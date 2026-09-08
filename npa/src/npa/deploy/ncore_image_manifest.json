@@ -42,6 +42,25 @@
     "critical_unfixed": null,
     "secrets": null
   },
+  "selected_base_scan": {
+    "format": "npa_ncore_selected_base_scan_v1",
+    "status": null,
+    "image_digest": null,
+    "platform_digest": null,
+    "config_digest": null,
+    "rootfs_sha256": null,
+    "lock_sha256": null,
+    "sbom_sha256": null,
+    "report_sha256": null,
+    "packages_sha256": null,
+    "files_verified": null,
+    "symlinks_verified": null,
+    "packages_evaluated": null,
+    "critical_total": null,
+    "critical_with_fix": null,
+    "critical_unfixed": null,
+    "secrets": null
+  },
   "license_scan": {
     "status": null,
     "report_sha256": null,

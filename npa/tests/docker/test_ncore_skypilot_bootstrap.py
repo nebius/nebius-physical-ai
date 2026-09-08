@@ -159,6 +159,7 @@ def test_actual_pinned_skypilot_apt_startup(base_sources):
             "HOME=/home/ubuntu",
             "LANG=C",
             "LC_ALL=C",
+            "BASH_ENV=/opt/ncore/bin/native-bootstrap.sh",
             "/bin/bash",
             "-ec",
             script,

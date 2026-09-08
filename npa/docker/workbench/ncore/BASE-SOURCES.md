@@ -52,10 +52,11 @@ under `bootstrap.upstream` in the lock.
 | Debian profile, bash defaults, writable ubuntu `.profile`/`.bashrc`, `/etc/profile.d`, `/var/run` | Provisioner environment propagation and login-shell setup |
 
 The additional linked libraries are libapt-pkg/libapt-private, libcurl,
-libbrotlidec/libbrotlicommon, libgnutls, libhogweed/libnettle, libidn2, libldap/liblber,
-libnghttp2, libp11-kit, libpsl, librtmp, libsasl2, libseccomp, libssh2, libtasn1,
-libunistring, libmount and libblkid. Existing selected libraries satisfy their
-remaining ELF dependencies. Each is bound to actual pinned Debian bytes.
+libbrotlidec/libbrotlicommon, libhogweed/libnettle, libidn2, libldap/liblber,
+libnghttp2, libp11-kit, libpsl, librtmp, libsasl2, libseccomp, libtasn1,
+libunistring, libmount and libblkid. Libgnutls and libssh2 are delivered at
+runtime as described below. Existing selected libraries satisfy the remaining
+ELF dependencies. Each is bound to actual pinned Debian bytes.
 
 APT retains only the clean builder's pinned Debian snapshot sources and validity
 configuration plus the public Debian signing keyring and CA trust. Empty writable
@@ -76,7 +77,79 @@ and `dpkg --audit`. Supply `NPA_NCORE_BOOTSTRAP_ROOT` and
 files). The disposable root needs runtime device/DNS inputs and the standard
 `policy-rc.d` exit-101 policy to prevent automatic daemon starts. The separate SSH
 and full SkyPilot runtime checks remain necessary on the parent's exact image.
-Never run the mutating APT probe against `/public-root` before its scratch copy.
+The probe explicitly sets the same native `BASH_ENV` hook inside the disposable
+root because its `env -i` commands do not inherit OCI environment. Never run the
+mutating APT probe against `/public-root` before its scratch copy.
+
+## Native startup delivery
+
+The public selection excludes exactly these original Debian libraries and SONAME
+links. Their complete package identities, byte hashes, modes and member sizes
+are in `native-bootstrap-lock.json`; the bootstrap pins that entire lock hash.
+
+| Runtime package | Library | SONAME link |
+| --- | --- | --- |
+| `libgnutls30` `3.7.9-2+deb12u7` | `libgnutls.so.30.34.3` | `libgnutls.so.30` |
+| `libssh2-1` `1.10.0-3+deb12u1` | `libssh2.so.1.0.1` | `libssh2.so.1` |
+
+The libraries retain their original bytes at `/usr/lib/x86_64-linux-gnu`.
+GnuTLS is required by APT's HTTPS transport, and libssh2 by curl's linked protocol
+closure. Bash, APT, dpkg, sudo, SSH, rsync and all other selected base files remain
+the original programs. No package wrapper or synthetic dpkg status substitutes
+for them.
+
+The final image alone sets `BASH_ENV=/opt/ncore/bin/native-bootstrap.sh`. The
+pinned SkyPilot Kubernetes template overrides ENTRYPOINT with `/bin/bash -c`, so
+this hook must establish the libraries before the actual upstream APT commands.
+The normal entrypoint also sources the same hook before generating SSH keys.
+Failure exits the shell before its command, including when `errexit` is off.
+There is no environment-variable success marker that bypasses verification.
+
+The unprivileged bootstrap uses the existing stdlib/OpenSSL HTTPS transport with
+exact destination and redirect-host validation. It downloads only the two pinned
+public Debian artifacts and checks complete archive and selected member hashes.
+The parser accepts their exact three-member ar layout and safe tar paths/types;
+it never extracts an archive tree or runs package scripts. See Debian's
+[package format](https://manpages.debian.org/bookworm/dpkg-dev/deb.5.en.html).
+
+`NPA_NCORE_NATIVE_CACHE` selects an absolute per-user private directory, defaulting
+to `${XDG_CACHE_HOME:-<account-home>/.cache}/npa/ncore/native` (normally
+`/home/ubuntu/.cache/npa/ncore/native`). It needs POSIX `flock` and atomic rename;
+it is ephemeral unless the operator mounts durable storage. Directories reject
+symlinks, foreign ownership and writable ancestors (except a root-owned sticky
+ancestor for an unprivileged user). The cache root is `0700`; singly linked
+regular artifacts and its lock are `0600`. Existing modes are not repaired.
+Every warm startup rechecks the full `.deb` and member hashes. An interrupted
+download publishes no artifact; a later invocation can retry. Corrupt or unsafe
+existing cache entries fail closed and need operator removal before retry.
+
+The downloader passes complete verified artifacts through stdin to a fixed
+`sudo` invocation of root-owned `/usr/local/bin/python3.12 -I -S -B` and the
+root-owned script. Its environment is cleared. The installer accepts no cache,
+lock or destination argument and interprets no environment variable as code.
+It rehashes both artifacts and their selected members into memory before opening
+any installation path. It checks root ownership and permissions of the fixed
+script, interpreter, lock and ancestor directories. A separate private root
+flock serializes installs; staged files are checked before atomic replacement,
+then all installed bytes, modes, ownership and links are checked again. Missing
+files from an interrupted installation can be completed; altered existing
+libraries or SONAMEs fail closed. There is no `LD_LIBRARY_PATH` dependency.
+
+`base-source-lock.json` retains every unaffected binary/source record and all six
+signed repository metadata artifacts. Only the absent packages' two components,
+two copyright notices and four unshared GnuTLS source/signature artifacts are
+removed from the delivered selection. Their identities and source/license
+provenance remain metadata in the native lock; these records are not a delivered
+source annex or a source waiver for any retained binary. GnuTLS's selected
+library remains LGPL-2.1-or-later, and libssh2 BSD-3-Clause. Runtime cache contents
+must not be copied into a final build input or published as a derived image.
+
+Build probes only import the stdlib bootstrap and verify its lock while the
+selected native bytes are absent. The final copy is guarded by absence checks
+for the four paths, cache and installation state. Do not invoke either startup
+hook against `/public-root`. Exact-image cold/warm startup, the explicit Bash
+entrypoint override, real APT/SSH bootstrap, complete-byte scans and application
+checks remain acceptance gates; source tests do not establish image acceptance.
 
 ## Why source is or is not delivered
 
@@ -162,27 +235,45 @@ excluded from those scans.
 Recipients receive `/opt/ncore/base-sources` in the same image pull, plus the
 selected runtime notices under `/usr/share/doc`. URLs identify original inputs;
 they are not substitutes for corresponding source or invented written offers.
-The annex contains source archives, original Debian patches/.dsc files, signed
-repository indexes, the lock, this document and `recipes/base_sources.py`.
+The annex contains source archives, original Debian patches/.dsc files, the lock,
+this document and `recipes/base_sources.py`. Exactly six signed repository inputs
+(the two snapshots' InRelease, Packages.xz and Sources.xz files) have
+`delivery: build-only`. They authenticate the selection during the build in
+`/build/base-metadata`, outside the delivered annex. The final root check mounts
+that directory read-only; the scratch copy never includes it. Classification
+must equal the signed repository input population and cannot remove any required
+corresponding source, including original patches and transformed source outputs.
 
 Extract the annex, `/usr/share/doc`, and
 `/usr/share/keyrings/debian-archive-keyring.gpg` from the image, and save that
-exact image as `image.tar`. Using Python 3.12+ and gpgv outside the image:
+exact image as `image.tar`. Using Python 3.12+ and gpgv outside the image, first
+fetch the hash-locked build metadata into a separate directory. `assemble` reuses
+and verifies the delivered sources; it downloads missing inputs over anonymous
+HTTPS. A fresh cache may instead supply these inputs with `--cache` and
+`--offline`. The metadata directory must neither contain nor be contained in the
+source annex, and must not resolve to the same directory.
 
 ```sh
+npa/.venv/bin/python base-sources/recipes/base_sources.py assemble \
+  --lock base-sources/recipes/base-source-lock.json \
+  --annex base-sources --native base-sources --metadata build-metadata
 npa/.venv/bin/python base-sources/recipes/base_sources.py inventory \
   --image-archive image.tar --output inventory.json
 npa/.venv/bin/python base-sources/recipes/base_sources.py verify \
   --lock base-sources/recipes/base-source-lock.json \
-  --annex base-sources --native base-sources \
+  --annex base-sources --native base-sources --metadata build-metadata \
   --keyring debian-archive-keyring.gpg --inventory inventory.json
 ```
 
 `--native` remains only an interface compatibility parameter; there is no native
 application annex. The verifier authenticates binary/source metadata, delivered
 archive hashes, every selected base file/notice, and every ELF in every layer.
+Every delivered archive must also exist at its published annex path with its
+exact output hash in the final filesystem inventory; a separate valid annex
+cannot supply missing image bytes. Build-only metadata is rejected by path and
+by exact hash anywhere in any published layer, even under a different name.
 A second filesystem layer, unknown ELF, omitted source or changed notice fails.
-The same selected-file check runs on `/public-root` before the scratch copy.
+The same source/selected-file check runs on `/public-root` before the scratch copy.
 It does not replace security, license or complete-byte scanning.
 
 For unchanged Debian sources, use `dpkg-source -x` on the delivered .dsc with its
@@ -198,8 +289,9 @@ npa/.venv/bin/python base-sources/recipes/base_sources.py prepare-source \
 
 This unpacks the actual delivered archives, overlays the original Debian build
 metadata and applies the patches, recording original/applied patch hashes in
-`NPA-SOURCE-PREPARATION.json`. GCC preparation needs make, dpkg-dev, lsb-release,
-Perl and patch. The upstream .dsc checksums intentionally describe the original
+`NPA-SOURCE-PREPARATION.json`. `prepare-source` verifies the delivered source
+hashes without requiring build-only repository indexes. GCC preparation needs
+make, dpkg-dev, lsb-release, Perl and patch. The upstream .dsc checksums intentionally describe the original
 inputs, so do not claim that a transformed archive matches its original .dsc.
 Use the locked transformed hash and the preparation helper instead of disabling
 source verification. The corresponding build commands are recorded in the lock;

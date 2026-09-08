@@ -61,6 +61,23 @@ def accepted():
             "secrets": 0,
         },
         "license_scan": {**scan, "unresolved_findings": 0},
+        "selected_base_scan": {
+            **scan,
+            "format": "npa_ncore_selected_base_scan_v1",
+            "platform_digest": PLATFORM,
+            "config_digest": CONFIG,
+            "rootfs_sha256": HASH,
+            "lock_sha256": HASH,
+            "sbom_sha256": HASH,
+            "packages_sha256": HASH,
+            "files_verified": 3,
+            "symlinks_verified": 1,
+            "packages_evaluated": 1,
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "critical_unfixed": 0,
+            "secrets": 0,
+        },
         "conversion": {
             "status": "pass",
             "exit_code": 0,
@@ -200,6 +217,23 @@ def test_acceptance_validates_complete_evidence(accepted):
         ("vulnerability_scan.critical_with_fix", 1),
         ("vulnerability_scan.secrets", 1),
         ("vulnerability_scan.critical_total", 1),
+        ("selected_base_scan.format", "lock-only"),
+        ("selected_base_scan.status", "unverified"),
+        ("selected_base_scan.image_digest", PLATFORM),
+        ("selected_base_scan.platform_digest", DIGEST),
+        ("selected_base_scan.config_digest", DIGEST),
+        ("selected_base_scan.rootfs_sha256", ""),
+        ("selected_base_scan.sbom_sha256", ""),
+        ("selected_base_scan.report_sha256", ""),
+        ("selected_base_scan.lock_sha256", ""),
+        ("selected_base_scan.packages_sha256", ""),
+        ("selected_base_scan.files_verified", True),
+        ("selected_base_scan.files_verified", 0),
+        ("selected_base_scan.symlinks_verified", -1),
+        ("selected_base_scan.packages_evaluated", 0),
+        ("selected_base_scan.critical_total", 1),
+        ("selected_base_scan.critical_with_fix", 1),
+        ("selected_base_scan.secrets", 1),
         ("conversion.observed_image_digest", CONFIG),
         ("conversion.dataset_root", "struktur28_auto"),
         ("conversion.source_counts.images", 59),
@@ -415,6 +449,12 @@ def registry(accepted, monkeypatch):
         "_scan_trivy_exact_digest",
         lambda ref, **kwargs: calls.append(ref) or vulnerability,
     )
+    def selected_scan(ref, *, platform_digest, config_digest):
+        assert platform_digest == PLATFORM and config_digest == CONFIG
+        calls.append(ref)
+        return copy.deepcopy(accepted["selected_base_scan"])
+
+    monkeypatch.setattr(publish, "_scan_ncore_selected_base_exact_digest", selected_scan)
     return index, statements, layers, config, calls
 
 
@@ -428,7 +468,7 @@ def item():
 
 def test_exact_attested_index_passes(accepted, registry):
     assert publish.verify_ncore_publication_source(item())[0]
-    assert registry[-1] == [REPOSITORY + "@" + DIGEST] * 2
+    assert registry[-1] == [REPOSITORY + "@" + DIGEST] * 3
 
 
 def test_buildx_v1_provenance_and_oci_artifact_subject_pass(registry, monkeypatch):
@@ -534,6 +574,41 @@ def test_live_scans_must_reproduce_recorded_counts(registry, monkeypatch, gate):
     ok, detail = publish.verify_ncore_publication_source(item())
     assert not ok
     assert "counts differ" in detail
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("format", "lock-only"),
+        ("image_digest", PLATFORM),
+        ("platform_digest", DIGEST),
+        ("config_digest", DIGEST),
+        ("lock_sha256", "f" * 64),
+        ("packages_sha256", "f" * 64),
+        ("files_verified", 4),
+        ("symlinks_verified", 2),
+        ("packages_evaluated", 2),
+        ("critical_total", 1),
+        ("critical_unfixed", 1),
+        ("critical_with_fix", 1),
+        ("secrets", False),
+    ],
+)
+def test_live_selected_scan_refuses_mismatched_evidence(
+    accepted, registry, monkeypatch, field, value
+):
+    scan = {**accepted["selected_base_scan"], field: value}
+    monkeypatch.setattr(
+        publish, "_scan_ncore_selected_base_exact_digest", lambda *args, **kwargs: scan
+    )
+    ok, detail = publish.verify_ncore_publication_source(item())
+    assert not ok and "live selected-base" in detail
+
+
+def test_supplemental_spdx_cannot_replace_or_duplicate_buildx_predicate(registry):
+    registry[2].append(copy.deepcopy(registry[2][0]))
+    ok, detail = publish.verify_ncore_publication_source(item())
+    assert not ok and "duplicate attestation" in detail
 
 
 @pytest.mark.parametrize(

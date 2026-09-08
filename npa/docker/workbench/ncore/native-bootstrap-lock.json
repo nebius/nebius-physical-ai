@@ -1,0 +1,205 @@
+{
+  "schema": 1,
+  "delivery": "runtime-only",
+  "debian_binaries": [
+    {
+      "name": "libgnutls30",
+      "version": "3.7.9-2+deb12u7",
+      "architecture": "amd64",
+      "source": "debian:gnutls28@3.7.9-2+deb12u7",
+      "package_index": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+      "sha256": "30abec8c824feb1d2d7e9000a34083cccd19d139625e1b21547e3ac53b922f8e",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/libgnutls30_3.7.9-2+deb12u7_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30",
+          "mode": 511,
+          "link": "libgnutls.so.30.34.3"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+          "mode": 420,
+          "sha256": "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b",
+          "elf": true,
+          "size": 2209528
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+          "sha256": "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b"
+        }
+      ],
+      "size": 1409084
+    },
+    {
+      "name": "libssh2-1",
+      "version": "1.10.0-3+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:libssh2@1.10.0-3+deb12u1",
+      "package_index": "610da1862518c2a1f69e459b6b02b579ec328697b4594244765b231b450ccc4e",
+      "sha256": "fff72a194e493f88e100a2567e22472bb4ab828d429c2956965c6f2f134f1b3a",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/libs/libssh2/libssh2-1_1.10.0-3+deb12u1_amd64.deb",
+      "files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1",
+          "mode": 511,
+          "link": "libssh2.so.1.0.1"
+        },
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+          "mode": 420,
+          "sha256": "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec",
+          "elf": true,
+          "size": 260552
+        }
+      ],
+      "elf_files": [
+        {
+          "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+          "sha256": "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
+        }
+      ],
+      "size": 175976
+    }
+  ],
+  "provenance": {
+    "base_image": "python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c",
+    "debian_repositories": [
+      {
+        "id": "debian-bookworm-20260906T183022Z",
+        "inrelease": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
+        "indexes": {
+          "Packages.xz": {
+            "artifact": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+            "release_path": "main/binary-amd64/Packages.xz"
+          },
+          "Sources.xz": {
+            "artifact": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+            "release_path": "main/source/Sources.xz"
+          }
+        }
+      },
+      {
+        "id": "debian-security-bookworm-security-20260906T183022Z",
+        "inrelease": "f88c4f45663f0387a87e2b02c61c3ab956e1129b8c6edebb4eb3c8c9c07cdfd5",
+        "indexes": {
+          "Packages.xz": {
+            "artifact": "610da1862518c2a1f69e459b6b02b579ec328697b4594244765b231b450ccc4e",
+            "release_path": "main/binary-amd64/Packages.xz"
+          },
+          "Sources.xz": {
+            "artifact": "3220c4978ed66ed56d256dc4b077e96268506f14684f2169c40caabf93c462f5",
+            "release_path": "main/source/Sources.xz"
+          }
+        }
+      }
+    ],
+    "debian_keyring_sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+    "components": [
+      {
+        "id": "debian:gnutls28@3.7.9-2+deb12u7",
+        "kind": "debian-source",
+        "name": "gnutls28",
+        "version": "3.7.9-2+deb12u7",
+        "source_index": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
+        "artifacts": [
+          "027b2f60e38add78ee611d099dbf34e977a6600d446cc39673534b736a182cb6",
+          "aaa03416cdbd54eb155187b359e3ec3ed52ec73df4df35a0edd49429ff64d844",
+          "da4a96b14edd3cd44971a36ba1e976af1057e57a2d6c21b0cc7025c983ee84cc",
+          "bcfcf396482ce7635df255abeff1c811321a84f016c95677db28f56908b25595"
+        ],
+        "license": "LGPL-2.1-or-later",
+        "delivery": "source",
+        "license_reason": "libgnutls is a linked dependency of APT HTTPS acquisition and the retained curl protocol-library closure."
+      },
+      {
+        "id": "debian:libssh2@1.10.0-3+deb12u1",
+        "kind": "debian-source",
+        "name": "libssh2",
+        "version": "1.10.0-3+deb12u1",
+        "source_index": "3220c4978ed66ed56d256dc4b077e96268506f14684f2169c40caabf93c462f5",
+        "artifacts": [],
+        "license": "BSD-3-Clause",
+        "delivery": "notice",
+        "license_reason": "Selected libssh2 shared library used by curl, with original BSD notices."
+      }
+    ],
+    "source_artifacts": [
+      {
+        "path": "sources/debian/gnutls28/3.7.9-2+deb12u7/gnutls28_3.7.9-2+deb12u7.dsc",
+        "filename": "gnutls28_3.7.9-2+deb12u7.dsc",
+        "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/gnutls28_3.7.9-2+deb12u7.dsc",
+        "sha256": "027b2f60e38add78ee611d099dbf34e977a6600d446cc39673534b736a182cb6"
+      },
+      {
+        "path": "sources/debian/gnutls28/3.7.9-2+deb12u6/gnutls28_3.7.9.orig.tar.xz",
+        "filename": "gnutls28_3.7.9.orig.tar.xz",
+        "url": "https://snapshot.debian.org/archive/debian-security/20260224T203152Z/pool/updates/main/g/gnutls28/gnutls28_3.7.9.orig.tar.xz",
+        "sha256": "aaa03416cdbd54eb155187b359e3ec3ed52ec73df4df35a0edd49429ff64d844"
+      },
+      {
+        "path": "sources/debian/gnutls28/3.7.9-2+deb12u6/gnutls28_3.7.9.orig.tar.xz.asc",
+        "filename": "gnutls28_3.7.9.orig.tar.xz.asc",
+        "url": "https://snapshot.debian.org/archive/debian-security/20260224T203152Z/pool/updates/main/g/gnutls28/gnutls28_3.7.9.orig.tar.xz.asc",
+        "sha256": "da4a96b14edd3cd44971a36ba1e976af1057e57a2d6c21b0cc7025c983ee84cc"
+      },
+      {
+        "path": "sources/debian/gnutls28/3.7.9-2+deb12u7/gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+        "filename": "gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+        "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gnutls28/gnutls28_3.7.9-2+deb12u7.debian.tar.xz",
+        "sha256": "bcfcf396482ce7635df255abeff1c811321a84f016c95677db28f56908b25595"
+      }
+    ],
+    "notices": [
+      {
+        "path": "usr/share/doc/libgnutls30/copyright",
+        "sha256": "bb7e5c24b3e27bbba5671dd710d159a0066833bda4caa1d55d8027ffed539337",
+        "mode": 420
+      },
+      {
+        "path": "usr/share/doc/libssh2-1/copyright",
+        "sha256": "98978241c573785aa7c8504e399bb66cfb3c40c1f20507a0d3c7580bfbf9d8d4",
+        "mode": 420
+      }
+    ],
+    "metadata": [
+      {
+        "path": "metadata/debian-bookworm-20260906T183022Z/InRelease",
+        "filename": "InRelease",
+        "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/dists/bookworm/InRelease",
+        "sha256": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa"
+      },
+      {
+        "path": "metadata/debian-bookworm-20260906T183022Z/Packages.xz",
+        "filename": "Packages.xz",
+        "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/dists/bookworm/main/binary-amd64/Packages.xz",
+        "sha256": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5"
+      },
+      {
+        "path": "metadata/debian-bookworm-20260906T183022Z/Sources.xz",
+        "filename": "Sources.xz",
+        "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/dists/bookworm/main/source/Sources.xz",
+        "sha256": "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8"
+      },
+      {
+        "path": "metadata/debian-security-bookworm-security-20260906T183022Z/InRelease",
+        "filename": "InRelease",
+        "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/dists/bookworm-security/InRelease",
+        "sha256": "f88c4f45663f0387a87e2b02c61c3ab956e1129b8c6edebb4eb3c8c9c07cdfd5"
+      },
+      {
+        "path": "metadata/debian-security-bookworm-security-20260906T183022Z/Packages.xz",
+        "filename": "Packages.xz",
+        "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/dists/bookworm-security/main/binary-amd64/Packages.xz",
+        "sha256": "610da1862518c2a1f69e459b6b02b579ec328697b4594244765b231b450ccc4e"
+      },
+      {
+        "path": "metadata/debian-security-bookworm-security-20260906T183022Z/Sources.xz",
+        "filename": "Sources.xz",
+        "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/dists/bookworm-security/main/source/Sources.xz",
+        "sha256": "3220c4978ed66ed56d256dc4b077e96268506f14684f2169c40caabf93c462f5"
+      }
+    ]
+  }
+}

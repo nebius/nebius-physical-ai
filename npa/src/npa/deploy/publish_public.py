@@ -1008,6 +1008,74 @@ def _scan_ncore_payload_exact_digest(image_ref: str) -> dict[str, int]:
         return counts
 
 
+def _scan_ncore_selected_base_exact_digest(
+    image_ref: str,
+    *,
+    platform_digest: str,
+    config_digest: str,
+) -> dict[str, Any]:
+    """Verify shipped selected bytes and repeat their supplemental package scan."""
+    from npa.deploy import ncore_selected_sbom as selected
+
+    if not re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", image_ref):
+        raise RuntimeError("NCore selected-base scan requires an exact digest")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", platform_digest):
+        raise RuntimeError(
+            "NCore selected-base export requires an exact platform digest"
+        )
+    with tempfile.TemporaryDirectory(prefix="npa-ncore-selected-base-") as temporary:
+        directory = Path(temporary)
+        archive = directory / "rootfs.tar"
+        # The caller has already checked this sole child against the accepted
+        # index and config. Export that exact child, with no tag resolution.
+        platform_ref = f"{_repository(image_ref)}@{platform_digest}"
+        _export_ncore_selected_base(platform_ref, archive)
+        return selected.scan_archive(
+            archive,
+            directory / "scan",
+            image_digest=image_ref.split("@", 1)[1],
+            platform_digest=platform_digest,
+            config_digest=config_digest,
+            trivy_command=_trivy_command(),
+        )
+
+
+def _export_ncore_selected_base(platform_ref: str, archive: Path) -> None:
+    exported = subprocess.run(
+        ["crane", "export", "--platform", "linux/amd64", platform_ref, str(archive)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if exported.returncode:
+        raise RuntimeError("NCore selected-base exact-digest export failed")
+
+
+def _validate_ncore_selected_live_scan(accepted, live):
+    fields = (
+        "format",
+        "status",
+        "image_digest",
+        "platform_digest",
+        "config_digest",
+        "lock_sha256",
+        "packages_sha256",
+        "files_verified",
+        "symlinks_verified",
+        "packages_evaluated",
+        "critical_total",
+        "critical_with_fix",
+        "critical_unfixed",
+        "secrets",
+    )
+    for field in fields:
+        expected = accepted["selected_base_scan"][field]
+        if type(live.get(field)) is not type(expected) or live.get(field) != expected:
+            raise RuntimeError(
+                f"NCore live selected-base {field} differs from acceptance"
+            )
+
+
 def verify_ncore_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Recheck accepted NCore bytes, source-bound buildx evidence and live scans.
 
@@ -1241,6 +1309,11 @@ def verify_ncore_publication_source(item: PublishItem) -> tuple[bool, str]:
             },
             "live vulnerability counts differ from acceptance",
         )
+        selected_scan = _scan_ncore_selected_base_exact_digest(
+            item.source_ref, platform_digest=platform,
+            config_digest=accepted["config_digest"],
+        )
+        _validate_ncore_selected_live_scan(accepted, selected_scan)
         return (
             True,
             f"exact accepted digest {digest}; full COLMAP conversion and NRE RTX scene/render proof",

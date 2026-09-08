@@ -119,7 +119,12 @@ original copyright notices. Permissive components have a binary-specific
 `delivery: notice` decision; their unnecessary full source archives are absent.
 Inherited pip/ensurepip and optional Python build/test/GUI payloads are absent.
 Real APT/dpkg/curl and their checked helper/library closure are required by the
-pinned SkyPilot 0.12.2 startup and are baked bootstrap utilities. The published
+pinned SkyPilot 0.12.2 startup. The original programs are baked bootstrap
+utilities; exactly libgnutls and libssh2 plus their SONAME links are hash-locked
+runtime deliveries before APT startup. The final-stage `BASH_ENV` hook handles
+SkyPilot's Bash entrypoint override and fails closed on native setup failure.
+See [native startup delivery](BASE-SOURCES.md#native-startup-delivery) and
+[cache configuration](README.md). The published
 dpkg status is empty because selected loose package files are not configured
 Debian installations. The lock inventories those bytes; runtime APT writes real
 package status, lists and conffile metadata. No installed-package claims are
@@ -129,6 +134,12 @@ checks remain enabled. See [BASE-SOURCES.md](BASE-SOURCES.md) for the exact
 bootstrap boundary and disposable-root upstream-command probe.
 The remaining covered binaries receive real preferred source and build/install
 scripts. GCC runtime exceptions do not waive standalone library source delivery.
+The six signed Debian repository inputs are authenticated build-only metadata,
+kept outside the source annex and absent from published layers. Original source
+archives, patches, notices and reviewed transformed outputs remain delivered.
+Verification requires their exact hashes in the final image filesystem; a valid
+external source annex cannot satisfy missing image source. Metadata paths and
+exact metadata hashes are rejected in every published layer.
 The three reviewed source transformations remove only identified optional
 tests/fixtures, retain required build inputs, and record input/output hashes and
 library buildability evidence. They do not create scanner exceptions or source

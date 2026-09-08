@@ -35,6 +35,7 @@ except ModuleNotFoundError as error:
 SOURCE_DOWNLOAD_HOSTS = frozenset(
     {"archive.ubuntu.com", "raw.githubusercontent.com", "snapshot.debian.org"}
 )
+SOURCE_ANNEX = "opt/ncore/base-sources"
 
 
 def digest(value: bytes) -> str:
@@ -90,14 +91,7 @@ def retained_files(lock: dict) -> list[dict]:
     ]
 
 
-def validate_delivery(lock: dict) -> None:
-    """A source classification requires actual delivered bytes, never just URLs."""
-    if lock.get("schema") != 2:
-        return
-    artifacts = {
-        a.get("transformation", {}).get("input_sha256", a["sha256"]): a
-        for a in lock["artifacts"]
-    }
+def _validate_component_delivery(lock: dict, artifacts: dict) -> None:
     for component in lock["components"]:
         delivery = component["delivery"]
         if not component.get("license_reason"):
@@ -106,11 +100,63 @@ def validate_delivery(lock: dict) -> None:
             if (
                 not component["artifacts"]
                 or not set(component["artifacts"]) <= artifacts.keys()
+                or any(
+                    artifacts[sha].get("delivery", "source") != "source"
+                    for sha in component["artifacts"]
+                )
             ):
                 raise ValueError("required corresponding source is not delivered")
         elif delivery != "notice" or component["artifacts"]:
             raise ValueError("invalid notice-only source boundary")
+
+
+def _validate_metadata_delivery(lock: dict, artifacts: dict) -> None:
+    signed = {}
+    for repo in lock.get("debian_repositories", []):
+        if set(repo["indexes"]) != {"Packages.xz", "Sources.xz"}:
+            raise ValueError("signed metadata requires both Packages.xz and Sources.xz")
+        entries = {"InRelease": repo["inrelease"]}
+        entries.update(
+            (name, entry["artifact"]) for name, entry in repo["indexes"].items()
+        )
+        for name, sha in entries.items():
+            if sha in signed:
+                raise ValueError("duplicate signed metadata identity")
+            signed[sha] = (f"metadata/{safe_path(repo['id'])}/{name}", name)
+    build_only = {
+        sha: item
+        for sha, item in artifacts.items()
+        if item.get("delivery") == "build-only"
+    }
+    if build_only.keys() != signed.keys():
+        raise ValueError("build-only artifacts must exactly match signed metadata")
+    for sha, item in build_only.items():
+        if (item["path"], item["filename"]) != signed[sha] or "transformation" in item:
+            raise ValueError("build-only metadata path or identity changed")
+
+
+def validate_delivery(lock: dict) -> None:
+    """Require delivered source and classify only signed indexes as build-only.
+
+    Args:
+        lock: Source and selected-file lock.
+    Returns:
+        None.
+    Raises:
+        ValueError: Source, transformation or metadata delivery is inconsistent.
+    """
+    if lock.get("schema") != 2:
+        return
+    artifacts = {
+        a.get("transformation", {}).get("input_sha256", a["sha256"]): a
+        for a in lock["artifacts"]
+    }
+    if len(artifacts) != len(lock["artifacts"]):
+        raise ValueError("duplicate source artifact identity")
+    _validate_component_delivery(lock, artifacts)
     for item in lock["artifacts"]:
+        if item.get("delivery", "source") not in {"source", "build-only"}:
+            raise ValueError("invalid artifact delivery classification")
         recipe = item.get("transformation")
         if recipe and (
             recipe.get("output_sha256") != item["sha256"]
@@ -118,6 +164,7 @@ def validate_delivery(lock: dict) -> None:
             or not recipe.get("build_proof")
         ):
             raise ValueError("source transformation lacks reviewed buildability proof")
+    _validate_metadata_delivery(lock, artifacts)
 
 
 def assemble_package_state(output: Path) -> None:
@@ -349,7 +396,10 @@ def gcc_distro_defaults(root: Path) -> None:
 
 def prepare_source(lock: dict, annex: Path, component_id: str, output: Path) -> Path:
     """Unpack delivered source and apply Debian patches without missing test hunks."""
-    verify_artifacts(lock, annex, annex)
+    validate_delivery(lock)
+    for item in lock["artifacts"]:
+        if item.get("delivery") != "build-only":
+            _verify_artifact(item, artifact_path(item, annex, annex))
     component = next(c for c in lock["components"] if c["id"] == component_id)
     if component["delivery"] != "source" or output.exists():
         raise ValueError("source component and new output directory required")
@@ -597,10 +647,42 @@ def inventory(archive_path: Path) -> dict:
     return result
 
 
-def artifact_path(item: dict, output: Path, native: Path) -> Path:
+def _metadata_directory(output: Path, native: Path, metadata: Path | None) -> Path:
+    if metadata is None:
+        raise ValueError("build-only artifacts require an explicit metadata directory")
+    resolved = metadata.resolve()
+    for delivered in (output.resolve(), native.resolve()):
+        if resolved.is_relative_to(delivered) or delivered.is_relative_to(resolved):
+            raise ValueError(
+                "metadata directory must be separate from delivered source"
+            )
+    return metadata
+
+
+def artifact_path(
+    item: dict, output: Path, native: Path, metadata: Path | None = None
+) -> Path:
+    """Locate a locked artifact inside its delivery directory.
+
+    Args:
+        item: Locked artifact identity and delivery classification.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        metadata: Separate build-only directory; required for signed indexes.
+    Returns:
+        Artifact path inside the appropriate directory.
+    Raises:
+        ValueError: The filename or metadata directory is unsafe.
+    """
     name = safe_path(item["filename"])
     if "/" in name:
         raise ValueError("unsafe artifact filename")
+    if item.get("delivery") == "build-only":
+        directory = _metadata_directory(output, native, metadata)
+        target = directory / safe_path(item["path"])
+        if not target.resolve().is_relative_to(directory.resolve()):
+            raise ValueError("build-only metadata escapes its directory")
+        return target
     return (
         native / name
         if item.get("delivery") == "native"
@@ -608,75 +690,133 @@ def artifact_path(item: dict, output: Path, native: Path) -> Path:
     )
 
 
-def verify_artifacts(lock: dict, output: Path, native: Path) -> dict:
+def _verify_artifact(item: dict, target: Path) -> int:
+    if not target.is_file() or file_digest(target) != item["sha256"]:
+        raise ValueError(f"SHA256 mismatch or missing artifact: {item['path']}")
+    return target.stat().st_size
+
+
+def verify_artifacts(
+    lock: dict, output: Path, native: Path, metadata: Path | None = None
+) -> dict:
+    """Verify every locked source and build-only input by exact hash.
+
+    Args:
+        lock: Source and metadata lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        metadata: Separate signed repository input directory.
+    Returns:
+        Verified artifact and byte counts.
+    Raises:
+        ValueError: Delivery classification, directory or artifact bytes changed.
+    """
     validate_delivery(lock)
     size = 0
     for item in lock["artifacts"]:
-        target = artifact_path(item, output, native)
-        if not target.is_file() or file_digest(target) != item["sha256"]:
-            raise ValueError(f"SHA256 mismatch or missing source: {item['path']}")
-        size += target.stat().st_size
+        target = artifact_path(item, output, native, metadata)
+        size += _verify_artifact(item, target)
     return {"artifacts": len(lock["artifacts"]), "bytes": size}
 
 
 def assemble(
-    lock: dict, output: Path, native: Path, caches: list[Path], *, offline: bool = False
+    lock: dict,
+    output: Path,
+    native: Path,
+    caches: list[Path],
+    *,
+    offline: bool = False,
+    metadata: Path | None = None,
 ) -> dict:
+    """Assemble source and authenticated build inputs in separate directories.
+
+    Args:
+        lock: Source and metadata lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        caches: Optional directories of cached locked inputs.
+        offline: Refuse network access when a required input is absent.
+        metadata: Separate build-only directory for signed repository inputs.
+    Returns:
+        Verified artifact and byte counts.
+    Raises:
+        ValueError: A required input, hash or delivery boundary is invalid.
+    """
     validate_delivery(lock)
     output.mkdir(parents=True, exist_ok=True)
     for item in lock["artifacts"]:
-        target = artifact_path(item, output, native)
-        if item.get("delivery") == "native" or target.exists():
-            if not target.is_file() or file_digest(target) != item["sha256"]:
-                raise ValueError(f"SHA256 mismatch or missing source: {item['path']}")
-            continue
-        cached = next(
-            (
-                p
-                for root in caches
-                for p in (root / item["path"], root / item["filename"])
-                if p.is_file()
-            ),
-            None,
-        )
-        if cached is None and offline:
-            raise ValueError(f"offline source missing: {item['path']}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(target.name + ".partial")
-        try:
-            if cached:
-                shutil.copyfile(cached, temporary)
-            else:
-                with temporary.open("wb") as destination:
-                    download_public_https(
-                        item["url"], destination, allowed_hosts=SOURCE_DOWNLOAD_HOSTS
-                    )
-            expected = item.get("transformation", {}).get(
-                "input_sha256", item["sha256"]
-            )
-            actual = file_digest(temporary)
-            if actual not in (expected, item["sha256"]):
-                raise ValueError(f"SHA256 mismatch: {item['path']}")
-            if "transformation" in item and actual != item["sha256"]:
-                transformed = temporary.with_suffix(".transformed")
-                try:
-                    transform_archive(temporary, transformed, item["transformation"])
-                    transformed.replace(temporary)
-                finally:
-                    transformed.unlink(missing_ok=True)
-            temporary.replace(target)
-            target.chmod(0o644)
-        finally:
-            temporary.unlink(missing_ok=True)
-    return verify_artifacts(lock, output, native)
+        target = artifact_path(item, output, native, metadata)
+        _assemble_artifact(item, target, caches, offline)
+    return verify_artifacts(lock, output, native, metadata)
+
+
+def _assemble_artifact(item: dict, target: Path, caches: list[Path], offline: bool) -> None:
+    if item.get("delivery") == "native" or target.exists():
+        _verify_artifact(item, target)
+        return
+    cached = next(
+        (
+            p
+            for root in caches
+            for p in (root / item["path"], root / item["filename"])
+            if p.is_file()
+        ),
+        None,
+    )
+    if cached is None and offline:
+        raise ValueError(f"offline source missing: {item['path']}")
+    _stage_artifact(item, target, cached)
+
+
+def _stage_artifact(item: dict, target: Path, cached: Path | None) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".partial")
+    try:
+        if cached:
+            shutil.copyfile(cached, temporary)
+        else:
+            with temporary.open("wb") as destination:
+                download_public_https(
+                    item["url"], destination, allowed_hosts=SOURCE_DOWNLOAD_HOSTS
+                )
+        expected = item.get("transformation", {}).get("input_sha256", item["sha256"])
+        actual = file_digest(temporary)
+        if actual not in (expected, item["sha256"]):
+            raise ValueError(f"SHA256 mismatch: {item['path']}")
+        if "transformation" in item and actual != item["sha256"]:
+            transformed = temporary.with_suffix(".transformed")
+            try:
+                transform_archive(temporary, transformed, item["transformation"])
+                transformed.replace(temporary)
+            finally:
+                transformed.unlink(missing_ok=True)
+        temporary.replace(target)
+        target.chmod(0o644)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def verify_debian_metadata(
-    lock: dict, output: Path, native: Path, keyring: Path
+    lock: dict, output: Path, native: Path, keyring: Path, metadata: Path | None = None
 ) -> dict:
-    """Reauthenticate exact binary -> source -> archive mappings offline."""
+    """Reauthenticate exact binary, source and archive mappings offline.
+
+    Args:
+        lock: Source and signed repository lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        keyring: Hash-locked Debian archive verification keyring.
+        metadata: Separate build-only signed repository input directory.
+    Returns:
+        Authenticated binary and source version counts.
+    Raises:
+        ValueError: An artifact, signed index or binary/source mapping changed.
+        OSError: A required keyring or artifact cannot be read.
+        subprocess.CalledProcessError: Signature verification failed.
+    """
     if file_digest(keyring) != lock["debian_keyring_sha256"]:
         raise ValueError("Debian archive keyring SHA256 mismatch")
+    verify_artifacts(lock, output, native, metadata)
     artifacts = {
         item.get("transformation", {}).get("input_sha256", item["sha256"]): item
         for item in lock["artifacts"]
@@ -691,7 +831,7 @@ def verify_debian_metadata(
     }
     seen_binary, seen_source = set(), set()
     for repo in lock["debian_repositories"]:
-        release = artifact_path(artifacts[repo["inrelease"]], output, native)
+        release = artifact_path(artifacts[repo["inrelease"]], output, native, metadata)
         checked = subprocess.run(
             [
                 "gpgv",
@@ -711,7 +851,7 @@ def verify_debian_metadata(
             if line.strip()
         }
         for name, entry in repo["indexes"].items():
-            path = artifact_path(artifacts[entry["artifact"]], output, native)
+            path = artifact_path(artifacts[entry["artifact"]], output, native, metadata)
             if signed[entry["release_path"]] != (
                 file_digest(path),
                 path.stat().st_size,
@@ -769,8 +909,38 @@ def verify_debian_metadata(
     }
 
 
+def _reject_published_metadata(lock: dict, inv: dict) -> None:
+    metadata = [a for a in lock["artifacts"] if a.get("delivery") == "build-only"]
+    hashes = {a["sha256"] for a in metadata}
+    paths = {safe_path(a["path"]) for a in metadata}
+    directories = (f"{SOURCE_ANNEX}/metadata", "build/base-metadata")
+    for row in inv["layers"]:
+        for path, item in row["files"].items():
+            forbidden_path = (
+                path in paths
+                or any(path.endswith("/" + name) for name in paths)
+                or any(
+                    path == name or path.startswith(name + "/") for name in directories
+                )
+            )
+            if forbidden_path or item.get("sha256") in hashes:
+                raise ValueError(f"published build-only metadata: {path}")
+
+
+def _verify_source_delivery(lock: dict, files: dict) -> None:
+    for item in lock["artifacts"]:
+        if item.get("delivery") == "build-only":
+            continue
+        path = f"{SOURCE_ANNEX}/{safe_path(item['path'])}"
+        if files.get(path, {}).get("sha256") != item["sha256"]:
+            raise ValueError(f"missing or changed delivered source: {path}")
+
+
 def verify_coverage(lock: dict, inv: dict, native: Path) -> dict:
     """Fail on unknown package identities or ELF bytes, including ancestors."""
+    validate_delivery(lock)
+    if lock.get("schema") == 2:
+        _reject_published_metadata(lock, inv)
     if [row["diff_id"] for row in inv["layers"][: len(lock["base_diff_ids"])]] != lock[
         "base_diff_ids"
     ]:
@@ -846,6 +1016,7 @@ def verify_coverage(lock: dict, inv: dict, native: Path) -> dict:
             kind = "link" if "link" in item else "sha256"
             if actual.get(kind) != item[kind]:
                 raise ValueError(f"missing or changed retained {kind}: {item['path']}")
+        _verify_source_delivery(lock, inv["final_files"])
     return {"elf_occurrences": count, "inventoried_layers": len(inv["layers"])}
 
 
@@ -943,6 +1114,12 @@ def main() -> None:
         child.add_argument("--lock", type=Path, required=True)
         child.add_argument("--annex", type=Path, required=True)
         child.add_argument("--native", type=Path, required=True)
+        child.add_argument(
+            "--metadata",
+            type=Path,
+            required=True,
+            help="Build-only signed repository inputs, separate from the delivered annex",
+        )
         if name == "assemble":
             child.add_argument("--cache", type=Path, action="append", default=[])
             child.add_argument("--offline", action="store_true")
@@ -971,12 +1148,19 @@ def main() -> None:
             result = assemble_root(lock, args.root, args.output)
         elif args.command == "assemble":
             result = assemble(
-                lock, args.annex, args.native, args.cache, offline=args.offline
+                lock,
+                args.annex,
+                args.native,
+                args.cache,
+                offline=args.offline,
+                metadata=args.metadata,
             )
         else:
-            result = verify_artifacts(lock, args.annex, args.native)
+            result = verify_artifacts(lock, args.annex, args.native, args.metadata)
             result.update(
-                verify_debian_metadata(lock, args.annex, args.native, args.keyring)
+                verify_debian_metadata(
+                    lock, args.annex, args.native, args.keyring, args.metadata
+                )
             )
             if args.inventory:
                 inv = json.loads(args.inventory.read_text())

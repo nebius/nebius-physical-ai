@@ -116,3 +116,43 @@ def validate_full_input_proof(conversion: dict, proof: dict) -> None:
     _frame_coverage(conversion, training)
     _recipe_evidence(training)
     _visualization_evidence(conversion, proof)
+
+
+def validate_selected_base_scan(manifest: dict) -> None:
+    """Require the retained final-filesystem supplemental scan evidence.
+
+    Args:
+        manifest: NCore acceptance tuple with exact index/platform/config IDs.
+    Returns:
+        None when receipt identities, evidence hashes and counts are consistent.
+    Raises:
+        RuntimeError: Evidence is missing, malformed or mismatched.
+    """
+    from npa.deploy.ncore_selected_sbom import SCAN_FORMAT
+
+    scan = _record(manifest, "selected_base_scan")
+    _require(scan.get("format") == SCAN_FORMAT, "selected-base scan format")
+    _require(scan.get("status") == "pass", "selected-base scan status")
+    for field, parent in (
+        ("image_digest", "oci_digest"),
+        ("platform_digest", "amd64_manifest"),
+        ("config_digest", "config_digest"),
+    ):
+        _require(scan.get(field) == manifest[parent], "selected-base " + field)
+    for field in (
+        "rootfs_sha256",
+        "sbom_sha256",
+        "report_sha256",
+        "lock_sha256",
+        "packages_sha256",
+    ):
+        _hash(scan, field)
+    for field in ("files_verified", "packages_evaluated"):
+        _count(scan, field)
+    _count(scan, "symlinks_verified", 0)
+    for field in ("critical_with_fix", "secrets"):
+        _require(_count(scan, field, 0) == 0, "selected-base " + field)
+    _require(
+        _count(scan, "critical_total", 0) == _count(scan, "critical_unfixed", 0),
+        "selected-base CRITICAL accounting",
+    )
