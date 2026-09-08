@@ -12,6 +12,10 @@ The source archives are immutable and checked before extraction:
 | RoboCasa v1.0 | `8f3c96ec8d1bfcd8126cad2bca887da98d30e997` | `1893328b5222ac0443287e593c161c696c77e3f8018f6d9f6bd900871d2caad3` |
 | robosuite | `85abee228d1c43ab1939bce33028099945d453b4` | `2369a5c3385bf122eeff3362e7f70aacf1d10436e860d12026ecd10b37c152cd` |
 
+The unused MIT `render_dataset_with_omniverse.py` adapter is removed in the
+same extraction step as its source archive; neither the adapter nor that
+archive remains in an image layer. The service uses MuJoCo/EGL.
+
 Both source licenses are MIT with separate Apache-2.0 MuJoCo portions. The
 source archives also contain assets: 208 RoboCasa files and 943 robosuite files
 under their respective `models/assets` trees. RoboCasa identifies its assets

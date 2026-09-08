@@ -54,13 +54,15 @@ RUN curl --fail --location https://developer.download.nvidia.com/compute/nvshmem
       -o /usr/share/doc/npa-robocasa/NVSHMEM-LICENSE.txt \
     && echo '43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f  /usr/share/doc/npa-robocasa/NVSHMEM-LICENSE.txt' | sha256sum -c -
 
-# Preserve upstream code, bundled asset bytes, README credits and notices. The
-# separate trainer extras are excluded; the selected ACT subset is documented.
+# Preserve bundled assets, README credits and notices. Remove the unused MIT
+# Omniverse adapter in the extraction layer; this service uses MuJoCo/EGL.
+# Separate trainer extras are excluded; the selected ACT subset is documented.
 RUN curl --fail --location https://codeload.github.com/ARISE-Initiative/robosuite/tar.gz/85abee228d1c43ab1939bce33028099945d453b4 \
       -o /tmp/robosuite.tar.gz \
     && echo '2369a5c3385bf122eeff3362e7f70aacf1d10436e860d12026ecd10b37c152cd  /tmp/robosuite.tar.gz' | sha256sum -c - \
     && mkdir -p /opt/robosuite/source \
     && tar -xzf /tmp/robosuite.tar.gz --strip-components=1 -C /opt/robosuite/source \
+    && rm /opt/robosuite/source/robosuite/scripts/render_dataset_with_omniverse.py \
     && pip install --no-cache-dir --no-compile --no-deps --no-build-isolation -e /opt/robosuite/source \
     && curl --fail --location https://codeload.github.com/robocasa/robocasa/tar.gz/8f3c96ec8d1bfcd8126cad2bca887da98d30e997 \
       -o /tmp/robocasa.tar.gz \
