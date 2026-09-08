@@ -27,6 +27,22 @@ usable with an authorized endpoint serving it. Start a new run when changing
 models or upgrading this evaluator contract; Stage 9 verifies model identity,
 family, request accounting, and exact Stage 7 rollout coverage before PPO.
 
+Select the model explicitly with one of these submit overrides:
+
+```bash
+# Current public Token Factory default:
+--var cosmos3_model=MiniMaxAI/MiniMax-M3
+# An authorized endpoint that serves this exact Cosmos 3 model ID:
+--var cosmos3_model=nvidia/Cosmos3-Super-Reasoner
+```
+
+For a custom endpoint, set `NEBIUS_TOKEN_FACTORY_BASE_URL` privately and also
+pass `--secret-env NEBIUS_TOKEN_FACTORY_BASE_URL` to submit. This keeps the
+local access check and the remote evaluator on the same endpoint. Verify its
+key-scoped model list first. NPA never silently substitutes another model.
+The `cosmos3_model` name is retained for compatibility; it does not mean that a
+MiniMax evaluation is a Cosmos 3 evaluation.
+
 Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
 [Isaac Sim additional licenses](https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html),
@@ -159,7 +175,7 @@ Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
 template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
-export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6'
+export NPA_ISAAC_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<selected-64-hex-digest>'
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
@@ -193,19 +209,26 @@ Relevant build entrypoints are
 `npa/docker/workbench/isaac-lab/build.sh`. Follow
 [build and push](../container-packaging.md) when images are absent.
 
-The five image digests below are the accepted coherent release set, built from
-`c164fd3480f8a9ea8f9df9ccb9509502fd527996` and verified anonymously on
-2026-09-05. Put them in shell variables, then reproduce the actual manifest
-pulls with the same config used by submit:
+Choose five images built from the same source commit containing the current
+Stage 8/9 hosted evaluator contract. The historical September 4 coherent release
+at `c164fd3480f8a9ea8f9df9ccb9509502fd527996` predates that contract: its
+Stage 8 only accepts Cosmos 3 and fails with the current MiniMax default.
+Anonymous pullability and a matching source SHA alone do not establish evaluator
+compatibility. Do not combine those historical digests with this workflow's
+current evaluator contract.
+
+Resolve the selected release or development tags to immutable digests, record
+their common source SHA, then reproduce the manifest pulls with the same config
+used by submit:
 
 ```bash
-export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7'
-export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3'
-export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422'
+export CONTROLLER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:<selected-64-hex-digest>'
+export TRANSFER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:<selected-64-hex-digest>'
+export ENVGEN_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:<selected-64-hex-digest>'
 export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
-export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:4c09c9cf3c14606db8e45c8ee564388888cd3261448f7c3f1304bfdfb1b9e5b2'
+export VIEWER_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:<selected-64-hex-digest>'
 export SPEC=workflows/main/sim2real.yaml
-export SOURCE_SHA=c164fd3480f8a9ea8f9df9ccb9509502fd527996
+export SOURCE_SHA='<selected-full-40-character-source-sha>'
 
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
   --project "${NPA_PROJECT}" \
@@ -223,6 +246,12 @@ npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
 `NPA_IMAGE_SOURCE_SHA` in every selected Sim2Real image. Supply the SHA attested
 by the coherent image set you selected; do not assume the current repository
 checkout matches those image bytes.
+
+The generated setup executes a network-free evaluator check using each image's
+baked interpreter. The first CPU stage verifies support for the exact selected
+model and rejection of an empty Stage 8/9 boundary before any GPU wave starts.
+An incompatible image fails with the model ID and migration guidance. This
+check makes no hosted inference request and does not modify the image source.
 
 Expected: every image is pullable and bootstrap-compatible. `not_found` means
 build/push the printed image; `forbidden` means fix the exact-host registry

@@ -940,6 +940,19 @@ def test_baked_raw_module_setup_probes_the_executed_module() -> None:
         "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
     )
     assert "npa.cli.main" not in setup
+    assert "baked Sim2Real evaluator verified" in setup
+
+
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"])
+def test_baked_sim2real_setup_keeps_the_selected_evaluator(model):
+    setup = render_setup_for_tool(
+        "",
+        config={"require_baked_npa": "1", "cosmos3_model": model},
+        options=SkypilotRenderOptions(),
+        command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
+    )
+    assert f"hosted_rollout_model_family({model!r})" in setup
+    assert "validate_hosted_evaluator(" in setup
 
 
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
@@ -976,6 +989,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
+        assert "baked Sim2Real evaluator verified" in task["setup"]
         assert (
             "importlib.import_module('npa.workflows.sim2real.workflow_stage')"
             in task["setup"]
