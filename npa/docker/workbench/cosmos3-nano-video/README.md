@@ -32,6 +32,28 @@ Validate real continuation and source-conditioned augmentation through the
 documented SDK/CLI, fully decode the MP4s, and inspect joins and source alignment.
 A one-replica result does not qualify the 16-replica routing/concurrency matrix.
 
+## Verified public development image
+
+On 2026-09-08, `dev-1bd1b00330e37b3a8916b2a740c2578aca25651e`
+(`sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78`)
+passed its [trusted publication gates](https://github.com/nebius/nebius-physical-ai/actions/runs/34193230368)
+and real workloads on **one B200**: a 720-frame, 30-second continuation and a
+144-frame, six-second structural augmentation, both at 832×480 and 24 fps.
+All 27 generated artifacts passed storage readback, with complete media decoding.
+The actual GPU pod's image and installed module hashes matched the published
+bytes; the runtime used no source overlay.
+
+Visual review found recognizable orange robot and blue racks with no obvious
+reset at the sampled joins. Wheel details and floor markings changed, and the
+requested dampness was unclear: prompt fidelity is partial. This result does not
+qualify exact asset preservation, physical realism, the 16-replica matrix,
+30-second source augmentation or B300. Supported-release defaults remain unchanged.
+See the [measured development scope](../../../deploy/cosmos3-nano-video/README.md#measured-public-development-validation)
+for timing and fresh-execution evidence; the historical 16-replica results apply
+to their recorded operator image.
+
+## Runtime compatibility
+
 The video adapter launches the pinned Omni serving command through its Python
 parser so `sound_gen=false` and `guardrails=false` remain explicit model settings.
 Omni 0.28 removed `--stage-configs-path` and the `stage_args` schema. Its Cosmos

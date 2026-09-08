@@ -74,7 +74,7 @@ The detection-training stack row and detector GPU results [7] and [28]–[31] de
 | `npa-cosmos3` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (r6) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |
 | `npa-cosmos3-super-benchmark` (public development) | unverified | unverified | unverified | **verified single-video generation** [development records](#public-development-evidence); full benchmark pending | unverified |
-| `npa-cosmos3-nano-video` (operator-private) | not validated | not validated | not validated | **verified** [67] | not validated |
+| `npa-cosmos3-nano-video` (public development) | unverified | unverified | unverified | **verified single-replica continuation/augmentation** [development records](#public-development-evidence); 16-replica qualification pending | unverified |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
@@ -219,6 +219,7 @@ qualification are recorded in the [publication report](image-publication-audit-2
 
 | Image digest | Measured hardware | Actual workload |
 | --- | --- | --- |
+| Nano `sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78` | one B200, capability 10.0 | TP1 BF16 30-second continuation and six-second structural augmentation at 832×480/24 fps; 27 verified artifacts and all three joins inspected. Prompt fidelity is partial; 16-replica/concurrent-eight, full-source 30-second augmentation and B300 qualification remain pending. [Measured scope](../../npa/deploy/cosmos3-nano-video/README.md#measured-public-development-validation). |
 | Super `sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6` | one B200, capability 10.0 | TP1 BF16 video, 1280×720, 189 frames, 24 fps, 35 inference steps; complete decode and storage readback. Full eight-GPU benchmark and single-H200 suite remain unqualified. |
 | RoboCasa `sha256:538c531f26e282af9463f149a6d93ab9a8cd92b24004b38cac381c0289ffe257` | one RTX PRO 6000, capability 12.0 | 256-step kitchen simulation with state/actions, two camera arrays and a decoded 12.8-second MP4; nine verified objects. No task-success or policy-training claim. |
 

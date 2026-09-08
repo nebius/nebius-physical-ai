@@ -53,10 +53,15 @@ five original exclusions and the replacement packaging work. Public development
 availability and supported-release qualification are separate states. Its registry check does not refresh the
 September 5 historical-alias/config inspection above.
 
-The [Super development image](../../npa/docker/workbench/cosmos3-super-benchmark/README.md)
-passed exact-byte publication checks and a complete one-B200 video on September 8.
-It is selectable by its explicit full-SHA image reference and remains outside
-the 32-row supported-release table. Its larger benchmark qualification is pending.
+The [Nano](../../npa/docker/workbench/cosmos3-nano-video/README.md),
+[Super](../../npa/docker/workbench/cosmos3-super-benchmark/README.md) and
+[RoboCasa](../../npa/docker/workbench/robocasa/README.md) development images passed
+exact-byte publication checks and real GPU workloads on September 8: Nano
+continuation and augmentation, Super video generation, and RoboCasa simulation
+with camera/state exports. Each is selectable by its documented full-SHA image
+reference and remains outside the 32-row supported-release table. Their broader
+supported qualifications remain pending; the linked results state the tested
+scope and output-quality limitations.
 
 LeRobot 0.6.0 remains selectable package support without an accepted public
 image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
@@ -238,20 +243,24 @@ the existing supported image digests listed above.
 - **`npa-cosmos3-nano-video`** replaces the historical vendor-runtime ancestor
   with the accepted public Cosmos3 serving base, pinned bootstrap sources and
   Ray Serve dependencies. Model weights and the remaining vendor runtime are
-  fetched at execution. The replacement is eligible for a public development
-  build after its exact-byte gates; supported release qualification remains
-  pending. See the
+  fetched at execution. The published development digest passed exact-byte
+  gates and a fresh one-B200 30-second continuation plus six-second augmentation.
+  Prompt fidelity was partial. Multi-replica and supported release qualification
+  remain pending. See the
   [deployment recipe](../../npa/deploy/cosmos3-nano-video/README.md).
 - **`npa-cosmos3-super-benchmark`** uses the same public serving base and pinned
   runtime bootstrap, plus an exercised non-root SkyPilot worker bootstrap.
   The historical inherited vendor image remains unapproved for redistribution.
-  The replacement can enter the development channel after exact-byte gates;
-  the full benchmark matrix remains a separate supported-release gate.
+  The published replacement passed exact-byte gates and generated a fully
+  decoded 189-frame video on one B200. The full benchmark matrix remains a
+  separate supported-release gate.
 - **`npa-robocasa`** replaces the inherited development base with a pinned CUDA
   base and a hash-locked runtime closure. The recipe includes the complete NPA
   package, RoboCasa/robosuite MIT notices, asset attribution, and only the
-  permitted cuDNN runtime files and notices. Its complete-layer verifier and
-  real GPU workload must pass for the new development digest. It remains
+  permitted cuDNN runtime files and notices. The published development digest
+  passed complete-layer verification and a 256-step kitchen simulation with
+  video, two camera arrays, state and action exports on a graphics-qualified
+  RTX PRO 6000. Task success and ACT policy training were not established. It remains
   outside `publicly_publishable_tools()` until supported release promotion.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.

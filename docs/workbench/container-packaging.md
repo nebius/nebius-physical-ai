@@ -447,10 +447,16 @@ remain in `UNVALIDATED_PUBLICATION_TOOLS` or `VALIDATION_CANDIDATE_TOOLS`
 until their required licensing and exact-digest evidence is recorded, so a
 classification change alone cannot create a supported release.
 
-> **Publishing is a business decision.** The engineering makes publication defensible —
-> the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
-> operator under that operator's own acceptance — but dispatching the workflow with
-> `dry_run=false` should wait on sign-off from someone with the authority to accept it.
+Publication requires authorization and the applicable exact-image gates. Some
+public images include licensed NVIDIA CUDA or cuDNN runtime files under their
+specific redistribution grants, with the required notices retained. Other
+components, including Isaac, are fetched directly from the vendor at runtime
+under the operator's applicable terms. The component inventory and every image
+layer must support the chosen packaging boundary; proprietary ownership alone
+does not decide eligibility. Existing authorization covers the scoped dispatch
+without another approval prompt. A development push still requires all
+pre-publication checks, while `dry_run=false` release promotion additionally
+requires the supported release's accepted qualification evidence.
 
 ## Feature exposure
 

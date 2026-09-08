@@ -56,12 +56,12 @@
     {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
-      "verdict": "unknown",
-      "validation": "pending-build",
+      "verdict": "ready",
+      "validation": "pending-qualification",
       "smoke": "Run the live Nano video acceptance: one 30-second 480p BF16 rollout followed by eight complete concurrent requests on B200, with frame decode, actual latency, device VRAM and fanout evidence.",
-      "notes": "Replacement public bootstrap contains no vendor runtime or model weights. New exact-digest continuation and augmentation validation is required on B200. The historical operator digest and its 16-replica measurements are retained separately and do not qualify replacement bytes. B300 and other GPU families remain unvalidated.",
+      "notes": "The exact public development digest passed one B200 TP1 BF16 30-second continuation and six-second structural augmentation, with full media decoding and 27 readback-verified artifacts. Actual GPU module hashes and fresh server requests bind execution to the new image without source overlay. Visual review found recognizable orange robot and blue racks with no sampled hard join reset, but wheel details and floor markings changed and dampness was unclear. Historical 16-replica measurements remain separate; this run does not qualify that matrix, full-source 30-second augmentation, B300 or other GPU families.",
       "redistribution": "public",
-      "torch": "runtime-fetched pinned Cosmos serving closure",
+      "torch": "Measured runtime torch 2.13.0, vLLM/vLLM-Omni 0.28.0 and Ray 2.56.0 on B200; full wheel architecture list not captured",
       "historical_operator_validation": {
         "measured_torch": "2.11.0+cu130",
         "measured_arch_list": [
@@ -75,6 +75,51 @@
         "validated_tag": "dev-826b1730f64c1fae2fb6a4280c312f280b6648ad",
         "validated_digest": "sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97",
         "validated_registry_scope": "operator"
+      },
+      "development_qualification": {
+        "channel": "development",
+        "reference": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-nano-video:dev-1bd1b00330e37b3a8916b2a740c2578aca25651e",
+        "digest": "sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78",
+        "source_commit_sha": "1bd1b00330e37b3a8916b2a740c2578aca25651e",
+        "validated_at": "2026-09-08",
+        "prepublication_validation": {
+          "passed": true,
+          "anonymous_verified": true,
+          "workflow_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/34193230368",
+          "evidence_sha256": "55fa9be64b67fd4347c536a922467b124a3dd7a9057ac65e92c09e20b6b48261"
+        },
+        "runtime": {
+          "digest": "sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78",
+          "completed": true,
+          "successful": true,
+          "scope": "One standalone B200 replica, TP1 BF16 with guardrails off: 720-frame 30-second continuation and 144-frame six-second structural augmentation at 832x480 and 24 fps; full decoding, source-prefix equality and 27 artifact readbacks. No source overlay. Partial prompt fidelity, with no exact asset-preservation or physics claim.",
+          "gpu": "NVIDIA B200",
+          "compute_capability": "10.0",
+          "evidence_sha256": "077d41b42bf4e6c6fe2476309283c391bace6da8de22b842557c8708f7e785a2",
+          "artifacts": [
+            {
+              "name": "video-30s.mp4",
+              "sha256": "df1724d9fa3d2a858d5674f4ae62b9890a3f00e5b2eb809edfe0480cace538ba",
+              "size_bytes": 4673384
+            },
+            {
+              "name": "augmented.mp4",
+              "sha256": "cd902534e7b77e2c3d3a06906daad1260c66f04213a5c878219f1ea17c70bcbc",
+              "size_bytes": 1024310
+            },
+            {
+              "name": "comparison.mp4",
+              "sha256": "3e1f4f3fadbed1c1258a8d153d9b9396c6b82bddbdd87c1266a6120d72b8938c",
+              "size_bytes": 1679818
+            }
+          ]
+        },
+        "supported_qualification": "pending",
+        "remaining_qualification": [
+          "Exact-image 16-replica routing and concurrent-eight continuation acceptance",
+          "Complete 30-second source augmentation and broader prompt-fidelity evaluation",
+          "Separate B300 and other GPU-family qualification"
+        ]
       }
     },
     {

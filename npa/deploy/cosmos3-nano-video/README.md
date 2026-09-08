@@ -288,16 +288,53 @@ publish immutable S3 objects with read-after-write verification. Publication
 failure retains the local recovery copy; **do not repeat GPU generation to
 retry an upload**.
 
+## Measured public development validation
+
+On 2026-09-08, public
+`ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-nano-video:dev-1bd1b00330e37b3a8916b2a740c2578aca25651e`
+resolved anonymously to
+`sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78`.
+The [trusted build](https://github.com/nebius/nebius-physical-ai/actions/runs/34193230368)
+passed its publication gates; independent verification checked the exact image,
+source, provenance and SBOM attestations. One standalone B200 replica then ran
+TP1 BF16 generation with guardrails off, using the baked NPA modules without a
+source overlay. The runtime reported Torch 2.13.0, vLLM/vLLM-Omni 0.28.0 and
+Ray 2.56.0; the full wheel architecture list was not captured.
+
+| Workload | Actual output | Validation |
+| --- | --- | --- |
+| Continuation | Three requests of 297, 297 and 137 frames; 720-frame, 30-second MP4 at 832×480 and 24 fps | Full decode and 13 immutable artifact readbacks; both joins inspected |
+| Structural augmentation | Lossless first 144 frames of that new continuation; two source windows of 121 and 28 frames; 144-frame, six-second output and synchronized comparison | All source-prefix frames matched, strict resolver/control checks passed, media fully decoded and 14 artifacts read back; join and source alignment inspected |
+
+Continuation server execution took **138.92 s**; the complete host CLI invocation
+took **150.20 s**, including artifact delivery and validation. Augmentation server
+execution took **77.55 s**. These measurements exclude model staging and startup
+and do not measure sustained throughput. The seeded continuation MP4 matches the
+earlier development run's bytes. New pod identity, installed module hashes, three
+successful serving requests with new timestamps, and a new output scope establish
+fresh execution; publication recovery was not substituted for generation.
+
+The orange robot and blue racks remained recognizable with no obvious hard reset
+in the sampled join frames. Augmentation changed lighting/body highlights, wheel
+details and floor markings; dampness was not clearly established. Prompt fidelity
+is partial, and sparse frames do not establish exact asset preservation, tire
+contact, no-slip motion or physical safety. Earlier failed candidates and their
+original outputs remain separately recorded in the
+[publication audit](../../../docs/workbench/image-publication-audit-20260907.md).
+
+This result does not qualify the 16-replica or concurrent-eight matrix, complete
+30-second source augmentation, B300 or other GPU families. The accepted release
+set and default pins remain unchanged. The following historical measurements
+apply only to their recorded operator-image bytes.
+
 ## Measured B200 acceptance
 
 These historical results apply to the recorded former vendor-runtime image.
 They are not qualification of the replacement public development image.
 
 The measurements below are retained evidence from the September 6 deployment.
-Subsequent PR maintenance reconciled current main and hardened failed-start
-cleanup and loopback readiness against ambient proxies. Those lifecycle changes
-have CPU regression coverage; they have not been rebuilt into a newly validated
-GPU image. These measurements apply to the previously tested artifacts.
+The public development validation above covers one replica and does not transfer
+these historical concurrency measurements to the replacement image.
 
 After adding augmentation and shared-server cancellation handling, acceptance was rerun on the updated image: one full 30-second continuation video through the SDK, then eight complete continuation requests concurrently through the CLI. All nine clips passed full decoding at 832×480, 24 fps and 720 frames. The two batches published 13 and 97 immutable objects respectively, with read-after-write hash verification. Models were already initialized and BF16 weights prestaged before timing.
 
