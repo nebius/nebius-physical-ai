@@ -1,10 +1,9 @@
 """Transfer the original NCore OCI graph and compare a complete anonymous copy."""
 
-import json
 import subprocess
 
-from image_byte_scan import core as W
-from . import artifact
+from image_byte_scan import core as W, oci_graph as G
+from . import artifact, handoff
 from .diagnostics import phase, run_phase
 from .process import ROOT, public_environment, run, write_json
 
@@ -44,6 +43,7 @@ def transfer(args, directory, build, graph, verification):
     Returns:
         Exact publication digest, after anonymous equality and full-byte checks.
     Raises:
+        handoff.AdministratorHandoffRequired: Validated private package needs its admin.
         ValueError, OSError: Existing bytes differ, transfer or readback fails.
     """
     image, digest = build["image"], build["image_digest"]
@@ -61,7 +61,7 @@ def transfer(args, directory, build, graph, verification):
         _require_equal_or_absent(observed, digest)
         if observed is None:
             run_phase("registry-copy", _copy, args, directory, image, digest, archive, verification)
-    run_phase("registry-visibility", _public_visibility, directory, image, digest, graph)
+    run_phase("registry-visibility", _public_visibility, args, directory, build, graph, verification)
     run_phase("anonymous-verification", _readback, args, directory, image, digest, graph)
     artifact.assert_unchanged(archive, verification)
     return digest
@@ -87,18 +87,61 @@ def _copy(args, directory, image, digest, archive, verification):
     W.require((directory / "tagged-digest").read_text().strip() == digest, "tagged_index_changed")
 
 
-def _public_visibility(directory, image, digest, graph):
+def _public_visibility(args, directory, build, graph, verification):
     run(["gh", "api", PACKAGE_API], directory / "visibility.json")
-    if json.loads((directory / "visibility.json").read_bytes())["visibility"] == "public":
+    package = W.json_object((directory / "visibility.json").read_bytes())
+    if package["visibility"] == "public":
         return
-    run(["gh", "api", "--paginate", "--slurp", PACKAGE_API + "/versions?per_page=100"], directory / "versions.json")
-    allowed = {digest, *(row["digest"] for row in graph["receipt"]["blobs"])}
-    tag = image.rsplit(":", 1)[1]
-    versions = [row for page in json.loads((directory / "versions.json").read_bytes()) for row in page]
-    W.require(versions and all(row["name"] in allowed
-              and set(row["metadata"]["container"]["tags"]) <= {tag} for row in versions),
+    inventory = _package_inventory(package, directory / "versions.json", build, graph)
+    # Detect inventory drift during the check. The administrator must still
+    # refresh immediately before the UI action; these reads cannot lock GHCR.
+    run(["gh", "api", PACKAGE_API], directory / "visibility-refresh.json")
+    refreshed = W.json_object((directory / "visibility-refresh.json").read_bytes())
+    W.require(_package_inventory(refreshed, directory / "versions-refresh.json", build, graph)
+              == inventory, "private_package_inventory_changed")
+    W.require(_observed(build["image"], directory / "handoff-index.json", args.authfile)
+              == build["image_digest"], "private_package_tag_changed")
+    handoff.require_administrator(args, directory, build, graph, verification, inventory)
+
+
+def _package_inventory(package, output, build, graph):
+    W.require(package.get("visibility") in {"private", "internal"}
+              and package.get("package_type") == "container"
+              and package.get("name") == "nebius-physical-ai/npa-ncore"
+              and package.get("owner", {}).get("login") == "nebius"
+              and type(package.get("version_count")) is int and package["version_count"] > 0,
+              "invalid_private_package_inventory")
+    run(["gh", "api", "--paginate", "--slurp", PACKAGE_API + "/versions?per_page=100"], output)
+    pages = W.json_object(output.read_bytes())
+    W.require(type(pages) is list and pages and all(type(page) is list and page for page in pages),
+              "incomplete_private_package_inventory")
+    rows = [_version_identity(row) for page in pages for row in page]
+    W.require(len(rows) == package["version_count"]
+              and len({row["id"] for row in rows}) == len(rows)
+              and len({row["digest"] for row in rows}) == len(rows), "incomplete_private_package_inventory")
+    digest = build["image_digest"]
+    blobs = handoff.graph_blobs(graph, digest)
+    # GHCR versions are manifests, not config/layer blobs. Every manifest in
+    # this graph must be present, and only its publication index may be tagged.
+    expected = {digest, *(row["digest"] for row in blobs
+                           if row["mediaType"] in {G.INDEX, G.MANIFEST, G.ATTESTATION})}
+    tag = build["image"].rsplit(":", 1)[1]
+    W.require({row["digest"] for row in rows} == expected
+              and all(row["tags"] == ([tag] if row["digest"] == digest else []) for row in rows),
               "private_package_contains_unvalidated_versions")
-    run(["gh", "api", "--method", "PATCH", PACKAGE_API, "-f", "visibility=public"], directory / "make-public.log")
+    return {"visibility": package["visibility"], "versions": sorted(rows, key=lambda row: row["digest"])}
+
+
+def _version_identity(row):
+    W.require(type(row) is dict and type(row.get("id")) is int and row["id"] > 0
+              and type(row.get("name")) is str and W.DIGEST.fullmatch(row["name"]),
+              "invalid_private_package_version")
+    metadata = row.get("metadata")
+    W.require(type(metadata) is dict and metadata.get("package_type") == "container"
+              and type(metadata.get("container")) is dict, "invalid_private_package_version")
+    tags = metadata["container"].get("tags")
+    W.require(type(tags) is list and all(type(tag) is str for tag in tags), "invalid_private_package_tags")
+    return {"id": row["id"], "digest": row["name"], "tags": tags}
 
 
 def _readback(args, directory, image, digest, graph):

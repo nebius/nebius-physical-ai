@@ -6,7 +6,7 @@ from pathlib import Path
 import tarfile
 
 from image_byte_scan import core as W, prepare as P
-from . import artifact, registry
+from . import artifact, handoff, registry
 from .diagnostics import phase, run_phase
 from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
 from .process import committed_npa_imports
@@ -254,6 +254,12 @@ def main(argv=None):
                 _check_or_publish(args)
         print("NCore OCI operation passed; release acceptance and quarantine are unchanged")
         return 0
+    except handoff.AdministratorHandoffRequired as error:
+        print("NCore OCI operation failed; inspect private evidence")
+        summary = handoff.public_summary(error)
+        if summary is not None:
+            print(summary)
+        return 1
     except (Exception, KeyboardInterrupt):
         # Unexpected library errors can also contain private paths or process output.
         print("NCore OCI operation failed; inspect private evidence")

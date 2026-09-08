@@ -253,6 +253,7 @@ def test_any_gate_failure_prevents_registry_or_visibility_mutation(private, monk
     ordered = ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "components", "bootstrap"]
     assert calls == ordered[:ordered.index(failure) + 1]
     assert not (args.output_dir / "prepublication.json").exists()
+    assert not (args.output_dir / "transfer/administrator-handoff.json").exists()
 
 
 def test_publication_reexecutes_gates_instead_of_trusting_a_pass_file(private, monkeypatch):
@@ -350,17 +351,23 @@ def test_tag_created_during_digest_upload_cannot_be_overwritten(private, monkeyp
 
 
 def test_visibility_refuses_an_unrelated_private_version(private, monkeypatch):
+    path, digest, _ = _archive(private)
+    graph, verification = artifact.inspect(path, digest)
     commands = []
 
     def run(argv, output, **_):
         commands.append(argv)
-        value = {"visibility": "private"} if output.name == "visibility.json" else [[{
-            "name": "sha256:" + "f" * 64, "metadata": {"container": {"tags": ["unrelated"]}}}]]
+        value = {"visibility": "private", "package_type": "container",
+                 "name": "nebius-physical-ai/npa-ncore", "owner": {"login": "nebius"},
+                 "version_count": 1} if output.name == "visibility.json" else [[{
+            "id": 1, "name": "sha256:" + "f" * 64,
+            "metadata": {"package_type": "container", "container": {"tags": ["unrelated"]}}}]]
         output.write_text(json.dumps(value))
 
     monkeypatch.setattr(registry, "run", run)
     with pytest.raises(ValueError, match="unvalidated_versions"):
-        registry._public_visibility(private, gates.eligibility(SHA), "sha256:" + "d" * 64, {"receipt": {"blobs": []}})
+        registry._public_visibility(None, private, {"image": gates.eligibility(SHA), "image_digest": digest},
+                                    graph, verification)
     assert all("PATCH" not in command for command in commands)
 
 

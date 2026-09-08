@@ -211,10 +211,42 @@ Docker load/push and later GitHub referrers are not the publication path.
 These flags preserve the full list and require digest preservation.
 See the [Skopeo copy reference](https://github.com/containers/skopeo/blob/main/docs/skopeo-copy.1.md).
 
-Only after every prepublication gate passes can a push or visibility mutation
-occur. An existing private package can become public only if every version
-belongs to this verified graph and every tag is this dev tag. Readback explicitly
-disables credentials, downloads the entire graph, compares index/platform/config
+Only after every prepublication gate passes can a push or administrator handoff
+occur. Already public packages continue directly to anonymous verification.
+For a private or internal package, the command uses supported package GET and
+fully paginated version GET requests, requires exactly the validated graph's
+manifest versions with only the original index carrying this dev tag, then
+refreshes the inventory and rechecks the tag. Missing versions, additional
+versions or tags, malformed responses and inventory changes fail without a
+handoff. The REST package resource has no supported visibility PATCH operation;
+the command never attempts it. GitHub documents visibility changes through
+[package-admin settings](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-an-organization),
+separately from the [Packages REST API](https://docs.github.com/en/rest/packages/packages).
+
+After those checks pass, a non-public package still ends with a typed
+`administrator-handoff-required` failure and nonzero exit status. The private
+`transfer/administrator-handoff.json` receipt binds the full source SHA, exact
+immutable dev tag, index/platform/config digests, original archive hash, validated
+graph and package inventory hash, and hashes of the required evidence files.
+It contains no raw authentication, scanner policy or process output. The CLI
+prints only strictly validated receipt/source/image identities and a fixed
+instruction identifying organization `nebius`, container package
+`nebius-physical-ai/npa-ncore`, and **Package settings → Danger Zone → Change
+visibility → Public**. It does not print private receipt locations or API URLs.
+The handoff is neither publication success nor release acceptance.
+
+A package administrator must refresh the complete exact inventory immediately
+before that UI action and compare it with the private handoff, stopping if
+anything changed. Inventory reads cannot lock the package or authorize later
+unvalidated versions. After the UI change, retry `publish` using the same
+original OCI archive and build receipt with a new output directory. All
+prepublication gates run again; an equal immutable tag is not copied. A fresh,
+nondeterministic build from the same source SHA does not validate or replace the
+existing tag: a different digest is refused.
+
+Anonymous full graph, hash and byte verification remains mandatory after the
+UI change. Readback explicitly disables credentials, downloads the entire
+graph, compares index/platform/config
 and every blob descriptor, and reruns the unchanged complete-byte gate on the
 downloaded archive. Equality binds source, payload, security, bootstrap and SBOM
 evidence to those same registry bytes. A failed readback never produces a
