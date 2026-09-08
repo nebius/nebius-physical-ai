@@ -110,12 +110,13 @@ RUN /opt/venv/bin/python -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}", o
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -name 'ssh_host_*' -print -quit)"
 # Copy the selected base files into an empty root; no builder ancestry survives.
+# Merge documentation contents because selected CPython notices already created the directory.
 RUN --mount=type=bind,from=base-source-delivery,source=/build/base-metadata,target=/build/base-metadata \
     python /opt/ncore/base-sources/recipes/base_sources.py assemble-root \
       --lock /opt/ncore/base-sources/recipes/base-source-lock.json --root / --output /public-root \
     && mkdir -p /public-root/opt \
     && cp -a /opt/ncore /opt/npa /opt/venv /public-root/opt/ \
-    && cp -a /usr/share/doc/npa-ncore /public-root/usr/share/doc/npa-ncore \
+    && cp -a /usr/share/doc/npa-ncore/. /public-root/usr/share/doc/npa-ncore/ \
     && printf '%s\n' '/usr/local/lib' >/public-root/etc/ld.so.conf \
     && ldconfig -r /public-root \
     && cp -a /dev/null /dev/urandom /public-root/dev/ \
