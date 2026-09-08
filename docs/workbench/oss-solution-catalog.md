@@ -28,6 +28,10 @@ unique and must be tested with its own upstream-named capabilities.
 
 ## Live capability results
 
+The OpenPI rows here preserve the historical B200 operator-image results.
+The newer public development digest has separate
+[RTX PRO 6000 evidence below](#openpi); that result does not transfer to B200.
+
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
@@ -107,6 +111,26 @@ simulation/export, with ACT training, policy evaluation and other hardware
 remaining unqualified. See the [image record](../../npa/docker/workbench/robocasa/README.md).
 
 ### OpenPI
+
+The public development image
+`npa-openpi:dev-5dbe0fc1e87ae4da54dd7605db24383a79835d39`, digest
+`sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b`,
+passed trusted publication gates and a real RTX PRO 6000 four-mode workflow on
+September 8, 2026. It produced finite direct `15x8` targets, two responses
+between separate server/client pods, eight upstream LoRA/AdamW updates with
+changed state and an Orbax checkpoint reloaded at step 8, and evaluation on
+four samples excluded from the eight-sample synthetic training split. All 34
+artifacts passed readback, including 25 checkpoint files totaling
+9,266,047,031 bytes. Native `sm_120` probes passed in direct/train/eval; serving
+proved actual JAX GPU inference without a server-native `sm_120` probe.
+
+This is development functionality on synthetic data. The full-DROID supported
+pin remains `pi05-full-droid-rlds-cu128-unbuilt`; eight-node qualification,
+B200/B300 validation of this digest, convergence and physical robot success
+remain unproven. See the [exact-image measurements](openpi-pi05-polaris.md#public-development-validation-on-rtx-pro-6000).
+
+The table below preserves the historical operator-built B200 qualification.
+It is not evidence that the newer public digest has executed on B200.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

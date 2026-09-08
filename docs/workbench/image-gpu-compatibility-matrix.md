@@ -79,7 +79,7 @@ The detection-training stack row and detector GPU results [7] and [28]–[31] de
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
-| `npa-openpi` (public development) | unverified | unverified | development workload pending; full-DROID qualification separate | `sm_100` probe packaged; exact-digest workload unverified | unverified |
+| `npa-openpi` (public development) | unverified | unverified | **verified four-mode development workload** [development records](#public-development-evidence); full-DROID qualification pending | `sm_100` probe packaged; exact-digest workload unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [63] | **verified** [62] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
@@ -222,6 +222,7 @@ qualification are recorded in the [publication report](image-publication-audit-2
 | Nano `sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78` | one B200, capability 10.0 | TP1 BF16 30-second continuation and six-second structural augmentation at 832×480/24 fps; 27 verified artifacts and all three joins inspected. Prompt fidelity is partial; 16-replica/concurrent-eight, full-source 30-second augmentation and B300 qualification remain pending. [Measured scope](../../npa/deploy/cosmos3-nano-video/README.md#measured-public-development-validation). |
 | Super `sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6` | one B200, capability 10.0 | TP1 BF16 video, 1280×720, 189 frames, 24 fps, 35 inference steps; complete decode and storage readback. Full eight-GPU benchmark and single-H200 suite remain unqualified. |
 | RoboCasa `sha256:538c531f26e282af9463f149a6d93ab9a8cd92b24004b38cac381c0289ffe257` | one RTX PRO 6000, capability 12.0 | 256-step kitchen simulation with state/actions, two camera arrays and a decoded 12.8-second MP4; nine verified objects. No task-success or policy-training claim. |
+| OpenPI `sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b` | one RTX PRO 6000 per model stage, capability 12.0 | Direct `15x8` inference, two cross-pod responses, eight real LoRA/AdamW updates, checkpoint save/reload at step 8 and four disjoint held-out evaluations; 34 artifacts readback-verified. Native `sm_120` probes passed in direct/train/eval; serving proved JAX GPU execution without a server-native probe. Full-DROID and other GPUs remain unqualified. [Measured scope](openpi-pi05-polaris.md#public-development-validation-on-rtx-pro-6000). |
 
 RoboCasa's successful worker had qualified NVIDIA Operator EGL/GLX libraries.
 The same image failed before scene creation on a managed-driver worker with

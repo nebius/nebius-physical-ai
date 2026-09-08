@@ -54,12 +54,15 @@ availability and supported-release qualification are separate states. Its regist
 September 5 historical-alias/config inspection above.
 
 The [Nano](../../npa/docker/workbench/cosmos3-nano-video/README.md),
-[Super](../../npa/docker/workbench/cosmos3-super-benchmark/README.md) and
-[RoboCasa](../../npa/docker/workbench/robocasa/README.md) development images passed
+[Super](../../npa/docker/workbench/cosmos3-super-benchmark/README.md),
+[RoboCasa](../../npa/docker/workbench/robocasa/README.md) and
+[OpenPI](../../npa/docker/workbench/openpi/README.md) development images passed
 exact-byte publication checks and real GPU workloads on September 8: Nano
-continuation and augmentation, Super video generation, and RoboCasa simulation
-with camera/state exports. Each is selectable by its documented full-SHA image
-reference and remains outside the 32-row supported-release table. Their broader
+continuation and augmentation; Super video generation; RoboCasa simulation
+with camera/state exports; and OpenPI inference, cross-pod serving, eight real
+optimizer updates and four held-out evaluations. Each is selectable by its
+documented full-SHA image reference and remains outside the 32-row
+supported-release table. Their broader
 supported qualifications remain pending; the linked results state the tested
 scope and output-quality limitations.
 
@@ -201,21 +204,27 @@ published, and anonymously pullable status for this exact digest only.
 
 ## Candidates outside the supported public release plan
 
-`npa-openpi` is a zero-weight, zero-dataset public-image candidate for the
+`npa-openpi` has a zero-weight, zero-dataset public development image for the
 pinned pi0.5 full-DROID runtime. It includes `rerun-sdk==0.31.4` in an isolated
 RRD-worker environment solely to turn the actual run's rank-zero training journal
 into the declared, verified RRD. The separation preserves the pinned OpenPI
 RLDS/TensorFlow NumPy 1.x ABI while keeping the current Rerun NumPy 2 contract;
-the recording is not a baked demo or image payload. Its only permitted initial publication is the
-immutable `dev-<full-git-sha>` channel; the supported tag remains explicitly
+the recording is not a baked demo or image payload. Its validated development
+tag is `dev-5dbe0fc1e87ae4da54dd7605db24383a79835d39`, digest
+`sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b`.
+The exact bytes passed trusted publication gates and the six-state four-mode
+workflow on RTX PRO 6000 with eight real optimizer updates, checkpoint reload
+and four held-out samples. The full-DROID/RRD path was not executed by that
+development workload. The supported tag remains explicitly
 `-unbuilt` until byte scans, anonymous pull, and the eight-node RTX PRO 6000
 qualification are recorded together.
 
-The OpenPI candidate source also isolates its hash-locked public GCS reader
+The published OpenPI image also isolates its hash-locked public GCS reader
 from the training environment. It replaces the legacy gsutil dependency
 closure with the maintained Google Cloud Storage SDK and verifies object
 generations, checksums and destination paths during dataset preparation.
-This source change does not qualify or republish an existing image digest.
+Weights and DROID data remain runtime fetches; no B200/B300 or eight-node
+full-DROID qualification is inferred from the measured RTX development run.
 
 The FiftyOne candidate now requires loopback access through verified SSH or
 Kubernetes port-forwarding. Published tags retain their original bytes until a
@@ -273,8 +282,10 @@ the existing supported image digests listed above.
 - **`npa-openpi`** remains at `pi05-full-droid-rlds-cu128-unbuilt`. The full-DROID
   replacement uses a pinned CUDA runtime base, filtered cuDNN runtime libraries
   and notices, a complete-layer inventory verifier, and non-root bootstrap
-  checks. Weights and DROID data stay at runtime. Development validation covers
-  actual inference, serving, training and checkpoint reload; the specified
+  checks. Weights and DROID data stay at runtime. Its exact public development
+  digest completed direct inference, two cross-pod responses, eight real
+  optimizer updates with checkpoint save/reload, and four held-out evaluations
+  on RTX PRO 6000, with all 34 artifacts verified by storage readback. The specified
   eight-node RTX PRO 6000 qualification gates the full-DROID supported release.
   Runtime model authorization does not replace image redistribution checks.
 

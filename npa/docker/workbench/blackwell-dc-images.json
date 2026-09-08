@@ -316,16 +316,75 @@
       "name": "npa-openpi",
       "dockerfile": "openpi/Dockerfile",
       "verdict": "unknown",
-      "validation": "pending-build",
+      "validation": "pending-qualification",
       "redistribution": "public",
       "source_compiled_extensions": [
         "npa-openpi-sm120-probe",
         "npa-openpi-sm100-probe"
       ],
       "smoke": "the pinned full-DROID pi0.5 recipe completes 100,000 steps with global batch 256 across an eight-process JAX mesh and publishes a content-hashed checkpoint manifest",
-      "port_blocker": "The candidate compiles separate sm_100 and sm_120 probes. Physical execution and the corresponding real workload still require exact-digest qualification; no B300 support is inferred. Full-DROID qualification retains its separate eight-node sm_120 scope.",
+      "port_blocker": "The exact public development image passed direct inference, cross-pod serving, eight LoRA optimizer updates and four held-out evaluations on RTX PRO 6000 (sm_120). B200 and B300 execution of this digest remains unqualified; separate compiled probes do not establish datacenter Blackwell support. Full-DROID qualification retains its eight-node sm_120 scope.",
       "upstream_tracking": "https://github.com/Physical-Intelligence/openpi",
-      "notes": "Planned public development validation covers direct inference, cross-pod serving, LoRA optimizer updates and held-out evaluation on the selected hardware. This is separate from the supported full-DROID eight-RTX-PRO-6000-node training recipe and is not convergence or physical robot success evidence."
+      "notes": "Public development validation used deterministic synthetic Franka-shaped inputs, runtime-fetched Polaris weights and baked NPA GPU adapters without a source overlay. The CPU controller/source tree was separately staged and fingerprinted. Native sm_120 probes passed in direct inference, training and evaluation; serving proved actual JAX GPU execution and two cross-pod responses without a server-native sm_120 probe. The eight-node full-DROID recipe, convergence and physical robot success remain unqualified.",
+      "development_qualification": {
+        "channel": "development",
+        "reference": "ghcr.io/nebius/nebius-physical-ai/npa-openpi:dev-5dbe0fc1e87ae4da54dd7605db24383a79835d39",
+        "digest": "sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b",
+        "source_commit_sha": "5dbe0fc1e87ae4da54dd7605db24383a79835d39",
+        "validated_at": "2026-09-08",
+        "prepublication_validation": {
+          "passed": true,
+          "anonymous_verified": true,
+          "workflow_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/34197309452",
+          "evidence_sha256": "8b778da97de1d11ce9d7ef93f8ad55c7956d9629fa4f131892b86c4fb90a31cd"
+        },
+        "runtime": {
+          "digest": "sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b",
+          "completed": true,
+          "successful": true,
+          "scope": "Six-state workflow on the exact public image: opt-out refusal, synthetic data preparation, finite 15x8 direct inference, two private cross-pod WebSocket responses, eight real LoRA/AdamW updates with checkpoint save/reload at step 8, and evaluation on four disjoint held-out samples. All 34 artifacts, including 25 checkpoint files, passed storage readback. CPU source is separately bound; no GPU source overlay.",
+          "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "compute_capability": "12.0",
+          "evidence_sha256": "5a5efe5f56d4f4f95fb568c88532449d9172f9a18b50f507c0d3ac8a3b8f2c77",
+          "artifacts": [
+            {
+              "name": "reports/direct-inference.json",
+              "sha256": "c0c5caff034d2e4128ecacf6e5cd439498f51ad18c7be9286671546a0f3aaeec",
+              "size_bytes": 4659
+            },
+            {
+              "name": "reports/cross-pod-service/service.json",
+              "sha256": "eb874917d67c7bfbc257e7ea54e5e24b27563a9432e6ba08e89a7b375e9b6001",
+              "size_bytes": 4524
+            },
+            {
+              "name": "reports/training.json",
+              "sha256": "c7ec5e1b49f3303201d6635d625af0d5a7499b69d671c0fdf92d537a5f11ed5e",
+              "size_bytes": 5717
+            },
+            {
+              "name": "checkpoints/trained/manifest.json",
+              "sha256": "d86e893ef7953ac28fd67fa13bd9bb0bb59fa03f4459faf7080ddf57e548dc9f",
+              "size_bytes": 4833
+            },
+            {
+              "name": "reports/heldout-evaluation.json",
+              "sha256": "261ad71de639a085e46a09ef71dbad7cdebfa01d681b5437f19734dc6d6e43e3",
+              "size_bytes": 5658
+            },
+            {
+              "name": "data/mini-franka-two-camera.npz",
+              "sha256": "9d673954f333503ee608f967dc34a7000f0c1f00870b3c05b929eaac19ddcc17",
+              "size_bytes": 3589208
+            }
+          ]
+        },
+        "supported_qualification": "pending",
+        "remaining_qualification": [
+          "Complete full-DROID RLDS 1.0.1 normalization, the eight-node 100-update qualification and the separate 100,000-update full training recipe across eight RTX PRO 6000 nodes, with required checkpoints and decoded RRD milestones",
+          "Separate B200, B300 and other hardware qualification of this exact digest"
+        ]
+      }
     },
     {
       "name": "npa-alpamayo2-super",

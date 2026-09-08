@@ -1,21 +1,26 @@
 # OpenPI pi0.5 Polaris: direct, serve, train, and evaluate
 
-The connected OpenPI workflow family has two deliberately separate surfaces:
+For the measured public development path, select the exact image below and run
+`openpi-pi05-four-mode.yaml` on RTX PRO 6000 Blackwell. The connected workflow
+family also retains its historical BYOF builder:
 
 - `byof-openpi.yaml` packages and byte-scans the immutable upstream
   `Physical-Intelligence/openpi@15a9616a00943ada6c20a0f158e3adb39df2ccac`
   source, pushes it to the operator's private registry, and resolves the image
   to a digest. Its original direct plus same-pod WebSocket smoke remains a
   regression gate.
-- `openpi-pi05-four-mode.yaml` consumes only that digest and runs the live
+- `openpi-pi05-four-mode.yaml` consumes an explicitly selected immutable digest
+  from the trusted public build or the validated BYOF builder and runs the live
   negative terms probe, direct inference, private cross-pod serving, real
   optimizer/checkpoint work, and disjoint held-out evaluation.
 
-The builder uses CUDA 12.8, compiles an `sm_100` runtime probe, and retains
+The historical BYOF builder uses CUDA 12.8, compiles an `sm_100` runtime probe, and retains
 upstream's pinned JAX CUDA 12 stack. A CUDA 13.0 managed-driver MK8s node is
 backward compatible with that userspace stack. GPU artifacts record the actual
 driver, XLA platform, JAX/JAXlib, GPU product, allocated GPU count, compute
-capability, compiled-kernel proof, timings, and available peak-memory counters.
+capability, applicable compiled-kernel proof, timings, and available peak-memory
+counters. The public image's measured RTX stack and probe scope are recorded
+in [the development result](#public-development-validation-on-rtx-pro-6000).
 
 ## Policy and checkpoint
 
@@ -268,7 +273,9 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 
 Before live submission, prove the selected project/tenant/region, eight reserved
 one-GPU node shapes, a ReadWriteMany volume, writable workflow S3 prefix, exact
-image digest and pull, and runtime-only terms secret. Submit with
+image digest and pull, and the applicable runtime terms/access preflight.
+An explicit acceptance or opt-out uses the runtime secret channel; the public
+Polaris checkpoint needs no extra terms boolean or Hugging Face token. Submit with
 `--max-wait-seconds 0`; no workflow,
 job, cost, or training deadline is added. Preserve the same run id, PVC, digest,
 and output prefix when resuming.
@@ -307,12 +314,16 @@ npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
 ```
 
-For a manual four-mode submission, use the immutable image value returned by
-the builder. Source staging is automatic; `--stage-src` makes the branch-code
-dependency explicit. `--max-wait-seconds 0` waits indefinitely.
+For a manual four-mode submission, this example selects the measured public
+development digest and its eight-update/four-held-out RTX scope. Discover the
+actual compatible accelerator name and service node selector before submitting.
+Source staging supplies the CPU controller and data stages; the OpenPI image
+stages execute their baked adapters without an NPA source overlay. Retain both
+the source fingerprint and exact image IDs. `--max-wait-seconds 0` waits
+indefinitely.
 
 ```bash
-export OPENPI_IMAGE='registry.example.invalid/operator/openpi@sha256:<digest>'
+export OPENPI_IMAGE='ghcr.io/nebius/nebius-physical-ai/npa-openpi@sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b'
 export OPENPI_RUN_ID="openpi-four-mode-$(date -u +%Y%m%dT%H%M%SZ)"
 export OPENPI_NAMESPACE=default
 export OPENPI_KUBECONFIG='<task-owned-kubeconfig>'
@@ -344,18 +355,21 @@ npa/.venv/bin/npa workbench workflow submit \
   --stage-src \
   --infra "k8s/${OPENPI_CONTEXT}" \
   --project '<project-alias>' \
-  --registry 'registry.example.invalid/operator' \
   --config-path '<task-owned-skypilot-config.yaml>' \
   --var 'bucket=<operator-project-bucket>' \
   --var "prefix=oss-solutions/openpi/${OPENPI_RUN_ID}" \
   --var "runtime_image=${OPENPI_IMAGE}" \
-  --var 'gpu_type=B200' \
+  --var 'gpu_type=RTXPRO6000' \
   --var 'gpu_count=1' \
-  --var 'expected_gpu_type=B200' \
-  --var 'expected_compute_capability=10.0' \
+  --var 'expected_gpu_type=RTX PRO 6000' \
+  --var 'expected_compute_capability=12.0' \
+  --var 'train_samples=8' \
+  --var 'heldout_samples=4' \
+  --var 'train_steps=8' \
   --var "service_namespace=${OPENPI_NAMESPACE}" \
   --var "service_account=${OPENPI_SERVICE_ACCOUNT}" \
-  --var 'service_gpu_node_selector_value=B200' \
+  --var 'service_gpu_node_selector_key=nebius.com/gpu-name' \
+  --var 'service_gpu_node_selector_value=RTX6000' \
   --var 'service_server_ready_timeout_seconds=1200' \
   --var 'service_client_timeout_seconds=600' \
   --var 'service_cleanup_timeout_seconds=180' \
@@ -404,7 +418,62 @@ workflow's declared artifacts.
 previous image may be used for diagnosis, but does not replace fresh build and
 byte-scan evidence.
 
-## Live acceptance and limitations
+## Public development validation on RTX PRO 6000
+
+On September 8, 2026, the public development image
+`npa-openpi:dev-5dbe0fc1e87ae4da54dd7605db24383a79835d39`, digest
+`sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b`,
+completed all six states of `openpi-pi05-four-mode.yaml`. Its
+[trusted build](https://github.com/nebius/nebius-physical-ai/actions/runs/34197309452),
+independent anonymous registry verification and cryptographic source/SBOM
+attestations bind that exact image. The installed OpenPI source is
+`15a9616a00943ada6c20a0f158e3adb39df2ccac`.
+
+Each model stage used one physical RTX PRO 6000 Blackwell Server Edition,
+capability `12.0`, driver `580.159.04`, and JAX/JAXlib `0.6.2` with CUDA 12.8.
+Observed image IDs, UID 1000 and four installed NPA module hashes matched the
+published source in the negative, direct, server, client, training and
+evaluation containers. Those containers had no NPA source overlay. The CPU
+controller/data source was staged separately and retained its own fingerprint;
+the image attestation does not cover that entire CPU source tree.
+
+| Stage | Observed result |
+| --- | --- |
+| Explicit opt-out | Child exited 64 before model import or checkpoint fetch; the accepted parent then proceeded. |
+| Data preparation | Eight training and four held-out synthetic Franka-shaped examples with distinct IDs/hashes, two changing `224x224` RGB cameras and train-only normalization. |
+| Direct inference | Actual Polaris policy returned finite `float64[15,8]` absolute targets; inference took 26,350.154 ms. |
+| Cross-pod serving | A private ClusterIP server and distinct CPU client completed two real WebSocket requests with finite `15x8` responses; exact service cleanup passed. |
+| Training/checkpoint | Eight real upstream LoRA/AdamW updates with finite losses/gradients and changed state hashes; update L2 0.5829449843. Orbax saved and reloaded step 8. |
+| Held-out evaluation | Four samples excluded from training, using that exact checkpoint: mean upstream loss 0.1857164223, action MAE 0.0192097329 and MSE 0.0006792568; finite reloaded-policy targets. |
+
+All 34 output artifacts passed storage readback. The trained checkpoint's 25
+files totaled 9,266,047,031 bytes and were streamed and rehashed against the
+manifest. The 3,589,208-byte synthetic NPZ has SHA-256
+`9d673954f333503ee608f967dc34a7000f0c1f00870b3c05b929eaac19ddcc17`.
+The metadata record retains the actual report hashes and receipt hashes;
+operational locations and model/checkpoint bytes remain private. Workflow
+status, cancellation, exact controller/service cleanup and owned API shutdown
+all completed successfully.
+
+Native `sm_120` probes passed in direct inference, training and evaluation with
+`devices=1 cc=12.0 result=42`. Serving proved actual JAX GPU execution and
+responses, but its shipped hardware schema does not run a server-native
+`sm_120` probe. A private inspector initially assumed that missing field and
+failed; after schema-aware correction and independent review, all artifact
+checks passed without repeating GPU work. The original failure was retained.
+
+These measurements validate the development workflow on small synthetic data.
+Losses were nonmonotonic; they do not establish convergence or generalization.
+Action errors combine joint and gripper dimensions and do not measure physical
+robot success. B200/B300 execution of this digest, the eight-node 100-update
+qualification, and the separate 100,000-update full-DROID training recipe
+remain unverified. The supported pin
+`pi05-full-droid-rlds-cu128-unbuilt` and its publication quarantine are unchanged.
+
+## Historical B200 BYOF acceptance and limitations
+
+The following results describe older operator-built bytes; they do not qualify
+the public development digest above on B200.
 
 The historical builder baseline uses one B200 (`sm_100`) on isolated reserved
 MK8s capacity. It includes private-registry build/push/digest verification,
