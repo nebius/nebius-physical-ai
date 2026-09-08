@@ -459,9 +459,11 @@ def test_root_flock_serializes_installers(installation):
 
 
 @pytest.mark.parametrize(
-    "command", [[], ["install", "--root", "/tmp"], ["ensure", "extra"]]
+    "command", [[], ["install", "--root"], ["ensure", "extra"]]
 )
-def test_no_cli_path_or_code_overrides(native, monkeypatch, command):
+def test_no_cli_path_or_code_overrides(native, monkeypatch, tmp_path, command):
+    if "--root" in command:
+        command = [*command, str(tmp_path)]
     monkeypatch.setattr(sys, "argv", ["native_bootstrap.py", *command])
     with pytest.raises(ValueError, match="expected exactly"):
         native._main()

@@ -95,6 +95,7 @@ COPY --chmod=0644 docker/workbench/ncore/native-bootstrap.sh /opt/ncore/bin/
 # Root installation uses the fixed base interpreter with -I -S, never the mutable
 # application cache. The downloader/hook/lock and all ancestors stay root owned.
 RUN chown -R root:root /opt/ncore/native /opt/ncore/bin /opt/venv \
+    && chmod 0755 /opt/ncore/native \
     && chmod -R go-w /opt/ncore/native /opt/ncore/bin /opt/venv \
     && /usr/local/bin/python3.12 -I -S -B /opt/ncore/native/native_bootstrap.py verify-lock
 # TEST: exercise non-root SkyPilot sudo/SSH bootstrap, as required by ncore's

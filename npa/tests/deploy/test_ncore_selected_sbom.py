@@ -79,7 +79,7 @@ def test_required_source_cannot_be_omitted_as_build_only(lock):
 
 def _fixture_sha1s(raw):
     return {
-        path: hashlib.sha1(body).hexdigest()
+        path: hashlib.sha1(body, usedforsecurity=False).hexdigest()
         for path, body in {
             "usr/lib/libc.so.6": b"libc",
             "usr/share/doc/libc6/copyright": b"notice",
@@ -106,7 +106,9 @@ def test_partial_inventory_has_real_versions_hashes_and_source_links(lock):
     assert pkg["filesAnalyzed"] is True
     assert (
         pkg["packageVerificationCode"]["packageVerificationCodeValue"]
-        == hashlib.sha1(sha1s["usr/lib/libc.so.6"].encode()).hexdigest()
+        == hashlib.sha1(
+            sha1s["usr/lib/libc.so.6"].encode(), usedforsecurity=False
+        ).hexdigest()
     )
     assert "partial" in pkg["comment"] and "not installed" in pkg["comment"]
     assert pkg["licenseDeclared"] == pkg["licenseConcluded"] == "NOASSERTION"
@@ -171,7 +173,7 @@ def test_export_checks_actual_files_and_delivered_source(tmp_path, lock):
     libc = next(f for f in sbom["files"] if f["fileName"] == "./usr/lib/libc.so.6")
     assert {
         "algorithm": "SHA1",
-        "checksumValue": hashlib.sha1(b"libc").hexdigest(),
+        "checksumValue": hashlib.sha1(b"libc", usedforsecurity=False).hexdigest(),
     } in libc["checksums"]
 
 
