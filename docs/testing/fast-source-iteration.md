@@ -277,3 +277,11 @@ The [comparison and ownership assessment](../architecture/ray-development-guide-
 explains which responsibilities belong to Ray, SkyPilot and Workbench. This is a
 guarded tool-specific development example, not another workflow catalog.
 `npa.workflow` remains the durable production composition contract.
+
+## Optional Rerun review
+
+The downloaded basic and advanced CLIP results can be converted on the CPU into
+a factual `.rrd` with images, vectors, retrieval, timing and checkpoint lineage.
+Follow [Review a downloaded result in Rerun](../../npa/workflows/workbench/ray-clip-development/README.md#review-a-downloaded-result-in-rerun)
+after preserving the results. The converter validates persisted artifacts and
+does not change the native Ray Jobs or SkyPilot lifecycle.
