@@ -116,5 +116,11 @@ def _apt_script(upstream):
                       and any(isinstance(target, ast.Name) and target.id == "install_ssh_k8s_cmd" for target in node.targets))
     ssh = ast.literal_eval(assignment.value).split("$(prefix_cmd) mkdir -p /var/run/sshd;", 1)[0]
     packages = ("curl", "patch", "openssh-server", "rsync")
-    predicates = "\n".join(f'dpkg -l | grep -q "^ii  {name} "' for name in packages)
+    # Capture the complete query and its exit status before testing readiness;
+    # grep -q can SIGPIPE a full inventory under the caller's pipefail setting.
+    predicates = "\n".join(
+        f"npa_package_status=$(dpkg-query -W -f='${{Status}}' {name})\n"
+        'test "$npa_package_status" = "install ok installed"'
+        for name in packages
+    )
     return prefix + "\n" + apt + "\n" + ssh + "\n" + predicates + "\nsudo -n apt-get check\nsudo -n dpkg --audit\n"
