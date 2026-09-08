@@ -189,7 +189,7 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       # Updated only after independent review of the exact public content proofs.
-      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 926071afdcae20de640b384b391574cd096aa42fa21455b89d74ec716712086a
     steps:
       - uses: actions/checkout@v6
         with:

@@ -1,0 +1,517 @@
+{
+  "schema_version": "npa.public-native-content-semantics.v1",
+  "content": [
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+      "record_bytes": 2065824,
+      "semantic_role": "cryptographic-self-test",
+      "operational_credential": false,
+      "reason": "The ten exact static translation-unit constants are inputs only to known-answer and round-trip public-key algorithm self-tests. Temporary private/public key objects import the constants, sign/verify fixed data or encrypt/decrypt fixed data, reject deliberately invalid verification input, and are released through the self-test cleanup paths. These constants do not configure a TLS session, operational identity, credential store or trust root in the inspected local caller closure. Eligibility is limited to this exact complete record and exact native occurrence multiset.",
+      "source_binding": {
+        "source_package": "gnutls28",
+        "distribution_version": "3.8.3-1.1ubuntu3.6",
+        "upstream_version": "3.8.3",
+        "translation_unit": "lib/crypto-selftests-pk.c",
+        "upstream_and_patched_sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+        "all_46_distribution_patches_applied": true,
+        "translation_unit_unchanged": true,
+        "external_patched_lib_symbol_references": 0
+      },
+      "constant_bindings": [
+        {
+          "symbol": "rsa_2048_privkey",
+          "declaration_byte_range": [
+            1317,
+            3166
+          ],
+          "declaration_lines": [
+            43,
+            70
+          ],
+          "decoded_value_sha256": "f4b1de2f94f1df2d588ff6c18290e0f7f5091267b9ef0da8433c622bad3d127a",
+          "decoded_value_bytes": 1675,
+          "binary_byte_range": [
+            1640512,
+            1642187
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4764,
+            "end_line": 4790
+          },
+          "translation_unit_reference_lines": [
+            43,
+            231,
+            232,
+            342,
+            343,
+            347,
+            348,
+            961
+          ]
+        },
+        {
+          "symbol": "dsa_2048_privkey",
+          "declaration_byte_range": [
+            4334,
+            5685
+          ],
+          "declaration_lines": [
+            91,
+            111
+          ],
+          "decoded_value_sha256": "80ec06e06b06635bcad5c71b0e9e7a3516c02133c682a2369b09599addb8d7f3",
+          "decoded_value_bytes": 1212,
+          "binary_byte_range": [
+            1639296,
+            1640508
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4763
+          },
+          "translation_unit_reference_lines": [
+            91,
+            352,
+            353,
+            980
+          ]
+        },
+        {
+          "symbol": "ecdsa_secp256r1_privkey",
+          "declaration_byte_range": [
+            6034,
+            6332
+          ],
+          "declaration_lines": [
+            120,
+            125
+          ],
+          "decoded_value_sha256": "d653005e4d23cf91e3572fe8148ab6db2e474924d9711838521d3ba352b193f5",
+          "decoded_value_bytes": 227,
+          "binary_byte_range": [
+            1638624,
+            1638851
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4743
+          },
+          "translation_unit_reference_lines": [
+            120,
+            369,
+            370,
+            1005
+          ]
+        },
+        {
+          "symbol": "ecdsa_secp192r1_privkey",
+          "declaration_byte_range": [
+            6756,
+            7012
+          ],
+          "declaration_lines": [
+            136,
+            141
+          ],
+          "decoded_value_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+          "decoded_value_bytes": 190,
+          "binary_byte_range": [
+            1639104,
+            1639294
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4744
+          },
+          "translation_unit_reference_lines": [
+            136,
+            360,
+            361,
+            1054
+          ]
+        },
+        {
+          "symbol": "ecdsa_secp224r1_privkey",
+          "declaration_byte_range": [
+            7332,
+            7600
+          ],
+          "declaration_lines": [
+            150,
+            155
+          ],
+          "decoded_value_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+          "decoded_value_bytes": 202,
+          "binary_byte_range": [
+            1638880,
+            1639082
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4744
+          },
+          "translation_unit_reference_lines": [
+            150,
+            364,
+            365,
+            1069
+          ]
+        },
+        {
+          "symbol": "ecdsa_secp384r1_privkey",
+          "declaration_byte_range": [
+            7963,
+            8315
+          ],
+          "declaration_lines": [
+            165,
+            171
+          ],
+          "decoded_value_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+          "decoded_value_bytes": 282,
+          "binary_byte_range": [
+            1638336,
+            1638618
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4739
+          },
+          "translation_unit_reference_lines": [
+            165,
+            373,
+            374,
+            1023
+          ]
+        },
+        {
+          "symbol": "ecdsa_secp521r1_privkey",
+          "declaration_byte_range": [
+            8843,
+            9271
+          ],
+          "declaration_lines": [
+            183,
+            190
+          ],
+          "decoded_value_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+          "decoded_value_bytes": 354,
+          "binary_byte_range": [
+            1637952,
+            1638306
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4739
+          },
+          "translation_unit_reference_lines": [
+            183,
+            377,
+            378,
+            1038
+          ]
+        },
+        {
+          "symbol": "gost01_privkey",
+          "declaration_byte_range": [
+            9934,
+            10143
+          ],
+          "declaration_lines": [
+            204,
+            208
+          ],
+          "decoded_value_sha256": "b8369cc647a1e1e8f8e420b6b8580c36223f89b0f8e70281732d028aebf15fac",
+          "decoded_value_bytes": 152,
+          "binary_byte_range": [
+            1637792,
+            1637944
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4735,
+            "end_line": 4738
+          },
+          "translation_unit_reference_lines": [
+            204,
+            389,
+            390
+          ]
+        },
+        {
+          "symbol": "gost12_256_privkey",
+          "declaration_byte_range": [
+            10174,
+            10391
+          ],
+          "declaration_lines": [
+            211,
+            215
+          ],
+          "decoded_value_sha256": "3de5d1d9ca9af8e24d29bab925c3d500c2cdd11a06c4a2c6a6b336e73bb3ad56",
+          "decoded_value_bytes": 156,
+          "binary_byte_range": [
+            1637632,
+            1637788
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4731,
+            "end_line": 4734
+          },
+          "translation_unit_reference_lines": [
+            211,
+            395,
+            396
+          ]
+        },
+        {
+          "symbol": "gost12_512_privkey",
+          "declaration_byte_range": [
+            10422,
+            10689
+          ],
+          "declaration_lines": [
+            218,
+            223
+          ],
+          "decoded_value_sha256": "c72070fc1ffb2df729650b949157c85ec03d8ec9743ba7956c03e21d385bce4e",
+          "decoded_value_bytes": 201,
+          "binary_byte_range": [
+            1637408,
+            1637609
+          ],
+          "binary_occurrence_count": 1,
+          "nul_terminated_in_binary": true,
+          "native_coordinate": {
+            "rule_id": "private-key",
+            "start_line": 4726,
+            "end_line": 4730
+          },
+          "translation_unit_reference_lines": [
+            218,
+            401,
+            402
+          ]
+        }
+      ],
+      "binary_storage": {
+        "section": ".rodata",
+        "byte_range": [
+          1495040,
+          1874215
+        ],
+        "all_ten_constants_in_read_only_data": true,
+        "each_full_decoded_constant_occurs_exactly_once": true
+      },
+      "caller_analysis": [
+        {
+          "function": "test_rsa_enc",
+          "source_lines": [
+            225,
+            314
+          ],
+          "role": "Static RSA constant imported into local key; fixed data encryption/decryption and byte equality checks; local key/public key and buffers cleaned up.",
+          "import_lines": [
+            247,
+            254
+          ],
+          "verification_lines": [
+            267,
+            280,
+            292
+          ],
+          "cleanup_lines": [
+            299,
+            301,
+            302,
+            303,
+            304
+          ]
+        },
+        {
+          "function": "test_sig",
+          "source_lines": [
+            316,
+            463
+          ],
+          "role": "Selects only the ten static key constants by algorithm/curve; imports local private key, signs fixed data, verifies good input and requires failure for deliberately bad input; temporary objects cleaned up.",
+          "constant_selection_lines": [
+            338,
+            410
+          ],
+          "import_line": 412,
+          "sign_line": 425,
+          "good_verify_line": 431,
+          "bad_verify_line": 439,
+          "cleanup_lines": [
+            449,
+            453
+          ]
+        },
+        {
+          "function": "test_known_sig",
+          "source_lines": [
+            465,
+            585
+          ],
+          "role": "Receives static constants through PK_KNOWN_TEST only; checks deterministic signature bytes, verifies correct data, rejects bad data, releases local objects; returns a status integer.",
+          "import_line": 501,
+          "fixed_signature_comparison_lines": [
+            518,
+            526
+          ],
+          "verification_lines": [
+            551,
+            561
+          ],
+          "cleanup_lines": [
+            572,
+            573,
+            575,
+            576
+          ]
+        },
+        {
+          "function": "PK_KNOWN_TEST",
+          "source_lines": [
+            595,
+            601
+          ],
+          "role": "Macro forwards the reviewed static key and fixed signature arrays into test_known_sig with their compile-time lengths."
+        },
+        {
+          "function": "gnutls_pk_self_test",
+          "source_lines": [
+            920,
+            1119
+          ],
+          "role": "Public algorithm self-test dispatcher; its API accepts flags and algorithm selection and returns a status, not a key or credentials. It is the only local caller of these static helper functions."
+        },
+        {
+          "function": "_gnutls_fips_perform_self_checks2",
+          "source_file": "lib/fips.c",
+          "source_sha256": "385b846569264a71376ed936227f58bf6d0dc0503d7b50b14afdfacd6d0ae9f3",
+          "call_lines": [
+            581,
+            586,
+            591,
+            596
+          ],
+          "role": "Invokes the public-key self-test dispatcher during FIPS self-checks. Distribution patches leave this caller file unchanged."
+        }
+      ],
+      "native_detector": {
+        "identity": {
+          "helper_sha256": "6e4891bd5e423b9c7031770c8adc8b5ec89a65ae592a7fb3fd0e59aeaa96fced",
+          "config_sha256": "4ae31a02bb25f4f1c94b024a5163f45f461692260d0656556635c98e663b9e4e"
+        },
+        "original_full_record_findings": [
+          {
+            "rule_id": "private-key",
+            "start_line": 4726,
+            "end_line": 4730
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4731,
+            "end_line": 4734
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4735,
+            "end_line": 4738
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4739
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4739
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4739,
+            "end_line": 4743
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4744
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4744
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4744,
+            "end_line": 4763
+          },
+          {
+            "rule_id": "private-key",
+            "start_line": 4764,
+            "end_line": 4790
+          }
+        ],
+        "coordinate_convention": "The reviewed helper passes a complete raw Fragment with default StartLine0; native line numbers are preserved exactly, including duplicate coordinate multiplicities. Source declaration lines are separately one-based.",
+        "original_replay_exit_code": 1,
+        "meaning_of_exit_code": "Expected nonzero: the scanner still detects all ten key-shaped constants. No detector or policy was changed for this proof.",
+        "standalone_constant_tests": {
+          "records": 10,
+          "each_private_key_findings": 1
+        },
+        "diagnostic_blanking": {
+          "record_bytes": 2065824,
+          "findings": 0,
+          "method": "For diagnostic comparison only, replace exactly the ten bound byte ranges by spaces while preserving newline bytes. Original ELF is unchanged; the diagnostic record is never an image or accepted scan input."
+        }
+      },
+      "occurrence_conservation": {
+        "constant_count": 10,
+        "original_native_finding_count": 10,
+        "all_full_constant_values_and_coordinates_bound": true,
+        "all_duplicate_coordinates_preserved": true,
+        "unexplained_original_native_occurrences": 0
+      },
+      "policy_boundary": [
+        "Add one exact regular-content record only.",
+        "Retain the older Ubuntu3.4 ancestor record unchanged.",
+        "Any differing full-record hash, byte count, detector identity, occurrence count or coordinates remains unreviewed.",
+        "No path/archive/package-origin exemption and no confidentiality finding acceptance.",
+        "No assertion that these disclosed self-test keys may be used as operational credentials."
+      ],
+      "raw_key_material_in_proof": false
+    }
+  ]
+}

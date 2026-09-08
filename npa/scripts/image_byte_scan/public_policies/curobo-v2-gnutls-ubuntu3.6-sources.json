@@ -1,0 +1,562 @@
+{
+  "schema_version": "npa.public-native-content-provenance.v1",
+  "content": [
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+      "record_bytes": 2065824,
+      "public_origin": {
+        "kind": "signed-ubuntu-package-member",
+        "package": "libgnutls30t64",
+        "source_package": "gnutls28",
+        "version": "3.8.3-1.1ubuntu3.6",
+        "architecture": "amd64",
+        "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/libgnutls30t64_3.8.3-1.1ubuntu3.6_amd64.deb",
+        "artifact_sha256": "b8944756260c5ea6b7fac019745f931f905aa7a4df0763676b1b25c911b692e2",
+        "artifact_bytes": 1002902,
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1",
+        "member_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+        "member_bytes": 2065824
+      },
+      "archive_authentication": {
+        "inrelease_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease",
+        "inrelease_sha256": "adfb4dabbc495e94768ef4d6b65322f6b3c527ce114388d165329bfd3b40ebf8",
+        "archive_signer_fingerprint": "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+        "gpgv_exit_code": 0,
+        "packages_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/main/binary-amd64/Packages.xz",
+        "packages_sha256": "529f8fa0b3fe9e6a60e519455238c2c6bc15852b22022fe774342124b6d483ca",
+        "source_index_url": "https://archive.ubuntu.com/ubuntu/dists/noble-updates/main/source/Sources.xz",
+        "source_index_sha256": "5d805cf24734a9b057bb7b40afb5a42aa28e6adc0ca0b48f7d317e0ca911ac62",
+        "source_index_bytes": 519676,
+        "method": "Independently verify archive InRelease with the Ubuntu archive keyring; verify both index hashes/sizes against its SHA256 section; verify exact binary and source artifact hashes/sizes against their authenticated package stanzas. Binary Source field identifies gnutls28 at this same version."
+      },
+      "distribution_source": {
+        "package": "gnutls28",
+        "version": "3.8.3-1.1ubuntu3.6",
+        "artifacts": [
+          {
+            "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz",
+            "filename": "gnutls28_3.8.3.orig.tar.xz",
+            "sha256": "f74fc5954b27d4ec6dfbb11dea987888b5b124289a3703afcada0ee520f4173e",
+            "size_bytes": 6463720
+          },
+          {
+            "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz.asc",
+            "filename": "gnutls28_3.8.3.orig.tar.xz.asc",
+            "sha256": "b2b90d225728890b0e2aa7c05e5f25f8ba1282821b46e72cd99f0c732b639cef",
+            "size_bytes": 854
+          },
+          {
+            "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.debian.tar.xz",
+            "filename": "gnutls28_3.8.3-1.1ubuntu3.6.debian.tar.xz",
+            "sha256": "b4cc6ebad4cb21ffe82d094f6d9c90de31e08a8b31ed36911a2adbe5aaa56d47",
+            "size_bytes": 124984
+          },
+          {
+            "artifact_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.dsc",
+            "filename": "gnutls28_3.8.3-1.1ubuntu3.6.dsc",
+            "sha256": "34455be2f5fb343b5833ff40cc00623106326e6cc88aaf9862943f6b3aa5ab60",
+            "size_bytes": 3397
+          }
+        ],
+        "patch_application": {
+          "tool": "dpkg-source -x",
+          "exit_code": 0,
+          "authentication": "Exact inputs authenticated through archive-signed Sources before extraction; no maintainer-signature validity claim.",
+          "patch_series_sha256": "e54559d86987a35840990962201bc4714c9460920dd62f3bf8a526888f647a21",
+          "patch_count": 46,
+          "patches": [
+            {
+              "path": "debian/patches/14_version_gettextcat.diff",
+              "sha256": "dd2f4ea0d93bdd1228e17921bf6dfdb372ffebdc767ffe6ca4faa56861280f13",
+              "size_bytes": 2327,
+              "touched_paths": [
+                "po/Makevars",
+                "lib/global.c",
+                "configure.ac",
+                "lib/str.h",
+                "libdane/errors.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/40_srptest_doubletimeout.diff",
+              "sha256": "8c99f560e9b852d5401dccbad185467bab40873e34ce98f6120b65abb2c93e2d",
+              "size_bytes": 1521,
+              "touched_paths": [
+                "tests/srp.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/9259100633b77a0dc03f83047d7cf778466bf9f3.patch",
+              "sha256": "c605ccfd3f405244155488bc8defb1a9ddabc346f946460a237eb79148643154",
+              "size_bytes": 9179,
+              "touched_paths": [
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/aes-ssse3-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/aesni-gcm-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/aesni-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/e_padlock-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/ghash-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/sha1-ssse3-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/sha256-ssse3-x86_64.s",
+                "gnutls28-3.7.0-5ubuntu1/lib/accelerated/x86/elf/sha512-ssse3-x86_64.s"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2024-28834.patch",
+              "sha256": "bb33f0dda031888f8b189f01e6b46ad6c0da7d7d0a5fb112848353665bbf5c64",
+              "size_bytes": 12113,
+              "touched_paths": [
+                "lib/nettle/int/dsa-compute-k.c",
+                "lib/nettle/int/dsa-compute-k.h",
+                "lib/nettle/int/ecdsa-compute-k.c",
+                "lib/nettle/int/ecdsa-compute-k.h",
+                "lib/nettle/pk.c",
+                "tests/sign-verify-deterministic.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2024-28835.patch",
+              "sha256": "097e627ddd0a377d9c38c2de2eaad750ddb9f194ea3a901fb6b63dbe41eeb610",
+              "size_bytes": 17591,
+              "touched_paths": [
+                "lib/gnutls_int.h",
+                "lib/x509/common.c",
+                "lib/x509/verify-high.c",
+                "tests/test-chains.h"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2024-12243.patch",
+              "sha256": "0f12f93ac24cfeadeb00e361a4169928e893564c516f19fd66ed693a7b09966a",
+              "size_bytes": 33911,
+              "touched_paths": [
+                "lib/datum.c",
+                "lib/x509/name_constraints.c",
+                "lib/x509/x509_ext.c",
+                "lib/x509/x509_ext_int.h",
+                "lib/x509/x509_int.h"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-32988.patch",
+              "sha256": "39936845d5cbd95728ed76810fbd2461d866ad038bc4b6fadd9fbfd6d6c67981",
+              "size_bytes": 2286,
+              "touched_paths": [
+                "lib/x509/extensions.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-32989.patch",
+              "sha256": "e6780de2e590c0b13a43e1d18c224963bf5562a0086721cfcf66715edfae052b",
+              "size_bytes": 2135,
+              "touched_paths": [
+                "lib/x509/x509_ext.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-32990.patch",
+              "sha256": "2ad2ec9230fb65d9512e38f70b43854f841d645d34ea0abfd79fda276ab6b0fd",
+              "size_bytes": 89042,
+              "touched_paths": [
+                "src/certtool-cfg.c",
+                "tests/cert-tests/Makefile.am",
+                "tests/cert-tests/template-test.sh",
+                "tests/cert-tests/templates/template-too-many-othernames.tmpl"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-6395.patch",
+              "sha256": "c2be83e18b0b31eac271083398c24c13893e923555a63b3a203124c93218cc34",
+              "size_bytes": 8985,
+              "touched_paths": [
+                "lib/handshake.c",
+                "lib/state.c",
+                "tests/Makefile.am",
+                "tests/tls13/hello_retry_request_psk.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-9820.patch",
+              "sha256": "ae0bad67d16268b5a830022681eec4f6209c6d6c80c7e4b2413fb43766b9b5a4",
+              "size_bytes": 7340,
+              "touched_paths": [
+                "lib/pkcs11_write.c",
+                "tests/Makefile.am",
+                "tests/pkcs11/long-label.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-1.patch",
+              "sha256": "4f4754320ddaabf7ff32e286360cc709babeeb83609ab3e82199be6db93c52a2",
+              "size_bytes": 2173,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-2.patch",
+              "sha256": "733dd57870634b87a4f64a941ec5cc564f5016660eb9453ad52cffd01988c69e",
+              "size_bytes": 844,
+              "touched_paths": [
+                "tests/name-constraints-ip.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-3.patch",
+              "sha256": "e60117988759456ca70d55ff9b4ed8c1a915666ccdde8f48bb6939e0255e75e8",
+              "size_bytes": 1354,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-4.patch",
+              "sha256": "7393ee919c38397b42383964bdbf3b9de1e028d975b749936ccd93c62da2d884",
+              "size_bytes": 6057,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-5.patch",
+              "sha256": "9d5dfca82c7681aaf6ec4b4bf2421dcfef56636ef6bc553a234f02b1cf7ed6a1",
+              "size_bytes": 15526,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-6.patch",
+              "sha256": "e4e4a6014ac625b5b75c2117c65f654428f24ad36dcb6fef7c30a06e0085a3d9",
+              "size_bytes": 3400,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-7.patch",
+              "sha256": "6cee5caebf3757465c6eb577008580c98cbe1c9c0976d5cf106ba55f6f51817f",
+              "size_bytes": 4475,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-8.patch",
+              "sha256": "0f9f155d92cb7e39873ec5f930c1ecfcdff6f842f5ae33fd678bbaebe9a36afd",
+              "size_bytes": 4020,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2025-14831-9.patch",
+              "sha256": "adf9c3e4379d5e18a545ba082aa3e3afe5cba3a85594c4ef16c8137433c01af4",
+              "size_bytes": 14588,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-33846-pre1.patch",
+              "sha256": "89c10315c3b4983e8e64d6cdfcd7b5233914b14614fbecd2fafe10660a943dc4",
+              "size_bytes": 3345,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-33846.patch",
+              "sha256": "89a095c406f185cfd1c44059b2f2b3369586728c5f1bd7c1880c011a3ff6f78a",
+              "size_bytes": 2130,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42009-pre1.patch",
+              "sha256": "a618f2610c6182192ed858b0d37b026a57d0b4794f0f0bbc8fa2575f57485c26",
+              "size_bytes": 1262,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42009-1.patch",
+              "sha256": "e9e63b7af8843facf6d3e2b4e1bfaa30caab5d046cc5f05df6762ce549afeeb4",
+              "size_bytes": 1756,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42009-2.patch",
+              "sha256": "84b036bdf409d7ef1b893031a87321a187af2ee86440747b385f635b7fe87ae9",
+              "size_bytes": 1299,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-33845-pre1.patch",
+              "sha256": "221808ccbcd2791f501f8f6e4d5e177125c945eb5b6a7cc0a5e6739d60281ca4",
+              "size_bytes": 3438,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-33845.patch",
+              "sha256": "cf1bb3a38f6bfe6dd6fabb02641c67bf4fd4fc2a3d799c2f5c5cf65f326e761c",
+              "size_bytes": 5927,
+              "touched_paths": [
+                "lib/buffers.c",
+                "lib/gnutls_int.h"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-33845-2.patch",
+              "sha256": "e406b87a8fb785260f2fab9df67f51c1d10fa9f59a8e72db2b3da8b1a443ed12",
+              "size_bytes": 1461,
+              "touched_paths": [
+                "lib/buffers.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-3832-pre1.patch",
+              "sha256": "32a1e8dfb8ea9c95c7d11dbe77fe448aed7199ddac001b67d6e6e23f704c2e77",
+              "size_bytes": 10137,
+              "touched_paths": [
+                "doc/examples/ex-ocsp-client.c",
+                "lib/cert-session.c",
+                "lib/ocsp-api.c",
+                "src/ocsptool-common.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-3832-pre2.patch",
+              "sha256": "2e97fc0c73633cf1ee5abc4b54551775cb6ded73ad3ef3c2e4b758f364bdc1c2",
+              "size_bytes": 2351,
+              "touched_paths": [
+                "doc/examples/ex-ocsp-client.c",
+                "lib/cert-session.c",
+                "lib/ocsp-api.c",
+                "src/ocsptool-common.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-3832.patch",
+              "sha256": "d229dc0665c4159f0b2a970a5583bb8f5b33ee1aba37b0d6a2393bf04f811567",
+              "size_bytes": 1575,
+              "touched_paths": [
+                "lib/cert-session.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-3833.patch",
+              "sha256": "883116e430a5dc833f789888f28d624b6e580de668982a6e99eb901746b2d53f",
+              "size_bytes": 3023,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42011.patch",
+              "sha256": "aa3721e51e41776614deb9079f40a64a0c7a39197592d431586c3998a28a2a9c",
+              "size_bytes": 1157,
+              "touched_paths": [
+                "lib/x509/name_constraints.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42010.patch",
+              "sha256": "88f6ecf2e43ffcada8ec6a4744cca3af515d00e0b778c7ac0f790004a912b596",
+              "size_bytes": 1232,
+              "touched_paths": [
+                "lib/auth/rsa_psk.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-5260-1.patch",
+              "sha256": "a47de79827378aa13fe074a5c3de246b015a9d318bb714e2d145858560fbd0a0",
+              "size_bytes": 2682,
+              "touched_paths": [
+                "lib/auth/rsa.c",
+                "lib/auth/rsa_psk.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-5260-2.patch",
+              "sha256": "ecd88945a7276e136840da3bdb3eded0701331ff18d2ea0eefdc8f0b4f124bf2",
+              "size_bytes": 979,
+              "touched_paths": [
+                "lib/pkcs11_privkey.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42012-pre1.patch",
+              "sha256": "ef39ab4e092baa0abc1d29250df37793af1b7b0b937094d002b37d8616d51180",
+              "size_bytes": 2022,
+              "touched_paths": [
+                "lib/x509/hostname-verify.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42012-pre2.patch",
+              "sha256": "39b59a2f6c3df89cd04dd127df6114c57daee9f94bf8fa4fd108fbcd0b29f5b5",
+              "size_bytes": 5457,
+              "touched_paths": [
+                "lib/includes/gnutls/gnutls.h.in",
+                "lib/x509/common.h",
+                "lib/x509/name_constraints.c",
+                "lib/x509/output.c",
+                "lib/x509/virt-san.c",
+                "lib/x509/x509.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42012-pre3.patch",
+              "sha256": "599b181be266aa22e65bb13fc8a7809cab89b15372327c7a4dd978fb48ae5c3a",
+              "size_bytes": 3085,
+              "touched_paths": [
+                "lib/datum.h",
+                "lib/mem.h",
+                "lib/str.h"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42012.patch",
+              "sha256": "7125f1682ffa28bfe27c588fca11523dc773cdaf0232d0d4d0048311a92b25af",
+              "size_bytes": 1713,
+              "touched_paths": [
+                "lib/x509/hostname-verify.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42013-pre1.patch",
+              "sha256": "7f06a3ee07ee9b39a9c79c007bef659391276c566d04538569e68fd7f896d074",
+              "size_bytes": 1834,
+              "touched_paths": [
+                "lib/x509/email-verify.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42013.patch",
+              "sha256": "72138fa058844cc51f5f6571e0880dfec0145796ef17e4dba33ad1730f32a7b3",
+              "size_bytes": 2160,
+              "touched_paths": [
+                "lib/x509/email-verify.c",
+                "lib/x509/hostname-verify.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42014.patch",
+              "sha256": "e2552b2c2971fe627ae92d628ce7028e4556c83b822381894616041fc0b38249",
+              "size_bytes": 1647,
+              "touched_paths": [
+                "lib/pkcs11_write.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-42015.patch",
+              "sha256": "84c73b0d7b9cac572ab4335649628a2a796af826b9b823715196fff6f6dfc62a",
+              "size_bytes": 1503,
+              "touched_paths": [
+                "lib/x509/pkcs12_bag.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-5419.patch",
+              "sha256": "feca456b4f4794d2b358a827946e67f7c0bc2ab8a9bf8bd86b19448b052d5be2",
+              "size_bytes": 6747,
+              "touched_paths": [
+                "lib/crypto-api.c",
+                "lib/libgnutls.map",
+                "tests/Makefile.am",
+                "tests/pkcs7-pad.c"
+              ],
+              "touches_selftest_translation_unit": false
+            },
+            {
+              "path": "debian/patches/CVE-2026-5419-2.patch",
+              "sha256": "857d6d692e8a64f82198c5ff7d33280d79bef810ab3d12488f188d247db66b89",
+              "size_bytes": 727,
+              "touched_paths": [
+                "lib/crypto-api.c"
+              ],
+              "touches_selftest_translation_unit": false
+            }
+          ]
+        },
+        "reviewed_files": [
+          {
+            "path": "lib/crypto-selftests-pk.c",
+            "sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+            "upstream_sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+            "byte_identical_to_upstream": true,
+            "patches_touching_file": 0
+          },
+          {
+            "path": "lib/fips.c",
+            "sha256": "385b846569264a71376ed936227f58bf6d0dc0503d7b50b14afdfacd6d0ae9f3",
+            "upstream_sha256": "385b846569264a71376ed936227f58bf6d0dc0503d7b50b14afdfacd6d0ae9f3",
+            "byte_identical_to_upstream": true,
+            "patches_touching_file": 0
+          }
+        ],
+        "upstream_version": "3.8.3",
+        "upstream_source_url": "https://gitlab.com/gnutls/gnutls/-/blob/3.8.3/lib/crypto-selftests-pk.c",
+        "source_license": "LGPL-2.1-or-later"
+      },
+      "scope_limitations": [
+        "Archive authentication and constant-byte binding do not assert a fully reproduced Ubuntu package build.",
+        "This proof authenticates one complete ELF record, not a path, tar container, image, package name or future version.",
+        "The failed hosted image archive was not retained; this does not establish that this record was the sole original failing record. A fresh complete image gate remains required."
+      ]
+    }
+  ]
+}

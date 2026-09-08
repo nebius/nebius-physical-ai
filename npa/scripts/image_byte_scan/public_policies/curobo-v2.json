@@ -1988,6 +1988,73 @@
         "sha256": "31161541290240f45edd6976c15f584f2006a4b6d92905c5862402c9ea6bb71f"
       },
       "semantic_role": "public-source-symbol"
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+      "record_bytes": 2065824,
+      "native_findings": [
+        {
+          "rule_id": "private-key",
+          "start_line": 4726,
+          "end_line": 4730
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4731,
+          "end_line": 4734
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4735,
+          "end_line": 4738
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4739,
+          "end_line": 4739
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4739,
+          "end_line": 4739
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4739,
+          "end_line": 4743
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4744,
+          "end_line": 4744
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4744,
+          "end_line": 4744
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4744,
+          "end_line": 4763
+        },
+        {
+          "rule_id": "private-key",
+          "start_line": 4764,
+          "end_line": 4790
+        }
+      ],
+      "operational_credential": false,
+      "semantic_role": "cryptographic-self-test",
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-gnutls-ubuntu3.6-sources.json",
+        "sha256": "f18c50863fbbbed5ad59752a79717954d3bc7f1a7070af5717a5e13f7ed089ab"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/curobo-v2-gnutls-ubuntu3.6-semantics.json",
+        "sha256": "cc2d34fe6b8754b26d7e4fddcf3a95871a92fb7caa39b65997708ddb051968f5"
+      }
     }
   ],
   "schema_version": "npa.image-native-content-policy.v1"
