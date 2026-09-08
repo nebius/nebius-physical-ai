@@ -454,6 +454,11 @@ respective split.
 
 ## Resume and verify
 
+Resume planning preserves the recorded S3 run location and prior launch evidence.
+If a later preflight fails, status still resolves the existing runtime and its
+completed waves. To inspect a run from another operator machine, supply its exact
+`s3://<bucket>/sim2real/<run-id>/npa-workflow` URI to `workflow status`.
+
 ```bash
 npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT}" --watch
 # after an operator/controller restart:

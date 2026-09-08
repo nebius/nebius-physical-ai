@@ -201,6 +201,15 @@ def fake_runtime(mocker, satisfied_preflight):
     captured: dict[str, object] = {}
 
     def _run(spec, **kwargs):
+        from npa.orchestration.npa_workflow.submission_state import (
+            load_submission_state, submission_proves_never_launched,
+        )
+
+        receipt = load_submission_state(kwargs["options"].project, kwargs["run_id"])
+        assert receipt["launch"] == {"status": "launching", "kind": "runtime"}
+        assert not submission_proves_never_launched(
+            receipt, project=kwargs["options"].project, run_id=kwargs["run_id"],
+        )
         captured["spec"] = spec
         captured.update(kwargs)
         return RuntimeReport(

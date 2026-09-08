@@ -320,3 +320,34 @@ def update_submission_state(
         return _update(submission_state_path(project, run_id))
     with submission_lock(project, run_id) as path:
         return _update(path)
+
+
+def record_submission_plan(
+    project: str, run_id: str, *, workflow: Mapping[str, Any],
+    planning: Mapping[str, Any], launch_state: str = "planned",
+) -> dict[str, Any]:
+    """Save planning metadata without erasing an earlier run's location or launch.
+
+    Args:
+        project: Selected project alias.
+        run_id: Exact run being prepared or resumed.
+        workflow: Partial workflow identity from the planning phase.
+        planning: Non-secret planning evidence.
+        launch_state: Initial state for a run without launch evidence.
+
+    Returns:
+        The updated submission receipt.
+
+    Raises:
+        ValueError: Metadata contains secrets or changes the workflow identity.
+        OSError: The locked receipt cannot be persisted.
+    """
+    with submission_lock(project, run_id):
+        previous = load_submission_state(project, run_id)
+        recorded = previous.get("workflow") or {}
+        if recorded.get("name") and recorded["name"] != workflow.get("name"):
+            raise ValueError("submission planning cannot change the workflow identity")
+        updates = {"workflow": {**recorded, **workflow}, "planning": dict(planning)}
+        if "launch" not in previous:
+            updates["launch_state"] = launch_state
+        return update_submission_state(project, run_id, updates, locked=True)

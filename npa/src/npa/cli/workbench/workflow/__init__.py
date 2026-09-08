@@ -300,24 +300,14 @@ def prepare_run_cmd(
             workflow_identity=spec.name,
             resume_run=requested,
         )
-        from npa.orchestration.npa_workflow.submission_state import (
-            update_submission_state,
-        )
+        from npa.orchestration.npa_workflow.submission_state import record_submission_plan
 
-        update_submission_state(
+        record_submission_plan(
             project or "default",
             prepared.run_id,
-            {
-                "launch_state": "reserved",
-                "workflow": {
-                    "name": spec.name,
-                    "kind": "npa.workflow/v0.0.1",
-                },
-                "planning": {
-                    "state": "durable",
-                    "source": "prepare-run",
-                },
-            },
+            workflow={"name": spec.name, "kind": "npa.workflow/v0.0.1"},
+            planning={"state": "durable", "source": "prepare-run"},
+            launch_state="reserved",
         )
     except Exception as exc:
         _fail(str(exc))
@@ -1622,27 +1612,17 @@ def submit_cmd(
                     new_run_id="" if resume else resolved_run_id,
                     persist=True,
                 )
-                from npa.orchestration.npa_workflow.submission_state import (
-                    update_submission_state,
-                )
+                from npa.orchestration.npa_workflow.submission_state import record_submission_plan
 
-                update_submission_state(
+                record_submission_plan(
                     project or "default",
                     resolved_run_id,
-                    {
-                        "launch_state": "planned",
-                        "workflow": {
-                            "name": workflow_identity,
-                            "kind": "npa.workflow/v0.0.1",
-                        },
-                        "planning": {
-                            "state": "durable",
-                            "source_action": source_action,
-                            "input_action": "planned"
-                            if is_paidf_spec
-                            else "not-required",
-                            "infra_context": infra_context,
-                        },
+                    workflow={"name": workflow_identity, "kind": "npa.workflow/v0.0.1"},
+                    planning={
+                        "state": "durable",
+                        "source_action": source_action,
+                        "input_action": "planned" if is_paidf_spec else "not-required",
+                        "infra_context": infra_context,
                     },
                 )
             except Exception as exc:
@@ -2644,6 +2624,12 @@ def _run_npa_workflow_runtime(
         runtime_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
     previous_env = {name: os.environ.get(name) for name in runtime_env}
     try:
+        # Record entry into the runtime before it can launch a wave. A runtime
+        # receipt has multiple job identities in S3, so no single job ID belongs here.
+        update_submission_state(
+            project or "default", run_id,
+            {"launch": {"status": "launching", "kind": "runtime"}},
+        )
         os.environ.update(runtime_env)
         try:
             report = run_workflow_runtime(
