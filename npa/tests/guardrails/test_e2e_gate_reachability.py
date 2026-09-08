@@ -16,6 +16,8 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_RAY_CLIP_RESULTS": "requires operator-selected downloaded native Ray CLIP CUDA result artifacts",
+    ),
     "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
         "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
     ),
