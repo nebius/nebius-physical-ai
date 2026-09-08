@@ -14,6 +14,8 @@ from npa.deploy import ncore_component_inventory as inventory
 from npa.deploy import ncore_component_scan as scan
 from npa.deploy import ncore_component_sources as sources
 
+NCORE = Path(__file__).resolve().parents[2] / "docker/workbench/ncore"
+
 
 @pytest.fixture
 def grype_report():
@@ -257,7 +259,7 @@ def test_scanner_does_not_inherit_ambient_filters_or_auth(monkeypatch, tmp_path)
 
 
 def test_profile_refuses_unreviewed_embedded_binary_change():
-    lock = json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     assert len(inventory._python_profile(lock)) == 665
     lock["cpython_elf_files"][0]["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="embedded component profile"):
@@ -266,7 +268,7 @@ def test_profile_refuses_unreviewed_embedded_binary_change():
 
 @pytest.mark.parametrize("field", ["python_distributions", "python_wheels"])
 def test_runtime_download_lock_is_not_installed_package_evidence(field):
-    lock = json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     lock[field] = [{"name": "pip", "version": "synthetic"}]
     with pytest.raises(ValueError, match="installed Python dependencies"):
         inventory._python_profile(lock)
@@ -312,7 +314,7 @@ def test_new_distribution_cannot_be_classified_as_an_npa_file(tmp_path):
 
 @pytest.mark.parametrize("field,value", [("version", "3.12.12"), ("name", "pypy"), ("kind", "pypy")])
 def test_unsupported_interpreter_identity_is_not_guessed(field, value):
-    lock = json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     lock["components"][0][field] = value
     with pytest.raises(ValueError, match="component/version"):
         inventory._python_profile(lock)
@@ -472,7 +474,7 @@ def test_wrong_upstream_query_refuses_before_network(monkeypatch, tmp_path):
 
 
 def test_python_file_lock_cannot_disagree_with_pinned_elf_hashes():
-    lock = json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     target = lock["cpython_elf_files"][0]["path"]
     next(row for row in lock["cpython_files"] if row["path"] == target)["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="file identity differs"):
@@ -481,7 +483,7 @@ def test_python_file_lock_cannot_disagree_with_pinned_elf_hashes():
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "changed"])
 def test_observed_python_elf_population_must_match_source_profile(mutation):
-    lock = json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     python_files = inventory._python_profile(lock)
     files = {row["path"]: {"sha256": row["sha256"], "elf": True} for row in lock["cpython_elf_files"]}
     inventory._verify_python_elf(files, python_files)
@@ -497,7 +499,7 @@ def test_observed_python_elf_population_must_match_source_profile(mutation):
 
 
 def _reviewed_lock():
-    return json.loads(Path("npa/docker/workbench/ncore/base-source-lock.json").read_bytes())
+    return json.loads((NCORE / "base-source-lock.json").read_bytes())
 
 
 def test_reviewed_python_profile_and_all_eight_notice_bytes():
@@ -509,7 +511,7 @@ def test_reviewed_python_profile_and_all_eight_notice_bytes():
     required = {path: digest for path, digest in inventory._NOTICES.values()}
     for row in lock["cpython_provenance"]["notices"]:
         assert required[row["path"]] == row["sha256"]
-        source = Path("npa/docker/workbench/ncore/notices/cpython") / Path(row["path"]).name
+        source = NCORE / "notices/cpython" / Path(row["path"]).name
         assert inventory._sha(source.read_bytes()) == row["sha256"]
         assert inventory._file_group(row["path"], {row["path"]: row}, {}, {}, {}, required) == "cpython"
     assert required["usr/local/lib/python3.12/LICENSE.txt"] == (
@@ -588,7 +590,7 @@ def delivered_short_notices(monkeypatch):
     files, required = {}, {}
     for name in scan._NOTICE_TERMS:
         path, digest = inventory._NOTICES[name]
-        raw = (Path("npa/docker/workbench/ncore/notices/cpython") / Path(path).name).read_bytes()
+        raw = (NCORE / "notices/cpython" / Path(path).name).read_bytes()
         files[path] = raw
         required[name] = {"path": path, "sha256": digest}
     terms = copy.deepcopy(scan._LICENSE_TERMS)
