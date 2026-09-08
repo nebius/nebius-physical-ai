@@ -8,7 +8,7 @@ fill acceptance records, change a release tag or add a public catalog row.
 The NCore branch of `publish-public-images.yml` uses
 `npa/scripts/publish_ncore_oci.py`. Other tools retain their existing workflow.
 The CLI requires Linux amd64, the checkout's CPython 3.12 environment with the
-NPA development dependencies, Docker/buildx, the Debian archive keyring, and
+NPA development dependencies, Docker/buildx, `dpkg-deb`, `gpgv`, and
 `skopeo` plus `gh` for publication. Use an exclusively controlled builder and
 registry writer for this immutable tag. CI dispatches sharing a development SHA
 are serialized by the existing workflow concurrency group. Skopeo/OCI registry
@@ -18,9 +18,19 @@ publisher for the same tag concurrently.
 
 Run from the exact reviewed, committed coordinator checkout. Source authorization
 requires `HEAD` and the full requested SHA to agree, and verifies the committed
-build context and executable gate sources. Unrelated dirty paths are permitted.
-Private scanner policy must already be available as `CUSTOMER_DENYLIST` and
-`INFRA_DENYLIST`. These values never become Docker build arguments or container
+build context and executable gate sources. Each host NPA import must resolve
+inside that checkout and match its committed blob before execution; the loader
+compiles those compared bytes without using cached bytecode. The source check
+also compares the actual loaded repository module population. The packaging
+guards execute from a complete committed repository snapshot, including
+transitive imports, conftests, configuration and data. Their receipt requires
+every collected guard to pass setup, call and teardown, with no skips,
+deselections or expected failures. Python environment controls, site startup
+and pytest plugin autoload are disabled for that guard subprocess. Unrelated
+dirty paths never enter the snapshot and are permitted. The operator's host
+interpreter, installed dependencies and initial CLI startup remain trusted.
+Private scanner policy must already be available as `CUSTOMER_DENYLIST`, with
+optional `INFRA_DENYLIST`. These values never become Docker build arguments or container
 environment variables. Keep their provisioning outside source files and command
 logs. Do not upload the analysis directory as a public CI artifact.
 
@@ -39,25 +49,39 @@ replace evidence:
 ```bash
 umask 077
 npa/.venv/bin/python npa/scripts/publish_ncore_oci.py prepare \
-  --source-sha "$SOURCE_SHA" --analysis-root "$NCORE_OCI_ROOT"
+  --source-sha "$SOURCE_SHA" --analysis-root "$NCORE_OCI_ROOT" \
+  --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg"
 npa/.venv/bin/python npa/scripts/publish_ncore_oci.py build \
   --source-sha "$SOURCE_SHA" --analysis-root "$NCORE_OCI_ROOT" \
+  --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
   --builder "$NCORE_BUILDX_BUILDER"
 npa/.venv/bin/python npa/scripts/publish_ncore_oci.py check \
   --source-sha "$SOURCE_SHA" --analysis-root "$NCORE_OCI_ROOT" \
   --output-dir "$NCORE_OCI_ROOT/check" \
   --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
   --metadata "$NCORE_OCI_ROOT/metadata" \
+  --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
   --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source"
 ```
 
-`prepare` invokes the existing pinned Go/Gitleaks and Aho-Corasick preparation
+`prepare` first downloads the public Debian keyring package identified by the
+existing base lock over verified HTTPS. It checks the package hash, reads the
+single regular keyring member without installing the package, and checks the
+keyring's independently locked hash. `--keyring` defaults to
+`$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg`; CI passes that path explicitly.
+Build, check and publish require the prepared owner-only file and verify its
+hash before their expensive work. No ambient Ubuntu keyring is used. The
+existing signed Debian metadata checks retain the same exact keyring hash.
+
+`prepare` then invokes the existing pinned Go/Gitleaks and Aho-Corasick preparation
 and real native integration checks. It downloads the locked source annex,
 separate signed Debian metadata, and the two hash-pinned SkyPilot bootstrap
 sources. It requires the `base_sources.py --metadata` integration; an older
 helper fails rather than combining build metadata with delivered source.
 `build` calls the existing committed-context `ncore/build.sh --oci-output`
-with `--provenance=mode=max` and `--sbom=true`. The actual buildx metadata,
+with `--provenance=mode=max` and a digest-pinned BuildKit SBOM generator.
+Provenance must name that exact generator in addition to the locked base;
+unknown, duplicate or substituted materials are refused. The actual buildx metadata,
 original archive hash, complete committed context archive hash and invocation
 are retained in `build/`. Direct `build.sh --load` smoke images cannot enter this
 publication command.
@@ -94,9 +118,29 @@ rejects whiteouts, duplicate paths, special files and hardlinks, and retains:
   SPDX/Trivy scan generated by `npa.deploy.ncore_selected_sbom.scan_archive`.
   The latter requires actual `--list-all-pkgs` coverage; lock-only output cannot
   qualify. It does not replace the mandatory embedded buildx SPDX predicate.
+- The SLSA materials must include the exact Python base reference, linux/amd64
+  platform and digest from the base lock, exactly once, and the digest-pinned
+  SBOM generator declared by the committed build script. Only the frontend
+  reference declared by the committed Dockerfile may accompany those materials.
+  The frontend digest receives structural checks only: its tag is not an
+  independent digest pin. This does not authenticate the producer or every
+  network-fetched build input. The committed context hash,
+  shipped-source comparison and separate source delivery checks provide their
+  own bindings. The local build receipt is not a signed builder identity.
 - Source authentication using the actual shipped lock, final-file inventory,
   corresponding-source annex, separate signed repository metadata and keyring.
   Private denylists never enter these public source inputs.
+
+The shipped-source check requires the exact three-file `/opt/ncore/native/`
+population, including the downloader from `npa/src/npa/_public_https.py`, plus
+the shell launcher in `/opt/ncore/bin/native-bootstrap.sh`. It compares every
+file with its real committed source path. Missing, additional,
+duplicate, nonregular or changed native inputs fail. Payload layer-path scanning
+retains the exact text-only Python `.pth` hook check. Separately,
+`payload-history.json` records the existing payload classifier's evaluation of
+every history entry from the original digest-bound config, including empty
+layers; it records the classified entry count and fails on prohibited installs.
+The tarball path scanner's empty history result is not history coverage.
 
 Before any NCore bootstrap container starts, the command captures the single
 immutable identity reported by the local Docker load, inspects that identity
@@ -128,6 +172,7 @@ npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
   --output-dir "$NCORE_OCI_ROOT/publication" \
   --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
   --metadata "$NCORE_OCI_ROOT/metadata" \
+  --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
   --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
   --authfile "$NCORE_OCI_ROOT/registry-auth.json"
 ```

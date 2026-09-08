@@ -85,11 +85,16 @@ def _runtime_layers(blob, raw, count, tails):
 
 def _statements(blob, runtime, source):
     statements = []
+    base = json.loads((ROOT / "npa/docker/workbench/ncore/base-source-lock.json").read_bytes())["base_image"]
+    reference, digest = base.split("@")
+    generator, generator_digest = provenance._sbom_generator()
     for kind, predicate in [
         (provenance.SPDX, {"packages": [{"name": "fixture-only"}]}),
         ("https://slsa.dev/provenance/v0.2", {"buildType": "https://mobyproject.org/buildkit@v1",
             "invocation": {"parameters": {"args": {"build-arg:SOURCE_SHA": source}}},
-            "materials": [{"uri": "pkg:docker/python", "digest": {"sha256": "b" * 64}}]}),
+            "materials": [{"uri": "pkg:docker/" + reference.replace(":", "@") + "?platform=linux%2Famd64",
+                           "digest": {"sha256": digest[7:]}},
+                          {"uri": "pkg:" + generator, "digest": {"sha256": generator_digest[7:]}}]}),
     ]:
         statement = blob({"_type": "https://in-toto.io/Statement/v1", "predicateType": kind,
             "predicate": predicate, "subject": [{"digest": {"sha256": runtime["digest"][7:]}}]},
@@ -207,7 +212,7 @@ def _build_receipt(private, digest="sha256:" + "d" * 64):
     return receipt
 
 
-@pytest.mark.parametrize("failure", ["source", "graph", "bytes", "delivery", "payload", "trivy", "selected-base", "bootstrap"])
+@pytest.mark.parametrize("failure", ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "bootstrap"])
 def test_any_gate_failure_prevents_registry_or_visibility_mutation(private, monkeypatch, failure):
     path, digest, _ = _archive(private)
     receipt = _build_receipt(private, digest)
@@ -237,13 +242,14 @@ def test_any_gate_failure_prevents_registry_or_visibility_mutation(private, monk
     monkeypatch.setattr(gates, "byte_scan", gate("bytes"))
     monkeypatch.setattr(provenance, "shipped_source", lambda *_: 1)
     for name, attribute in (("delivery", "_source_delivery"), ("payload", "_payload"),
+                            ("history", "_payload_history"),
                             ("trivy", "_security"), ("selected-base", "_selected_base")):
         monkeypatch.setattr(gates, attribute, gate(name))
     monkeypatch.setattr(gates.bootstrap, "verify", gate("bootstrap"))
     monkeypatch.setattr(registry, "transfer", lambda *_: calls.append("registry mutation"))
     with pytest.raises(ValueError, match="gate failed"):
         cli._check_or_publish(args)
-    ordered = ["source", "graph", "bytes", "delivery", "payload", "trivy", "selected-base", "bootstrap"]
+    ordered = ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "bootstrap"]
     assert calls == ordered[:ordered.index(failure) + 1]
     assert not (args.output_dir / "prepublication.json").exists()
 
@@ -369,6 +375,7 @@ def test_source_binding_uses_full_committed_context_and_scoped_dirty_check(monke
         return b"complete committed context tar"
 
     monkeypatch.setattr(process.subprocess, "check_output", output)
+    monkeypatch.setattr(process, "_verify_imported_sources", lambda sha: None)
     assert process.committed_source(SHA) == W.sha(b"complete committed context tar")
     assert commands[-1] == ["git", "archive", SHA, "npa/src/npa", "npa/docker/workbench/ncore"]
     assert "--" in commands[1] and "npa/scripts/ncore_publication" in commands[1]
@@ -460,10 +467,15 @@ def test_shipped_source_is_compared_to_commit_bytes(private, monkeypatch):
         (packaging / filename).write_bytes(b"committed recipe")
         files[relative] = b"committed recipe"
     monkeypatch.setattr(provenance, "ROOT", checkout)
+    for name, relative in provenance.NATIVE_SOURCES.items():
+        source = checkout / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"committed native input")
+        files[name] = source.read_bytes()
     monkeypatch.setattr(provenance, "_committed_digest", lambda source, sha: process.file_sha(source))
     path = private / "rootfs.tar"
     path.write_bytes(_tar(files))
-    assert provenance.shipped_source(path, SHA) == 5
+    assert provenance.shipped_source(path, SHA) == 9
     files["opt/npa/src/npa/__init__.py"] = b"changed code"
     path.write_bytes(_tar(files))
     with pytest.raises(ValueError, match="shipped_source_changed"):

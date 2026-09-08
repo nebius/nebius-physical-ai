@@ -5,6 +5,13 @@ It remains a quarantined development candidate; no image acceptance or GPU
 readiness is implied. See [REDISTRIBUTION.md](REDISTRIBUTION.md) for the source,
 application dependency and acceptance boundaries.
 
+The [OCI publication procedure](../../../../docs/workbench/ncore-oci-publication.md)
+prepares the exact locked public Debian keyring before scanner preparation or
+building. Its `--keyring` option defaults to
+`<analysis-root>/keyring/debian-archive-keyring.gpg`; CI supplies the prepared
+path explicitly. Packaging guards execute the complete committed snapshot and
+require successful test execution, including setup and teardown.
+
 At container startup, the unprivileged user fetches two exact Debian native
 libraries needed by real APT/curl. The fixed isolated root installer verifies
 those bytes before installing their original library paths and SONAME links.

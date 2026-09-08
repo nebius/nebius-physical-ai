@@ -9,7 +9,8 @@ from image_byte_scan import core as W
 from npa.deploy import images
 from npa.deploy.publish_public import _TRIVY_CONTAINER_IMAGE
 from . import artifact, bootstrap, provenance
-from .process import ROOT, PYTHON, committed_source, public_environment, run, write_json
+from .process import guard_command, guard_snapshot, verify_guard_execution
+from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
 
 
 def eligibility(sha):
@@ -29,19 +30,27 @@ def eligibility(sha):
         registry="ghcr.io/nebius/nebius-physical-ai")
 
 
-def source_guards(directory):
+def source_guards(directory, sha):
     """Execute the established packaging/license guards before building/pushing.
 
     Args:
         directory: Private output directory.
+        sha: Full reviewed commit whose complete snapshot the tests execute.
     Returns:
         None.
     Raises:
         ValueError, OSError: Any existing guard fails.
     """
-    run([str(PYTHON), "-m", "pytest", "-q",
-         "npa/tests/docker/test_packaging_contract.py",
-         "npa/tests/docker/test_ncore_image_contract.py"], directory / "source-guards.log")
+    snapshot, digest = guard_snapshot(directory, sha)
+    env = public_environment()
+    env["TMPDIR"] = str(directory)
+    run(guard_command(snapshot, directory), directory / "source-guards.log", env=env, cwd=snapshot)
+    verify_guard_execution(json.loads((directory / "source-guards.json").read_bytes()))
+    write_json(directory / "source-guards-snapshot.json", {
+        "source_sha": sha, "archive_sha256": digest,
+        "scope": "complete-committed-repository", "execution_report": "source-guards.json",
+        "python_site_startup": False, "pytest_plugin_autoload": False,
+    })
 
 
 def byte_scan(args, directory, archive, digest, verification):
@@ -93,7 +102,7 @@ def verify(args, directory, build):
     """
     eligibility(args.source_sha)
     W.require(committed_source(args.source_sha) == build["context_sha256"], "build_context_changed")
-    source_guards(directory)
+    source_guards(directory, args.source_sha)
     archive = args.analysis_root / "build/image.oci.tar"
     digest = build["image_digest"]
     graph, verification = artifact.inspect(archive, digest)
@@ -106,6 +115,7 @@ def verify(args, directory, build):
     provenance.shipped_source(directory / "rootfs.tar", args.source_sha)
     _source_delivery(args, directory)
     _payload(directory)
+    _payload_history(directory, graph)
     _security(directory, graph)
     _selected_base(directory, digest, graph)
     bootstrap.verify(directory, graph["image_config_digest"], args.bootstrap_source)
@@ -150,6 +160,34 @@ def _payload(directory):
         W.require(len(members) == 1 and members[0].isfile()
                   and members[0].size == len(b"/opt/npa/src\n"), "python_import_hook_required")
         W.require(archive.extractfile(members[0]).read() == b"/opt/npa/src\n", "python_import_hook_changed")
+
+
+def _payload_history(directory, graph):
+    from scan_image_omniverse_payload import classify_history
+
+    digest = graph["image_config_digest"]
+    with tarfile.open(directory / "inspection.tar") as archive:
+        members = [member for member in archive if member.name == digest[7:] + ".json"]
+        W.require(len(members) == 1 and members[0].isfile(), "payload_original_config_required")
+        raw = archive.extractfile(members[0]).read()
+    W.require("sha256:" + W.sha(raw) == digest, "payload_config_digest")
+    history = W.json_object(raw).get("history")
+    W.require(isinstance(history, list) and history, "payload_history_population_required")
+    hits = []
+    for position, entry in enumerate(history):
+        W.require(isinstance(entry, dict) and isinstance(entry.get("created_by"), str),
+                  "payload_history_command_required")
+        reason = classify_history(entry["created_by"])
+        if reason:
+            hits.append({"entry": position, "why": reason, "command": entry["created_by"]})
+    write_json(directory / "payload-history.json", {
+        "schema": "npa.ncore.payload-history.v1", "config_digest": digest,
+        "classifier_sha256": file_sha(ROOT / "npa/scripts/scan_image_omniverse_payload.py"),
+        "source": "digest-bound-original-config", "entries_classified": len(history),
+        "history_hits": hits, "complete": True, "valid": not hits,
+        "layer_paths_report": "payload.json",
+    })
+    W.require(not hits, "ncore_restricted_history")
 
 
 def _security(directory, graph):

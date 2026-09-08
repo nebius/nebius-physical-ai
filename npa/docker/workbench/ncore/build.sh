@@ -10,6 +10,7 @@ IMAGE=""
 OCI_OUTPUT=""
 METADATA_FILE=""
 BUILDER=""
+SBOM_GENERATOR="docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source-sha) SOURCE_SHA="${2:?}"; shift 2 ;;
@@ -39,7 +40,7 @@ options=(--load --provenance=false)
 if [[ -n "$OCI_OUTPUT" ]]; then
   [[ "$OCI_OUTPUT" != *,* ]] || { echo 'OCI output path cannot contain commas' >&2; exit 2; }
   [[ ! -e "$OCI_OUTPUT" ]] || { echo 'Refusing to overwrite an existing OCI artifact' >&2; exit 2; }
-  options=(--output "type=oci,dest=$OCI_OUTPUT" --provenance=mode=max --sbom=true)
+  options=(--output "type=oci,dest=$OCI_OUTPUT" --provenance=mode=max --attest "type=sbom,generator=$SBOM_GENERATOR")
 fi
 [[ -z "$METADATA_FILE" ]] || options+=(--metadata-file "$METADATA_FILE")
 [[ -z "$BUILDER" ]] || options+=(--builder "$BUILDER")

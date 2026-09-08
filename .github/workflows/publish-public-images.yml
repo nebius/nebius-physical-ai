@@ -273,7 +273,8 @@ jobs:
           root="$(mktemp -d "$RUNNER_TEMP/ncore-oci.XXXXXXXX")"
           echo "NCORE_OCI_ROOT=$root" >> "$GITHUB_ENV"
           npa/.venv/bin/python npa/scripts/publish_ncore_oci.py prepare \
-            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$root"
+            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$root" \
+            --keyring "$root/keyring/debian-archive-keyring.gpg"
 
       - name: Prove destination cannot expose unvalidated tagged bytes
         if: matrix.tool != 'ncore'
@@ -348,7 +349,8 @@ jobs:
         run: |
           set -euo pipefail
           npa/.venv/bin/python npa/scripts/publish_ncore_oci.py build \
-            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT"
+            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
+            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg"
 
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
@@ -547,6 +549,7 @@ jobs:
             --output-dir "$NCORE_OCI_ROOT/prepublication" \
             --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
             --metadata "$NCORE_OCI_ROOT/metadata" --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
+            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
             --authfile "$NCORE_OCI_ROOT/registry-auth.json"
           echo "NCore exact OCI development publication verified anonymously; RTX acceptance remains required." >> "$GITHUB_STEP_SUMMARY"
           # Raw scanner output, denylist inputs and auth remain private. Never
