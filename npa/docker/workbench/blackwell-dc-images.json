@@ -49,7 +49,8 @@
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
     "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
     "not-required": "CPU-only image; no arch assertion applies.",
-    "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
+    "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all.",
+    "pending-qualification": "An exact public development digest passed its recorded substantive workload, but its larger supported-release qualification remains incomplete. GPU compatibility is limited to the measured product/capability in development_qualification; this state does not promote a supported tag or validate other GPUs."
   },
   "images": [
     {
@@ -705,17 +706,51 @@
       "dockerfile": "cosmos3-super-benchmark/Dockerfile",
       "build_script": "cosmos3-super-benchmark/build.sh",
       "redistribution": "public",
-      "verdict": "unknown",
-      "validation": "pending-build",
+      "verdict": "ready",
+      "validation": "pending-qualification",
       "torch": "runtime-fetched pinned Cosmos serving closure",
       "source_compiled_extensions": [],
       "smoke": "full four-cell B200 serving benchmark with strict MP4 validity",
-      "notes": "Replacement public SkyPilot bootstrap fetches its pinned vendor runtime and model at execution. New exact-digest TP1 generation establishes development functionality only; full fixed-topology benchmark qualification remains required for supported promotion. Historical operator digest evidence does not qualify these replacement bytes.",
+      "notes": "Public bootstrap contains no vendor runtime or model weights. Its exact public development digest passed one complete B200 TP1 BF16 720p/189-frame/35-step video, full decoding and storage readback. The explicitly staged benchmark client is separately bound from image bootstrap bytes. Historical eight-GPU operator results do not qualify the replacement full benchmark, single-H200 path or B300.",
       "historical_operator_validation": {
         "validated_digest": "sha256:df755667ee290717f843b4f565be487787ea5297a85d262317c274f894085a68",
         "validated_registry_scope": "operator",
         "measured_arch_list": [
           "sm_100"
+        ]
+      },
+      "development_qualification": {
+        "channel": "development",
+        "reference": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-super-benchmark:dev-638560022d44443f42a1469af5ac5a26ca398712",
+        "digest": "sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6",
+        "source_commit_sha": "638560022d44443f42a1469af5ac5a26ca398712",
+        "validated_at": "2026-09-08",
+        "prepublication_validation": {
+          "passed": true,
+          "anonymous_verified": true,
+          "workflow_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/34183223673",
+          "evidence_sha256": "67d4996fb3472add9a6ad5990ddd7fc04f44e57c7c0144645a50dda622e4e8fe"
+        },
+        "runtime": {
+          "digest": "sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6",
+          "completed": true,
+          "successful": true,
+          "scope": "One complete B200 TP1 BF16 development video on the exact public digest with runtime vendor fetch, pinned public model/prompts and explicit NPA source staging. No fixed benchmark throughput qualification.",
+          "gpu": "NVIDIA B200",
+          "compute_capability": "10.0",
+          "evidence_sha256": "b0c3c9089cf1d86934aa9cb1c450925d977122179c6cf55c6bfcdd558881b217",
+          "artifacts": [
+            {
+              "name": "video.mp4",
+              "sha256": "7b1345c4a4887d22a074b0c3e850e6a7162a09c5004123a7cf3a62ea462bc612",
+              "size_bytes": 7871457
+            }
+          ]
+        },
+        "supported_qualification": "pending",
+        "remaining_qualification": [
+          "Fixed eight-GPU four-cell benchmark with validated warmups and 24 measured attempts per cell",
+          "Separate single-H200 suite and other hardware qualifications"
         ]
       }
     },

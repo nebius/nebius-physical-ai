@@ -144,7 +144,8 @@ def orchestration(tmp_path, monkeypatch):
         extra = json.loads(fields["extra_params"])
         config = {key: extra[key] for key in ("num_video_frames_per_chunk", "max_frames", "num_conditional_frames",
             "num_first_chunk_conditional_frames", "control_guidance", "share_vision_temporal_positions")}
-        config.update(hints={"edge": {**extra["edge"], "key": "edge", "control": None, "preset_blur_strength": "medium"}},
+        config.update(hints={"edge": {**extra["edge"], "key": "edge", "control": None, "preset_blur_strength": "medium",
+            "control_weight": 1.0}}, emphasize_control_in_prompt=True,
             guidance_scale=float(fields["guidance_scale"]), flow_shift=float(fields["flow_shift"]),
             control_guidance_interval=None, fps=24.0, num_frames=int(fields["num_frames"]), show_input=False, show_control_condition=False)
         return {"transfer_config": config, "positive_prompt": fields["prompt"], "negative_prompt": fields["negative_prompt"],
@@ -206,6 +207,17 @@ def test_all_chunks_use_original_controls_and_only_previous_augmented_tail(orche
             invalid["chunks"][1]["effective"]["transfer_config"]["num_first_chunk_conditional_frames"] = 0
         with pytest.raises(NanoVideoError):
             augment.validate_report(invalid, value)
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_resolved_control_weight_is_rejected_before_serialization(orchestration, tmp_path, weight):
+    source, value, _ = orchestration
+    report = augment.run_augmentation(endpoint="http://localhost", output_dir=tmp_path / "result", input_video=source,
+        request=value, replica_id="synthetic-replica")
+    report["chunks"][0]["effective"]["transfer_config"]["hints"]["edge"]["control_weight"] = weight
+    with pytest.raises(NanoVideoError, match="coverage") as caught:
+        augment.validate_report(report, value)
+    assert str(caught.value.__cause__) == "unexpected structural control weight"
 
 
 def test_final_evidence_failure_is_durably_failed_and_never_reports_success(orchestration, tmp_path, monkeypatch):

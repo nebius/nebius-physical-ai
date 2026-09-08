@@ -172,7 +172,9 @@ def boundary(monkeypatch, tmp_path):
                                             "share_vision_temporal_positions": True,
                                             "control_guidance_interval": None, "fps": 24.0, "num_frames": 9,
                                             "show_input": False, "show_control_condition": False,
+                                            "emphasize_control_in_prompt": True,
                                             "hints": {"edge": {"key": "edge", "control": None,
+                                                                "control_weight": 1.0,
                                                                 "control_path": str(tmp_path / "control-000.mkv"),
                                                                 "preset_blur_strength": "medium",
                                                                 "preset_edge_threshold": body["edge_threshold"]}},
@@ -401,6 +403,8 @@ def test_malformed_stage_duration_rejected_before_download(boundary, value):
     ("control_guidance_interval", [0.0, 1.0]),
     ("fps", 12), ("num_frames", 8),
     ("show_input", True), ("show_control_condition", True),
+    ("emphasize_control_in_prompt", False), ("emphasize_control_in_prompt", 1),
+    ("emphasize_control_in_prompt", None),
     ("unsupported_extra", 1),
 ])
 def test_transfer_override_rejected_before_download(boundary, field, value):
@@ -413,9 +417,24 @@ def test_transfer_override_rejected_before_download(boundary, field, value):
 @pytest.mark.parametrize("field,value", [
     ("key", "depth"), ("control", [1]), ("control_path", "control-000.mkv"),
     ("preset_blur_strength", "high"), ("unsupported_extra", 1),
+    ("control_weight", 0.5), ("control_weight", True), ("control_weight", 1),
+    ("control_weight", "1.0"), ("control_weight", None),
 ])
 def test_hint_override_rejected_before_download(boundary, field, value):
     boundary.mutate_report = lambda report: report["chunks"][0]["effective"]["transfer_config"]["hints"]["edge"].update({field: value})
+    with pytest.raises(client.video.NanoVideoError, match="coverage"):
+        boundary.submit()
+    assert boundary.posts == 1 and boundary.gets == 0
+
+
+@pytest.mark.parametrize("field", ["emphasize_control_in_prompt", "control_weight"])
+def test_missing_pinned_resolver_default_rejected_before_download(boundary, field):
+    def remove_default(report):
+        config = report["chunks"][0]["effective"]["transfer_config"]
+        target = config["hints"]["edge"] if field == "control_weight" else config
+        target.pop(field)
+
+    boundary.mutate_report = remove_default
     with pytest.raises(client.video.NanoVideoError, match="coverage"):
         boundary.submit()
     assert boundary.posts == 1 and boundary.gets == 0

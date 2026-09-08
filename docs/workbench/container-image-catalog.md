@@ -53,6 +53,11 @@ five original exclusions and the replacement packaging work. Public development
 availability and supported-release qualification are separate states. Its registry check does not refresh the
 September 5 historical-alias/config inspection above.
 
+The [Super development image](../../npa/docker/workbench/cosmos3-super-benchmark/README.md)
+passed exact-byte publication checks and a complete one-B200 video on September 8.
+It is selectable by its explicit full-SHA image reference and remains outside
+the 32-row supported-release table. Its larger benchmark qualification is pending.
+
 LeRobot 0.6.0 remains selectable package support without an accepted public
 image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
 `404 MANIFEST_UNKNOWN` in the separate optional-variant check; use a validated

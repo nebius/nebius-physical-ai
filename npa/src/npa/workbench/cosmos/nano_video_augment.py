@@ -573,18 +573,25 @@ def validate_report(report: Any, request: dict[str, Any]) -> None:
                                ("show_control_condition", False)):
                 if config[key] != value:
                     raise ValueError("unexpected transfer override")
+            # Omni 0.28 records these resolver defaults even when callers do
+            # not request an override. Their values remain part of the proof.
+            if config["emphasize_control_in_prompt"] is not True:
+                raise ValueError("unexpected control prompt emphasis")
             if set(config) != {"hints", "guidance_scale", "control_guidance", "control_guidance_interval", "flow_shift",
                     "num_video_frames_per_chunk", "num_conditional_frames", "max_frames", "show_control_condition",
-                    "show_input", "num_first_chunk_conditional_frames", "share_vision_temporal_positions", "num_frames", "fps"}:
+                    "show_input", "num_first_chunk_conditional_frames", "share_vision_temporal_positions", "num_frames", "fps",
+                    "emphasize_control_in_prompt"}:
                 raise ValueError("unknown transfer resolver fields")
             if set(config["hints"]) != {"edge"} or Path(config["hints"]["edge"]["control_path"]).name != chunk["control_path"]:
                 raise ValueError("missing edge control")
             hint = config["hints"]["edge"]
             if hint["preset_edge_threshold"] != request["edge_threshold"]:
                 raise ValueError("edge preset")
+            if type(hint["control_weight"]) is not float or hint["control_weight"] != 1.0:
+                raise ValueError("unexpected structural control weight")
             if (hint["key"] != "edge" or hint["control"] is not None or hint["preset_blur_strength"] != "medium"
                     or not Path(hint["control_path"]).is_absolute()
-                    or set(hint) != {"key", "control", "control_path", "preset_edge_threshold", "preset_blur_strength"}):
+                    or set(hint) != {"key", "control", "control_path", "preset_edge_threshold", "preset_blur_strength", "control_weight"}):
                 raise ValueError("unrequested or ambiguous structural control")
             effective = chunk["effective"]
             if (effective["positive_prompt"] != _expected_prompt(request["prompt"], planned["model_chunk_frames"])

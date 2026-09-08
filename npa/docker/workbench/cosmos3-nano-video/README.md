@@ -40,6 +40,12 @@ the flag to `--deploy-config` would lose the video-only checkpoint contract.
 The launcher retains upstream parsing, validation, BF16 precision, TP1 placement,
 profiling, and the real serving implementation; it does not patch vendor code.
 
+The augmentation evidence validator includes Omni 0.28's recorded resolver
+defaults: `emphasize_control_in_prompt=true` and edge `control_weight=1.0`.
+Both must have those exact values; missing defaults, altered values, and unknown
+resolver fields still fail validation. A completed diffusion request alone does
+not qualify an augmentation whose final evidence validation failed.
+
 The accepted public parent contains an older runtime recipe. Both replacement
 images explicitly copy the current reviewed serving lock and bootstrap scripts,
 override their source/checksum environment values, and verify all 11 effective

@@ -5,6 +5,24 @@ vLLM-Omni, and model weights are fetched into operator storage at runtime. The
 image overlays the reviewed serving recipe and pins vLLM-Omni revision `eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c` and
 checks dependency and source archive hashes. See [REDISTRIBUTION.md](REDISTRIBUTION.md).
 
+On **2026-09-08**, the trusted build and independent anonymous/attestation checks
+verified this immutable public development reference:
+
+```text
+ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-super-benchmark:dev-638560022d44443f42a1469af5ac5a26ca398712
+sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6
+```
+
+[Build and publication evidence](https://github.com/nebius/nebius-physical-ai/actions/runs/34183223673)
+binds these bytes to the reviewed source. The exact digest generated one complete
+BF16 video on one B200 with TP1: **1280×720, 189 frames, 24 fps, 35 inference
+steps**, with full decoding and hash-verified private storage readback. The MP4
+SHA-256 is `7b1345c4a4887d22a074b0c3e850e6a7162a09c5004123a7cf3a62ea462bc612`.
+The image bootstrap executed from its installed paths; the benchmark client used
+explicitly staged, separately hash-bound NPA source. This development result
+does not qualify the full benchmark or another GPU family. The digest is retained
+under the [development retention policy](../../../../docs/workbench/container-packaging.md).
+
 The default entrypoint without arguments waits for SkyPilot's worker command.
 Ordinary commands forward unchanged for SkyPilot's CPU worker bootstrap.
 With `--runtime`, `/usr/local/bin/npa-cosmos3-super-benchmark-entrypoint` checks

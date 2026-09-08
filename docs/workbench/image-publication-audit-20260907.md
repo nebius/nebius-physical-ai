@@ -7,6 +7,10 @@ RoboCasa closure, and repairs its package import defect. These replacement
 sources are eligible for guarded public development builds; they remain outside
 the supported-release selection pending qualification. Historical tags, scan
 results and private runtime evidence do not qualify the replacement bytes.
+The [Super replacement](../../npa/docker/workbench/cosmos3-super-benchmark/README.md)
+has since passed public development publication and a complete one-B200 video
+on its exact new digest. That narrower development result does not promote its
+supported tag or qualify the fixed benchmark matrix.
 
 ## September 7 baseline
 
