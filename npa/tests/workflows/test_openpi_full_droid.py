@@ -1437,17 +1437,22 @@ def test_completed_optimizer_updates_maps_zero_based_source_steps() -> None:
         full_droid._completed_optimizer_updates(-1)
 
 
-@pytest.mark.parametrize("compute_capability", ["10.0", "12.0"])
+@pytest.mark.parametrize(
+    ("compute_capability", "native_output"),
+    [
+        ("10.0", "devices=1 cc=10.0 result=42"),
+        ("12.0", "devices=1 cc=12.0 result=42"),
+    ],
+)
 def test_cuda_hardware_probe_requires_exact_runtime_evidence(
-    compute_capability: str,
+    compute_capability: str, native_output: str,
 ) -> None:
-    expected = f"devices=1 cc={compute_capability}"
-
     assert (
         openpi_pipeline._validated_cuda_probe_output(
-            "driver diagnostic\n  " + expected + "  \n", expected_cc=compute_capability
+            "driver diagnostic\n  " + native_output + "  \n",
+            expected_cc=compute_capability,
         )
-        == expected
+        == native_output
     )
     with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
         openpi_pipeline._validated_cuda_probe_output(
@@ -1455,12 +1460,29 @@ def test_cuda_hardware_probe_requires_exact_runtime_evidence(
         )
     with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
         openpi_pipeline._validated_cuda_probe_output(
-            "devices=2 cc=" + compute_capability,
+            "devices=2 cc=" + compute_capability + " result=42",
             expected_cc=compute_capability,
         )
     with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
         openpi_pipeline._validated_cuda_probe_output(
-            expected + "\ndevices=1 cc=0.0", expected_cc=compute_capability
+            native_output + "\ndevices=1 cc=0.0 result=42",
+            expected_cc=compute_capability,
+        )
+
+
+@pytest.mark.parametrize("compute_capability", ["10.0", "12.0"])
+@pytest.mark.parametrize(
+    "kernel_result",
+    ["", " result=0", " result=41", " result=43", " result=42.0",
+     " result=42 extra=true", " result=42 result=0"],
+)
+def test_cuda_hardware_probe_rejects_missing_or_inexact_kernel_result(
+    compute_capability: str, kernel_result: str,
+) -> None:
+    with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
+        openpi_pipeline._validated_cuda_probe_output(
+            f"devices=1 cc={compute_capability}{kernel_result}",
+            expected_cc=compute_capability,
         )
 
 

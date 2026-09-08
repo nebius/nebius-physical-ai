@@ -702,7 +702,7 @@ def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
 
 
 def _validated_cuda_probe_output(output: str, *, expected_cc: str) -> str:
-    expected = f"devices=1 cc={expected_cc}"
+    expected = f"devices=1 cc={expected_cc} result=42"
     lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
     evidence = [line for line in lines if line.startswith("devices=")]
     if evidence != [expected]:
