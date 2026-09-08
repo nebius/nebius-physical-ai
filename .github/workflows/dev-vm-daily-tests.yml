@@ -10,6 +10,7 @@
 #   DEV_VM_SSH_HOST         hostname or IP of the dev VM
 #   DEV_VM_SSH_USER         SSH login user
 #   DEV_VM_SSH_PRIVATE_KEY  private key (PEM) authorized on the dev VM
+#   DEV_VM_SSH_KNOWN_HOSTS  independently verified SSH host key entry
 # Optional:
 #   DEV_VM_SSH_PORT         SSH port (defaults to 22)
 #
@@ -40,6 +41,13 @@ on:
         description: "Branch, tag, or sha to test on the dev VM"
         type: string
         default: main
+      runner_label:
+        description: "GitHub host used for the SSH connection"
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - ubuntu-latest
 
 # The tier the daily schedule runs. `e2e-daily` runs the >= 4-step workflow
 # coverage gate, plans every npa.workflow spec, checks every image is reachable
@@ -58,22 +66,26 @@ concurrency:
 
 jobs:
   dev-vm-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner_label || vars.NPA_DAILY_RUNNER || 'macos-15' }}
     timeout-minutes: 300
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Verify required secrets are present
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
+          DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
           missing=""
           [ -n "$DEV_VM_SSH_HOST" ] || missing="$missing DEV_VM_SSH_HOST"
           [ -n "$DEV_VM_SSH_USER" ] || missing="$missing DEV_VM_SSH_USER"
           [ -n "$DEV_VM_SSH_PRIVATE_KEY" ] || missing="$missing DEV_VM_SSH_PRIVATE_KEY"
+          [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ] || missing="$missing DEV_VM_SSH_KNOWN_HOSTS"
           if [ -n "$missing" ]; then
             echo "::error::Missing required secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
             exit 1
@@ -110,25 +122,17 @@ jobs:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
           DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
-          # Optional: a pre-vetted known_hosts entry (recommended). When set it is
-          # used as-is; otherwise we fall back to ssh-keyscan (trust-on-first-use).
+          # Require independently verified host keys before sending credentials.
           DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
+          umask 077
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$DEV_VM_SSH_PRIVATE_KEY" > ~/.ssh/dev_vm_key
           chmod 600 ~/.ssh/dev_vm_key
           port="${DEV_VM_SSH_PORT:-22}"
           echo "SSH_PORT=$port" >> "$GITHUB_ENV"
-          if [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ]; then
-            # Pre-vetted pin: no trust-on-first-use window.
-            printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            # Trust-on-first-use: records whatever key is presented now. Set the
-            # DEV_VM_SSH_KNOWN_HOSTS secret to remove this MITM-at-keyscan window.
-            echo "::warning::DEV_VM_SSH_KNOWN_HOSTS not set; using ssh-keyscan (trust-on-first-use)."
-            ssh-keyscan -p "$port" -H "$DEV_VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          fi
+          printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy runner script to the dev VM
@@ -137,6 +141,7 @@ jobs:
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
         run: |
           scp -P "$SSH_PORT" \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
             -o StrictHostKeyChecking=yes \
             scripts/dev-vm-daily-tests.sh \
@@ -168,6 +173,7 @@ jobs:
           # git refs and Nebius ids/flags never legitimately contain such chars.
           safe='^[A-Za-z0-9._/-]*$'
           for pair in "git_ref=$REF" \
+                      "test_tier=$TIER" \
                       "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
                       "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
                       "NPA_E2E_CLUSTER_CONTEXT=$NPA_E2E_CLUSTER_CONTEXT" \
@@ -204,6 +210,7 @@ jobs:
             bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
 
           ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
             -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=1200 \

@@ -23,7 +23,14 @@ Actions**:
 | `DEV_VM_SSH_HOST` | Hostname or IP of the dev VM |
 | `DEV_VM_SSH_USER` | SSH login user |
 | `DEV_VM_SSH_PRIVATE_KEY` | Private key (PEM) authorized on the dev VM |
+| `DEV_VM_SSH_KNOWN_HOSTS` | Required, independently verified SSH host key entry; non-default ports use `[hostname]:port` |
 | `DEV_VM_SSH_PORT` | Optional; defaults to `22` |
+
+The connection verifies the server's pinned host key and uses public-key
+authentication without interactive prompts. GitHub creates the private-key file
+with owner-only permissions and removes it after the job. Host keys must come
+from a trusted existing connection; the workflow does not trust a fresh network
+scan automatically.
 
 Optional repository **variables** (not secrets) forwarded to the run:
 
@@ -37,6 +44,7 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_E2E_REGISTRY` | Optional explicit custom registry for live workflow cases; defaults to public GHCR releases |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
+| `NPA_DAILY_RUNNER` | GitHub host used to reach the VM; defaults to `macos-15`. Set to `ubuntu-latest` only after verifying its network can reach the SSH endpoint. Manual dispatch can override this with `runner_label`. |
 | `NPA_DAILY_AGENT_GPU_E2E` | Set to `1` with `gpu-daily` to run the agent-confirmed self-hosted VLM proof instead of the rotating case; requires a deployed agent record |
 
 The dev VM must already have `git`, `python3`, and `make`, plus a reachable git
@@ -49,6 +57,12 @@ the shared dev clone or other agents' worktrees.
 The workflow runs daily at `07:00 UTC` and can also be triggered manually via
 **Run workflow** (`workflow_dispatch`). Change the `cron` line to match the
 operator's off-peak window.
+
+There is no pull-request trigger. The GitHub host only performs SSH transport;
+the tests still execute in the isolated Linux checkout on the operator VM.
+If an SSH connection times out before authentication, check reachability from
+the selected GitHub runner network. A successful connection from an operator's
+laptop does not establish reachability from GitHub's Linux runner network.
 
 ## Test tiers
 
