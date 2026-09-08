@@ -30,7 +30,6 @@ def _parser():
 
 def _inputs(args):
     args.analysis_root = args.analysis_root.absolute()
-    W.C.compile_policy(os.environ.get("CUSTOMER_DENYLIST"), os.environ.get("INFRA_DENYLIST"))
     _policy_input(args)
     committed_source(args.source_sha)
     gates.eligibility(args.source_sha)
@@ -62,6 +61,7 @@ def _policy_input(args):
                   and all(type(value) is str and value for value in values), "nonempty_literal_inventory_required")
     else:
         W.require(args.literal_inventory is None, "literal_inventory_requires_exact_mode")
+        W.C.compile_policy(os.environ.get("CUSTOMER_DENYLIST"), os.environ.get("INFRA_DENYLIST"))
 
 
 def _prepare(args):

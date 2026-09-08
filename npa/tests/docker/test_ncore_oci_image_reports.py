@@ -61,6 +61,29 @@ def test_byte_authorization_preserves_selected_policy(tmp_path, monkeypatch, mod
         assert "--literal-inventory" not in authorization
 
 
+def test_ci_policy_retains_required_customer_and_optional_infrastructure_validation(monkeypatch):
+    monkeypatch.delenv("CUSTOMER_DENYLIST", raising=False)
+    monkeypatch.delenv("INFRA_DENYLIST", raising=False)
+    args = SimpleNamespace(policy_mode="ci-regex", literal_inventory=None)
+    with pytest.raises(ValueError, match="customer_pattern_missing"):
+        cli._policy_input(args)
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "private-customer-fixture")
+    cli._policy_input(args)
+    monkeypatch.setenv("INFRA_DENYLIST", "[")
+    with pytest.raises(ValueError, match="infra-denylist_invalid"):
+        cli._policy_input(args)
+
+
+def test_exact_policy_does_not_replace_or_compile_ambient_regex(tmp_path, monkeypatch):
+    path = tmp_path / "literals.json"
+    path.write_text('{"literals":["private-fixture"]}')
+    path.chmod(0o600)
+    monkeypatch.setattr(W.C, "compile_policy", lambda *_: pytest.fail("exact policy used regex mode"))
+    args = SimpleNamespace(policy_mode="exact-literals", literal_inventory=path)
+    with W.authorized_roots(tmp_path, ROOT):
+        cli._policy_input(args)
+
+
 @pytest.mark.parametrize("change", [None, "weights", "executable", "symlink", "duplicate",
                                     "missing", "incomplete", "history", "payload", "missing-list"])
 def test_payload_accepts_only_complete_scan_and_exact_text_import_hook(tmp_path, monkeypatch, change):
