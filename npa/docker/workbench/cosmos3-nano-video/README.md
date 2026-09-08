@@ -32,6 +32,14 @@ Validate real continuation and source-conditioned augmentation through the
 documented SDK/CLI, fully decode the MP4s, and inspect joins and source alignment.
 A one-replica result does not qualify the 16-replica routing/concurrency matrix.
 
+The video adapter launches the pinned Omni serving command through its Python
+parser so `sound_gen=false` and `guardrails=false` remain explicit model settings.
+Omni 0.28 removed `--stage-configs-path` and the `stage_args` schema. Its Cosmos
+diffusion fallback does not apply deployment-file overrides, so changing only
+the flag to `--deploy-config` would lose the video-only checkpoint contract.
+The launcher retains upstream parsing, validation, BF16 precision, TP1 placement,
+profiling, and the real serving implementation; it does not patch vendor code.
+
 The accepted public parent contains an older runtime recipe. Both replacement
 images explicitly copy the current reviewed serving lock and bootstrap scripts,
 override their source/checksum environment values, and verify all 11 effective

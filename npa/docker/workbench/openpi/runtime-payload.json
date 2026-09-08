@@ -27,6 +27,20 @@
       "size": 821174704,
       "source_lock_url": "https://raw.githubusercontent.com/Physical-Intelligence/openpi/15a9616a00943ada6c20a0f158e3adb39df2ccac/uv.lock",
       "source_lock_sha256": "793488b5a55bb87200db90a61fd0af51922b686d94e1da4f4c587ab119b37d74"
+    },
+    "tensorflow": {
+      "url": "https://files.pythonhosted.org/packages/93/c0/a774286d0383419f558deb27096e5de9f9facd6c27df8e9f9af6fba2f77e/tensorflow-2.15.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "dee8ec2b2c6c942ae65d25746e53cdc475e82d5fcbbb3009ce47f5963d69ebfc",
+      "size": 475258658,
+      "source_lock_url": "https://raw.githubusercontent.com/Physical-Intelligence/openpi/15a9616a00943ada6c20a0f158e3adb39df2ccac/uv.lock",
+      "source_lock_sha256": "793488b5a55bb87200db90a61fd0af51922b686d94e1da4f4c587ab119b37d74"
+    },
+    "tensorflow_cpu": {
+      "url": "https://files.pythonhosted.org/packages/fa/44/a1698c62942d20cab378ba201a6cbfcce579418351a0c6e4ea9d66c9adf2/tensorflow_cpu-2.15.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "f46c795177f6311c83562e05d38dc7d4618f8d3150e6902a4499b875f3f97270",
+      "size": 207208171,
+      "source_lock_url": "https://raw.githubusercontent.com/Physical-Intelligence/openpi/15a9616a00943ada6c20a0f158e3adb39df2ccac/uv.lock",
+      "source_lock_sha256": "793488b5a55bb87200db90a61fd0af51922b686d94e1da4f4c587ab119b37d74"
     }
   },
   "required": [
@@ -773,6 +787,426 @@
       "sha256": "8bec2abc72ca3d9657b2781f4b235f72908c3e40d1c3a22f4764772588590b06",
       "size": 493839,
       "kind": "torch_license"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_backend_base.h",
+      "sha256": "aaa7edc4a46c064b349f5477c65e434a72721de1547379bb01fe6d158014b224",
+      "size": 5651,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend.h",
+      "sha256": "e5c96bf2ea9165c57a96511f9a177eff1a95eeaa7f3f068f64835dd7fffec55a",
+      "size": 6992,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_ConvDesc.h",
+      "sha256": "46a150aa0604568fea032de2df100c1c8d32acfeb43aec2899eeeb12a042691d",
+      "size": 13996,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Engine.h",
+      "sha256": "25718065f4e38e1650201abf68657b43dd552c8c6e947049e1950b2b1f4e1735",
+      "size": 13089,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_EngineConfig.h",
+      "sha256": "cf0fd09da8e5449e7757c9b3963f7f3606ddaee99018e5b4ccc5fef62c5353c6",
+      "size": 10543,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_EngineConfigGenerator.h",
+      "sha256": "bace72c3c510a1307e25b84f33fc505abbff4c419059de9bfa2fef9b4c18256c",
+      "size": 5524,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_EngineFallbackList.h",
+      "sha256": "e567eaec4d1270aaadc2bab8ff74d876ccae3dd890645e7519f913dbd0769c7f",
+      "size": 8052,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Errata.h",
+      "sha256": "b9c22cf7cd11f5abb805dd6319ecf89423901de6983f79292dfa9a40f8553ddb",
+      "size": 12823,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_ExecutionPlan.h",
+      "sha256": "1d8d7152e9ffefc8f2525d60764e08dfe4d9e25f96623175ebf2966fcf23913f",
+      "size": 28121,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_ExecutionPlanCache.h",
+      "sha256": "cdd8016639f7f71da9c3f2d35d64510a1b13edfb5ed09042c29b8bd89e289a6e",
+      "size": 7620,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Filters.h",
+      "sha256": "2ddd6699fd627f93ddf569de5c793d1fd803d75c1daf0e7a361d9dbe0b176b07",
+      "size": 4742,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Heuristics.h",
+      "sha256": "95f954b7b98242a2374236882e6754f82da5737117597c18d9bb2c6cb02d64f7",
+      "size": 17711,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Logging.h",
+      "sha256": "0a74821fb496c90ac15cc4beca177d48bbda8fa63df493bb7fef522095baa599",
+      "size": 3232,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_MatMulDesc.h",
+      "sha256": "2a1dfab05d1f7e0d1467f9a19d4c6e4ee6f7521abd3070b2285ba0df4bf41b5f",
+      "size": 6371,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Operation.h",
+      "sha256": "5252da073797257e5eeebe8191f39836b9006c5118d6e500a71d87f11828a964",
+      "size": 134612,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_OperationGraph.h",
+      "sha256": "99acf8bffe2f02dee4b25eb7e1212126413da84bd1d91ee9065a64efe06cac41",
+      "size": 10325,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_PointWiseDesc.h",
+      "sha256": "335590a4ba05f3d1cefc89370871a2a8ae85d7da85fa9a53ab33841f84bab07b",
+      "size": 18680,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_ReductionDesc.h",
+      "sha256": "bcd0010158f7c2e99460757fd4fb3111b98e9cc8188e50d2f28aa7b173a97f4a",
+      "size": 6361,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Reorder_Tensor.h",
+      "sha256": "70d6ea075837707e6ce74b82d24fab5f88ec6a094e8ee90615b286ec7f7abc4a",
+      "size": 3607,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Resample.h",
+      "sha256": "f69c8c0ed9c5bfe4109123b006f8d62829758499f0867f3a383e29ae3bdfb0b1",
+      "size": 20494,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Rng.h",
+      "sha256": "edb15fcf4c59786512ca72f44f4d651c8c05f0bf8938e037fa8acd125fa9b90a",
+      "size": 11700,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_Tensor.h",
+      "sha256": "d936588d20bb1d55378c9a3a828f22774c489cb3154ac3551a50323033a39522",
+      "size": 20313,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_VariantPack.h",
+      "sha256": "491df760c24a77087c0eef08e794547e04271cf656e8d8ade62ef83e8d576829",
+      "size": 7973,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_find_plan.h",
+      "sha256": "fdb43352ed51295845a4b9d37796008fb715f48a68f3bd1a4a28dd1a95e96539",
+      "size": 6784,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_get_plan.h",
+      "sha256": "5eb9d3b1ee8fac728c19e9ad5e13120f8f3630dc2712a4c228a6768717d8ba20",
+      "size": 2318,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/_virtual_includes/cudnn_frontend/third_party/cudnn_frontend/include/cudnn_frontend_utils.h",
+      "sha256": "664f9a5e81c77acd8ecc22a9d969e9857aa4166845ffee9d8c7b42e6b8c9be79",
+      "size": 24731,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_backend_base.h",
+      "sha256": "aaa7edc4a46c064b349f5477c65e434a72721de1547379bb01fe6d158014b224",
+      "size": 5651,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend.h",
+      "sha256": "e5c96bf2ea9165c57a96511f9a177eff1a95eeaa7f3f068f64835dd7fffec55a",
+      "size": 6992,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_ConvDesc.h",
+      "sha256": "46a150aa0604568fea032de2df100c1c8d32acfeb43aec2899eeeb12a042691d",
+      "size": 13996,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Engine.h",
+      "sha256": "25718065f4e38e1650201abf68657b43dd552c8c6e947049e1950b2b1f4e1735",
+      "size": 13089,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_EngineConfig.h",
+      "sha256": "cf0fd09da8e5449e7757c9b3963f7f3606ddaee99018e5b4ccc5fef62c5353c6",
+      "size": 10543,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_EngineConfigGenerator.h",
+      "sha256": "bace72c3c510a1307e25b84f33fc505abbff4c419059de9bfa2fef9b4c18256c",
+      "size": 5524,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_EngineFallbackList.h",
+      "sha256": "e567eaec4d1270aaadc2bab8ff74d876ccae3dd890645e7519f913dbd0769c7f",
+      "size": 8052,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Errata.h",
+      "sha256": "b9c22cf7cd11f5abb805dd6319ecf89423901de6983f79292dfa9a40f8553ddb",
+      "size": 12823,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_ExecutionPlan.h",
+      "sha256": "1d8d7152e9ffefc8f2525d60764e08dfe4d9e25f96623175ebf2966fcf23913f",
+      "size": 28121,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_ExecutionPlanCache.h",
+      "sha256": "cdd8016639f7f71da9c3f2d35d64510a1b13edfb5ed09042c29b8bd89e289a6e",
+      "size": 7620,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Filters.h",
+      "sha256": "2ddd6699fd627f93ddf569de5c793d1fd803d75c1daf0e7a361d9dbe0b176b07",
+      "size": 4742,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Heuristics.h",
+      "sha256": "95f954b7b98242a2374236882e6754f82da5737117597c18d9bb2c6cb02d64f7",
+      "size": 17711,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Logging.h",
+      "sha256": "0a74821fb496c90ac15cc4beca177d48bbda8fa63df493bb7fef522095baa599",
+      "size": 3232,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_MatMulDesc.h",
+      "sha256": "2a1dfab05d1f7e0d1467f9a19d4c6e4ee6f7521abd3070b2285ba0df4bf41b5f",
+      "size": 6371,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Operation.h",
+      "sha256": "5252da073797257e5eeebe8191f39836b9006c5118d6e500a71d87f11828a964",
+      "size": 134612,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_OperationGraph.h",
+      "sha256": "99acf8bffe2f02dee4b25eb7e1212126413da84bd1d91ee9065a64efe06cac41",
+      "size": 10325,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_PointWiseDesc.h",
+      "sha256": "335590a4ba05f3d1cefc89370871a2a8ae85d7da85fa9a53ab33841f84bab07b",
+      "size": 18680,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_ReductionDesc.h",
+      "sha256": "bcd0010158f7c2e99460757fd4fb3111b98e9cc8188e50d2f28aa7b173a97f4a",
+      "size": 6361,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Reorder_Tensor.h",
+      "sha256": "70d6ea075837707e6ce74b82d24fab5f88ec6a094e8ee90615b286ec7f7abc4a",
+      "size": 3607,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Resample.h",
+      "sha256": "f69c8c0ed9c5bfe4109123b006f8d62829758499f0867f3a383e29ae3bdfb0b1",
+      "size": 20494,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Rng.h",
+      "sha256": "edb15fcf4c59786512ca72f44f4d651c8c05f0bf8938e037fa8acd125fa9b90a",
+      "size": 11700,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_Tensor.h",
+      "sha256": "d936588d20bb1d55378c9a3a828f22774c489cb3154ac3551a50323033a39522",
+      "size": 20313,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_VariantPack.h",
+      "sha256": "491df760c24a77087c0eef08e794547e04271cf656e8d8ade62ef83e8d576829",
+      "size": 7973,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_find_plan.h",
+      "sha256": "fdb43352ed51295845a4b9d37796008fb715f48a68f3bd1a4a28dd1a95e96539",
+      "size": 6784,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_get_plan.h",
+      "sha256": "5eb9d3b1ee8fac728c19e9ad5e13120f8f3630dc2712a4c228a6768717d8ba20",
+      "size": 2318,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/external/cudnn_frontend_archive/include/cudnn_frontend_utils.h",
+      "sha256": "664f9a5e81c77acd8ecc22a9d969e9857aa4166845ffee9d8c7b42e6b8c9be79",
+      "size": 24731,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_fused_conv_rewriter.h",
+      "sha256": "e8fde94032dbc03d607174d47cbb472eb625d8653ed9ff5bfe5591294d120026",
+      "size": 4328,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_fused_mha_rewriter.h",
+      "sha256": "5dd139b3ddb6ff8fb62dc925b665964b55feac325aa133c2f7fe3402d228a362",
+      "size": 1923,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_fused_mha_transpose_fusion.h",
+      "sha256": "3edae740742c5f268c70520aa67c477da95b2b9183fb28353e1b946d8158aa89",
+      "size": 1406,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_pad_for_convolutions.h",
+      "sha256": "82ebe533cec1d1666a197d29ca3f8e86686f5c22a26bfb2ef494eb751ccea3f9",
+      "size": 1940,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_simplify_padding.h",
+      "sha256": "c406535dd4e17303aac8c27ba4bae3490c53e508d2e90dd7c4c80fd28c29cdb4",
+      "size": 2641,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_support_utils.h",
+      "sha256": "5be91890c11a3844f7b923c766c1afc33bc75d0d5fd3b7998753381885ad7a45",
+      "size": 3036,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/compiler/xla/service/gpu/cudnn_vectorize_convolutions.h",
+      "sha256": "7257df3864a9b67e7277b0097e8cd40d352a3a44b48d2c7b27273d7072845d09",
+      "size": 2315,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/tensorflow/core/kernels/cudnn_pooling_gpu.h",
+      "sha256": "84994893e45cf64319dc85f515955b5f3dcf0fff5dae26da546323aa072bcfc3",
+      "size": 2509,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_fused_conv_rewriter.h",
+      "sha256": "e8fde94032dbc03d607174d47cbb472eb625d8653ed9ff5bfe5591294d120026",
+      "size": 4328,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_fused_mha_rewriter.h",
+      "sha256": "5dd139b3ddb6ff8fb62dc925b665964b55feac325aa133c2f7fe3402d228a362",
+      "size": 1923,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_fused_mha_transpose_fusion.h",
+      "sha256": "3edae740742c5f268c70520aa67c477da95b2b9183fb28353e1b946d8158aa89",
+      "size": 1406,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_pad_for_convolutions.h",
+      "sha256": "82ebe533cec1d1666a197d29ca3f8e86686f5c22a26bfb2ef494eb751ccea3f9",
+      "size": 1940,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_simplify_padding.h",
+      "sha256": "c406535dd4e17303aac8c27ba4bae3490c53e508d2e90dd7c4c80fd28c29cdb4",
+      "size": 2641,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_support_utils.h",
+      "sha256": "5be91890c11a3844f7b923c766c1afc33bc75d0d5fd3b7998753381885ad7a45",
+      "size": 3036,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/include/xla/service/gpu/cudnn_vectorize_convolutions.h",
+      "sha256": "7257df3864a9b67e7277b0097e8cd40d352a3a44b48d2c7b27273d7072845d09",
+      "size": 2315,
+      "kind": "tensorflow_adapter"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow/THIRD_PARTY_NOTICES.txt",
+      "sha256": "fbbedc619d20c26b5e486bf82acdb1efeafff032fb5c854435651924afec0cb8",
+      "size": 476563,
+      "kind": "tensorflow_license"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow-2.15.0.dist-info/LICENSE",
+      "sha256": "71c6915d04265772a0339bed47276942c678b45cc01534210ebe6984fd1aec65",
+      "size": 13575,
+      "kind": "tensorflow_license"
+    },
+    {
+      "path": "opt/venv/lib/python3.11/site-packages/tensorflow_cpu-2.15.0.dist-info/LICENSE",
+      "sha256": "71c6915d04265772a0339bed47276942c678b45cc01534210ebe6984fd1aec65",
+      "size": 13575,
+      "kind": "tensorflow_license"
     }
   ],
   "excluded_sdk": [
@@ -866,5 +1300,10 @@
     "matching_official_payloads": 56,
     "unmatched": []
   },
-  "torch_adapter_count": 53
+  "torch_adapter_count": 53,
+  "tensorflow_adapter_count": 67,
+  "tensorflow_adapter_licenses": {
+    "Apache-2.0": 15,
+    "MIT": 52
+  }
 }

@@ -8,6 +8,24 @@
 
 The upstream license file is retained at `/opt/byof/LICENSE`.
 
+## TensorFlow and cuDNN Frontend adapters
+
+TensorFlow 2.15.0 and TensorFlow CPU 2.15.0 use
+[Apache License 2.0](https://github.com/tensorflow/tensorflow/blob/v2.15.0/LICENSE).
+Their full licenses remain at
+`/opt/venv/lib/python3.11/site-packages/tensorflow-2.15.0.dist-info/LICENSE` and
+`/opt/venv/lib/python3.11/site-packages/tensorflow_cpu-2.15.0.dist-info/LICENSE`.
+The complete bundled third-party notices remain at
+`/opt/venv/lib/python3.11/site-packages/tensorflow/THIRD_PARTY_NOTICES.txt`.
+
+The TensorFlow include tree contains fifteen Apache-2.0 TensorFlow/XLA
+cuDNN adapters and 52 copies of NVIDIA cuDNN Frontend 0.8.0 headers. The latter
+carry the full copyright and permission notice from
+[cuDNN Frontend's MIT license](https://github.com/NVIDIA/cudnn-frontend/blob/8f488bd41229aa0a3d5f7c0168f59e4d69c618ee/LICENSE.txt)
+inside each header. All 67 headers and the three license/notice files are
+required by exact path, SHA-256 and size in `runtime-payload.json`. This
+permissive frontend license does not license the separate cuDNN SDK payload.
+
 ## NVIDIA CUDA and cuDNN
 
 The final image inherits the CUDA 12.8.1 runtime base without cuDNN development

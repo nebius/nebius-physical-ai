@@ -85,29 +85,21 @@ def validate_weights(model_path: Path) -> dict[str, Any]:
     return ready
 
 
-def diffusion_stage_config() -> dict[str, Any]:
-    """Use the pinned engine's explicit stage path; fallback drops stage overrides."""
-    return {"stage_args": [{
-        "stage_id": 0,
-        "stage_type": "diffusion",
-        "runtime": {"process": True, "devices": "0"},
-        "engine_args": {
-            "model_stage": "diffusion",
-            "model_class_name": PIPELINE,
-            "dtype": "bfloat16",
-            "parallel_config": {"tensor_parallel_size": 1},
-            "model_config": {"sound_gen": False, "guardrails": False},
-            "enable_diffusion_pipeline_profiler": True,
-        },
-        "default_sampling_params": {"num_inference_steps": 35},
-        "final_output": True,
-        "final_output_type": "image",
-    }]}
+def server_argv(model_path: Path, port: int) -> list[str]:
+    """Build the isolated upstream server command for a staged video model.
 
-
-def server_argv(model_path: Path, port: int, stage_config_path: Path) -> list[str]:
+    Args:
+        model_path: Verified local Cosmos3-Nano checkpoint directory.
+        port: Loopback HTTP port owned by this replica.
+    Returns:
+        Arguments using the current runtime interpreter and NPA model settings.
+    Raises:
+        None.
+    """
     return [
-        "vllm",
+        sys.executable,
+        "-m",
+        "npa.workbench.cosmos.nano_video_engine",
         "serve",
         str(model_path),
         "--omni",
@@ -121,8 +113,6 @@ def server_argv(model_path: Path, port: int, stage_config_path: Path) -> list[st
         "1",
         "--dtype",
         "bfloat16",
-        "--stage-configs-path",
-        str(stage_config_path),
         "--enable-diffusion-pipeline-profiler",
         "--init-timeout",
         "1800",
@@ -177,13 +167,13 @@ class NanoVideoRuntime:
         logs = self.output_root / ".server-logs"
         logs.mkdir(exist_ok=True)
         from .nano_video import write_json
+        from .nano_video_engine import model_config
 
-        stage_config_path = logs / f"{self.replica_id}.stage.json"
-        write_json(stage_config_path, diffusion_stage_config())
+        write_json(logs / f"{self.replica_id}.model.json", model_config())
         try:
             self._log_stream = (logs / f"{self.replica_id}.log").open("ab", buffering=0)
             self.process = subprocess.Popen(
-                server_argv(self.model_path, port, stage_config_path),
+                server_argv(self.model_path, port),
                 env=environment,
                 stdout=self._log_stream,
                 stderr=subprocess.STDOUT,

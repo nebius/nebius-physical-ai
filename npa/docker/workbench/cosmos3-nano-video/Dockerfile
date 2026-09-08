@@ -46,6 +46,7 @@ COPY --chmod=0644 docker/workbench/cosmos3-super-benchmark/LICENSE-APACHE-2.0 /o
 COPY src/npa/workbench/cosmos/nano_video.py \
      src/npa/workbench/cosmos/nano_video_augment.py \
      src/npa/workbench/cosmos/nano_video_server.py \
+     src/npa/workbench/cosmos/nano_video_engine.py \
      src/npa/workbench/cosmos/nano_video_auth.py \
      src/npa/workbench/cosmos/nano_video_router.py \
      src/npa/workbench/cosmos/nano_video_stage.py /opt/npa/npa/workbench/cosmos/

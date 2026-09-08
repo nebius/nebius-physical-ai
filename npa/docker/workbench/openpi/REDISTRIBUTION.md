@@ -27,12 +27,24 @@ headers in a later layer would not satisfy this boundary.
 `runtime-payload.json` records independently computed hashes from complete,
 hash-verified upstream wheels. `verify_image.py` binds the saved config/manifest
 and every ordered layer to the inspected image ID, reads every regular file,
-and rejects changed/relocated runtimes, cuDNN headers (including renamed copies),
+and rejects changed/relocated runtimes, cuDNN SDK headers (including renamed copies),
 cached cuDNN wheels, or missing/changed notices. Later whiteouts cannot erase a
 bad ancestor finding. Exact PyTorch 2.7.1 adapter declarations qualify under
 their retained complete license; these 53 generated adapter headers are not
-NVIDIA cuDNN SDK headers. The general archive/security scanner remains required
-for nested payloads and other licensing/security boundaries.
+NVIDIA cuDNN SDK headers.
+
+The pinned TensorFlow 2.15.0 and TensorFlow CPU 2.15.0 wheels also retain 67
+cuDNN-named application headers: 15 TensorFlow/XLA adapters under Apache-2.0
+and 52 copies of cuDNN Frontend 0.8.0 headers under
+[NVIDIA's MIT grant](https://github.com/NVIDIA/cudnn-frontend/blob/8f488bd41229aa0a3d5f7c0168f59e4d69c618ee/LICENSE.txt).
+Each exact header retains its original copyright and license notice. The
+inventory binds every allowed path, size and SHA-256 to the hash-verified wheels
+in OpenPI's pinned lockfile, and requires both distribution licenses and
+TensorFlow's complete third-party notices. These permissive adapters do not
+expand the cuDNN SDK boundary: all fourteen excluded SDK byte hashes remain
+prohibited at every path, and unknown cuDNN-named headers still fail. The general
+archive/security scanner remains required for nested payloads and other
+licensing/security boundaries.
 
 The three compatibility vendor wheels are SHA-256 locked in
 `vendor-requirements.txt`. NCCL 2.27.5 retains its header, shared library and

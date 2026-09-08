@@ -93,6 +93,8 @@ def _inventory(contract):
         raise ValueError("required vendor and adapter notices are incomplete")
     if kinds.count("torch_adapter") != 53 or kinds.count("nvshmem_payload") != 56 or kinds.count("nccl_payload") != 2:
         raise ValueError("reviewed application dependency inventory is incomplete")
+    if kinds.count("tensorflow_adapter") != 67 or kinds.count("tensorflow_license") != 3:
+        raise ValueError("reviewed TensorFlow adapters and notices are incomplete")
     for row in [*expected.values(), *contract["excluded_sdk"]]:
         if not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) or type(row["size"]) is not int or row["size"] < 0:
             raise ValueError("invalid exact-byte inventory")
@@ -143,7 +145,7 @@ class _LayerAudit:
         if entry.isdir():
             return
         basename = PurePosixPath(path).name
-        adapter = self.expected.get(path, {}).get("kind") == "torch_adapter"
+        adapter = self.expected.get(path, {}).get("kind") in {"torch_adapter", "tensorflow_adapter"}
         if _SDK.fullmatch(basename) and not adapter:
             self.issue("excluded_cudnn_sdk_path", layer_index, entry_index)
         if "/nvidia/cudnn/" in "/" + path and path not in self.expected:
@@ -200,6 +202,7 @@ class _LayerAudit:
             "content_bytes_read": self.bytes, "required_payload_count": len(self.expected),
             "retained_runtime_count": sum(self.observed.get(path, False) for path, row in self.expected.items() if row["kind"] == "cudnn_runtime"),
             "verified_torch_adapter_count": sum(self.observed.get(path, False) for path, row in self.expected.items() if row["kind"] == "torch_adapter"),
+            "verified_tensorflow_adapter_count": sum(self.observed.get(path, False) for path, row in self.expected.items() if row["kind"] == "tensorflow_adapter"),
         }
 
 

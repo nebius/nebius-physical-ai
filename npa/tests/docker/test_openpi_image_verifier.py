@@ -61,8 +61,9 @@ def test_complete_layer_inventory_and_all_bytes(tmp_path, payload, compressed):
     assert report["valid"]
     assert report["retained_runtime_count"] == 8
     assert report["verified_torch_adapter_count"] == 53
-    assert report["required_payload_count"] == 124
-    assert report["regular_files_read"] == 125
+    assert report["verified_tensorflow_adapter_count"] == 67
+    assert report["required_payload_count"] == 194
+    assert report["regular_files_read"] == 195
     assert report["content_bytes_read"] == len(neutral) + sum(len(row[1]) for row in payload[1])
 
 
@@ -75,7 +76,7 @@ def test_oci_and_classic_identity_bind_repeated_blobs(tmp_path, payload, docker_
     report = VERIFIER.verify_image(archive, expected_image_id=config_id if use_config_id else manifest_id, contract=payload[0])
     assert report["valid"]
     assert report["layer_count"] == 2
-    assert report["regular_files_read"] == 248
+    assert report["regular_files_read"] == 388
     assert report["image_config_digest"] == config_id
     assert report["image_manifest_digest"] == manifest_id
 
@@ -89,7 +90,10 @@ def test_sdk_bytes_stay_rejected_after_whiteout(tmp_path, payload, renamed):
     assert "excluded_cudnn_sdk_bytes" in _codes(report)
 
 
-@pytest.mark.parametrize("kind", ["cudnn_runtime", "cudnn_license", "nvshmem_notice", "nccl_license", "torch_adapter", "torch_license"])
+@pytest.mark.parametrize("kind", [
+    "cudnn_runtime", "cudnn_license", "nvshmem_notice", "nccl_license",
+    "torch_adapter", "torch_license", "tensorflow_adapter", "tensorflow_license",
+])
 def test_old_changed_payload_cannot_be_hidden_by_correct_replacement(tmp_path, payload, kind):
     row = next(row for row in payload[0]["required"] if row["kind"] == kind)
     report = _verify(tmp_path, payload, [[ARCHIVES.entry(row["path"], b"changed ancestor bytes")], payload[1]])
@@ -97,7 +101,7 @@ def test_old_changed_payload_cannot_be_hidden_by_correct_replacement(tmp_path, p
     assert "retained_payload_hash_mismatch" in _codes(report)
 
 
-@pytest.mark.parametrize("kind", ["cudnn_license", "nvshmem_notice", "nccl_license", "torch_license"])
+@pytest.mark.parametrize("kind", ["cudnn_license", "nvshmem_notice", "nccl_license", "torch_license", "tensorflow_license"])
 def test_notice_whiteout_invalidates_final_retention(tmp_path, payload, kind):
     path = next(row["path"] for row in payload[0]["required"] if row["kind"] == kind)
     whiteout = str(Path(path).parent / (".wh." + Path(path).name))
@@ -161,7 +165,7 @@ def test_duplicate_layer_paths_fail_even_with_identical_bytes(tmp_path, payload)
     report = _verify(tmp_path, payload, [[*payload[1], payload[1][0]]])
     assert not report["valid"]
     assert "duplicate_layer_path" in _codes(report)
-    assert report["regular_files_read"] == 125
+    assert report["regular_files_read"] == 195
 
 
 def test_renamed_full_cudnn_wheel_bytes_are_rejected(tmp_path, payload):
@@ -170,6 +174,68 @@ def test_renamed_full_cudnn_wheel_bytes_are_rejected(tmp_path, payload):
     report = _verify(tmp_path, payload, [[*payload[1], ARCHIVES.entry("opt/cache/object", body)]])
     assert not report["valid"]
     assert "cached_cudnn_wheel_bytes" in _codes(report)
+
+
+@pytest.mark.parametrize("suffix", [
+    "external/cudnn_frontend_archive/include/cudnn_frontend.h",
+    "xla/service/gpu/cudnn_fused_mha_rewriter.h",
+    "tensorflow/core/kernels/cudnn_pooling_gpu.h",
+])
+@pytest.mark.parametrize("changed_size", [False, True])
+def test_permissive_adapter_path_requires_exact_bytes_and_size(tmp_path, payload, suffix, changed_size):
+    entry = next(entry for entry in payload[1] if entry[0].endswith(suffix))
+    changed = b"X" * (len(entry[1]) + int(changed_size))
+    entries = [ARCHIVES.entry(entry[0], changed) if row[0] == entry[0] else row for row in payload[1]]
+    report = _verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in _codes(report)
+    assert report["verified_tensorflow_adapter_count"] == 66
+
+
+@pytest.mark.parametrize("path", [
+    "opt/venv/lib/python3.11/site-packages/tensorflow/include/cudnn_unreviewed.h",
+    "usr/include/cudnn_frontend.h",
+])
+def test_permissive_header_bytes_do_not_authorize_unreviewed_paths(tmp_path, payload, path):
+    source = next(entry for entry in payload[1] if entry[0].endswith("include/cudnn_frontend.h"))
+    report = _verify(tmp_path, payload, [[*payload[1], ARCHIVES.entry(path, source[1])]])
+    assert not report["valid"]
+    assert "excluded_cudnn_sdk_path" in _codes(report)
+
+
+@pytest.mark.parametrize("sdk_index", range(14))
+def test_licensed_adapter_path_cannot_launder_any_excluded_sdk_bytes(tmp_path, payload, sdk_index):
+    path = next(row["path"] for row in payload[0]["required"] if row["kind"] == "tensorflow_adapter")
+    entries = [ARCHIVES.entry(path, payload[2][sdk_index]) if row[0] == path else row for row in payload[1]]
+    report = _verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert {"retained_payload_hash_mismatch", "excluded_cudnn_sdk_bytes"} <= _codes(report)
+
+
+@pytest.mark.parametrize("notice_index", range(3))
+@pytest.mark.parametrize("mutation", ["remove", "change", "whiteout"])
+def test_every_tensorflow_license_notice_is_required(tmp_path, payload, notice_index, mutation):
+    notices = [row for row in payload[0]["required"] if row["kind"] == "tensorflow_license"]
+    path = notices[notice_index]["path"]
+    entries = [row for row in payload[1] if row[0] != path]
+    layers = [entries]
+    if mutation == "change":
+        entries.append(ARCHIVES.entry(path, b"truncated notice"))
+    elif mutation == "whiteout":
+        marker = str(Path(path).parent / (".wh." + Path(path).name))
+        layers = [payload[1], [ARCHIVES.entry(marker)]]
+    report = _verify(tmp_path, payload, layers)
+    assert not report["valid"]
+    code = "retained_payload_hash_mismatch" if mutation == "change" else "required_payload_missing"
+    assert code in _codes(report)
+
+
+@pytest.mark.parametrize("kind", ["tensorflow_adapter", "tensorflow_license"])
+def test_incomplete_tensorflow_inventory_is_not_an_opt_out(tmp_path, payload, kind):
+    required = payload[0]["required"]
+    required.remove(next(row for row in required if row["kind"] == kind))
+    with pytest.raises(ValueError, match="TensorFlow adapters and notices are incomplete"):
+        _verify(tmp_path, payload)
 
 
 @pytest.mark.parametrize("mutation", [

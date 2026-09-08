@@ -36,6 +36,7 @@ def test_nano_public_layer_closure_contains_only_bootstrap_and_adapters():
     assert not re.search(r"pip install[^\n]*(torch|vllm|cuda|ray)", docker)
     assert 'npa.redistribution="public"' in docker
     assert "USER 10001:10001" in docker
+    assert "src/npa/workbench/cosmos/nano_video_engine.py" in docker
     assert "cosmos3-super-benchmark/prepare_guardrail_runtime.py" in docker
     bootstrap = (IMAGE_DIR / "runtime_bootstrap.sh").read_text()
     assert "flock 9" in bootstrap
