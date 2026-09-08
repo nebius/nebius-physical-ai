@@ -10,6 +10,7 @@ import tarfile
 
 from npa._public_https import download_public_https
 from npa.deploy import ncore_component_inventory as inventory
+from npa.deploy.ncore_karamel_source import verify_karamel_source
 
 _SOURCE_HOSTS = frozenset({"codeload.github.com", "www.bytereef.org"})
 _MPDECIMAL_REVIEW = {
@@ -123,6 +124,26 @@ def _component_proof(component, cpython, directory):
     return proof
 
 
+def _karamel_proof(component, cpython_archive, directory):
+    profile = inventory._KARAMEL_SOURCE_PROFILE
+    inventory._require(component.get("source_mapping") == profile
+                       and component["query"] == profile["query"]
+                       and component["version"] == inventory._HACL_COMMIT,
+                       "unreviewed KaRaMeL source mapping")
+    proof = verify_karamel_source(directory, cpython_archive=cpython_archive)
+    inventory._require(proof["sources"] == profile["sources"]
+                       and proof["source_records"] == profile["source_records"]
+                       and all(proof[key] == profile[key] for key in (
+                           "query", "parent_advisory_scope", "hacl_advisory_scope"))
+                       and all(inventory._sha(inventory._canonical(proof[key])) == profile[digest]
+                               for key, digest in (("files", "files_sha256"),
+                                                   ("hacl_vendored_tree", "hacl_tree_sha256"),
+                                                   ("cpython_tree", "cpython_tree_sha256")))
+                       and inventory._sha(json.dumps(proof, indent=2).encode() + b"\n")
+                       == profile["source_proof_sha256"], "KaRaMeL source proof differs")
+    return proof
+
+
 def verify_bundled_sources(components: list[dict], directory: Path) -> dict:
     """Reproduce reviewed upstream identities and finite patch scopes from public sources.
 
@@ -135,8 +156,12 @@ def verify_bundled_sources(components: list[dict], directory: Path) -> dict:
         ValueError: Changed source population, mapping, identity or upstream release notes.
         OSError, KeyError, TypeError, RuntimeError: Download, archive or schema failure.
     """
-    expected = inventory._BUNDLED_SOURCE_PROFILES
-    bundled = {row["name"]: row for row in components if row["name"] in expected}
-    inventory._require(bundled.keys() == expected.keys(), "bundled source population differs")
-    cpython = _archive_files(_fetch(inventory._CPYTHON_SOURCE, directory, "cpython.upstream"))
-    return {name: _component_proof(component, cpython, directory) for name, component in bundled.items()}
+    expected = set(inventory._BUNDLED_SOURCE_PROFILES) | {"karamel-runtime"}
+    bundled = [row for row in components if row["name"] in expected]
+    inventory._require(len(bundled) == len(expected)
+                       and {row["name"] for row in bundled} == expected,
+                       "bundled source population differs")
+    raw = _fetch(inventory._CPYTHON_SOURCE, directory, "cpython.upstream")
+    cpython = _archive_files(raw)
+    return {row["name"]: (_karamel_proof(row, raw, directory) if row["name"] == "karamel-runtime"
+                           else _component_proof(row, cpython, directory)) for row in bundled}

@@ -160,6 +160,16 @@ def _license_evaluation(path, population, directory, executable):
             "report_sha256": inventory._sha(raw), "scanner_sha256": _TRIVY_BINARY_SHA256}
 
 
+def _python_patch_coverage(row, expected):
+    parent = expected["cpython"]
+    inventory._require(parent["version"] == inventory._CPYTHON_VERSION
+                       and parent["query"] == {"cpe": "cpe:2.3:a:python:python:"
+                                               + inventory._CPYTHON_VERSION + ":*:*:*:*:*:*:*"}
+                       and row.get("parent_advisory_scope") == {
+                           "component": "cpython", "version": parent["version"], "query": parent["query"]},
+                       "CPython patch advisory scope differs")
+
+
 def _bundled_coverage(component, row, expected):
     name = component["name"]
     profile = inventory._BUNDLED_SOURCE_PROFILES.get(name)
@@ -172,16 +182,27 @@ def _bundled_coverage(component, row, expected):
                                                      else inventory._CPYTHON_COMMIT)
                        and re.fullmatch(r"[0-9a-f]{64}", row.get("source_proof_sha256", "")),
                        "bundled source proof missing or substituted")
-    parent = expected["cpython"]
-    inventory._require(parent["version"] == inventory._CPYTHON_VERSION
-                       and parent["query"] == {"cpe": "cpe:2.3:a:python:python:"
-                                               + inventory._CPYTHON_VERSION + ":*:*:*:*:*:*:*"}
-                       and row.get("parent_advisory_scope") == {
-                           "component": "cpython", "version": parent["version"], "query": parent["query"]},
-                       "CPython patch advisory scope differs")
+    _python_patch_coverage(row, expected)
     if name == "mpdecimal":
         inventory._require(row.get("upstream_review") == sources._MPDECIMAL_REVIEW,
                            "mpdecimal upstream release review missing or substituted")
+
+
+def _karamel_coverage(component, row, expected):
+    profile = inventory._KARAMEL_SOURCE_PROFILE
+    inventory._require(component.get("source_mapping") == profile
+                       and row.get("source_mapping") == profile
+                       and component["version"] == inventory._HACL_COMMIT
+                       and component["query"] == row.get("source_query") == profile["query"]
+                       and row.get("source_proof_sha256") == profile["source_proof_sha256"],
+                       "KaRaMeL source proof missing or substituted")
+    _python_patch_coverage(row, expected)
+    hacl = expected["hacl"]
+    inventory._require(hacl["version"] == inventory._HACL_COMMIT
+                       and hacl["query"] == profile["hacl_advisory_scope"]["query"]
+                       and row.get("hacl_advisory_scope") == {
+                           "component": "hacl", "query": hacl["query"]},
+                       "HACL advisory scope differs")
 
 
 def coverage_failures(population: dict, evaluations: list[dict], licenses: dict) -> list[str]:
@@ -217,6 +238,8 @@ def coverage_failures(population: dict, evaluations: list[dict], licenses: dict)
             failures.append("unmapped vulnerability evaluation: " + name)
         else:
             _bundled_coverage(component, row, expected)
+            if name == "karamel-runtime":
+                _karamel_coverage(component, row, expected)
         for finding in row["findings"]:
             if finding["blocking"]:
                 failures.append("blocking advisory: " + name + ":" + finding["id"])

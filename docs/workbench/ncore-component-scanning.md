@@ -12,7 +12,7 @@ the component modules. Its image-file mapping authenticates committed NPA
 source and notices, exact generated revision/import-hook bytes, and the duplicate
 Apache license against the separately authenticated upstream source.
 
-## Population and current refusal
+## Reviewed population and required evaluation
 
 The reviewed CPython 3.12.14 file selection contains these non-Debian components:
 
@@ -22,7 +22,7 @@ The reviewed CPython 3.12.14 file selection contains these non-Debian components
 | Embedded Expat | 2.8.3, explicit Grype Expat CPE | Exact upstream Expat notice |
 | Embedded libmpdec | Official 2.5.1 release; PSF-declared CPE plus bounded upstream release-note review | BSD-2-Clause notice |
 | HACL* hash implementations | Upstream revision recorded by CPython's refresh script, OSV commit query | MIT notice |
-| Embedded KaRaMeL runtime helpers, including F* arithmetic | Snapshot in HACL* revision `bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0`; standalone advisory mapping unresolved | Two Apache-2.0 headers plus delivered full terms |
+| Embedded KaRaMeL runtime helpers, including F* arithmetic | HACL* snapshot mapped to KaRaMeL revision `95968326f0ca1d6f9056347496482d285e6a9f1e`; separate OSV commit query | Two Apache-2.0 headers plus delivered full terms |
 | Embedded BLAKE2 | CPython snapshot mapped to the referenced upstream libb2 commit; OSV commit query | Reference-code and CPython-wrapper CC0 dedications plus delivered full terms |
 | NVIDIA NCore | Exact source-lock commit, OSV commit query | Apache-2.0 notice |
 | trueprice pycolmap | Exact source-lock commit, OSV commit query | MIT notice |
@@ -42,11 +42,12 @@ fact does not replace evaluating the new component versions and final image.
 Fixed CRITICAL findings still refuse; no severity, fix-state or scanner filter
 has changed.
 
-The gate still has **no complete passing profile**: the embedded KaRaMeL runtime has an explicit unresolved advisory row. A guessed CPE
-returning no matches, or a CPython/HACL* hash inventory, cannot close those
-rows. A reviewed, genuinely evaluated mapping is required for each vendored
-code population. The new notices and Python upgrade do not establish those
-standalone mappings.
+The KaRaMeL source relationship and standalone query are now verified by a
+required third bundled-source proof. This resolves the source-mapping gap;
+**final-image acceptance remains required**. Each replacement image must pass
+fresh component, selected-base, ordinary image, complete-byte, source, license
+and functional gates. A source proof or empty advisory response cannot accept
+an image.
 
 There are nine code identities and twelve required license scopes. These are
 separate populations: incorporated Python notices, the two KaRaMeL/F* notice
@@ -115,9 +116,10 @@ the real OSV query `{"commit":"620681a3b15c4d7239b9323b9da5ea208a959d3d"}`
 and consumes every page. Any returned advisory blocks pending review; no
 claim is made that CPython ships all of libb2 or every upstream code path.
 
-Both components require the full Python CPE evaluation for the installed
-parent version, covering CPython's wrappers and adaptations under the existing
-policy. That shared parent scope is recorded explicitly and is never counted
+All three bundled source proofs require the full Python CPE evaluation for
+the installed parent version, covering CPython's wrappers and adaptations under the existing
+policy. KaRaMeL additionally requires the actual HACL* commit evaluation.
+That shared parent scope is recorded explicitly and is never counted
 as a separate unique library scan. The fixed-CRITICAL rule remains unchanged.
 
 ## Invocation and evidence
@@ -164,8 +166,9 @@ same exact hashes. It does not execute the image. Tool commands, exits, stdout,
 stderr, raw OSV request/response pages, database identity/hash, staged-license
 origins and hashes, and each component's file-population hash stay in the
 private evidence directory. HTTP/scanner failures fail closed.
-Bundled evaluations also retain their source-proof hashes and, for libmpdec,
-the exact upstream release-review dispositions. Missing or substituted proof,
+Bundled evaluations also retain their exact mapping profiles and source-proof
+hashes. KaRaMeL retains its source query and both required parent scopes;
+libmpdec retains the exact upstream release-review dispositions. Missing or substituted proof,
 query, parent evaluation or release review refuses.
 
 Grype uses its supported [direct CPE scan interface](https://oss.anchore.com/docs/guides/vulnerability/scan-targets/).
@@ -230,8 +233,38 @@ The helpers are `lowstar_endianness.h`, `internal/target.h`,
 `FStar_UInt_8_16_32_64.h`, `fstar_uint128_struct_endianness.h` and
 `FStar_UInt128_Verified.h`. The script adjusts include paths, removes unused
 external declarations/macros, and generates the small `krml/types.h` wrapper.
-The versioned HACL* tree contains these helper files directly, not a gitlink
-that establishes a KaRaMeL revision.
+The pinned HACL* [INFO.txt](https://github.com/hacl-star/hacl-star/blob/bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0/dist/gcc-compatible/INFO.txt)
+records KaRaMeL revision
+`95968326f0ca1d6f9056347496482d285e6a9f1e`. Its
+[Makefile](https://github.com/hacl-star/hacl-star/blob/bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0/Makefile)
+records the KaRaMeL checkout revision and copies the runtime directories into
+`dist/karamel`. The verifier authenticates both source records and verifies
+that all 21 vendored files match that
+[recorded KaRaMeL revision](https://github.com/FStarLang/karamel/tree/95968326f0ca1d6f9056347496482d285e6a9f1e)
+byte for byte. The tree contains ordinary files, not a gitlink; this proof
+establishes a recorded revision with identical runtime bytes, without claiming
+the headers uniquely identify that commit or originated at its date.
+
+`npa.deploy.ncore_karamel_source.verify_karamel_source` checks all three pinned
+CPython/HACL*/KaRaMeL archives, the exact INFO/Makefile/refresh records, the
+complete HACL* vendor tree, all five header transformations and the six-file
+CPython helper directory including local `types.h`. Two upstream headers are
+unchanged; three have the reviewed include rewrites and declaration/macro
+removals. Every original, delivered-source and exact unified-diff hash is
+bound. Archives are read as data; no upstream scripts or compiler are run.
+The already fetched CPython archive is reused and checked against the same
+fixed hash before parsing.
+
+The inventory attaches a copy of the exact KaRaMeL profile to the actual
+`karamel-runtime` component. It includes every archive URL/root/hash,
+source-record hash, header-mapping hash, whole vendor/local-tree hash, the
+standalone query and both parent scopes. The retained source proof's exact
+JSON SHA256 is
+`362fa6f8dfa800e7145d8b9c3efe0b74cc0ad018f5a1bce842afa54ef8669c98`;
+a missing or substituted proof, profile or query refuses. The publication
+source closure includes the new verifier and both component/KaRaMeL test
+modules. Its committed-snapshot runner requires complete collection and
+passing setup, call and teardown reports for every mandatory test.
 
 The [build selection](https://github.com/python/cpython/blob/2abcf904b8dac8c999d2b3aac76681abb333798a/Modules/Setup.stdlib.in)
 compiles HACL* into `_md5`, `_sha1`, `_sha2` and `_sha3`.
@@ -239,14 +272,18 @@ Its [SHA2 implementation](https://github.com/python/cpython/blob/2abcf904b8dac8c
 uses the copied inline F* 128-bit arithmetic and endian helpers. This supports
 an embedded `karamel-runtime` advisory component bound to those four extension
 files. The recorded version denotes the HACL* vendored snapshot, not a claimed
-KaRaMeL release or commit. Its query remains unmapped: a HACL* OSV commit query
-does not independently evaluate advisories for the vendored KaRaMeL runtime.
+KaRaMeL release. Its standalone OSV query is
+`{"commit":"95968326f0ca1d6f9056347496482d285e6a9f1e"}`. The evaluation must also
+bind `parent_advisory_scope` to the actual CPython 3.12.14 version/CPE evaluation
+and `hacl_advisory_scope` to the actual HACL* commit evaluation. Neither parent
+query can substitute for the standalone KaRaMeL query. Every returned OSV
+advisory still blocks; zero findings describe only that database query's scope.
 The F* compiler and KaRaMeL translator are not selected runtime components;
 no compiler package is synthesized from a copyright header. Attribution is
 based on authenticated source/build inputs and exact ELF hashes, not on
 symbol-level recovery from stripped binaries.
 
-The current profile is intentionally fixed at CPython 3.12.12. A replacement
+The current profile is intentionally fixed at CPython 3.12.14. A replacement
 must update the parent version/CPE, source commit/archive hash, actual ELF
 inventory, wrapper/source mapping hashes and notices together after review.
 The gate checks that the Python file lock agrees with the pinned ELF hashes

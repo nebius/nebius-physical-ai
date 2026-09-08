@@ -21,6 +21,7 @@ SOURCE_PATHS = ("npa/docker/workbench/ncore", "npa/scripts/image_byte_scan", "np
                 "npa/src/npa/deploy/ncore_component_scan.py", "npa/src/npa/deploy/ncore_component_inventory.py",
                 "npa/src/npa/deploy/ncore_component_advisories.py",
                 "npa/src/npa/deploy/ncore_component_sources.py",
+                "npa/src/npa/deploy/ncore_karamel_source.py",
                 "npa/src/npa/__init__.py", "npa/src/npa/deploy/__init__.py",
                 "npa/src/npa/workbench/__init__.py", "npa/src/npa/workbench/gpu_classes.py",
                 "npa/src/npa/workflows/ncore_runtime.py", "npa/tests/conftest.py", "npa/pyproject.toml",
@@ -29,10 +30,14 @@ SOURCE_PATHS = ("npa/docker/workbench/ncore", "npa/scripts/image_byte_scan", "np
                 "npa/tests/docker/test_image_byte_go_build.py",
                 "npa/tests/docker/test_packaging_contract.py",
                 "npa/tests/docker/test_ncore_image_contract.py",
+                "npa/tests/deploy/test_ncore_component_scan.py",
+                "npa/tests/deploy/test_ncore_karamel_source.py",
                 "npa/docker/workbench/packaging-contract.yaml", ".gitleaks.toml",
                 ".trivyignore", ".github/workflows/publish-public-images.yml")
 SOURCE_GUARDS = ("npa/tests/docker/test_packaging_contract.py",
-                 "npa/tests/docker/test_ncore_image_contract.py")
+                 "npa/tests/docker/test_ncore_image_contract.py",
+                 "npa/tests/deploy/test_ncore_component_scan.py",
+                 "npa/tests/deploy/test_ncore_karamel_source.py")
 
 
 def run(argv, output, *, env=None, input_bytes=None, cwd=None):

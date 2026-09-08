@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import tarfile
 
+from npa.deploy import ncore_karamel_source as karamel
 from npa.deploy import ncore_selected_sbom as selected
 
 _CPYTHON_COMMIT = "2abcf904b8dac8c999d2b3aac76681abb333798a"
@@ -46,6 +47,21 @@ _BUNDLED_SOURCE_PROFILES = {
     },
 }
 _HACL_COMMIT = "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0"
+_KARAMEL_SOURCE_PROFILE = {
+    "sources": copy.deepcopy(karamel._SOURCES),
+    "source_records": copy.deepcopy(karamel._RECORDS),
+    "files_sha256": karamel._HEADER_MAPPING_SHA256,
+    "hacl_tree_sha256": karamel._HACL_TREE_SHA256,
+    "cpython_tree_sha256": karamel._CPYTHON_TREE_SHA256,
+    "query": {"commit": karamel._KARAMEL_COMMIT},
+    "parent_advisory_scope": {"component": "cpython", "version": _CPYTHON_VERSION,
+                              "query": {"cpe": "cpe:2.3:a:python:python:"
+                                        + _CPYTHON_VERSION + ":*:*:*:*:*:*:*"}},
+    "hacl_advisory_scope": {"component": "hacl", "query": {"commit": _HACL_COMMIT}},
+    # Exact retained JSON produced by the standalone source verifier, before
+    # any advisory evaluation. Its bytes are independent of the image receipt.
+    "source_proof_sha256": "362fa6f8dfa800e7145d8b9c3efe0b74cc0ad018f5a1bce842afa54ef8669c98",
+}
 _CPYTHON_ELF_INVENTORY = "fd9c96ddcf94b6e8cc74d04e0d555bf6964c47f0117514def0cc8d7ac180e698"
 _SOURCE_INVENTORY = "opt/ncore/src/source-inventory.json"
 _SOURCE_LOCK = "usr/share/doc/npa-ncore/source-lock.json"
@@ -254,11 +270,12 @@ def _components(groups, files, sources, source_sha):
         components.append(_component(name, version, paths, files, query, *_NOTICES[name]))
         if name in _BUNDLED_SOURCE_PROFILES:
             components[-1]["source_mapping"] = copy.deepcopy(_BUNDLED_SOURCE_PROFILES[name])
-    # These inline helpers are compiled into HACL extensions. The vendored tree
-    # is authenticated by HACL's revision, but that is not a KaRaMeL advisory ID.
+    # The installed snapshot describes HACL's copy; the separately verified
+    # KaRaMeL revision identifies the upstream advisory scope of these helpers.
     paths = next(row["files"] for row in components if row["name"] == "hacl")
     components.append(_component("karamel-runtime", _HACL_COMMIT, paths, files,
-                                 None, *_NOTICES["hacl-krml"]))
+                                 copy.deepcopy(_KARAMEL_SOURCE_PROFILE["query"]), *_NOTICES["hacl-krml"]))
+    components[-1]["source_mapping"] = copy.deepcopy(_KARAMEL_SOURCE_PROFILE)
     for name in ("ncore", "pycolmap"):
         version = sources[name]["revision"]
         _require(re.fullmatch(r"[0-9a-f]{40}", version), "full source revision required")

@@ -12,6 +12,7 @@ import ssl
 import tarfile
 
 from npa._public_https import download_public_https
+from npa.deploy import ncore_component_inventory as inventory
 from npa.deploy import ncore_component_sources as sources
 from npa.deploy.ncore_component_inventory import _canonical, _require, _sha
 
@@ -200,12 +201,21 @@ def _osv_evaluation(component, directory):
 
 def _attach_source_proof(component, result, proofs, directory):
     proof = proofs.get(component["name"])
+    required = set(inventory._BUNDLED_SOURCE_PROFILES) | {"karamel-runtime"}
+    _require(proof is not None or component["name"] not in required, "required source proof missing")
     if proof is None:
         return
     result["source_proof_sha256"] = _write(
         directory / (component["name"] + ".source-proof.json"), proof)
     result["source_mapping"] = component["source_mapping"]
     result["parent_advisory_scope"] = proof["parent_advisory_scope"]
+    if component["name"] == "karamel-runtime":
+        _require(proof["query"] == component["query"] == result["query"]
+                 and result["source_proof_sha256"]
+                 == inventory._KARAMEL_SOURCE_PROFILE["source_proof_sha256"],
+                 "KaRaMeL source proof/query differs")
+        result["source_query"] = proof["query"]
+        result["hacl_advisory_scope"] = proof["hacl_advisory_scope"]
     if "upstream_review" in proof:
         result["upstream_review"] = proof["upstream_review"]
 
