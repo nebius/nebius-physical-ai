@@ -143,6 +143,12 @@ workflow templates.
 
 ## Gotchas
 
+- The native Ray CLIP recipe has an optional completed-result archive companion
+  at `npa/workflows/workbench/ray-clip-development/archive.py`; follow
+  `docs/testing/ray-clip-archive.md` for quiescent source inventories, conditional
+  S3 publication and hash-bound private restore. It does not submit Jobs or
+  resume incomplete checkpoints, and its local rsync path needs no S3 credentials.
+
 - Customer-provided raw SkyPilot `envs` does not support self-referencing
   interpolation; repository specs use resolved `config` tokens.
 - `sky jobs launch` has no dry-run flag. Use `workflow submit --plan-only` for a

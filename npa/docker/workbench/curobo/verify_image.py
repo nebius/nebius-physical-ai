@@ -174,7 +174,7 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
         findings.append({"code": code, "layer_index": layer, "entry_index": entry})
 
     with tarball.open("rb") as stream:
-        archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+        archive_hash, _ = _hash_stream(stream)
     with tarfile.open(tarball, "r:*") as archive:
         outer = archive.getmembers()
         members = {_path(member.name): member for member in outer}

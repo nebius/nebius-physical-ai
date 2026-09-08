@@ -50,15 +50,19 @@ Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 decouples appearance-profile sampling from the run ID for reproducible quality
 comparisons. Quality and retries use
 `grade_threshold`, `refinement_iterations`, `retry_seed_stride`,
-`retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` controls
-the source-motion-preserving composite used for publication (the workflow uses
-`0.8`, retaining 20% of the real Cosmos appearance treatment). The unmodified
-Cosmos video is preserved beside the composite, so model output and post-process
-provenance remain independently auditable. The composition requires
+`retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
+compatibility setting that must be `0.0` (the default). Nonzero values fail
+before generation. Publication copies the model output bytes without blending,
+resizing, or changing the frame rate, and records their SHA-256 digest.
+The check lives in the shared generation implementation, so custom workflows
+using `workbench.cosmos3.generate_variants` and direct CLI callers receive the
+same protection for any dataset. Existing deployed images need the updated code;
+setting the workflow value to zero also disables blending in the older publisher.
+The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
-`caption_model` defaults to `nvidia/Cosmos3-Super-Reasoner` for the original
+`caption_model` defaults to `MiniMaxAI/MiniMax-M3` for the original
 and accepted-variant captions and for Cosmos Evaluator's visual questions.
 Token Factory availability is key-scoped and can change, so run
 `npa workbench token-factory models` before execution and override
@@ -70,6 +74,27 @@ pinned OpenMDW-1.1 framework source but no weights. The operator supplies
 `nvidia/Cosmos-Guardrail1` terms. Tokens and model weights are never serialized
 into artifacts or Git.
 
+### Double exposure in older runs
+
+Older workflow defaults blended 80% source pixels with 20% generated pixels.
+Because the model can move the camera, cloth, or grippers, this superimposed
+different scenes and produced translucent duplicate objects. Alpha blending
+does not align motion. Existing run artifacts and their rejection reports stay
+unchanged; retrieve each variant's `raw_cosmos_video.mp4` into a fresh output
+location to inspect the unblended result without repeating GPU generation.
+Those bytes require their own evaluation before acceptance.
+
+Removing the blend does not correct model drift or establish full-episode
+augmentation. Framework [video2video defaults](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/args.py)
+condition on the first two latent
+frames and generate a fixed-length segment; passing a long source file alone
+does not provide structural controls across its full duration. For complete
+source-motion conditioning, see the separately deployed
+[Nano augmentation path](../../../npa/deploy/cosmos3-nano-video/README.md#source-conditioned-visual-augmentation),
+which uses matching source-edge controls for each interval. That deployment has
+its own media and guardrail contract. Keep the acceptance threshold unchanged
+and inspect duration, identity, motion, and contacts independently of decoding.
+
 ## Artifact contract
 
 Every successful generation pass preserves the downstream layout:
@@ -79,7 +104,6 @@ cosmos_augmented/
   manifest.json
   variant-0000/
     augmented_video.mp4
-    raw_cosmos_video.mp4
     frame-00001.png
     metadata.json
 ```
@@ -87,8 +111,9 @@ cosmos_augmented/
 Each metadata file records the real engine (`nvidia-cosmos/cosmos-framework`),
 `video2video` mode, source-video conditioning, checkpoint, seed, guidance,
 steps, attempt number, guardrail posture, non-baked weights, and input lineage.
-When motion preservation is enabled, it also records source/Cosmos weights and
-SHA-256 digests for both the raw model output and published composite.
+It records `motion_preservation: null` and the published model video's SHA-256
+digest. Older blended runs additionally contain `raw_cosmos_video.mp4` and
+compositing metadata; those are retained historical evidence.
 The run manifest records non-empty video bytes, variant count, actual GPU
 parallelism, and the same conditioning contract.
 
@@ -128,6 +153,15 @@ names into the spec.
 
 ## Live validation scope
 
+The publication regression can reuse retained real GPU output without generating
+again. Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
+`NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded
+variant directories, `NPA_PAIDF_REPAIR_URI` set to a fresh S3 augment prefix, and
+`NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It requires
+saved raw-output hashes, uploads through the real publisher, and verifies exact
+bytes after S3 readback. This proves publication fidelity, not generation quality
+or training acceptance.
+
 The complete synthetic workflow has succeeded on reserved RTX PRO 6000, and
 real source-conditioned Cosmos 3 inference plus refinement semantics have
 succeeded on reserved B200. The preserved reserved topology exposes one
@@ -137,15 +171,16 @@ unit-tested rather than live-proven concurrently. No on-demand capacity was used
 a sequential two-variant run must not be described as concurrent evidence.
 
 The B200 validation also ran against the pinned RoboPro physical capture. Its
-initial and refined Cosmos passes produced 27,090,575-byte and 25,931,172-byte
-raw videos with upstream guardrails enabled and weights fetched at runtime. At a
-validation-only `0.40` threshold, the real evaluator scored them `0.154068` and
-`0.256552`; the second pass cleared hallucination and appearance checks but not
-temporal consistency or the required 4/4 attributes. The workflow therefore
-failed closed after the bounded refinement, retaining 98 artifacts and a
-316,545-byte Rerun quality-evidence recording. This is rejection-path evidence,
-not an accepted-quality claim, and it does not change the shipped `0.75`
-threshold.
+initial and refined Cosmos passes retained 27,090,575-byte and 25,931,172-byte
+raw model videos with upstream guardrails enabled and weights fetched at runtime.
+The then-current publisher evaluated source/model composites rather than those
+raw bytes: at a validation-only `0.40` threshold, the composites scored
+`0.154068` and `0.256552`; the second pass cleared hallucination and appearance
+checks but not temporal consistency or the required 4/4 attributes. The workflow
+therefore failed closed after the bounded refinement, retaining 98 artifacts and
+a 316,545-byte Rerun quality-evidence recording. This is historical pre-fix
+rejection-path evidence, not validation of current unmodified publication or an
+accepted-quality claim, and it does not change the shipped `0.75` threshold.
 
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 

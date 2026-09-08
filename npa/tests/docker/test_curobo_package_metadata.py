@@ -3,7 +3,11 @@
 import hashlib
 import importlib.util
 from pathlib import Path
-import tomllib
+
+try:  # tomllib is part of the standard library from Python 3.11.
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 import pytest
 
