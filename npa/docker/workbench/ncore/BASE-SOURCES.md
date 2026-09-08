@@ -161,8 +161,8 @@ checks remain acceptance gates; source tests do not establish image acceptance.
 ## Why source is or is not delivered
 
 Each component has a binary-specific `license` and `license_reason`; every
-selected Debian package keeps its original copyright file. Common license texts
-and CPython's original `LICENSE.txt` are included. A permissive component is
+selected Debian package keeps its original copyright file. Common license texts,
+CPython's original `LICENSE.txt` and incorporated-code notices are included. A permissive component is
 `delivery: notice`, with no full source archive. This classification is scoped to
 the files listed for that component, not the entire upstream project.
 
@@ -199,6 +199,77 @@ source waiver for distributing those libraries independently. See the
 Public CA trust data and the public Debian verification keyring retain their
 small source packages and notices. Public certificates/verification keys are
 intentional trust inputs; no private key is selected.
+
+## CPython 3.12.14 replacement
+
+The selected base is the official `python:3.12.14-slim-bookworm` index
+`sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254`,
+observed on 2026-09-08. Its linux/amd64 manifest is
+`sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef`
+and config is
+`sha256:59bf1d95c965f12dfc14afaf5af778fc1dbe5b372bd5c281645fc34d4c75d4e7`.
+The [official image recipe](https://github.com/docker-library/python/blob/688a0b86bb44289df16a363e9f41d90514c1a5f9/3.12/slim-bookworm/Dockerfile)
+and OCI history bind the
+[Python 3.12.14 source archive](https://www.python.org/ftp/python/3.12.14/Python-3.12.14.tar.xz)
+to SHA256 `5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a`.
+`CPYTHON-BASE-RECIPE.txt` retains that history command. `cpython_provenance` in
+the base lock records the index/platform/config, four layer hashes and decoded
+diff IDs, source archive, recipe and exact notice extraction identities.
+
+This replaces the affected 3.12.12 interpreter for
+[CVE-2026-6100](https://www.cve.org/CVERecord?id=CVE-2026-6100), whose PSF record
+identifies 3.12.14 as fixed on the 3.12 branch. All 665 selected CPython paths
+were rehashed from verified OCI members; the 61 ELF files retain the required
+Debian library closure. The two versioned `lib2to3` grammar pickle names now
+contain `3.12.14`. No image program was executed to derive these locks.
+
+The base's 105 installed Debian records contain no newer version of a selected
+package than the unchanged `20260906T183022Z` snapshot. The base's older PCRE2
+is upgraded by the existing APT step. The 99 baked partial-package records,
+their selected file hashes, source versions and corresponding-source artifacts
+remain unchanged. Their complete `.deb` archives and both runtime-only native
+archives were rehashed, selected members checked, and binary/source mappings
+verified against the two signed snapshot repositories. This read-only evidence
+does not substitute for running the build's real APT upgrade and bootstrap.
+
+The release archive and official
+[CPython commit](https://github.com/python/cpython/tree/2abcf904b8dac8c999d2b3aac76681abb333798a)
+agree byte-for-byte on the notice source members below. Files are delivered
+under `/usr/share/doc/npa-ncore/cpython/` and checked by the selected-file lock.
+For a C comment, retain the first complete `/* ... */` block followed by one LF.
+
+| Delivered notice | Exact source member | Extraction |
+| --- | --- | --- |
+| `LICENSE.third-party` | `Doc/license.rst` | Whole file |
+| `LICENSE.expat` | `Modules/expat/COPYING` | Whole file |
+| `LICENSE.mpdecimal` | `Modules/_decimal/libmpdec/mpdecimal.h` | C comment |
+| `LICENSE.hacl` | `Modules/_hacl/Hacl_Hash_SHA2.c` | C comment |
+| `LICENSE.hacl-krml` | `Modules/_hacl/include/krml/lowstar_endianness.h` | C comment |
+| `LICENSE.hacl-fstar` | `Modules/_hacl/include/krml/FStar_UInt128_Verified.h` | C comment |
+| `LICENSE.blake2` | `Modules/_blake2/impl/blake2.h` | C comment |
+| `LICENSE.blake2-python` | `Modules/_blake2/blake2module.c` | C comment |
+
+The selected interpreter's `LICENSE.txt` is the unchanged upstream core
+`LICENSE`. Embedded Expat is **2.8.3** (source macros and ELF version string),
+libmpdec is **2.5.1**, HACL* is revision
+`bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0`, and BLAKE2 is the exact vendored
+CPython snapshot. HACL's generated hash implementations carry MIT terms;
+its included KaRaMeL/F* helper headers also carry Apache-2.0 notices. Both
+BLAKE2's reference implementation and CPython wrapper carry CC0 dedications.
+The already selected `/usr/share/common-licenses/Apache-2.0` and `CC0-1.0`
+deliver the full referenced grants. The incorporated-code documentation retains
+upstream's broader license text, including notices for optional code outside
+this selection; it does not assert that every documented component ships.
+
+These permissive components permit binary redistribution with the retained
+notices; they require no corresponding-source archive. Their original source
+identities remain reproducible from the lock. Required GPL/LGPL source for the
+selected Debian binaries remains delivered. The new base and notice profile
+must be reviewed by the component gate, including its complete ELF hash profile,
+Expat identity and the additional Apache/CC0 notice scopes. Standalone libmpdec
+and BLAKE2 advisory evaluation remains unresolved by this packaging change.
+Quarantine remains until the integrated rebuilt artifact passes all required
+component, selected-Debian, source, complete-byte and runtime/bootstrap gates.
 
 ## Reviewed source transformations
 

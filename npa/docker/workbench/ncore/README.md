@@ -5,6 +5,13 @@ It remains a quarantined development candidate; no image acceptance or GPU
 readiness is implied. See [REDISTRIBUTION.md](REDISTRIBUTION.md) for the source,
 application dependency and acceptance boundaries.
 
+The selected base now pins CPython 3.12.14 to address CVE-2026-6100. Its 665
+interpreter/stdlib paths and 61 ELF hashes come from the official linux/amd64
+image. The fixed Debian snapshot still selects 99 baked partial packages and
+two runtime-only native packages. [BASE-SOURCES.md](BASE-SOURCES.md#cpython-31214-replacement)
+records the exact base/source identities and bundled notices. New build, scan
+and bootstrap evidence is required before this replacement can be accepted.
+
 The [OCI publication procedure](../../../../docs/workbench/ncore-oci-publication.md)
 prepares the exact locked public Debian keyring before scanner preparation or
 building. Its `--keyring` option defaults to

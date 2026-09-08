@@ -23,7 +23,7 @@ import sys
 import tarfile
 
 
-LOCK_SHA256 = "8d0b0eec211844d945929d11adb5e2127a5075587a8ecda3bbb215bb2b231172"
+LOCK_SHA256 = "7cc65ad272c1f9e32ada0ff171866c63d04353d3b0df9d9e8e36ca6f3039777a"
 SCRIPT_DIRECTORY = Path("/opt/ncore/native")
 LOCK_PATH = SCRIPT_DIRECTORY / "native-bootstrap-lock.json"
 PYTHON = "/usr/local/bin/python3.12"

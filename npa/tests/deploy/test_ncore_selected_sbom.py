@@ -20,7 +20,7 @@ def sha(raw):
 def lock():
     return {
         "schema": 2,
-        "base_image": "python:3.12.12-slim-bookworm@sha256:" + "a" * 64,
+        "base_image": "python:3.12.14-slim-bookworm@sha256:" + "a" * 64,
         "debian_binaries": [
             {
                 "name": "libc6",

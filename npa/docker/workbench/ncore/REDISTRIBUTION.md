@@ -95,7 +95,18 @@ reviewing the fetched artifacts.
 | NCore | NVIDIA/ncore `59c698d206da92b406a4f72619fce3b3a2c64bfd`; Apache-2.0, upstream LICENSE and source headers under `/opt/ncore/src/ncore` |
 | COLMAP model reader | trueprice/pycolmap `fe7a7c45df803b6c391777e349f0d8d65d39d777`; MIT, upstream `LICENSE.txt` under `/opt/ncore/src/pycolmap` |
 | NPA adapter and shared modules | Exact committed `SOURCE_SHA`, readable `/opt/npa/src/npa`, root Apache license and retained adaptation notices under `/usr/share/doc/npa-ncore/notices` |
-| Retained base binaries | Explicit file selection from digest-pinned Python 3.12.12 slim Bookworm and immutable Debian snapshot, copied into one `FROM scratch` filesystem layer. Original notices for permissive files and actual corresponding source/build scripts for covered binaries accompany the image; superseded ancestry is absent. See `base-source-lock.json` and `/opt/ncore/base-sources`. |
+| Retained base binaries | Explicit file selection from digest-pinned Python 3.12.14 slim Bookworm and immutable Debian snapshot, copied into one `FROM scratch` filesystem layer. Original notices for permissive files and actual corresponding source/build scripts for covered binaries accompany the image; superseded ancestry is absent. See `base-source-lock.json` and `/opt/ncore/base-sources`. |
+
+The CPython 3.12.14 base replaces 3.12.12 to resolve the PSF's fixed CRITICAL
+[CVE-2026-6100](https://www.cve.org/CVERecord?id=CVE-2026-6100). The base lock
+records actual selected interpreter/stdlib hashes, including embedded Expat
+2.8.3, libmpdec 2.5.1, HACL* and BLAKE2. Core Python terms, incorporated-code
+documentation, all selected bundled-code copyright grants, and the full
+Apache-2.0/CC0 terms accompany the selection. See the
+[CPython source and notice record](BASE-SOURCES.md#cpython-31214-replacement).
+This replacement has no accepted image result; a rebuild and renewed complete
+component evaluation remain required, including standalone libmpdec/BLAKE2
+advisory coverage.
 
 The image retains `NOTICE-NVIDIA-NCORE-COLMAP`, `NPA-LICENSE` and
 `NOTICE-NVIDIA-SKILLS`; the latter covers the adapted NuRec modules in the NPA

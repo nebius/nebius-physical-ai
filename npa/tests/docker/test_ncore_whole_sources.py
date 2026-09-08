@@ -255,7 +255,7 @@ def test_base_lock_delivers_only_retained_base_sources_and_has_no_private_paths(
     assert lock["python_distributions"] == []
     assert {c["id"] for c in lock["components"]} == {
         *(p["source"] for p in lock["debian_binaries"]),
-        "cpython:3.12.12",
+        "cpython:3.12.14",
     }
     assert "/home/ubuntu/" not in (packaging / "base-source-lock.json").read_text()
 

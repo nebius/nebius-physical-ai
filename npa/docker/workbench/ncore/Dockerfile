@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # CPU NCore converter/V4 reader. Build context: committed npa/ from SOURCE_SHA.
-FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime-base
+FROM python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime-base
 ARG DEBIAN_SNAPSHOT=20260906T183022Z
 # The base's CPython source-build key is unused by this recipe. Debian source
 # authentication uses its independently hash-pinned archive keyring.
@@ -88,6 +88,7 @@ COPY --from=source-stage /opt/ncore/src/ncore/LICENSE /usr/share/doc/npa-ncore/L
 COPY --chmod=0644 docker/workbench/ncore/notices/NPA-LICENSE \
      docker/workbench/ncore/notices/NOTICE-NVIDIA-NCORE-COLMAP \
      docker/workbench/ncore/notices/NOTICE-NVIDIA-SKILLS /usr/share/doc/npa-ncore/notices/
+COPY --chmod=0644 docker/workbench/ncore/notices/cpython/ /usr/share/doc/npa-ncore/cpython/
 COPY --chmod=0755 docker/workbench/ncore/colmap-convert docker/workbench/ncore/verify-packaging.py \
      docker/workbench/ncore/entrypoint.sh /opt/ncore/bin/
 COPY --chmod=0755 docker/workbench/ncore/npa-entrypoint /opt/venv/bin/npa
