@@ -6,6 +6,7 @@ import json
 import hashlib
 import shutil
 import stat
+import struct
 import subprocess
 import zipfile
 from pathlib import Path
@@ -362,6 +363,29 @@ def test_request_rejects_invalid_paths_and_modes(field, value):
         colmap.ColmapConversionRequest(**args)
 
 
+def _point_rgb_fixture(corruption):
+    import numpy as np
+    from ncore.data.v4 import PointCloudsComponent
+    from ncore.impl.data.types import PointCloud
+
+    rgb = np.array([[20, 30, 40], [50, 60, 70]], dtype=np.uint8)
+    expected_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
+    if corruption == "rgb_missing":
+        return {}, {}, expected_hash
+    if corruption == "rgb_permuted":
+        rgb = rgb[::-1]
+    if corruption == "rgb_shape":
+        rgb = rgb.reshape(2, 1, 3)
+    if corruption == "rgb_fractional":
+        rgb = rgb.astype(np.float32) + 0.25
+    schema = PointCloudsComponent.AttributeSchema(
+        transform_type=PointCloud.AttributeTransformType.INVARIANT,
+        dtype=rgb.dtype,
+        shape_suffix=rgb.shape[1:],
+    )
+    return {"rgb": schema}, {"rgb": rgb}, expected_hash
+
+
 def ncore_fixture(tmp_path, *, corruption=""):
     """Write real synthetic V4 stores with upstream, never a fake reader."""
     import io
@@ -429,11 +453,12 @@ def ncore_fixture(tmp_path, *, corruption=""):
             else {},
             generic_meta_data={},
         )
+    schemas, attributes, rgb_hash = _point_rgb_fixture(corruption)
     points = writer.register_component_writer(
         v4.PointCloudsComponent.Writer,
         "sfm_points",
         coordinate_unit=PointCloud.CoordinateUnit.UNITLESS,
-        attribute_schemas={},
+        attribute_schemas=schemas,
     )
     xyz = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
     if corruption == "points":
@@ -442,7 +467,7 @@ def ncore_fixture(tmp_path, *, corruption=""):
         xyz=xyz,
         reference_frame_id="world",
         reference_frame_timestamp_us=0,
-        attributes={},
+        attributes=attributes,
     )
     paths = writer.finalize()
     meta = tmp_path / "fixture.json"
@@ -466,6 +491,7 @@ def ncore_fixture(tmp_path, *, corruption=""):
             }
         },
         "counts": {"cameras": 1, "images": 2, "poses": 2, "points": 2},
+        "points_rgb_sha256": rgb_hash,
     }
     return meta, source
 
@@ -878,6 +904,374 @@ def test_binary_image_preflight_rejects_truncation_before_vendor_reader(tmp_path
     )
     with pytest.raises(colmap.NcoreConversionError, match="binary"):
         colmap.validate_binary_images(malformed)
+
+
+def _binary_model_records():
+    cameras = [struct.pack("<IiQQ4d", index, 1, 4, 3, 3, 3, 2, 1.5) for index in (1, 5)]
+    images = [
+        struct.pack("<I4d3dI", index, 1, 0, 0, 0, -index, 0, 0, camera)
+        + f"frame{index}.png".encode()
+        + b"\0"
+        + struct.pack("<Q", 0)
+        for index, camera in ((1, 1), (2, 1), (3, 5), (4, 5))
+    ]
+    points = [
+        struct.pack("<Q3d3BdQII", index, *xyz, *rgb, 0, 1, 1, 0)
+        for index, xyz, rgb in (
+            (1, (1, 2, 3), (20, 30, 40)),
+            (2, (0, 0, 0), (80, 90, 100)),
+            (3, (4, 5, 6), (50, 60, 70)),
+        )
+    ]
+    return {"cameras": cameras, "images": images, "points3D": points}
+
+
+def _binary_capture(root, records=None):
+    from PIL import Image
+
+    colmap_text_fixture(root)
+    for index in (3, 4, 5):
+        Image.new("RGB", (4, 3), (index * 50, 10, 20)).save(
+            root / f"images/frame{index}.png"
+        )
+    for component, entries in (records or _binary_model_records()).items():
+        (root / f"sparse/0/{component}.bin").write_bytes(
+            struct.pack("<Q", len(entries)) + b"".join(entries)
+        )
+    return root
+
+
+@pytest.mark.parametrize("component", ["cameras", "images", "points3D"])
+def test_binary_preflight_rejects_duplicates_hidden_by_trueprice(tmp_path, component):
+    pycolmap = pytest.importorskip("pycolmap")
+    records = _binary_model_records()
+    duplicate = records[component][0]
+    if component == "cameras":
+        duplicate = struct.pack("<IiQQ4d", 1, 1, 4, 3, 99, 99, 2, 1.5)
+    if component == "images":
+        duplicate = duplicate.replace(b"frame1.png", b"overwritten.png")
+    records[component].insert(0, duplicate)
+    root = _binary_capture(tmp_path / "capture", records)
+    scene = pycolmap.SceneManager(str(root / "sparse/0"))
+    scene.load()
+    if component == "points3D":
+        assert len(scene.point3D_ids) == 4
+        assert len(scene.point3D_id_to_point3D_idx) == 3
+    else:
+        assert len(getattr(scene, component)) == len(records[component]) - 1
+    if component == "cameras":
+        assert scene.cameras[1].fx == 3
+    if component == "images":
+        assert "overwritten.png" not in [image.name for image in scene.images.values()]
+    with pytest.raises(colmap.NcoreConversionError, match="binary.*" + component):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+def _convert_binary_capture(tmp_path, records=None):
+    converter = pytest.importorskip("tools.data_converter.colmap.converter")
+    from click.testing import CliRunner
+
+    root = _binary_capture(tmp_path / "capture", records)
+    source = colmap.inspect_colmap_source(root, publication_request(tmp_path))
+    result = CliRunner().invoke(
+        converter.cli,
+        [
+            "--root-dir",
+            str(root),
+            "--output-dir",
+            str(tmp_path / "output"),
+            "colmap-v4",
+        ],
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    return tmp_path / "output/capture/capture.json", source
+
+
+def _rewrite_derived_trajectory(meta, mutation):
+    import numpy as np
+    from ncore.data.v4 import PosesComponent, SequenceComponentGroupsReader
+    from ncore.data.v4 import SequenceComponentGroupsWriter
+    from upath import UPath
+
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    writer = SequenceComponentGroupsWriter.from_reader(
+        output_dir_path=UPath(meta.parent),
+        store_base_name="altered",
+        sequence_reader=reader,
+        store_type="itar",
+    )
+    poses_writer = writer.register_component_writer(
+        PosesComponent.Writer, "npa_rig", group_name="npa_rig"
+    )
+    poses_reader = reader.open_component_readers(PosesComponent.Reader)["npa_rig"]
+    for edge, (poses, timestamps) in poses_reader.get_dynamic_poses():
+        poses, timestamps = np.array(poses), np.array(timestamps)
+        if edge == ("rig", "world"):
+            if mutation == "translation":
+                poses[:, 0, 3] += 7
+            elif mutation == "timestamps":
+                timestamps += 1
+        if edge == ("camera1", "world") and mutation == "original_edge":
+            poses[:, 0, 3] += 7
+        poses_writer.store_dynamic_pose(
+            *edge, poses, timestamps, require_sequence_time_coverage=False
+        )
+    paths = [
+        path
+        for path in reader.component_store_paths
+        if not str(path).endswith(".ncore4-npa_rig.zarr.itar")
+    ]
+    paths.extend(writer.finalize())
+    meta.write_text(
+        json.dumps(SequenceComponentGroupsReader(paths).get_sequence_meta().to_dict())
+    )
+
+
+@pytest.mark.parametrize("mutation", ["translation", "timestamps", "original_edge"])
+def test_derived_rig_requires_source_reference_trajectory(tmp_path, mutation):
+    meta, source = _convert_binary_capture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+    _rewrite_derived_trajectory(meta, mutation)
+    with pytest.raises(colmap.NcoreConversionError, match="rig|camera transforms"):
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("reference_camera", "camera5"),
+        ("reference_camera", "missing"),
+        ("pose_count", 99),
+        ("cameras", ["camera1"]),
+        ("sequence_id", "other"),
+        ("poses_component_group", "default"),
+        ("derived_by", "other"),
+    ],
+)
+def test_derived_rig_requires_consistent_sidecar(tmp_path, field, value):
+    meta, source = _convert_binary_capture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    sidecar = meta.parent / "npa-rig.json"
+    document = json.loads(sidecar.read_text())
+    document[field] = value
+    sidecar.write_text(json.dumps(document))
+    with pytest.raises(colmap.NcoreConversionError, match="rig.*sidecar"):
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "rgb_missing",
+        "rgb_permuted",
+        "rgb_shape",
+        "rgb_fractional",
+    ],
+)
+def test_sparse_rgb_requires_source_shape_and_values(tmp_path, corruption):
+    meta, source = ncore_fixture(tmp_path, corruption=corruption)
+    with pytest.raises(colmap.NcoreConversionError, match="RGB"):
+        colmap.validate_ncore_sequence(meta, source)
+
+
+@pytest.mark.parametrize("component", ["cameras", "images", "points3D"])
+@pytest.mark.parametrize("mutation", ["drop", "replace", "repeat"])
+def test_binary_preflight_checks_parsed_id_count_parity(
+    tmp_path, monkeypatch, component, mutation
+):
+    pycolmap = pytest.importorskip("pycolmap")
+    root = _binary_capture(tmp_path / "capture")
+    load = pycolmap.SceneManager.load
+
+    def incomplete_load(scene):
+        load(scene)
+        if component == "points3D":
+            if mutation == "drop":
+                scene.point3D_ids = scene.point3D_ids[:-1]
+            else:
+                scene.point3D_ids[-1] = 99 if mutation == "replace" else 1
+        else:
+            records = getattr(scene, component)
+            value = records.pop(next(iter(records)))
+            if mutation != "drop":
+                records[99] = value
+
+    monkeypatch.setattr(pycolmap.SceneManager, "load", incomplete_load)
+    with pytest.raises(colmap.NcoreConversionError, match="raw.*" + component):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+@pytest.mark.parametrize("component", ["cameras", "images", "points3D"])
+@pytest.mark.parametrize("mutation", ["count", "truncated", "trailing", "short_header"])
+def test_binary_record_counts_are_bounded_by_bytes(tmp_path, component, mutation):
+    records = _binary_model_records()[component]
+    contents = struct.pack("<Q", len(records)) + b"".join(records)
+    if mutation == "count":
+        contents = struct.pack("<Q", 2**64 - 1) + contents[8:]
+    elif mutation == "truncated":
+        contents = contents[:-1]
+    elif mutation == "trailing":
+        contents += b"\0"
+    else:
+        contents = contents[:7]
+    path = tmp_path / f"{component}.bin"
+    path.write_bytes(contents)
+    with pytest.raises(colmap.NcoreConversionError, match="binary.*" + component):
+        colmap._raw_binary_model_ids(path, component)
+
+
+@pytest.mark.parametrize("component", ["images", "points3D"])
+def test_binary_observations_and_tracks_are_bounded_by_bytes(tmp_path, component):
+    record = _binary_model_records()[component][0]
+    if component == "images":
+        record = record[:-8] + struct.pack("<Q", 2**64 - 1)
+    else:
+        record = record[:43] + struct.pack("<Q", 2**64 - 1) + record[51:]
+    path = tmp_path / f"{component}.bin"
+    path.write_bytes(struct.pack("<Q", 1) + record)
+    with pytest.raises(colmap.NcoreConversionError, match="variable-length"):
+        colmap._raw_binary_model_ids(path, component)
+
+
+def test_binary_camera_layouts_match_all_pinned_reader_models(tmp_path):
+    pycolmap = pytest.importorskip("pycolmap")
+    root = colmap_text_fixture(tmp_path / "capture")
+    parameters = [
+        (3, 2, 1.5),
+        (3, 3, 2, 1.5),
+        (3, 2, 1.5, 0.1),
+        (3, 2, 1.5, 0.1, 0.01),
+        (3, 3, 2, 1.5, 0.1, 0.01, 0.02, 0.03),
+        (3, 3, 2, 1.5, 0.1, 0.01, 0.02, 0.03),
+    ]
+    path = root / "sparse/0/cameras.bin"
+    path.write_bytes(
+        struct.pack("<Q", 6)
+        + b"".join(
+            struct.pack("<IiQQ", model + 1, model, 4, 3)
+            + struct.pack(f"<{len(values)}d", *values)
+            for model, values in enumerate(parameters)
+        )
+    )
+    scene = pycolmap.SceneManager(str(root / "sparse/0"))
+    scene.load()
+    assert (
+        colmap._raw_binary_model_ids(path, "cameras")
+        == set(scene.cameras)
+        == set(range(1, 7))
+    )
+
+
+def test_binary_point_rows_must_match_independent_count(tmp_path, monkeypatch):
+    pycolmap = pytest.importorskip("pycolmap")
+    root = _binary_capture(tmp_path / "capture")
+    load = pycolmap.SceneManager.load
+
+    def incomplete_load(scene):
+        load(scene)
+        scene.points3D = scene.points3D[:-1]
+
+    monkeypatch.setattr(pycolmap.SceneManager, "load", incomplete_load)
+    with pytest.raises(colmap.NcoreConversionError, match="raw points3D count"):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+@pytest.mark.parametrize("component", ["cameras", "images", "points3D"])
+def test_trueprice_precedence_is_per_component_and_never_falls_back(
+    tmp_path, component
+):
+    pytest.importorskip("pycolmap")
+    root = colmap_text_fixture(tmp_path / "capture")
+    records = _binary_model_records()[component]
+    if component == "cameras":
+        records = records[:1]
+    if component == "images":
+        records = records[:2]
+    binary = root / f"sparse/0/{component}.bin"
+    binary.write_bytes(struct.pack("<Q", len(records)) + b"".join(records))
+    text = root / f"sparse/0/{component}.txt"
+    valid_text = text.read_bytes()
+    text.write_bytes(b"invalid ignored text")
+    source = colmap.inspect_colmap_source(root, publication_request(tmp_path))
+    assert source["counts"] == {"cameras": 1, "images": 2, "poses": 2, "points": 2}
+    text.write_bytes(valid_text)
+    binary.write_bytes(b"bad")
+    with pytest.raises(colmap.NcoreConversionError, match="binary.*" + component):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+def test_filtered_sparse_rgb_matches_actual_converter(tmp_path):
+    meta, source = _convert_binary_capture(tmp_path)
+    from ncore.data.v4 import PointCloudsComponent, SequenceComponentGroupsReader
+    from upath import UPath
+
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    points = reader.open_component_readers(PointCloudsComponent.Reader)["sfm_points"]
+    assert points.get_pc_attribute(0, "rgb").tolist() == [[20, 30, 40], [50, 60, 70]]
+    assert (
+        source["points_rgb_sha256"]
+        == hashlib.sha256(bytes([20, 30, 40, 50, 60, 70])).hexdigest()
+    )
+    assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
+
+
+def test_derived_rig_honors_explicit_source_reference(tmp_path):
+    meta, source = _convert_binary_capture(tmp_path)
+    colmap._derive_in_place(meta, "camera5")
+    assert (
+        colmap.validate_ncore_sequence(
+            meta, source, rig_mode="derive", reference_camera="camera5"
+        )
+        == source["counts"]
+    )
+    with pytest.raises(colmap.NcoreConversionError, match="rig.*sidecar"):
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+
+
+def test_derived_rig_selects_longest_source_world_trajectory(tmp_path):
+    records = _binary_model_records()
+    records["images"].append(
+        struct.pack("<I4d3dI", 5, 1, 0, 0, 0, -5, 0, 0, 5)
+        + b"frame5.png\0"
+        + struct.pack("<Q", 0)
+    )
+    meta, source = _convert_binary_capture(tmp_path, records)
+    colmap._derive_in_place(meta, "")
+    sidecar = json.loads((meta.parent / "npa-rig.json").read_text())
+    assert sidecar["reference_camera"] == "camera5"
+    assert (
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+        == source["counts"]
+    )
+
+
+def test_binary_capture_preserves_source_image_integrity(tmp_path):
+    from PIL import Image
+
+    meta, source = _convert_binary_capture(tmp_path)
+    root = tmp_path / "capture"
+    Image.new("RGB", (4, 3), (1, 2, 3)).save(root / "images/frame1.png")
+    changed_source = colmap.inspect_colmap_source(root, publication_request(tmp_path))
+    assert source["counts"] == changed_source["counts"]
+    with pytest.raises(colmap.NcoreConversionError, match="image bytes differ"):
+        colmap.validate_ncore_sequence(meta, changed_source)
+    (root / "images/frame1.png").unlink()
+    with pytest.raises(colmap.NcoreConversionError, match="missing image"):
+        colmap.inspect_colmap_source(root, publication_request(tmp_path))
+
+
+@pytest.mark.parametrize("contents", [None, "{", "[]", "null"])
+def test_derived_rig_rejects_missing_or_malformed_sidecar(tmp_path, contents):
+    meta, source = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    sidecar = meta.parent / "npa-rig.json"
+    if contents is None:
+        sidecar.unlink()
+    else:
+        sidecar.write_text(contents)
+    with pytest.raises(colmap.NcoreConversionError, match="rig.*sidecar"):
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
 
 
 def test_nre_discovers_sequence_meta_instead_of_conversion_report(tmp_path):

@@ -206,40 +206,90 @@ def _transforms(value: Any) -> np.ndarray:
 
 
 def validate_binary_images(path: Path) -> None:
-    """Check the upstream reader's binary layout before its NUL-name loop.
+    """Validate binary image IDs, paths and byte boundaries before vendor loading.
 
     trueprice's reader loops until a NUL byte, without checking for EOF. A
     truncated images.bin would otherwise hang rather than produce a domain error.
     Counts are checked against remaining file bytes, never an arbitrary cap.
+
+    Args:
+        path: COLMAP images.bin file.
+    Returns:
+        None.
+    Raises:
+        NcoreConversionError: Records are malformed, unsafe or duplicated.
     """
-    size = path.stat().st_size
-    with path.open("rb") as stream:
+    _raw_binary_model_ids(path, "images")
 
-        def take(count: int) -> bytes:
-            value = stream.read(count)
-            if len(value) != count:
-                raise NcoreConversionError("truncated COLMAP binary images model")
-            return value
 
-        count = struct.unpack("<Q", take(8))[0]
-        for _ in range(count):
-            take(struct.calcsize("<I4d3dI"))
-            name = bytearray()
-            while (character := take(1)) != b"\0":
-                name.extend(character)
-            try:
-                _relative(name.decode("utf-8"))
-            except (ValueError, UnicodeError) as exc:
-                raise NcoreConversionError(
-                    "unsafe COLMAP binary image reference"
-                ) from exc
-            points = struct.unpack("<Q", take(8))[0]
-            remaining = size - stream.tell()
-            if points > remaining // 24:
-                raise NcoreConversionError("truncated COLMAP binary image observations")
-            stream.seek(points * 24, 1)
-        if stream.tell() != size:
-            raise NcoreConversionError("unexpected trailing COLMAP binary image data")
+def _binary_fields(stream: Any, layout: str) -> tuple[Any, ...]:
+    size = struct.calcsize(layout)
+    data = stream.read(size)
+    if len(data) != size:
+        raise ValueError("truncated record")
+    return struct.unpack(layout, data)
+
+
+def _skip_binary_values(stream: Any, size: int, count: int, stride: int) -> None:
+    if count > (size - stream.tell()) // stride:
+        raise ValueError("truncated variable-length record")
+    stream.seek(count * stride, 1)
+
+
+def _binary_camera_id(stream: Any, size: int) -> int:
+    record_id, model, _, _ = _binary_fields(stream, "<IiQQ")
+    # The pinned reader and converter support precisely these six COLMAP models.
+    parameter_counts = {0: 3, 1: 4, 2: 4, 3: 5, 4: 8, 5: 8}
+    if model not in parameter_counts:
+        raise ValueError("unsupported camera model")
+    _skip_binary_values(stream, size, parameter_counts[model], 8)
+    return record_id
+
+
+def _binary_image_id(stream: Any, size: int) -> int:
+    record_id = _binary_fields(stream, "<I4d3dI")[0]
+    name = bytearray()
+    while (character := _binary_fields(stream, "<c")[0]) != b"\0":
+        name.extend(character)
+    _relative(name.decode("utf-8"))
+    observations = _binary_fields(stream, "<Q")[0]
+    _skip_binary_values(stream, size, observations, 24)
+    return record_id
+
+
+def _binary_point_id(stream: Any, size: int) -> int:
+    record = _binary_fields(stream, "<Q3d3BdQ")
+    _skip_binary_values(stream, size, record[-1], 8)
+    return record[0]
+
+
+def _raw_binary_model_ids(path: Path, component: str) -> set[int]:
+    """Parse IDs independently, bounding every declared count by actual bytes."""
+    parsers = {
+        "cameras": (_binary_camera_id, 48),
+        "images": (_binary_image_id, 73),
+        "points3D": (_binary_point_id, 51),
+    }
+    parse_record, minimum_size = parsers[component]
+    ids: set[int] = set()
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            count = _binary_fields(stream, "<Q")[0]
+            if count > (size - stream.tell()) // minimum_size:
+                raise ValueError("record count exceeds available bytes")
+            for _ in range(count):
+                record_id = parse_record(stream, size)
+                if record_id in ids:
+                    raise ValueError("duplicate record ID")
+                ids.add(record_id)
+            if stream.tell() != size:
+                raise ValueError("unexpected trailing data")
+    except (ValueError, OSError) as exc:
+        raise NcoreConversionError(
+            f"invalid COLMAP raw binary {component} records: {exc}"
+        ) from exc
+    return ids
 
 
 def _raw_text_model_ids(path: Path, component: str) -> set[int]:
@@ -296,20 +346,17 @@ def _raw_text_model_ids(path: Path, component: str) -> set[int]:
     return ids
 
 
-def inspect_colmap_source(
-    root: Path, request: ColmapConversionRequest
-) -> dict[str, Any]:
-    """Read trueprice's actual COLMAP model and validate all file references."""
-    binary_images = root / request.colmap_dir / "images.bin"
-    if binary_images.is_file():
-        validate_binary_images(binary_images)
+def _load_colmap_scene(root: Path, request: ColmapConversionRequest) -> Any:
     # Match each of SceneManager's binary-before-text selections independently.
     model_dir = root / request.colmap_dir
-    raw_text_ids = {
-        component: _raw_text_model_ids(model_dir / f"{component}.txt", component)
-        for component in ("cameras", "images", "points3D")
-        if not (model_dir / f"{component}.bin").is_file()
-    }
+    raw_ids = {}
+    for component in ("cameras", "images", "points3D"):
+        binary = model_dir / f"{component}.bin"
+        raw_ids[component] = (
+            _raw_binary_model_ids(binary, component)
+            if binary.is_file()
+            else _raw_text_model_ids(model_dir / f"{component}.txt", component)
+        )
     try:
         import pycolmap
     except ImportError as exc:
@@ -324,23 +371,33 @@ def inspect_colmap_source(
         str(root / request.colmap_dir), image_path=str(root / request.images_dir)
     )
     scene.load()
+    _validate_parsed_model_ids(scene, raw_ids)
+    return scene
+
+
+def _validate_parsed_model_ids(scene: Any, raw_ids: dict[str, set[int]]) -> None:
     parsed_ids = {
         "cameras": list(scene.cameras),
         "images": list(scene.images),
         "points3D": list(scene.point3D_ids),
     }
-    for component, raw_ids in raw_text_ids.items():
+    for component, expected_ids in raw_ids.items():
         actual_ids = parsed_ids[component]
-        if len(actual_ids) != len(raw_ids) or set(actual_ids) != raw_ids:
+        if len(actual_ids) != len(expected_ids) or set(actual_ids) != expected_ids:
             raise NcoreConversionError(
-                f"COLMAP raw text {component} IDs/counts differ from parsed model"
+                f"COLMAP raw {component} IDs/counts differ from parsed model"
             )
-    if "points3D" in raw_text_ids and len(scene.points3D) != len(
-        raw_text_ids["points3D"]
-    ):
+    if len(scene.points3D) != len(raw_ids["points3D"]):
         raise NcoreConversionError(
-            "COLMAP raw text points3D count differs from parsed model"
+            "COLMAP raw points3D count differs from parsed model"
         )
+
+
+def inspect_colmap_source(
+    root: Path, request: ColmapConversionRequest
+) -> dict[str, Any]:
+    """Read trueprice's actual COLMAP model and validate all file references."""
+    scene = _load_colmap_scene(root, request)
     cameras: dict[str, dict[str, Any]] = {}
     for image in scene.images.values():
         relative = _relative(image.name)
@@ -423,7 +480,9 @@ def inspect_colmap_source(
                 }
     xyz = _finite(scene.points3D, "source points").astype(np.float32).reshape(-1, 3)
     _finite(xyz, "source points after float32 conversion")
-    retained = xyz[np.linalg.norm(xyz, axis=1) > 1e-6]
+    retained_mask = np.linalg.norm(xyz, axis=1) > 1e-6
+    retained = xyz[retained_mask]
+    rgb = _point_rgb(scene.point3D_colors, len(xyz))[retained_mask]
     images = sum(len(camera["frames"]) for camera in cameras.values())
     return {
         "cameras": cameras,
@@ -434,6 +493,7 @@ def inspect_colmap_source(
             "points": len(retained),
         },
         "points_sha256": hashlib.sha256(retained.astype("<f4").tobytes()).hexdigest(),
+        "points_rgb_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
         "source_points": len(xyz),
         "origin_points_filtered": len(xyz) - len(retained),
     }
@@ -496,16 +556,139 @@ def sequence_members(meta_path: Path) -> list[Path]:
         ) from exc
 
 
+def _rig_reference(source: dict[str, Any], preferred: str) -> str:
+    candidates = {
+        name: camera
+        for name, camera in source["cameras"].items()
+        if camera["target"] == "world" and camera["frames"]
+    }
+    if not candidates or (preferred and preferred not in candidates):
+        raise NcoreConversionError("derived rig reference has no source world poses")
+    if preferred:
+        return preferred
+    return min(candidates, key=lambda name: (-len(candidates[name]["frames"]), name))
+
+
+def _validate_rig_sidecar(
+    meta_path: Path, source: dict[str, Any], sequence_id: str, reference: str
+) -> None:
+    expected = {
+        "derived_by": "npa.workbench.nurec.ncore_rig",
+        "sequence_id": sequence_id,
+        "reference_camera": reference,
+        "poses_component_group": "npa_rig",
+        "pose_count": len(source["cameras"][reference]["frames"]),
+        "cameras": sorted(
+            name
+            for name, camera in source["cameras"].items()
+            if camera["target"] == "world"
+        ),
+    }
+    try:
+        sidecar = json.loads((meta_path.parent / "npa-rig.json").read_text())
+    except (OSError, ValueError) as exc:
+        raise NcoreConversionError("invalid or missing derived rig sidecar") from exc
+    if not isinstance(sidecar, dict) or any(
+        type(sidecar.get(key)) is not type(value) or sidecar[key] != value
+        for key, value in expected.items()
+    ):
+        raise NcoreConversionError("derived rig sidecar differs from source selection")
+
+
+def _validate_derived_rig(
+    meta_path: Path,
+    source: dict[str, Any],
+    reader: Any,
+    trajectories: dict,
+    reference_camera: str,
+) -> None:
+    reference = _rig_reference(source, reference_camera)
+    _validate_rig_sidecar(meta_path, source, str(reader.sequence_id), reference)
+    frames = source["cameras"][reference]["frames"]
+    expected_ts = np.arange(len(frames), dtype=np.uint64) * 1_000_000
+    edge = ("rig", "world")
+    if edge not in trajectories["npa_rig"]:
+        raise NcoreConversionError("derived rig edge is absent")
+    poses, timestamps = trajectories["npa_rig"][edge]
+    if (
+        len(frames) < 2
+        or poses.shape != (len(frames), 4, 4)
+        or not np.array_equal(timestamps, expected_ts)
+        or not np.allclose(
+            poses, [frame["pose"] for frame in frames], rtol=1e-4, atol=1e-4
+        )
+    ):
+        raise NcoreConversionError(
+            "derived rig trajectory differs from source reference"
+        )
+
+
+def _point_rgb(value: Any, point_count: int) -> np.ndarray:
+    rgb = _finite(value, "point RGB")
+    if rgb.shape != (point_count, 3) or rgb.dtype != np.dtype("uint8"):
+        raise NcoreConversionError("point RGB must have shape (N, 3) and uint8 values")
+    return rgb
+
+
+def _validate_point_clouds(reader: Any, source: dict[str, Any]) -> int:
+    from ncore.data.v4 import PointCloudsComponent
+
+    point_digest, rgb_digest = hashlib.sha256(), hashlib.sha256()
+    count = 0
+    for points in reader.open_component_readers(PointCloudsComponent.Reader).values():
+        _finite(points.pc_timestamps_us, "point timestamps")
+        for index in range(points.pcs_count):
+            xyz = _finite(points.get_pc_xyz(index), "points")
+            if (
+                xyz.ndim != 2
+                or xyz.shape[1] != 3
+                or points.get_pc_reference_frame_id(index) != "world"
+            ):
+                raise NcoreConversionError("invalid point geometry or reference frame")
+            if "rgb" not in points.attribute_names:
+                raise NcoreConversionError("NCore sparse point RGB is absent")
+            rgb = _point_rgb(points.get_pc_attribute(index, "rgb"), len(xyz))
+            for attribute in points.attribute_names:
+                values = _finite(
+                    points.get_pc_attribute(index, attribute), "point attributes"
+                )
+                if len(values) != len(xyz):
+                    raise NcoreConversionError("point attribute count differs")
+            point_digest.update(xyz.astype("<f4").tobytes())
+            rgb_digest.update(rgb.tobytes())
+            count += len(xyz)
+    if (
+        source.get("points_sha256")
+        and point_digest.hexdigest() != source["points_sha256"]
+    ):
+        raise NcoreConversionError("source and NCore point coordinates differ")
+    if rgb_digest.hexdigest() != source.get("points_rgb_sha256"):
+        raise NcoreConversionError("source and NCore point RGB differ")
+    return count
+
+
 def validate_ncore_sequence(
-    meta_path: Path, source: dict[str, Any], *, rig_mode: str = "preserve"
+    meta_path: Path, source: dict[str, Any], *, rig_mode: str = "preserve",
+    reference_camera: str = "",
 ) -> dict[str, int]:
-    """Independently reopen every V4 frame, calibration, pose and point array."""
+    """Independently reopen every V4 frame, calibration, pose and point array.
+
+    Args:
+        meta_path: Portable V4 sequence metadata.
+        source: Source inventory returned by inspect_colmap_source.
+        rig_mode: Whether to require the derived rig trajectory and sidecar.
+        reference_camera: Explicit rig reference, or longest source world trajectory
+            with camera ID breaking ties.
+    Returns:
+        Verified camera, image, pose and retained sparse point counts.
+    Raises:
+        NcoreConversionError: Output data or rig provenance differs from source.
+    """
     sequence_members(meta_path)
     try:
         from ncore.data.v4 import (
             CameraSensorComponent,
             IntrinsicsComponent,
-            PointCloudsComponent,
             PosesComponent,
             SequenceComponentGroupsReader,
         )
@@ -539,8 +722,8 @@ def validate_ncore_sequence(
     group = "npa_rig" if rig_mode == "derive" else "default"
     if group not in trajectories:
         raise NcoreConversionError("required NCore poses component group is absent")
-    if rig_mode == "derive" and ("rig", "world") not in trajectories[group]:
-        raise NcoreConversionError("derived rig edge is absent")
+    if rig_mode == "derive":
+        _validate_derived_rig(meta_path, source, reader, trajectories, reference_camera)
     for camera_id, camera in cameras.items():
         expected = source["cameras"][camera_id]
         calibrations = []
@@ -646,31 +829,7 @@ def validate_ncore_sequence(
                     )
             counts["images"] += 1
         counts["poses"] += n_frames
-    point_readers = reader.open_component_readers(PointCloudsComponent.Reader)
-    point_digest = hashlib.sha256()
-    for points in point_readers.values():
-        _finite(points.pc_timestamps_us, "point timestamps")
-        for index in range(points.pcs_count):
-            xyz = _finite(points.get_pc_xyz(index), "points")
-            if (
-                xyz.ndim != 2
-                or xyz.shape[1] != 3
-                or points.get_pc_reference_frame_id(index) != "world"
-            ):
-                raise NcoreConversionError("invalid point geometry or reference frame")
-            for attribute in points.attribute_names:
-                values = _finite(
-                    points.get_pc_attribute(index, attribute), "point attributes"
-                )
-                if len(values) != len(xyz):
-                    raise NcoreConversionError("point attribute count differs")
-            point_digest.update(xyz.astype("<f4").tobytes())
-            counts["points"] += len(xyz)
-    if (
-        source.get("points_sha256")
-        and point_digest.hexdigest() != source["points_sha256"]
-    ):
-        raise NcoreConversionError("source and NCore point coordinates differ")
+    counts["points"] = _validate_point_clouds(reader, source)
     if counts != source["counts"]:
         raise NcoreConversionError("source and NCore counts differ")
     return counts
@@ -927,7 +1086,10 @@ def convert_colmap(
             if request.rig_mode == "derive":
                 _derive_in_place(meta, request.reference_camera)
             phase = "NCore validation"
-            counts = validate_ncore_sequence(meta, source, rig_mode=request.rig_mode)
+            counts = validate_ncore_sequence(
+                meta, source, rig_mode=request.rig_mode,
+                reference_camera=request.reference_camera,
+            )
             members = [meta, *sequence_members(meta)]
             sidecar = meta.parent / "npa-rig.json"
             if request.rig_mode == "derive":
