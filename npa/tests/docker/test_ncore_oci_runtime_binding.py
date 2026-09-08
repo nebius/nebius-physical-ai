@@ -196,7 +196,12 @@ def _mock_docker(monkeypatch, private, files, inspected, load=None):
             pytest.fail("unexpected Docker operation")
 
     monkeypatch.setattr(bootstrap, "run", run)
-    monkeypatch.setattr(bootstrap, "_apt_script", lambda _: "synthetic pinned APT script")
+    monkeypatch.setattr(bootstrap, "_apt_script", lambda _: (
+        "# synthetic pinned APT script\n"
+        "function synthetic_apt() {\n"
+        f"  local log={private}/apt.log\n"
+        "}\n"
+    ))
     return commands
 
 

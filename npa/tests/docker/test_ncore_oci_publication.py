@@ -212,7 +212,7 @@ def _build_receipt(private, digest="sha256:" + "d" * 64):
     return receipt
 
 
-@pytest.mark.parametrize("failure", ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "bootstrap"])
+@pytest.mark.parametrize("failure", ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "components", "bootstrap"])
 def test_any_gate_failure_prevents_registry_or_visibility_mutation(private, monkeypatch, failure):
     path, digest, _ = _archive(private)
     receipt = _build_receipt(private, digest)
@@ -245,11 +245,12 @@ def test_any_gate_failure_prevents_registry_or_visibility_mutation(private, monk
                             ("history", "_payload_history"),
                             ("trivy", "_security"), ("selected-base", "_selected_base")):
         monkeypatch.setattr(gates, attribute, gate(name))
+    monkeypatch.setattr(gates.components, "verify", gate("components"))
     monkeypatch.setattr(gates.bootstrap, "verify", gate("bootstrap"))
     monkeypatch.setattr(registry, "transfer", lambda *_: calls.append("registry mutation"))
     with pytest.raises(ValueError, match="gate failed"):
         cli._check_or_publish(args)
-    ordered = ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "bootstrap"]
+    ordered = ["source", "graph", "bytes", "delivery", "payload", "history", "trivy", "selected-base", "components", "bootstrap"]
     assert calls == ordered[:ordered.index(failure) + 1]
     assert not (args.output_dir / "prepublication.json").exists()
 

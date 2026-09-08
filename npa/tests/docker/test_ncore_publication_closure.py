@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import runpy
 from pathlib import Path
 import subprocess
 import sys
@@ -18,9 +19,21 @@ sys.path.insert(0, str(ROOT / "npa/scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
 from ncore_publication import cli, gates, process, provenance  # noqa: E402
+from ncore_publication import bootstrap  # noqa: E402
 
 SHA = "a" * 40
 KEYRING = "usr/share/keyrings/debian-archive-keyring.gpg"
+
+
+@pytest.mark.parametrize("status,log_exists", [(0, True), (19, True), (19, False)])
+def test_bootstrap_diagnostics_preserve_status_and_log_before_container_removal(tmp_path, status, log_exists):
+    log = tmp_path / "upstream-apt.log"
+    if log_exists:
+        log.write_text("retained upstream diagnostic\n")
+    script = bootstrap._diagnostic_trap("local log=" + str(log) + "\n")
+    result = subprocess.run(["bash", "-c", script + f"exit {status}\n"], capture_output=True, check=False)
+    assert result.returncode == status
+    assert result.stderr == (b"retained upstream diagnostic\n" if status and log_exists else b"")
 
 
 def test_actual_buildx_metadata_mode_is_restricted_without_changing_bytes(tmp_path):
@@ -55,6 +68,22 @@ def test_build_metadata_rejects_unsafe_outputs_without_chmod(tmp_path, kind):
     with W.authorized_roots(tmp_path, ROOT), pytest.raises((ValueError, OSError)):
         cli._build_metadata(path)
     assert original.stat().st_mode & 0o777 == 0o644
+
+
+def test_build_metadata_refuses_a_link_added_during_permission_change(tmp_path, monkeypatch):
+    tmp_path.chmod(0o700)
+    path = tmp_path / "buildx.json"
+    path.write_bytes(b"metadata")
+    path.chmod(0o644)
+    chmod = os.fchmod
+
+    def add_link(fd, mode):
+        chmod(fd, mode)
+        os.link(path, tmp_path / "second-link")
+
+    monkeypatch.setattr(cli.os, "fchmod", add_link)
+    with W.authorized_roots(tmp_path, ROOT), pytest.raises(ValueError, match="build_metadata_changed"):
+        cli._build_metadata(path)
 
 
 def _tar(path, files):
@@ -138,22 +167,27 @@ def test_host_npa_import_cannot_resolve_to_another_checkout(tmp_path, monkeypatc
         process._verify_imported_sources(SHA)
 
 
-def test_npa_loader_compiles_compared_commit_without_reading_cached_bytecode(tmp_path, monkeypatch):
-    path = tmp_path / "npa/src/npa/example.py"
+@pytest.mark.parametrize("name,relative", [
+    ("npa.example", "npa/src/npa/example.py"),
+    ("scan_image_omniverse_payload", "npa/scripts/scan_image_omniverse_payload.py"),
+    ("ncore_publication.example", "npa/scripts/ncore_publication/example.py"),
+])
+def test_repository_loader_compiles_compared_commit_without_reading_cached_bytecode(tmp_path, monkeypatch, name, relative):
+    path = tmp_path / relative
     path.parent.mkdir(parents=True)
     path.write_bytes(b"result = 'reviewed'\n")
-    spec = SimpleNamespace(origin=str(path), loader=process.SourceFileLoader("npa.example", str(path)))
+    spec = SimpleNamespace(origin=str(path), loader=process.SourceFileLoader(name, str(path)))
     monkeypatch.setattr(process, "ROOT", tmp_path)
     monkeypatch.setattr(process.PathFinder, "find_spec", lambda *args: spec)
     monkeypatch.setattr(process.subprocess, "run", lambda *args, **kwargs:
                         subprocess.CompletedProcess([], 0, b"result = 'reviewed'\n"))
-    verified = process._CommittedNpaImports(SHA).find_spec("npa.example")
+    verified = process._CommittedNpaImports(SHA).find_spec(name)
     path.write_bytes(b"raise RuntimeError('changed after comparison')\n")
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("npa.example", verified.loader))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, verified.loader))
     verified.loader.exec_module(module)
     assert module.result == "reviewed"
     with pytest.raises(ValueError, match="committed_host_import_required"):
-        process._CommittedNpaImports(SHA).find_spec("npa.example")
+        process._CommittedNpaImports(SHA).find_spec(name)
 
 
 def test_npa_cannot_be_preloaded_before_import_authorization(monkeypatch):
@@ -218,6 +252,39 @@ def test_python_and_pytest_controls_are_removed_from_subprocesses(tmp_path, monk
     argv = process.guard_command(tmp_path / "snapshot", tmp_path)
     assert argv[1:5] == ["-I", "-S", "-B", "-c"]
     assert "snapshot/npa/src" in argv[-1] and "site-packages" in argv[-1]
+
+
+def test_python_subprocess_gets_its_own_empty_cache_namespace(tmp_path, monkeypatch):
+    observed = []
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", "untrusted-existing-cache")
+    monkeypatch.setattr(process.subprocess, "run", lambda *args, **kwargs:
+                        observed.append(kwargs["env"]) or subprocess.CompletedProcess(args, 0))
+    for name in ("first.log", "second.log"):
+        process.run([str(process.PYTHON), "-c", "pass"], tmp_path / name)
+    paths = [Path(environment["PYTHONPYCACHEPREFIX"]) for environment in observed]
+    assert paths[0] != paths[1]
+    assert all(path.parent == tmp_path and path.stat().st_mode & 0o777 == 0o700 for path in paths)
+    assert all(not list(path.iterdir()) for path in paths)
+    assert all(environment["PYTHONDONTWRITEBYTECODE"] == "1" for environment in observed)
+
+
+def test_entrypoint_isolates_import_cache_before_loading_publication_modules(monkeypatch):
+    observed = []
+
+    def main():
+        path = Path(sys.pycache_prefix)
+        observed.append(path)
+        assert path.is_dir() and not list(path.iterdir())
+        assert path.stat().st_mode & 0o777 == 0o700 and sys.dont_write_bytecode
+        return 7
+
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setitem(sys.modules, "ncore_publication.cli", SimpleNamespace(main=main))
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(ROOT / "npa/scripts/publish_ncore_oci.py"), run_name="__main__")
+    assert result.value.code == 7 and len(observed) == 1
+    assert not observed[0].exists()
 
 
 def test_guard_snapshot_uses_only_committed_files_including_config_and_conftests(tmp_path, monkeypatch):

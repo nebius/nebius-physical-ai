@@ -187,8 +187,13 @@ def _build_metadata(path):
         W.require(before.st_nlink == 1, "build_metadata_must_be_unshared")
         digest = W.descriptor_digest(fd)
         os.fchmod(fd, 0o600)
+        restricted = os.fstat(fd)
         binding = P.binding(path)
-        W.require(binding["sha256"] == digest and os.fstat(fd).st_ino == path.stat().st_ino,
+        after = os.fstat(fd)
+        selected = path.lstat()
+        W.require(binding["sha256"] == digest and after.st_nlink == selected.st_nlink == 1
+                  and W.stat_fingerprint(restricted) == W.stat_fingerprint(after)
+                  and W.stat_fingerprint(selected) == W.stat_fingerprint(after),
                   "build_metadata_changed")
         return binding
     finally:

@@ -3,6 +3,7 @@
 import ast
 import json
 import re
+import shlex
 import textwrap
 
 from image_byte_scan import core as W
@@ -30,12 +31,30 @@ def verify(directory, config_digest, upstream):
         directory / "image-only.log", env=env)
     # Each process is a fresh disposable container. The second verification in
     # each container proves the warm path without copying any cache to the image.
-    script = _capabilities() + "\n" + _apt_script(upstream) + "\n" + (
+    apt = _apt_script(upstream)
+    script = _diagnostic_trap(apt) + _capabilities() + "\n" + apt + "\n" + (
         "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py\n" * 2)
     run(["docker", "run", "--rm", "--pull=never", "-i", local_id, "/bin/bash", "-es"],
         directory / "entrypoint-bootstrap.log", env=env, input_bytes=script.encode())
     run(["docker", "run", "--rm", "--pull=never", "-i", "--entrypoint", "/bin/bash",
          local_id, "-es"], directory / "bash-bootstrap.log", env=env, input_bytes=script.encode())
+
+
+def _diagnostic_trap(apt):
+    # SkyPilot keeps APT update failures in this container-local log. Preserve
+    # those diagnostics in the private process stderr before --rm removes it.
+    locations = set(re.findall(r"^\s*local log=(\S+)$", apt, re.MULTILINE))
+    W.require(len(locations) == 1, "upstream_bootstrap_diagnostic_location_required")
+    location = locations.pop()
+    W.require(location.startswith("/"), "upstream_bootstrap_log_must_be_literal")
+    # Read the actual pinned upstream log location, without changing its body
+    # or keeping a second hard-coded path that could drift from the template.
+    return "npa_apt_diagnostic_log=" + shlex.quote(location) + "\n" + """trap 'rc=$?; set +e
+if [ "$rc" -ne 0 ] && [ -r "$npa_apt_diagnostic_log" ]; then
+  cat "$npa_apt_diagnostic_log" >&2
+fi
+exit "$rc"' EXIT
+"""
 
 
 def _load_verified(directory, config_digest, env):

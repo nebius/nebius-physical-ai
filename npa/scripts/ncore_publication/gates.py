@@ -8,7 +8,7 @@ import yaml
 from image_byte_scan import core as W
 from npa.deploy import images
 from npa.deploy.publish_public import _TRIVY_CONTAINER_IMAGE
-from . import artifact, bootstrap, provenance
+from . import artifact, bootstrap, components, provenance
 from .process import guard_command, guard_snapshot, verify_guard_execution
 from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
 
@@ -118,6 +118,7 @@ def verify(args, directory, build):
     _payload_history(directory, graph)
     _security(directory, graph)
     _selected_base(directory, digest, graph)
+    components.verify(directory, digest, graph, args.source_sha)
     bootstrap.verify(directory, graph["image_config_digest"], args.bootstrap_source)
     artifact.assert_unchanged(archive, verification)
     W.require(committed_source(args.source_sha) == build["context_sha256"], "source_changed_during_gates")

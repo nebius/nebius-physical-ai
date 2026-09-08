@@ -18,6 +18,9 @@ CONTEXT = ("npa/src/npa", "npa/docker/workbench/ncore")
 SOURCE_PATHS = ("npa/docker/workbench/ncore", "npa/scripts/image_byte_scan", "npa/scripts/ncore_publication",
                 "npa/src/npa/deploy/images.py", "npa/src/npa/deploy/publish_public.py",
                 "npa/src/npa/deploy/ncore_selected_sbom.py", "npa/src/npa/_public_https.py",
+                "npa/src/npa/deploy/ncore_component_scan.py", "npa/src/npa/deploy/ncore_component_inventory.py",
+                "npa/src/npa/deploy/ncore_component_advisories.py",
+                "npa/src/npa/deploy/ncore_component_sources.py",
                 "npa/src/npa/__init__.py", "npa/src/npa/deploy/__init__.py",
                 "npa/src/npa/workbench/__init__.py", "npa/src/npa/workbench/gpu_classes.py",
                 "npa/src/npa/workflows/ncore_runtime.py", "npa/tests/conftest.py", "npa/pyproject.toml",
@@ -50,6 +53,10 @@ def run(argv, output, *, env=None, input_bytes=None, cwd=None):
     environment = {key: value for key, value in (os.environ if env is None else env).items()
                    if not key.startswith(("PYTHON", "PYTEST"))}
     environment.update(PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1", PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
+    if Path(argv[0]).absolute() == PYTHON:
+        cache = output.with_suffix(output.suffix + ".python-cache")
+        cache.mkdir(mode=0o700)
+        environment["PYTHONPYCACHEPREFIX"] = str(cache)
     with output.open("xb") as stdout, output.with_suffix(output.suffix + ".stderr").open("xb") as stderr:
         result = subprocess.run(argv, cwd=ROOT if cwd is None else cwd, env=environment, input=input_bytes,
                                 stdout=stdout, stderr=stderr, check=False)
@@ -119,6 +126,7 @@ def _verify_imported_sources(sha):
         if not filename:
             continue
         path = Path(filename).absolute()
+        _expected_import_origin(name, path)
         if name == "npa" or name.startswith("npa."):
             W.require(path.is_relative_to(ROOT / "npa/src/npa"), "host_npa_import_outside_checkout")
         if path.is_relative_to(ROOT) and not path.is_relative_to(ROOT / "npa/.venv"):
@@ -145,13 +153,16 @@ class _CommittedNpaImports:
         self.sha = sha
 
     def find_spec(self, fullname, path=None, target=None):
-        if fullname != "npa" and not fullname.startswith("npa."):
-            return None
         spec = PathFinder.find_spec(fullname, path, target)
-        W.require(spec is not None and isinstance(spec.loader, SourceFileLoader), "host_npa_source_loader_required")
+        if spec is None or not isinstance(spec.origin, str):
+            W.require(fullname.split(".")[0] not in _import_roots(), "host_repository_module_missing")
+            return None
         source = Path(spec.origin).absolute()
-        W.require(source.is_relative_to(ROOT / "npa/src/npa") and source.resolve() == source,
-                  "host_npa_import_outside_checkout")
+        _expected_import_origin(fullname, source)
+        if not source.is_relative_to(ROOT) or source.is_relative_to(ROOT / "npa/.venv"):
+            return None
+        W.require(spec is not None and isinstance(spec.loader, SourceFileLoader), "host_npa_source_loader_required")
+        W.require(source.resolve() == source and source.suffix == ".py", "host_source_import_identity")
         relative = source.relative_to(ROOT).as_posix()
         result = subprocess.run(["git", "show", f"{self.sha}:{relative}"], cwd=ROOT,
                                 capture_output=True, check=False)
@@ -163,9 +174,25 @@ class _CommittedNpaImports:
         return spec
 
 
+def _import_roots():
+    return {
+        "npa": ROOT / "npa/src/npa",
+        "ncore_publication": ROOT / "npa/scripts/ncore_publication",
+        "image_byte_scan": ROOT / "npa/scripts/image_byte_scan",
+        "scan_image_omniverse_payload": ROOT / "npa/scripts/scan_image_omniverse_payload.py",
+    }
+
+
+def _expected_import_origin(name, path):
+    expected = _import_roots().get(name.split(".")[0])
+    if expected is not None:
+        code = "host_npa_import_outside_checkout" if name.split(".")[0] == "npa" else "host_repository_import_outside_checkout"
+        W.require(path == expected or path.is_relative_to(expected), code)
+
+
 @contextmanager
 def committed_npa_imports(sha):
-    """Load each host NPA module only from its compared committed Python blob.
+    """Load runtime repository imports only from compared committed Python blobs.
 
     Args:
         sha: Reviewed commit, checked before importing the NPA gate closure.

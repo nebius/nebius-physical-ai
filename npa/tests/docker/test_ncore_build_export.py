@@ -49,7 +49,11 @@ def test_oci_export_preserves_attestations_without_pushing(tmp_path):
     assert result.returncode == 0, result.stderr
     argv = json.loads(capture.read_text())
     assert "--load" not in argv and "--push" not in argv
-    assert "--provenance=mode=max" in argv and "--sbom=true" in argv
+    assert "--provenance=mode=max" in argv
+    assert argv[argv.index("--attest") + 1] == (
+        "type=sbom,generator=docker/buildkit-syft-scanner:stable-1@sha256:"
+        "ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+    )
     assert argv[argv.index("--output") + 1] == f"type=oci,dest={archive}"
     assert argv[argv.index("--metadata-file") + 1] == str(metadata)
     assert argv[argv.index("--builder") + 1] == "test-builder"

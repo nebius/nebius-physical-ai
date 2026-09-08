@@ -18,8 +18,9 @@ publisher for the same tag concurrently.
 
 Run from the exact reviewed, committed coordinator checkout. Source authorization
 requires `HEAD` and the full requested SHA to agree, and verifies the committed
-build context and executable gate sources. Each host NPA import must resolve
-inside that checkout and match its committed blob before execution; the loader
+build context and executable gate sources. Runtime repository imports, including
+the payload-history classifier, must resolve inside the expected checkout and
+match their committed blobs before execution; the loader
 compiles those compared bytes without using cached bytecode. The source check
 also compares the actual loaded repository module population. The packaging
 guards execute from a complete committed repository snapshot, including
@@ -29,6 +30,13 @@ deselections or expected failures. Python environment controls, site startup
 and pytest plugin autoload are disabled for that guard subprocess. Unrelated
 dirty paths never enter the snapshot and are permitted. The operator's host
 interpreter, installed dependencies and initial CLI startup remain trusted.
+The CLI starts project imports with a fresh private bytecode-cache namespace,
+and each Python subprocess receives its own empty namespace with cache writes
+disabled. Disabling writes alone would still allow old bytecode to be read.
+Buildx metadata permissions are restricted through a verified regular-file
+descriptor; content, identity and single-link ownership are checked again before
+the metadata becomes a bound gate input.
+
 Private scanner policy must already be available as `CUSTOMER_DENYLIST`, with
 optional `INFRA_DENYLIST`. These values never become Docker build arguments or container
 environment variables. Keep their provisioning outside source files and command
@@ -94,7 +102,10 @@ the full command therefore requires network access. Its initial `--image-only`
 packaging probe runs with networking disabled. Cold and warm runtime checks run
 through both the normal entrypoint and a Bash entrypoint override. Runtime
 installs and caches remain in disposable containers and are never committed
-back into the image. No GPU workload is part of this prepublication command.
+back into the image. A failed bootstrap preserves its internal APT diagnostics
+in private stderr before the disposable container is removed. The log location
+comes from the pinned upstream script, whose body and exit status are preserved.
+No GPU workload is part of this prepublication command.
 
 The inspection adapter accepts one assembled scratch-root layer, optionally
 followed by the exporter's exact canonical `WORKDIR` no-op: 1,024 zero decoded
