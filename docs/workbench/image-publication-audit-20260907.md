@@ -1,16 +1,46 @@
 # Public image publication audit — 2026-09-07
 
-The findings below record the September 7 baseline. The subsequent publication
-work replaces the Cosmos inherited vendor containers with runtime-fetch
-bootstraps, replaces OpenPI/RoboCasa cuDNN development ancestry, pins the
-RoboCasa closure, and repairs its package import defect. These replacement
-sources are eligible for guarded public development builds; they remain outside
-the supported-release selection pending qualification. Historical tags, scan
-results and private runtime evidence do not qualify the replacement bytes.
-The [Super replacement](../../npa/docker/workbench/cosmos3-super-benchmark/README.md)
-has since passed public development publication and a complete one-B200 video
-on its exact new digest. That narrower development result does not promote its
-supported tag or qualify the fixed benchmark matrix.
+This page records the September 7 baseline and the subsequent development-image
+work. The dated update below describes the newer evidence. The September 7
+baseline and every section beneath it remain the historical audit, including
+its then-current restrictions, failed probes and private workload results.
+The **32 accepted public releases and their pins are unchanged**; development
+qualification does not add a supported release.
+
+## September 9 development update
+
+Three exact public development images have completed their trusted publication
+gates, independent image/source verification and the measured workloads below.
+Their retained digests resolved anonymously again on September 9. Those checks
+establish these specific development results, not every advertised benchmark or
+future vulnerability-database result.
+
+| Image reference and digest | Measured development scope |
+| --- | --- |
+| `ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-nano-video:dev-1bd1b00330e37b3a8916b2a740c2578aca25651e`<br>`sha256:7e237a1b8fbf27bf08422263e64a70f870d8ebd28bf4f99b0cfbed946a598d78` | One B200, TP1 BF16: 30-second continuation and six-second structural augmentation, 27 verified artifacts. Guardrails were off and prompt fidelity is partial. [Measured Nano scope](../../npa/deploy/cosmos3-nano-video/README.md#measured-public-development-validation). |
+| `ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-super-benchmark:dev-638560022d44443f42a1469af5ac5a26ca398712`<br>`sha256:7797b5ada0e7f32dec924c52d52a58b04560608b12f31c42e78521edb3127ff6` | One B200, TP1 BF16: a fully decoded 1280×720 video, 189 frames at 24 fps and 35 inference steps. The fixed eight-GPU and H200 suites remain pending. [Measured Super scope](../../npa/docker/workbench/cosmos3-super-benchmark/README.md). |
+| `ghcr.io/nebius/nebius-physical-ai/npa-openpi:dev-5dbe0fc1e87ae4da54dd7605db24383a79835d39`<br>`sha256:df6910c8e8c73661b02eb55f6e62046a610a1c01a3f6c3aa570b40725b6ebb2b` | RTX PRO 6000: direct inference, two cross-pod responses, eight real optimizer updates, checkpoint reload and four held-out evaluations; 34 verified artifacts. Full-DROID and eight-node qualification remain pending. [Measured OpenPI scope](openpi-pi05-polaris.md#public-development-validation-on-rtx-pro-6000). |
+
+The earlier RoboCasa development image
+`ghcr.io/nebius/nebius-physical-ai/npa-robocasa:dev-8493d5af4c20eb8fec4bb4949dd8e29b5ed8a096`,
+digest `sha256:538c531f26e282af9463f149a6d93ab9a8cd92b24004b38cac381c0289ffe257`,
+passed its [256-step RTX kitchen simulation](../../npa/docker/workbench/robocasa/README.md)
+with nine verified artifacts. It did not establish task success or policy
+training. A refreshed September 9 dependency scan then reported the unpatched
+Accelerate 1.14.0 finding
+[CVE-2026-69112](https://www.vulncheck.com/advisories/hugging-face-accelerate-path-traversal-and-dos-via-weight-map).
+The earlier scan and runtime passes remain dated evidence for those bytes and
+do not waive the new security finding. Corrected source removes this unused
+dependency from the selected ACT runtime and checks the service, policy and
+processor boundary with Accelerate absent. A replacement public digest and its
+fresh runtime qualification are still awaited.
+
+cuRobo has corrective build and runner-cleanup source changes, but its next
+candidate still needs complete fresh pre- and postpublication byte checks,
+independent exact-image verification and an actual validated Franka planning
+workload. No cuRobo public development digest or GPU success is claimed here.
+The [publication gate contract](image-byte-scanning.md) continues to require all
+findings to be accounted for; interrupted evidence is not scan acceptance.
 
 ## September 7 baseline
 
