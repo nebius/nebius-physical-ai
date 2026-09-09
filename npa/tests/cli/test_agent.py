@@ -3634,9 +3634,17 @@ def test_agent_dry_run_counts_only_its_exact_healthy_project_record() -> None:
 
 
 def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
+    from unittest.mock import Mock
+    from npa.cli.agent_service_install import install_agent_services
 
-    source = _agent_source()
-    assert "npa-agent-bootstrap-{secrets.token_hex" in source
+    ssh = Mock()
+    for _ in range(2):
+        install_agent_services(
+            ssh, setup_script="set -eu\n", stage_source=Mock(), resuming=False
+        )
+    paths = [call.args[1] for call in ssh.upload_private_text.call_args_list]
+    assert len(set(paths)) == 2
+    assert all(path.startswith("/tmp/npa-agent-bootstrap-") for path in paths)
 
 
 def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
@@ -5049,6 +5057,9 @@ def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
     assert "tcp/22 never opened" in hint
     assert "split-tunnel" in hint
     assert "authenticated" not in hint
+    assert "rolled the VM back" not in hint
+    assert "npa agent status" in hint
+    assert "egress address" in hint
 
 
 def test_agent_deploy_failure_hint_separates_a_key_problem_from_the_network() -> None:
@@ -5066,6 +5077,8 @@ def test_agent_deploy_failure_hint_separates_a_key_problem_from_the_network() ->
     assert "never authenticated" in hint
     assert "--ssh-public-key-path" in hint
     assert "VPN" not in hint
+    assert "rolled the VM back" not in hint
+    assert "npa agent status" in hint
 
 
 def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
@@ -5082,6 +5095,9 @@ def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
     hint = _agent_deploy_failure_hint(detail)
     assert "cloud-init bootstrap failed" in hint
     assert "SSH never became reachable" not in hint
+    assert "rolled the VM back" not in hint
+    assert "VM is gone" not in hint
+    assert "npa agent status" in hint
 
 
 def test_agent_deploy_failure_hint_empty_for_unrelated_errors() -> None:

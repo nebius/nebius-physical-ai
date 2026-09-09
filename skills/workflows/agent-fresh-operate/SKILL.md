@@ -31,11 +31,26 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
   resume its first incomplete phase. Do not use `--replace` solely because the
   final Terraform/SSH response was lost; mismatched or unavailable evidence is
   indeterminate and resumable.
+- A completed service installer writes a private receipt before credentials are
+  staged. Interrupted bootstrap retries reuse that install only when its rendered
+  contents match exactly, then restage credentials and verify health. Changed
+  source/settings or a missing receipt require installation again.
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 
 All `npa agent …` and `nebius` commands run on the **operator/dev VM** with
 the selected NPA configuration root (`NPA_CONFIG_DIR`, default `~/.npa`).
 Use the authorized checkout and branch for live tests.
+
+The committed recovery regression is
+`npa/tests/e2e/test_agent_recovery_live.py`. Set
+`NPA_AGENT_RECOVERY_LIVE_CONFIG` to an owner-only JSON file containing
+`deploy_args` (the argument array beginning with `agent`, `deploy`, including an
+unused `--name`, exact project, `--agent-only`, and ingress settings) and
+`evidence_dir` (an owner-only directory outside the checkout). Use isolated
+`NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR`, run credential/capacity preflights,
+then run that test with the checkout's own Python. It injects an SSH failure during
+credential staging, requires one service install across both attempts, verifies
+authenticated health on the same VM, and destroys that exact test agent.
 
 ## Procedure
 
