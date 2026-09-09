@@ -100,6 +100,20 @@ model and storage credentials on the VM, outside the checkout. Set
 `NPA_E2E_PROJECT` to its configured project alias. Verify the selected service
 credentials before dispatching a live tier.
 
+The complete S3 rotation includes bucket creation and deletion. Use an exclusive
+CI storage project with a service account whose
+[`storage.editor` role](https://docs.nebius.com/iam/authorization/roles)
+is scoped to that project. A key restricted to one existing bucket can pass the
+workflow artifact tests, but cannot run the bucket lifecycle fixtures. Those
+fixtures also prune old test buckets by name prefix, so they must not share a
+project with another operator's test buckets. Keep broader storage permissions
+away from the project that holds production or interactive workloads.
+
+Ensure the existing storage is selected in NPA as well as saved in its
+credential store. `npa configure --no-provision` intentionally deselects storage;
+S3 tiers require the supported setup flow to create or reuse authorized storage
+and a passing storage preflight afterward.
+
 The workflow needs no Tailscale client, OAuth secret, OIDC permission, or
 `NPA_DAILY_NETWORK` variable. When replacing a host, verify the new public route
 and server identity before updating the SSH secrets. Retain a shared old host
