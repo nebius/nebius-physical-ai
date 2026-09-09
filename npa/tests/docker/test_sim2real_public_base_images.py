@@ -102,6 +102,8 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert 'names.isdisjoint({"tetgen", "wandb"})' in text
     assert "test ! -e /opt/nvidia/nsight-compute" in text
+    assert "gitpython-3.1.61-py3-none-any.whl#sha256=" in text
+    assert 'm.version("GitPython") == "3.1.61"' in text
 
     compat = (
         WORKBENCH / "common/envgen_compat/tetgen.py"
