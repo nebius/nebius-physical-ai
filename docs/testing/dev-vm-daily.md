@@ -64,6 +64,9 @@ not prove that GitHub can reach it. Validate by manually dispatching this
 workflow and checking that both the upload and remote test steps succeed.
 A laptop can reach the same address through a VPN or subnet route while direct
 connections from GitHub still fail.
+The workflow probes TCP reachability before creating its private-key file. On
+failure it checks public GitHub HTTPS and SSH endpoints as controls, reporting
+only reachability labels without printing connection values.
 
 Provision the VM with a dedicated CI public key, disable password and root
 login, and expose only the SSH port needed by this workflow. Keep application

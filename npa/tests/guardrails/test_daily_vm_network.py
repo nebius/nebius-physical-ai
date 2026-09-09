@@ -125,6 +125,33 @@ def test_missing_ssh_settings_fail_without_exposing_other_values(tmp_path, missi
     assert not Path(environment["COMMAND_LOG"]).exists()
 
 
+@pytest.mark.parametrize("vm_reachable", ["0", "1"])
+def test_tcp_probe_reports_controls_without_exposing_endpoint(tmp_path, vm_reachable):
+    environment = _environment(tmp_path)
+    binaries = tmp_path / "bin"
+    (binaries / "python3").symlink_to(sys.executable)
+    (binaries / "socket.py").write_text(
+        "import contextlib, os\n"
+        "def create_connection(address, timeout):\n"
+        "    if address[0] == os.environ['DEV_VM_SSH_HOST'] "
+        "and os.environ['VM_REACHABLE'] == '0':\n"
+        "        raise OSError('private endpoint details')\n"
+        "    return contextlib.nullcontext()\n"
+    )
+    environment.update({
+        "PYTHONPATH": str(binaries), "DEV_VM_SSH_HOST": "private-endpoint.invalid",
+        "DEV_VM_SSH_PORT": "22", "VM_REACHABLE": vm_reachable,
+    })
+    result = _run("Check direct SSH reachability", environment)
+    assert result.returncode == int(vm_reachable == "0")
+    output = result.stdout + result.stderr
+    assert "private-endpoint.invalid" not in output
+    assert "private endpoint details" not in output
+    assert ("GitHub HTTPS control: TCP reachable" in output) == (vm_reachable == "0")
+    assert ("GitHub SSH control: TCP reachable" in output) == (vm_reachable == "0")
+    assert not Path(environment["COMMAND_LOG"]).exists()
+
+
 @pytest.fixture
 def staging_environment(tmp_path):
     environment = _environment(tmp_path)

@@ -110,6 +110,34 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "Effective tier=$tier ref=$ref (event=$EVENT_NAME)"
 
+      - name: Check direct SSH reachability
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          import socket
+          import sys
+
+          def reachable(label, host, port):
+              try:
+                  with socket.create_connection((host, port), timeout=15):
+                      print(f"{label}: TCP reachable", flush=True)
+                      return True
+              except OSError:
+                  print(f"{label}: TCP unreachable", flush=True)
+                  return False
+
+          port = os.environ.get("DEV_VM_SSH_PORT") or "22"
+          if not port.isdecimal() or not 1 <= int(port) <= 65535:
+              sys.exit("::error::DEV_VM_SSH_PORT must be a valid TCP port.")
+          if not reachable("Dev VM SSH", os.environ["DEV_VM_SSH_HOST"], int(port)):
+              reachable("GitHub HTTPS control", "github.com", 443)
+              reachable("GitHub SSH control", "ssh.github.com", 443)
+              sys.exit("::error::The VM is unreachable from this runner before SSH authentication. Check its public route and network rules; no private key was staged.")
+          PYTHON
+
       - name: Configure SSH access to the dev VM
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
