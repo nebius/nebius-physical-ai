@@ -89,6 +89,13 @@ Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
 for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
 explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
 
+Current EnvGen build sources replace the pinned Genesis parent's GitPython
+3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
+the GitPython security findings that blocked a subsequent development build;
+see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
+Historical image digests retain their original dependency bytes. This source
+update does not change the accepted release pins above.
+
 ## 2026-09-02 private-registry isolation audit
 
 All 31 accepted release tags and recorded digests resolved through anonymous
