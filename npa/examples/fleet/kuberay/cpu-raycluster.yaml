@@ -1,0 +1,19 @@
+apiVersion: npa.fleet/v0.0.1
+name: cpu-ray
+# Supply the authorized tenant, region, profile and existing project privately.
+tenant_id: ""
+region: us-central1
+profile: ""
+defaults:
+  name: cpu-ray
+  cpu_nodes: {count: 1, platform: cpu-d3, preset: 16vcpu-64gb}
+  gpu_nodes: {count: 0}
+  enable_filestore: false
+  kuberay:
+    enabled: true
+    worker_replicas: 2
+    worker_cpus: 2
+    worker_memory_gib: 4
+projects:
+  - name: example
+    project_id: "<your-project-id>"

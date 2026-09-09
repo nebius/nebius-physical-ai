@@ -102,6 +102,17 @@ npa workbench token-factory generate \
 `--max-prompts 0` means all of them. Set a small non-zero value first: this is
 the command that turns a typo into a large token bill.
 
+Prompt parsing depends on the file extension. Keep plain prompt lines in a
+`.txt` file. Each nonempty `.jsonl` line must be a JSON string or an object with
+a `prompt`, `text`, or `instruction` field, not bare text. Use a JSON serializer
+when converting prompts, including prompts written by a workflow shell step.
+For a local, no-inference check, the installed
+`npa.workbench.token_factory._load_prompts(Path(...))` reader returns
+`(id, prompt)` pairs. Compare the prompt values and count with the requested
+input. This is an internal Python helper, not a CLI validation command;
+confirm it exists in the installed version before using it. It does not verify
+remote staging or model access.
+
 **Batch text generation** — same prompt file, same `generations.jsonl`, batch
 token rates, default model `openai/gpt-oss-120b`:
 

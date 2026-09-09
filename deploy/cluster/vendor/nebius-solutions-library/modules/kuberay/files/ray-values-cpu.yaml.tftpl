@@ -1,0 +1,71 @@
+# NPA fixed CPU RayCluster. Ray Jobs remains the application control API.
+kuberay:
+  enabled: true
+kube-prometheus-stack:
+  enabled: false
+configuration:
+  putspec:
+    yamlInput: |-
+      apiVersion: ray.io/v1
+      kind: RayCluster
+      metadata:
+        name: ray-cluster
+      spec:
+        rayVersion: "2.58.0"
+        enableInTreeAutoscaling: false
+        headGroupSpec:
+          serviceType: ClusterIP
+          rayStartParams:
+            num-cpus: "0"
+            dashboard-host: "0.0.0.0"
+          template:
+            spec:
+              automountServiceAccountToken: false
+              nodeSelector:
+                node.kubernetes.io/instance-type: "${cpu_platform}"
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                fsGroup: 1000
+                seccompProfile: {type: RuntimeDefault}
+              containers:
+                - name: ray-head
+                  image: docker.io/rayproject/ray@sha256:507464fe56b3d24cec2e812a25850db91b97d52752d63119fecf6914f7b0a37a
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    capabilities: {drop: [ALL]}
+                  resources:
+                    requests: {cpu: "1", memory: 4Gi}
+                    limits: {cpu: "1", memory: 4Gi}
+                  ports:
+                    - {containerPort: 6379, name: gcs}
+                    - {containerPort: 8265, name: dashboard}
+                    - {containerPort: 10001, name: client}
+        workerGroupSpecs:
+          - groupName: cpu-worker
+            replicas: ${worker_replicas}
+            minReplicas: ${worker_replicas}
+            maxReplicas: ${worker_replicas}
+            rayStartParams:
+              num-cpus: "${worker_cpus}"
+            template:
+              spec:
+                automountServiceAccountToken: false
+                nodeSelector:
+                  node.kubernetes.io/instance-type: "${cpu_platform}"
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                  runAsGroup: 1000
+                  fsGroup: 1000
+                  seccompProfile: {type: RuntimeDefault}
+                containers:
+                  - name: ray-worker
+                    image: docker.io/rayproject/ray@sha256:507464fe56b3d24cec2e812a25850db91b97d52752d63119fecf6914f7b0a37a
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities: {drop: [ALL]}
+                    resources:
+                      requests: {cpu: "${worker_cpus}", memory: "${worker_memory_gib}Gi"}
+                      limits: {cpu: "${worker_cpus}", memory: "${worker_memory_gib}Gi"}

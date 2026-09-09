@@ -29,6 +29,16 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: ray-train-synthetic
+    category: tools
+    when_to_use: "Run native Ray Train distributed CUDA synthetic regression, S3 checkpoints, optimizer recovery and factual Rerun metrics."
+    path: skills/tools/ray-train-synthetic/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/workflows/workbench/ray-train-synthetic/train.py
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/ray-train-synthetic/cluster.yaml
   - name: curobo
     category: tools
     when_to_use: "Run, validate or review cuRobo V2 Franka pose planning and full motion benchmarks on CUDA with factual RRD artifacts."
@@ -104,6 +114,15 @@ skills:
         path: npa/docker/workbench/packaging-contract.yaml
       - type: file_exists
         path: npa/src/npa/deploy/images.py
+  - name: contributions
+    category: atomic
+    when_to_use: "Write or review NPA contributions, including workbench agent changes, for readability, documentation, and prohibited anti-patterns."
+    path: skills/atomic/contributions/SKILL.md
+    smoke:
+      - type: file_exists
+        path: CONTRIBUTING.md
+      - type: file_exists
+        path: skills/atomic/contributions/SKILL.md
   - name: cosmos3-codebase-nav
     category: atomic
     when_to_use: "Navigate NPA Cosmos3 integration, Nano vLLM-Omni diffusion, and upstream Cosmos framework files."

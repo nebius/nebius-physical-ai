@@ -51,6 +51,12 @@ Configuration is explicit: `--world-size` sets GPUs per replica;
 `--parallelism-preset` is the Cosmos placement preset; and
 `--guardrails/--no-guardrails` is the explicit safety posture.
 
+Guarded startup reuses the pinned Cosmos tokenizer materializer before Ray/NLTK
+imports. Keep its verified regular-file `NLTK_DATA` cache at runtime; never bake
+it or disable NLTK path enforcement to permit Hub snapshot symlinks. Missing
+entitlement or invalid cache content must refuse startup. The shared materializer
+is the source of truth for the Guardrail1 revision and cache validation.
+
 Use authenticated `GET /ready`, and verify that the exact image checks the native
 Serve application and model replicas. Earlier implementations returned HTTP 200
 while weights were still loading. Require the selected application to be
@@ -86,6 +92,46 @@ them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `provenance.json` (`npa.cosmos3.ray-serve.provenance.v1`). Use
 `workflows/testing/cosmos3-ray-batch.yaml` for the workflow
 client; the persistent service must already be ready.
+
+The checks in this paragraph require the updated installed client (for example,
+the checkout's editable `npa/.venv` installation). The reference workflow's
+default accepted service image bundles the older client and does not enable a
+source overlay, so its default client path does not provide these checks.
+Updating NPA on the submission host does not update that packaged client.
+The accepted service digest remains wire-compatible with the updated client,
+but does not gain the current source's Ray management authentication, scoped S3
+input staging, or Ray 2.58/Torch 2.13 runtime changes. Revalidate the actual
+service runtime when those integration boundaries change; historical image
+evidence does not exercise replacement source or runtime dependencies.
+
+The updated client binds the supported schema, model, request ID and every requested
+sample name before downloading. An omitted request ID is generated before POST
+and retained in `request.json`. Require one successful native `SampleOutputs`
+per name and exact, unique artifact coverage of its declared files within
+`request_id/sample/`. Ordinary samples require `vision.jpg` or `vision.mp4`
+according to resolved frame count; reasoner samples without transfer hints require
+`reasoner_text.txt`. Require `control_<hint>` with the same media extension for
+every requested non-null transfer hint and bind the returned hint set. Debug files
+remain part of the verified file set. Failed/skipped samples,
+unsafe paths and incomplete manifests must never become completed publications.
+Use `num_outputs=1` and distinct named samples on this native Serve path.
+Image/video category is bound to explicit frames or the pinned mode/WSM defaults.
+Implicit S3 media types use the server's shared object-key parser, preserving
+the original request URI and rejecting unrecognized extensions before POST.
+The import-light client mirrors the pinned mode/frame-category defaults;
+custom service defaults at that same revision require explicit `model_mode`
+and `num_frames`. A new framework revision requires separate contract validation.
+Inline sample overrides: `defaults_file` is rejected because hidden server-local
+defaults cannot be bound to the client's requested output contract.
+
+Run `npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py` with
+`NPA_INTEGRATION_E2E=1`, the configured service endpoint/token, and
+`NPA_COSMOS3_RAY_LIVE_OUTPUT_URI` set to an owned S3 prefix. The current service
+needs storage credentials and `NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS` covering that
+prefix. The test exercises text2image and implicit image2image with an encoded
+S3 conditioning filename, reads back request/response/provenance, decodes both
+generated images and rejects a
+malformed copy of the real response before download/publication.
 
 Preserve the pinned framework's sampling types. Its aspect ratios include
 comma-delimited strings such as `"1,1"`, and resolution is a string enum such as
