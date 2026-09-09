@@ -23,6 +23,12 @@ with an actionable migration to this canonical spec.
    source SHA; never use source overlays or best-effort bootstrap.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
+   Run the selected Isaac image's `isaac-bootstrap status` against the cache
+   PVC and require `ready=yes` for its reported `expected_tree` before using
+   read-only/offline mode. The cache stamp includes the bootstrap script, so
+   unchanged wheel pins alone do not prove that a rebuilt image can reuse it.
+   If absent, run `npa/docker/workbench/common/warm-isaac-cache.yaml` with that
+   exact image digest to create its versioned tree; preserve older cache trees.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.

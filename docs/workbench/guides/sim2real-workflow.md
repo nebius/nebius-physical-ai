@@ -188,6 +188,12 @@ PVC is `Bound` with `RWX`. Exit 78 means acceptance was explicitly disabled;
 image pull failures are handled in the next gate. See
 [runtime-fetch packaging](../container-packaging.md#nvidia-isaac--omniverse-runtime-fetch-images).
 
+After changing the image, check `isaac-bootstrap status` from that exact digest
+against the PVC: its `expected_tree` must report `ready=yes`. The cache stamp
+also includes the bootstrap script, so matching wheel versions alone are not
+enough. Warm a missing version alongside existing trees before resuming a run
+that uses read-only/offline cache access.
+
 ## 5. Build/push once and prove the exact image pulls
 
 The workflow does not copy images between registries. Use the public GHCR

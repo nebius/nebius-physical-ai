@@ -523,17 +523,36 @@ def tail_live_job_logs(
     follow: bool = False,
     timeout: int = 300,
 ) -> subprocess.CompletedProcess[str]:
-    cmd = [sky_bin, "jobs", "logs", str(job_id)]
+    """Read the exact managed job through its configured SkyPilot connection.
+
+    Args:
+        sky_bin: Selected SkyPilot executable.
+        job_id: Immutable managed-job identity.
+        stage: Optional provider task identity within the managed job.
+        follow: Whether to stream subsequent output.
+        timeout: Maximum time for this log request.
+    Returns:
+        Captured output and exit status from the selected controller.
+    Raises:
+        RuntimeError: The isolated API connection cannot be verified.
+        OSError: The executable or isolated state cannot be accessed.
+        subprocess.TimeoutExpired: The log request exceeds its timeout.
+    """
+    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    runtime = resolve_config(sky_bin=sky_bin)
+    env = sky_environment(runtime.isolated_config_dir)
+    if runtime.global_config_path is not None:
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
+    cmd = [str(runtime.sky_bin), "jobs", "logs", str(job_id)]
     if stage:
         cmd.append(stage)
     cmd.append("--follow" if follow else "--no-follow")
     return subprocess.run(
-        cmd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+        cmd, env=env, cwd=runtime.isolated_config_dir or Path.home(),
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=timeout, check=False,
     )
 
 
