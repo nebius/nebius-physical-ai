@@ -31,6 +31,17 @@ def _invoke(args: list[str], evidence: Path, label: str):
     return result
 
 
+def _destroy_test_agent(project, name, evidence, keep_iam):
+    args = ["agent", "destroy", "--project", project, "--name", name, "--yes", "--json"]
+    if keep_iam:
+        args.append("--keep-iam")
+    cleanup = _invoke(args, evidence, "destroy")
+    assert cleanup.exit_code == 0, (
+        "Exact-agent cleanup failed; inspect private destroy.log"
+    )
+    assert json.loads(cleanup.stdout)["infrastructure_absent"] is True
+
+
 @pytest.fixture
 def deployment():
     config_path = Path(os.environ["NPA_AGENT_RECOVERY_LIVE_CONFIG"])
@@ -40,20 +51,14 @@ def deployment():
     assert args[:2] == ["agent", "deploy"]
     project, name = (args[args.index(flag) + 1] for flag in ("--project", "--name"))
     assert not agent._agent_record(project, name), "Choose an unused agent name"
+    keep_iam = bool(agent.resolve_project_agents(project))
     evidence = Path(config["evidence_dir"])
     evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
     assert evidence.stat().st_mode & 0o077 == 0, "Evidence must be owner-only"
     try:
         yield args, project, name, evidence
     finally:
-        cleanup = _invoke(
-            ["agent", "destroy", "--project", project, "--name", name, "--yes"],
-            evidence,
-            "destroy",
-        )
-        assert cleanup.exit_code == 0, (
-            "Exact-agent cleanup failed; inspect private destroy.log"
-        )
+        _destroy_test_agent(project, name, evidence, keep_iam)
 
 
 def test_interrupted_credentials_resume_without_reinstalling(deployment, monkeypatch):
@@ -73,6 +78,10 @@ def test_interrupted_credentials_resume_without_reinstalling(deployment, monkeyp
     assert agent._agent_record(project, name)["instance_id"] == instance_id
     assert stage_source.call_count == 1, "Resume reran source/service installation"
     assert "Reusing completed agent service installation" in resumed.output
+    _verify_recovered_agent(project, name, evidence, stage_source.call_count)
+
+
+def _verify_recovered_agent(project, name, evidence, installations):
     status = _invoke(
         ["agent", "status", "--project", project, "--name", name, "--json"],
         evidence,
@@ -86,7 +95,7 @@ def test_interrupted_credentials_resume_without_reinstalling(deployment, monkeyp
         json.dumps(
             {
                 "same_instance": True,
-                "service_installations": stage_source.call_count,
+                "service_installations": installations,
                 "credential_resume": True,
                 "authenticated_health": True,
             },

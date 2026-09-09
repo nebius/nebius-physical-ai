@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import hashlib
 import logging
+from pathlib import PurePosixPath
 import secrets
 import shlex
 import sys
@@ -17,13 +18,14 @@ _LOG = logging.getLogger(__name__)
 
 
 def _receipt_script(digest: str) -> str:
+    parent = shlex.quote(str(PurePosixPath(_INSTALL_RECEIPT).parent))
     return f"""
 (
 set -eu
-stage="$(sudo mktemp /opt/npa-agent/.services-installed.XXXXXXXX)"
+stage="$(sudo mktemp {parent}/.services-installed.XXXXXXXX)"
 trap 'sudo rm -f -- "$stage"' EXIT
 builtin printf '%s\\n' {shlex.quote(digest)} | sudo tee "$stage" >/dev/null
-sudo mv -fT -- "$stage" {_INSTALL_RECEIPT}
+sudo mv -fT -- "$stage" {shlex.quote(_INSTALL_RECEIPT)}
 )
 """
 
@@ -66,7 +68,8 @@ def install_agent_services(
         code, stdout, _stderr = ssh.run(f"sudo cat {_INSTALL_RECEIPT} 2>/dev/null")
         if code == 0 and stdout.strip() == digest:
             return True
-    remote_path = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
+    # SSH and SFTP start in the authenticated user's home, outside shared /tmp.
+    remote_path = f"./.npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
         stage_source(ssh)
         ssh.upload_private_text(setup_script + _receipt_script(digest), remote_path)

@@ -51,6 +51,9 @@ unused `--name`, exact project, `--agent-only`, and ingress settings) and
 then run that test with the checkout's own Python. It injects an SSH failure during
 credential staging, requires one service install across both attempts, verifies
 authenticated health on the same VM, and destroys that exact test agent.
+When the project already has agent records, cleanup uses `--keep-iam` to preserve
+their shared identity and still requires provider-verified absence of the test
+agent's infrastructure.
 
 ## Procedure
 

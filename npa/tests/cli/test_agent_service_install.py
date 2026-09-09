@@ -135,13 +135,13 @@ def bootstrap_harness(monkeypatch):
 
 @pytest.mark.parametrize("change_password", [False, True])
 def test_bootstrap_retry_restages_credentials_and_honors_changed_settings(
-    bootstrap_harness, change_password
+    bootstrap_harness, change_password, tmp_path
 ) -> None:
     agent, manifest, stage, credentials, llm = bootstrap_harness
     kwargs = dict(
         host="192.0.2.10",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path=str(tmp_path / "id_ed25519"),
         project_alias="test",
         agent_name="agent",
         project_id="project-test",

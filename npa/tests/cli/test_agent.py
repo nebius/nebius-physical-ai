@@ -3644,7 +3644,7 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
         )
     paths = [call.args[1] for call in ssh.upload_private_text.call_args_list]
     assert len(set(paths)) == 2
-    assert all(path.startswith("/tmp/npa-agent-bootstrap-") for path in paths)
+    assert all(path.startswith("./.npa-agent-bootstrap-") for path in paths)
 
 
 def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
