@@ -48,6 +48,8 @@ npa workbench cosmos3 ray-serve --world-size 1 --max-batch-size 4
 
 Configuration is explicit: `--world-size` sets GPUs per replica;
 `--max-batch-size` and `--batch-wait-timeout-s` are upstream batching knobs;
+the service sets Ray's model-replica request admission capacity to the configured
+maximum batch size so batches above Ray 2.58's default capacity can form;
 `--parallelism-preset` is the Cosmos placement preset; and
 `--guardrails/--no-guardrails` is the explicit safety posture.
 
