@@ -4,11 +4,15 @@ from pathlib import Path
 
 import pytest
 
+from npa.clients import config
 from npa.orchestration.npa_workflow import submission_state as state
 
 
 @pytest.fixture
 def private_home(tmp_path, monkeypatch):
+    # Exercise dynamic environment selection without the autouse fixture's
+    # explicit CONFIG_PATH override taking precedence.
+    monkeypatch.setattr(config, "CONFIG_PATH", config.NPA_CONFIG_DIR / "config.yaml")
     root = tmp_path / "synthetic-home"
     root.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))

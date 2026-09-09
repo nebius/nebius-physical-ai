@@ -115,15 +115,21 @@ def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
-    # The fake executable has no API daemon. Keep the real health gate, but
-    # inspect its empty process namespace instead of an operator's host API.
+    # This synthetic executable has no daemon. Keep the real health gate, but
+    # inspect synthetic procfs so an operator's running daemon cannot replace
+    # the accelerator behavior these tests are intended to exercise.
     proc_root = tmp_path / "proc"
     proc_root.mkdir()
-    probe = workflow_runtime._probe_local_api_daemon_cwd
+    real_probe = workflow_runtime._probe_local_api_daemon_cwd
+
+    def probe(sky_executable, **kwargs):
+        kwargs.setdefault("proc_root", proc_root)
+        return real_probe(sky_executable, **kwargs)
+
     monkeypatch.setattr(
         workflow_runtime,
         "_probe_local_api_daemon_cwd",
-        lambda executable, **kwargs: probe(executable, proc_root=proc_root, **kwargs),
+        probe,
     )
     return str(path)
 
@@ -231,7 +237,8 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     spec = {**SPEC}
@@ -246,6 +253,7 @@ def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
         )
 
     assert excinfo.type.__name__ == "Exit"
+    assert "nodes offer at most 1 of that GPU each" in capsys.readouterr().err
 
 
 def test_an_explicit_env_override_is_left_alone(

@@ -148,6 +148,14 @@ def verify_image(tarball: Path, *, expected_image_id: str, contract: dict | None
         expected.update(adapters)
         torch_license = torch_contract["license"]
         expected[f"{root}/{_path(torch_license['path'])}"] = torch_license
+        # The patched wheel carries third-party notices as separate files;
+        # its short project LICENSE no longer contains the complete notices.
+        notices = torch_contract["third_party_notices"]
+        notice_paths = {row["path"] for row in notices}
+        if len(notices) != 97 or len(notice_paths) != 97:
+            raise ImageVerificationError("expected complete reviewed PyTorch notice inventory")
+        for row in notices:
+            expected[f"{root}/{_path(row['path'])}"] = row
     excluded_hashes = {row["sha256"] for row in cudnn["excluded_sdk"]}
     runtime_hashes = {row["sha256"] for row in runtimes}
     if len(cudnn["excluded_sdk"]) != 14 or len({row["path"] for row in cudnn["excluded_sdk"]}) != 14:

@@ -36,6 +36,26 @@ def _binding(state: nebius.IamBindingState) -> nebius.StorageIamBindingEvidence:
     )
 
 
+def test_project_alias_registration_changes_identity_once(tmp_path, monkeypatch):
+    from npa.clients import project_credential_store as store
+
+    path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-01T00:00:00+00:00")
+    write_project_credentials(
+        "project-a", {"storage": {"bucket": "fixture-bucket"}}, alias="first", path=path,
+    )
+    before = path.read_bytes()
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-02T00:00:00+00:00")
+    added = project_credential_record("project-a", alias="second", path=path)
+    assert added["aliases"] == ["first", "second"]
+    assert added["updated_at"] == "2025-01-02T00:00:00+00:00"
+    registered = path.read_bytes()
+    assert registered != before
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-03T00:00:00+00:00")
+    assert project_credential_record("project-a", alias="second", path=path) == added
+    assert path.read_bytes() == registered
+
+
 def _bootstrap_result(binding_state: str) -> dict[str, str]:
     return {
         "service_account_id": "serviceaccount-stable",

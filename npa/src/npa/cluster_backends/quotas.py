@@ -33,7 +33,13 @@ _GIB = 1024**3
 _CPU_DISK_GIB = 128
 _FILESYSTEM_SIZE_QUOTA = "compute.filesystem.size.network-ssd"
 _FILESYSTEM_SIZE_UNIT = "byte"
-_BYTE_QUOTAS = {_FILESYSTEM_SIZE_QUOTA, "compute.disk.size.network-ssd"}
+_BYTE_QUOTAS = {
+    _FILESYSTEM_SIZE_QUOTA,
+    "compute.disk.size.network-ssd",
+    "storage.bucket.size.standard",
+    "storage.bucket.size.enhanced-throughput",
+    "storage.bucket.size.intelligent",
+}
 _VCPU_QUOTAS = {"compute.instance.non-gpu.vcpu"}
 _OPTIONAL_UNADVERTISED_QUOTAS = frozenset(
     {
@@ -298,7 +304,10 @@ def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str
 
 
 def required_quotas(
-    clusters: Iterable[Any], *, new_projects: int = 0
+    clusters: Iterable[Any],
+    *,
+    new_projects: int = 0,
+    object_storage: Iterable[Any] = (),
 ) -> dict[str, int]:
     """Aggregate the tenant quota amounts *clusters* need in one region.
 
@@ -346,6 +355,15 @@ def required_quotas(
         if cluster.enable_filestore and not cluster.existing_filestore:
             add("compute.filesystem.count", 1)
             add(_FILESYSTEM_SIZE_QUOTA, cluster.filestore_disk_size_gibibytes * _GIB)
+    # Bucket caps are not reserved bytes. Budget each new declaration's full
+    # capacity against remaining storage-class quota, independently of the
+    # cluster filesystem. Provider-verified existing buckets are excluded by
+    # the Fleet caller, just like unchanged existing cluster resources.
+    for storage in object_storage:
+        if storage.enabled:
+            storage_class = storage.normalized_storage_class().replace("_", "-")
+            add("storage.bucket.count", 1)
+            add(f"storage.bucket.size.{storage_class}", storage.size_gibibytes * _GIB)
     # A create-on-demand project needs one default/owned topology before the
     # recipe can run. Live inventory contains private and public project pools,
     # plus the network's default route table and egress route.
@@ -629,6 +647,7 @@ def preflight_region(
     clusters: Iterable[Any],
     env: dict[str, str],
     new_projects: int = 0,
+    object_storage: Iterable[Any] = (),
     profile: str = "",
     run_capture: Callable[..., Any],
     nebius_argv: Callable[[str, str], list[str]],
@@ -682,7 +701,9 @@ def preflight_region(
                 "capacity block group(s); ordinary GPU quota excluded"
             )
 
-    needed = required_quotas(clusters, new_projects=new_projects)
+    needed = required_quotas(
+        clusters, new_projects=new_projects, object_storage=object_storage
+    )
     if not needed:
         return []
     result = run_capture(

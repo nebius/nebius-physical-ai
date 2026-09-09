@@ -267,12 +267,13 @@ Snowglobe. Design doc: `docs/architecture/blueprint-incorporation-plan.md`.
   `GET /api/agent/trace/spans`, `POST /api/agent/trace/analyze`.
 - **Adversarial eval (Phase J)** — `npa/tests/agent_eval/adversarial.py`: persona
   (Token-Factory-generated, mocked in CI) × prompt-injection scenarios run
-  against the real modules; `validate_output` uses guardrails-ai when installed
-  (`npa[agent-eval]`) else a pure validator. `test_agent_adversarial_scorecard.py`
+  against the real modules; `validate_output` always runs the repository-owned
+  pure-Python checks. `test_agent_adversarial_scorecard.py`
   gates `defense_rate` **delta-vs-baseline** (`adversarial_baseline.json`).
 
 **Optional extras (injected/guarded, absent degrades gracefully):**
-`npa[agent-eval]` (guardrails-ai), `npa[agent-trace]` (langfuse /
+`npa[agent-eval]` is a compatibility alias with no extra dependencies.
+`npa[agent-trace]` (langfuse /
 opentelemetry-sdk). The LanceDB store is now part of the base install.
 Embeddings default to
 `NPA_AGENT_EMBED_MODEL` (confirm with `npa workbench token-factory models`);

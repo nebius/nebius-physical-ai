@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -102,17 +103,156 @@ def _yaml_document(contents: str | bytes) -> Any:
         raise IsolatedApiError("executing credential/configuration YAML is invalid") from None
 
 
+class _UniqueMappingLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        result = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in result:
+                raise ValueError("duplicate mapping key")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
+
+
+def _strict_mapping(contents: bytes) -> dict | None:
+    try:
+        value = yaml.load(contents, Loader=_UniqueMappingLoader)
+        return value if isinstance(value, dict) else None
+    except (yaml.YAMLError, ValueError, TypeError):
+        # No parser diagnostic or credential-bearing input may leave this boundary.
+        return None
+
+
+def _nebius_service_account_identity(environment: Mapping[str, str], home: Path, execs: list[dict]) -> dict[Path, str]:
+    """Bind one supported CLI RSA profile and its durable key; never fetch tokens.
+
+    CLI --config/--profile override exec environment and default selection.
+    NEBIUS_CONFIG_DIR is not a documented CLI config selector. Relative paths,
+    extra auth sources, and multiple effective selections remain byte-strict.
+    """
+    selections = set()
+    for spec in execs or [{}]:
+        if not isinstance(spec, dict):
+            return {}
+        env = dict(environment)
+        profile = None
+        config_path = home / ".nebius/config.yaml"
+        if spec:
+            if Path(str(spec.get("command", ""))).name != "nebius":
+                return {}
+            entries = spec.get("env") or []
+            if not isinstance(entries, list) or any(not isinstance(x, dict) or set(x) != {"name", "value"}
+                                                   or not all(isinstance(v, str) for v in x.values()) for x in entries):
+                return {}
+            if len({x["name"] for x in entries}) != len(entries) or any(x["name"] == "HOME" for x in entries):
+                return {}
+            env.update({x["name"]: x["value"] for x in entries})
+            args = spec.get("args") or []
+            if not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+                return {}
+            selectors = {}
+            index = 0
+            while index < len(args):
+                arg = args[index]
+                flag, separator, value = arg.partition("=")
+                if flag in {"--profile", "-p", "--config", "-c"}:
+                    name = "profile" if flag in {"--profile", "-p"} else "config"
+                    if not separator:
+                        index += 1
+                        value = args[index] if index < len(args) else ""
+                    if name in selectors or not value or value.startswith("-"):
+                        return {}
+                    selectors[name] = value
+                elif arg == "--" or arg.startswith(("-I", "-p", "-c", "--profile", "--config")) or (arg.startswith("-") and any(word in arg for word in ("token", "auth", "endpoint", "service-account", "private-key", "public-key", "federat", "impersonat"))):
+                    return {}
+                index += 1
+            profile = selectors.get("profile")
+            if "config" in selectors:
+                config_path = Path(selectors["config"])
+        if any(env.get(key) for key in ("NEBIUS_ENDPOINT", "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE", "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE")):
+            return {}
+        if not config_path.is_absolute():
+            return {}
+        try:
+            contents = config_path.read_bytes()
+        except FileNotFoundError:
+            return {}
+        data = _strict_mapping(contents)
+        if not data or set(data) - {"default", "profiles"} or not isinstance(data.get("profiles"), dict):
+            return {}
+        profile = profile or env.get("NEBIUS_PROFILE") or data.get("default")
+        if profile is None and len(data["profiles"]) == 1:
+            profile = next(iter(data["profiles"]))
+        if not isinstance(profile, str) or not profile:
+            return {}
+        selected = data["profiles"].get(profile)
+        fields = {"auth-type", "service-account-id", "public-key-id", "private-key-file-path", "endpoint", "parent-id", "tenant-id"}
+        if not isinstance(selected, dict) or set(selected) - fields or selected.get("auth-type") != "service account":
+            return {}
+        if not all(isinstance(v, str) and v for v in selected.values()) or not all(selected.get(k) for k in ("service-account-id", "public-key-id", "private-key-file-path")):
+            return {}
+        if any(not re.fullmatch(r"[^/\s]+", selected[k]) for k in ("service-account-id", "public-key-id")):
+            return {}
+        key = Path(selected["private-key-file-path"])
+        if not key.is_absolute():
+            return {}
+        selections.add((str(config_path), hashlib.sha256(contents).hexdigest(), profile,
+                        selected["service-account-id"], selected["public-key-id"], str(key)))
+    if len(selections) != 1:
+        return {}
+    config_name, config_hash, profile, account, public_key, key_name = selections.pop()
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+    try:
+        key_bytes = Path(key_name).read_bytes()
+        if not isinstance(load_pem_private_key(key_bytes, password=None), RSAPrivateKey):
+            raise ValueError
+    except (OSError, ValueError, TypeError, UnsupportedAlgorithm):
+        raise IsolatedApiError("selected Nebius service account private key cannot be verified") from None
+    key_hash = hashlib.sha256(key_bytes).hexdigest()
+    binding = json.dumps([config_name, config_hash, profile, account, public_key, key_name, key_hash])
+    return {Path(config_name): config_hash, Path(key_name): key_hash,
+            home / ".nebius/credentials.yaml": "derived-nebius-sa-cache-v1:" + hashlib.sha256(binding.encode()).hexdigest()}
+
+
+def _derived_service_account_cache(contents: bytes | None) -> bool:
+    """Recognize derived SA tokens, including creation/pruning of an empty cache.
+
+    This identifies durable auth configuration, not the subject of an arbitrary
+    bearer. Provider/principal access preflight remains required. Unknown or
+    mixed OAuth/token formats receive no exception to full-byte verification.
+    """
+    if contents is None:
+        return True
+    data = _strict_mapping(contents)
+    if data is None or set(data) != {"tokens"} or not isinstance(data["tokens"], dict):
+        return False
+    for name, value in data["tokens"].items():
+        if not isinstance(name, str) or not re.fullmatch(r"service-account/[^/\s]+/[^/\s]+", name):
+            return False
+        if not isinstance(value, dict) or set(value) != {"token", "expires_at"}:
+            return False
+        if not isinstance(value["token"], str) or not value["token"] or type(value["expires_at"]) is not int or value["expires_at"] < 0:
+            return False
+    return True
+
+
 def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any] | None = None) -> dict[str, str]:
     home = Path(environment.get("HOME") or "").expanduser()
     kube_paths = [Path(item).expanduser() for item in environment.get("KUBECONFIG", "").split(os.pathsep) if item]
     paths = [*kube_paths, home / ".aws" / "config", home / ".aws" / "credentials"]
-    for directory in (home / ".nebius", Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius"),
-                      Path(environment.get("NPA_CONFIG_DIR") or home / ".npa")):
-        paths.extend(directory / name for name in ("config.yaml", "credentials.yaml", "credentials.json",
-                     "NEBIUS_IAM_TOKEN.txt", "NEBIUS_TENANT_ID.txt", "NEBIUS_DOMAIN.txt"))
+    filenames = ("config.yaml", "credentials.yaml", "credentials.json", "NEBIUS_IAM_TOKEN.txt", "NEBIUS_TENANT_ID.txt", "NEBIUS_DOMAIN.txt")
+    provider_dirs = (home / ".nebius", Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius"))
+    designated_caches = {directory / "credentials.yaml" for directory in provider_dirs}
+    npa_dir = Path(environment.get("NPA_CONFIG_DIR") or home / ".npa")
+    protected = [npa_dir / name for name in filenames]
+    for directory in (*provider_dirs, npa_dir):
+        paths.extend(directory / name for name in filenames)
     for key in ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "NPA_NEBIUS_IAM_TOKEN_FILE", "NEBIUS_IAM_TOKEN_FILE"):
         if environment.get(key):
             paths.append(Path(environment[key]).expanduser())
+            protected.append(paths[-1])
     if config is None:
         config_path = Path(environment.get("SKYPILOT_GLOBAL_CONFIG") or "")
         config = _yaml_document(config_path.read_text()) if config_path.is_file() else {}
@@ -121,35 +261,66 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     native = workspace.get("nebius") or {}
     if native.get("credentials_file_path"):
         paths.append(Path(str(native["credentials_file_path"]).replace("~", str(home), 1)))
+        protected.append(paths[-1])
     # Fingerprint referenced files for only the selected kube context(s), never
     # private keys belonging to an unrelated context in a merged kubeconfig.
     allowed = (config.get("kubernetes") or {}).get("allowed_contexts") or []
+    execs = []
     for kube_path in kube_paths:
         if not kube_path.is_file():
             continue
         kube = _yaml_document(kube_path.read_text())
         if not isinstance(kube, dict):
             continue
-        contexts = [item.get("context", {}) for item in kube.get("contexts", [])
-                    if item.get("name") in (allowed or [kube.get("current-context")])]
+        requested = allowed or [kube.get("current-context")]
+        selected_contexts = [item for item in kube.get("contexts", []) if item.get("name") in requested]
+        contexts = [item.get("context", {}) for item in selected_contexts]
+        if not contexts or not all(isinstance(name, str) and name for name in requested) or {item.get("name") for item in selected_contexts} != set(requested) or len(selected_contexts) != len(set(requested)):
+            execs.append({"command": "unsupported"})
         users = {item.get("user") for item in contexts}
         clusters = {item.get("cluster") for item in contexts}
+        selected_users = [item for item in kube.get("users", []) if item.get("name") in users]
+        if not users or None in users or {item.get("name") for item in selected_users} != users or len(selected_users) != len(users):
+            execs.append({"command": "unsupported"})
         for key, selected, settings in (("users", users, ("client-key", "client-certificate", "tokenFile")),
                                         ("clusters", clusters, ("certificate-authority",))):
             for item in kube.get(key, []):
                 if item.get("name") not in selected:
                     continue
                 details = item.get("user" if key == "users" else "cluster") or {}
+                if not isinstance(details, dict):
+                    execs.append({"command": "unsupported"})
+                    continue
+                if key == "users":
+                    extra_auth = set(details) & {"token", "tokenFile", "client-key", "client-key-data", "auth-provider", "username", "password"}
+                    execs.append(details.get("exec") if not extra_auth and details.get("exec") else {"command": "unsupported"})
                 for setting in settings:
                     if details.get(setting):
                         referenced = Path(details[setting]).expanduser()
                         paths.append(referenced if referenced.is_absolute() else kube_path.parent / referenced)
+                        protected.append(paths[-1])
     result = {}
+    cache = home / ".nebius/credentials.yaml"
+    try:
+        durable = _nebius_service_account_identity(environment, home, execs)
+    except OSError:
+        raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
+    cache_binding = durable.pop(cache, None)
+    # An explicitly selected bearer/NPA/AWS/key file never becomes a cache,
+    # even if it aliases the provider's usual cache filename.
+    protected.extend(path for path in paths if path not in designated_caches)
+    protected.extend(durable)
+    cache_allowed = cache_binding and all(p.resolve() != cache.resolve() for p in protected)
     for path in paths:
         try:
-            result[str(path.absolute())] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
+            contents = path.read_bytes() if path.is_file() else None
+            value = hashlib.sha256(contents).hexdigest() if contents is not None else "absent"
+            if cache_allowed and path in designated_caches and path.resolve() == cache.resolve() and _derived_service_account_cache(contents):
+                value = cache_binding
+            result[str(path.absolute())] = value
         except OSError:
             raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
+    result.update({str(path.absolute()): value for path, value in durable.items()})
     return result
 
 

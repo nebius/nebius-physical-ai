@@ -211,7 +211,7 @@ def project_credential_record(
         saved = saved_projects.get(exact)
         return deepcopy(dict(saved)) if isinstance(saved, Mapping) else {}
     if target.exists():
-        update_private_yaml(target, update)
+        update_private_yaml(target, update, skip_if_unchanged=True)
     return result
 
 

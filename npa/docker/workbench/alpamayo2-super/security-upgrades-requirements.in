@@ -1,0 +1,5 @@
+# Portable security updates above the immutable upstream model lock.
+# Keep accelerator and model-library versions in the upstream lock.
+hydra-core==1.3.6
+pillow==12.3.0
+setuptools==84.0.0

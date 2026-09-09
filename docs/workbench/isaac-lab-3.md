@@ -71,6 +71,25 @@ and the Rerun adapter opens the trained-policy environment view as the primary
 pane. Metadata-only datasets remain supported and are labeled without a visual
 claim. `--no-export-rgb` is an explicit opt-out for scalar-only exports.
 
+Standalone checkpoint evaluation uses Isaac Lab's version-aware RSL-RL config
+migration before constructing the policy, just like training and trajectory
+export. This matters for RSL-RL 5, which replaces the legacy `stochastic`
+model options with `distribution_cfg`. Evaluation also preserves the task's
+action clipping. Policy construction and checkpoint-load errors remain fatal;
+an evaluation never substitutes random actions for an unavailable policy.
+For Reach tasks without an `ee_frame` sensor, goal-distance evaluation reads
+the pose command's measured position error in metres. Missing or nonfinite
+distance data fails the requested metric instead of becoming a survival test.
+
+The read-only live gate `test_isaac_lab_policy_eval_live.py` accepts an
+owner-private JSON file through `NPA_ISAAC_EVAL_VERIFY_CONFIG`. Supply
+`project_id`, `provenance_uri`, `task`, `seed`, `num_episodes`, and
+`success_metric`. The provenance object identifies the evaluator source hash
+and the report/checkpoint URIs and byte hashes. The gate reads those objects
+with the exact project's saved credentials, verifies their bytes, and requires
+a successful policy load from the current evaluator. Keep this configuration
+and all concrete artifact references outside Git.
+
 ## Generation 2 comparison
 
 The reproducible comparison uses the public 2.3.2 baseline and the 3.0 beta
