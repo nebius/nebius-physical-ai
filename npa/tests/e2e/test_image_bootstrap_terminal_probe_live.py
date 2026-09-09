@@ -32,7 +32,7 @@ def test_image_bootstrap_terminal_probe_live() -> None:
     )
 
     assert evidence.state in {"compatible", "incompatible"}
-    assert evidence.cleanup == "verified_deleted"
+    assert evidence.cleanup == "verified"
     assert evidence.detail or evidence.checks
 
 
@@ -62,4 +62,4 @@ def test_vendor_image_runtime_bootstrap_live() -> None:
     assert evidence.ok, evidence.detail
     assert evidence.source == "ephemeral_runtime_bootstrap_probe"
     assert "kubernetes_command_override" in evidence.checks
-    assert evidence.cleanup == "verified_deleted"
+    assert evidence.cleanup == "verified"

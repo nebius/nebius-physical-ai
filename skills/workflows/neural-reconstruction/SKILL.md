@@ -91,6 +91,12 @@ preflighted image/digest, `NPA_E2E_KUBECONTEXT`, `KUBECONFIG`, and any existing
 pull Secret names through `NPA_E2E_IMAGE_PULL_SECRETS` (comma separated). It
 requires compatible worker capabilities and verified deletion of its probe pod.
 
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_image_bootstrap_terminal_probe_live.py \
+  -k vendor_image_runtime_bootstrap -q
+```
+
 ## Real Entrypoints
 
 Every stage is a real command; nothing here is a manifest stub.

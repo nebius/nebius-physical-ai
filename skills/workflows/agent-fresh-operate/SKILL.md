@@ -55,6 +55,14 @@ When the project already has agent records, cleanup uses `--keep-iam` to preserv
 their shared identity and still requires provider-verified absence of the test
 agent's infrastructure.
 
+After setting the private configuration and completing the preflights, enable
+the common E2E gate as well as the recovery-specific configuration:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_agent_recovery_live.py -q
+```
+
 ## Procedure
 
 For an explicitly authorized existing bucket in another project, save its exact
