@@ -43,6 +43,10 @@ on:
         description: "Runner label for public development image builds"
         required: false
         default: "ubuntu-latest"
+      curobo_private_review_public_key_sha256:
+        description: "Optional authorized review public-key SHA256; requires curobo-only build and private signed pre/post reviews"
+        required: false
+        default: ""
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -90,6 +94,7 @@ jobs:
           DEVELOPMENT_SHA: ${{ inputs.development_sha || github.sha }}
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
+          REVIEW_PUBLIC_KEY_SHA256: ${{ inputs.curobo_private_review_public_key_sha256 }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -143,6 +148,10 @@ jobs:
           # deliberately name an older dev SHA after GPU evidence is committed.
           if matrix and head != sha:
               raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
+          review_key = os.environ.get("REVIEW_PUBLIC_KEY_SHA256", "")
+          if review_key and (not re.fullmatch(r"[0-9a-f]{64}", review_key)
+                             or [entry["tool"] for entry in matrix] != ["curobo"]):
+              raise SystemExit("private review requires an exact public-key digest and curobo-only build")
 
           print(f"target={target}")
           print(f"development_sha={sha}")
@@ -190,6 +199,7 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 926071afdcae20de640b384b391574cd096aa42fa21455b89d74ec716712086a
+      CUROBO_REVIEW_PUBLIC_KEY_SHA256: ${{ inputs.curobo_private_review_public_key_sha256 }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -267,6 +277,14 @@ jobs:
             --tools-receipt "$scan_root/tools/dependency-receipt.json" \
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
+          if [ -n "$CUROBO_REVIEW_PUBLIC_KEY_SHA256" ]; then
+            review_archives=("$scan_root"/tools/go-build-*/go.tar.gz)
+            test "${#review_archives[@]}" -eq 1
+            test -f "${review_archives[0]}"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/review_signature_build.py \
+              --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+              --output-dir "$scan_root/review-signature" --toolchain-archive "${review_archives[0]}"
+          fi
 
       - name: Prove destination cannot expose existing private bytes
         env:
@@ -408,10 +426,12 @@ jobs:
               --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
               --expected-image-id "$expected_image_id" \
               --output-dir "$phase/authorization" --policy-mode ci-regex
-            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+            npa/.venv/bin/python npa/scripts/image_byte_scan/private_review_gate.py \
               --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
               --authorization "$phase/authorization/authorization.json" \
               --output-dir "$phase/scan" \
+              --source-sha "$DEVELOPMENT_SHA" --phase pre \
+              --review-public-key-sha256 "$CUROBO_REVIEW_PUBLIC_KEY_SHA256" \
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
@@ -517,6 +537,7 @@ jobs:
           receipt_args=()
           if [ "$TOOL" = curobo ]; then
             receipt_args+=(--curobo-byte-gate-root "$CUROBO_BYTE_GATE_ROOT")
+            receipt_args+=(--curobo-review-public-key-sha256 "$CUROBO_REVIEW_PUBLIC_KEY_SHA256")
           fi
           npa/.venv/bin/python npa/scripts/public_image_validation_receipt.py \
             --tool "$TOOL" --source-sha "$DEVELOPMENT_SHA" --phase pre \
@@ -622,10 +643,12 @@ jobs:
               --archive "$phase/image.tar" --verification-report "$phase/graph.json" \
               --expected-image-id "$expected_image_id" \
               --output-dir "$phase/authorization" --policy-mode ci-regex
-            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+            npa/.venv/bin/python npa/scripts/image_byte_scan/private_review_gate.py \
               --analysis-root "$CUROBO_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
               --authorization "$phase/authorization/authorization.json" \
               --output-dir "$phase/scan" \
+              --source-sha "$DEVELOPMENT_SHA" --phase post \
+              --review-public-key-sha256 "$CUROBO_REVIEW_PUBLIC_KEY_SHA256" \
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
@@ -703,6 +726,7 @@ jobs:
           receipt_args=()
           if [ "$TOOL" = curobo ]; then
             receipt_args+=(--curobo-byte-gate-root "$CUROBO_BYTE_GATE_ROOT")
+            receipt_args+=(--curobo-review-public-key-sha256 "$CUROBO_REVIEW_PUBLIC_KEY_SHA256")
           fi
           receipt_args+=(--digest "$DIGEST")
           npa/.venv/bin/python npa/scripts/public_image_validation_receipt.py \

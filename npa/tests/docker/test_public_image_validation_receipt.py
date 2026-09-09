@@ -6,9 +6,11 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +23,120 @@ IMAGE = "sha256:" + "b" * 64
 ARCHIVE = "c" * 64
 REMOTE = "sha256:" + "d" * 64
 SENTINEL = "SYNTHETIC-PRIVATE-CUSTOMER-POLICY-CONTENT-MUST-NOT-EXPORT"
+
+
+def _private_put(path, value):
+    digest = _put(path, value)
+    path.chmod(0o600)
+    return {"path": str(path), "sha256": digest}
+
+
+def _mixed_rows():
+    native = {"rule_id": "generic-api-key", "start_line": 0, "end_line": 0}
+    regex = {"rule_id": "customer-denylist", "start_byte": 0, "end_byte": 3,
+             "start_line": 1, "end_line": 1, "views": ["record"]}
+    rows = [{"type": "record", "record_ordinal": ordinal, "bytes": 64,
+             "sha256": hashlib.sha256(bytes([ordinal]) * 64).hexdigest(),
+             "kind": "layer_regular_content", "findings": []} for ordinal in range(1, 10)]
+    rows[0]["findings"] = [native, dict(native), regex]
+    rows.append({"type": "finding", "record_ordinal": 1, "rule_id": "private_literal",
+                 "literal_index": 0, "literal_sha256": "e" * 64, "byte_start": 0, "byte_end": 3})
+    return rows
+
+
+def _private_scan(args, gate):
+    phase = args["curobo_byte_gate_root"] / args["phase"]
+    graph = _graph("curobo")
+    graph.update(entries_read=9, regular_files_read=9, required_payload_count=9, content_bytes_read=576)
+    graph_hash = _private_put(phase / "graph.json", graph)["sha256"]
+    _native(phase, graph_hash, graph)
+    raw = json.loads((phase / "scan/report.json").read_text())
+    rows = _mixed_rows()
+    raw.update(records=9, scanned_bytes=576, regular_files=9, regular_bytes=576,
+               verified_zero_bytes=0, findings=4,
+               helper_summary={"type": "summary", "files": 9, "bytes": 576, "findings": 2})
+    report = _private_put(phase / "scan/report.json", raw)
+    ledger = phase / "scan/records.jsonl"
+    ledger.write_bytes(b"".join(gate.W.canonical(row) + b"\n" for row in rows))
+    context = {name: raw[name] for name in ("archive_sha256", "authorization_sha256",
+                                           "image_config_digest", "image_manifest_digest")}
+    context.update(image_source_sha=SOURCE, scanner_source_sha=SOURCE,
+                   report_sha256=report["sha256"], records_sha256=gate.W.sha(ledger.read_bytes()),
+                   authorization_file_sha256=gate.W.sha((phase / "authorization/authorization.json").read_bytes()))
+    return phase, raw, context, gate.A.population(raw, rows)
+
+
+def _private_dispositions(phase, context, population, gate):
+    provenance = _private_put(phase / "provenance.json", {"synthetic_provenance": SENTINEL})
+    semantic = _private_put(phase / "semantics.json", {"synthetic_semantics": SENTINEL})
+    manifest = {"schema_version": gate.A.MANIFEST_SCHEMA, "context": context, "dispositions": []}
+    decisions = []
+    for index, (key, occurrence) in enumerate(population.items()):
+        proof = {"schema_version": gate.A.PROOF_SCHEMA, "context": context, "occurrence_id": key,
+                 "record_sha256": occurrence["record_sha256"], "record_bytes": occurrence["record_bytes"],
+                 "semantic_role": "non-operational-source-example", "operational_credential": False,
+                 "provenance_evidence": [provenance], "semantic_evidence": [semantic]}
+        binding = _private_put(phase / f"proof-{index}.json", proof)
+        manifest["dispositions"].append({"occurrence_id": key, "proof": binding})
+        decisions.append({"occurrence_id": key, "proof_sha256": binding["sha256"], "decision": "accept"})
+    manifest_hash = _private_put(phase / "review-inbox/manifest.json", manifest)["sha256"]
+    review = {"schema_version": gate.A.REVIEW_SCHEMA, "decision": "accept", "context": context,
+              "manifest_sha256": manifest_hash, "reviewed_occurrences": decisions}
+    return manifest_hash, _private_put(phase / "review-inbox/review.json", review)["sha256"]
+
+
+def _private_acceptance(phase, context, population, identity, gate, pin):
+    manifest_hash, review_hash = _private_dispositions(phase, context, population, gate)
+    command_hash = _private_put(phase / "raw-scan-exit.json",
+                               {"exit_code": 1, "completed": True, "interrupted": False})["sha256"]
+    envelope = {"schema_version": gate.SCHEMA, "algorithm": "Ed25519", "identity": identity,
+                "context": context, "public_key_sha256": pin, "verifier_sha256": "b" * 64,
+                "manifest_sha256": manifest_hash, "review_sha256": review_hash,
+                "scan_command_sha256": command_hash}
+    signed = {"envelope": envelope, "public_key_hex": bytes(range(32)).hex(), "signature_hex": "e" * 128}
+    signed_hash = _private_put(phase / "review-inbox/signed-envelope.json", signed)["sha256"]
+    result = {"schema_version": gate.A.SCHEMA, "accepted": True, "context": context,
+              "raw_scan_valid": False, "raw_scan_findings": 4, "accepted_occurrences": 4,
+              "unresolved_occurrences": 0, "manifest_sha256": manifest_hash, "review_sha256": review_hash}
+    _private_put(phase / "accepted-review/adjudication.json", result)
+    acceptance = {**result, "schema_version": gate.ACCEPTANCE_SCHEMA,
+                  "mode": "signed-private-occurrence-review", "identity": identity,
+                  "raw_scan_exit_code": 1, "raw_findings": 4, "native_findings": 2,
+                  "public_key_sha256": pin, "signed_envelope_sha256": signed_hash,
+                  "verifier_sha256": "b" * 64, "scan_command_sha256": command_hash,
+                  "untrusted_extra": SENTINEL}
+    _private_put(phase / "accepted-review/signed-acceptance.json", acceptance)
+
+
+@pytest.fixture
+def private_candidate(candidate, monkeypatch):
+    sys.path.insert(0, str(SCRIPT.parent))
+    from image_byte_scan import private_review_gate as gate
+
+    environment = {"GITHUB_REPOSITORY": "nebius/nebius-physical-ai", "GITHUB_WORKFLOW_SHA": SOURCE,
+        "GITHUB_WORKFLOW_REF": "nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/synthetic",
+        "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": "build-development"}
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    # The real signature protocol and committed scanner snapshot checks have
+    # their own tests. Keep their external inputs hermetic here; replay actual
+    # envelope, population, dispositions, proof and evidence verification.
+    monkeypatch.setattr(gate.S, "verified_binary", lambda _: {"path": "synthetic", "sha256": "b" * 64})
+    monkeypatch.setattr(gate, "_run_verifier", lambda *_: None)
+    monkeypatch.setattr(gate, "_prior_inputs", lambda *_: None)
+
+    def make(phase="pre"):
+        args = candidate("curobo", phase)
+        pin = gate.W.sha(bytes(range(32)))
+        args["curobo_review_public_key_sha256"] = pin
+        root, raw, context, population = _private_scan(args, gate)
+        identity = gate._identity(SOURCE, phase, os.environ)
+        _private_acceptance(root, context, population, identity, gate, pin)
+        args["curobo_byte_gate_root"].chmod(0o700)
+        for path in args["curobo_byte_gate_root"].rglob("*"):
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        return SimpleNamespace(args=args, root=root, gate=gate, raw=raw)
+    return make
 
 
 def _put(path, value):
@@ -285,3 +401,122 @@ def test_cli_writes_private_receipt_and_removes_stale_success_on_refusal(candida
     assert failure.returncode == 1
     assert not output.exists()
     assert SENTINEL not in failure.stdout + failure.stderr
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_signed_receipt_conserves_native_regex_and_literal_counts_without_export(private_candidate, phase):
+    case = private_candidate(phase)
+    before = (case.root / "scan/report.json").read_bytes()
+    receipt = RECEIPTS.create_receipt(**case.args)
+    gate = receipt["gates"]["complete_byte_scan"]
+    assert gate["mode"] == "signed-private-occurrence-review"
+    assert gate["raw_scan_valid"] is False and gate["raw_scan_exit_code"] == 1
+    assert gate["findings"] == gate["raw_findings"] == gate["accepted_occurrences"] == 4
+    assert gate["native_findings"] == 2 and gate["unresolved_occurrences"] == 0
+    assert "accepted_native_occurrences" not in gate
+    assert SENTINEL not in json.dumps(receipt) and str(case.root) not in json.dumps(receipt)
+    assert (case.root / "scan/report.json").read_bytes() == before
+    assert receipt["executes_scanners"] is False
+    assert ("registry_digest" in receipt) == (phase == "post")
+
+
+@pytest.mark.parametrize("pin", ["", "a" * 64, "A" * 64, "b" * 63, " " + "b" * 64])
+def test_private_receipt_requires_explicit_exact_dispatch_pin(private_candidate, pin):
+    case = private_candidate()
+    case.args["curobo_review_public_key_sha256"] = pin
+    with pytest.raises(ValueError):
+        RECEIPTS.create_receipt(**case.args)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source_sha", "f" * 40), ("workflow_sha", "f" * 40), ("phase", "post"),
+    ("run_id", "456"), ("run_attempt", "2"), ("job", "resolve"), ("tool", "openpi"),
+])
+def test_public_receipt_rechecks_signed_execution_identity(private_candidate, field, value):
+    case = private_candidate()
+    path = case.root / "review-inbox/signed-envelope.json"
+    signed = json.loads(path.read_text())
+    signed["envelope"]["identity"][field] = value
+    _private_put(path, signed)
+    with pytest.raises(ValueError):
+        RECEIPTS.create_receipt(**case.args)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("raw_findings", 3), ("accepted_occurrences", 3), ("native_findings", 4),
+    ("native_findings", True), ("unresolved_occurrences", 1), ("raw_scan_valid", True),
+    ("raw_scan_exit_code", 0), ("raw_scan_exit_code", True), ("accepted", False),
+    ("manifest_sha256", "f" * 64), ("review_sha256", "f" * 64),
+    ("signed_envelope_sha256", "f" * 64), ("scan_command_sha256", "f" * 64),
+    ("verifier_sha256", "f" * 64),
+])
+def test_public_receipt_refuses_changed_prior_acceptance(private_candidate, field, value):
+    case = private_candidate()
+    _change(case.root / "accepted-review/signed-acceptance.json", field, value)
+    with pytest.raises(ValueError):
+        RECEIPTS.create_receipt(**case.args)
+
+
+@pytest.mark.parametrize("relative", [
+    "proof-0.json", "provenance.json", "semantics.json", "review-inbox/manifest.json",
+    "review-inbox/review.json", "scan/records.jsonl", "scan/report.json",
+    "authorization/authorization.json", "raw-scan-exit.json",
+])
+@pytest.mark.parametrize("mutation", ["remove", "replace", "hardlink"])
+def test_public_receipt_replays_retained_proof_and_evidence_bindings(private_candidate, relative, mutation):
+    case = private_candidate()
+    path = case.root / relative
+    if mutation == "remove":
+        path.unlink()
+    elif mutation == "replace":
+        _private_put(path, {"changed": SENTINEL})
+    else:
+        os.link(path, path.with_name(path.name + ".alias"))
+    with pytest.raises((ValueError, OSError)):
+        RECEIPTS.create_receipt(**case.args)
+
+
+def test_public_receipt_normalizes_signature_dependency_refusal(private_candidate, monkeypatch):
+    case = private_candidate()
+
+    def refuse(_):
+        raise case.gate.S.B.BuildError("synthetic_private_dependency")
+
+    monkeypatch.setattr(case.gate.S, "verified_binary", refuse)
+    with pytest.raises(RECEIPTS.ReceiptError, match="review signature build evidence refused") as error:
+        RECEIPTS.create_receipt(**case.args)
+    assert SENTINEL not in str(error.value)
+
+
+def test_private_pin_cannot_select_review_for_another_tool(candidate):
+    args = candidate("openpi")
+    args["curobo_review_public_key_sha256"] = "a" * 64
+    with pytest.raises(ValueError):
+        RECEIPTS.create_receipt(**args)
+
+
+def test_private_receipt_cli_refusal_removes_stale_success_without_export(private_candidate, monkeypatch, capsys):
+    case = private_candidate()
+    output = case.args["runner_temp"] / "public-receipt.json"
+    output.write_text("stale success")
+    (case.root / "semantics.json").unlink()
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--tool", "curobo", "--source-sha", SOURCE,
+        "--image-id", IMAGE, "--phase", "pre", "--runner-temp", str(case.args["runner_temp"]),
+        "--output", str(output), "--curobo-byte-gate-root", str(case.args["curobo_byte_gate_root"]),
+        "--curobo-review-public-key-sha256", case.args["curobo_review_public_key_sha256"]])
+    assert RECEIPTS.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == "Public validation receipt refused: required gate evidence is incomplete or inconsistent.\n"
+    assert captured.err == "" and not output.exists()
+    assert SENTINEL not in captured.out and str(case.root) not in captured.out
+
+
+def test_mutually_consistent_acceptance_counts_cannot_replace_actual_population(private_candidate):
+    case = private_candidate()
+    acceptance = case.root / "accepted-review/signed-acceptance.json"
+    adjudication = case.root / "accepted-review/adjudication.json"
+    for path, raw_field in ((acceptance, "raw_findings"), (adjudication, "raw_scan_findings")):
+        _change(path, "accepted_occurrences", 3)
+        _change(path, raw_field, 3)
+    with pytest.raises(ValueError, match="private_review_derived_population"):
+        RECEIPTS.create_receipt(**case.args)

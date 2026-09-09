@@ -48,11 +48,14 @@ def fixture_tools_receipt(authorization, directory, ready=None):
     authorization["tools_receipt"] = write(directory / "fixture-tools.json", js(receipt))
 
 
-def fixture(tmp_path, *, entries=None, raw=None, compressed=None, literals=None, policy="exact-substring-v1", repeat=1, codec="gzip"):
+def fixture(tmp_path, *, entries=None, raw=None, compressed=None, literals=None, policy="exact-substring-v1", repeat=1, codec="gzip", revision=None):
     entries = entries if entries is not None else [file("opt/sample", b"actual synthetic neutral body")]
     raw = raw if raw is not None else tar_data(entries)
     data = (gzip.compress(raw, mtime=0) if codec == "gzip" else raw) if compressed is None else compressed
-    config = js({"rootfs": {"type": "layers", "diff_ids": ["sha256:" + digest(raw)] * repeat}})
+    configuration = {"rootfs": {"type": "layers", "diff_ids": ["sha256:" + digest(raw)] * repeat}}
+    if revision is not None:
+        configuration["config"] = {"Labels": {"org.opencontainers.image.revision": revision}}
+    config = js(configuration)
     config_id = "sha256:" + digest(config)
     manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                 "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": config_id, "size": len(config)},

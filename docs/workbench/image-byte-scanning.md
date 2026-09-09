@@ -122,8 +122,7 @@ editing hashes in an old report is not a substitute.
 
 This local review does not publish an image, authorize a registry operation, or
 replace licensing, vulnerability, SBOM/provenance, runtime or physical-GPU
-validation. The hosted publication workflow continues to require zero raw
-findings by default. It has no implicit access to an operator's private review
+validation. The hosted publication workflow has no implicit access to an operator's private review
 bundle. Do not upload that bundle as a public Actions artifact or add private
 evidence to Git to transport it.
 
@@ -164,3 +163,67 @@ complete scans. It obtains no approval hash from an unreviewed file at runtime.
 A failed policy gate stops subsequent publication actions and retains failed
 inputs for private investigation. Confidentiality configuration remains required
 before building; exact public native content cannot authorize denied identifiers.
+
+## Signed private review in trusted publication
+
+The optional `curobo_private_review_public_key_sha256` workflow-dispatch input
+selects private occurrence review for a cuRobo-only build. Its default is empty,
+which preserves the reviewed public-native gate. A private review still requires
+a complete fresh scan with every detector and confidentiality policy unchanged.
+It cannot accept incomplete scans, structural findings or missing dispositions.
+
+An authorized operator supplies the SHA-256 of a raw 32-byte Ed25519 public key
+in the authenticated dispatch request. Keep the signing key off the builder.
+Directory ownership and a hash calculated from a submitted bundle are not review
+authority. Retain the authenticated dispatch request privately; a normal GitHub
+run-status response does not establish its input values.
+
+The workflow builds a separate signature verifier with the scanner's pinned Go
+toolchain, standard-library Ed25519 and CGO disabled. Its independent
+[RFC 8032 test vector](https://www.rfc-editor.org/rfc/rfc8032#section-7.1),
+positive and negative tests must pass. The existing native detector binary and
+public-native policy are unchanged. Verified signature code executes from a
+sealed memory descriptor.
+
+After the complete scan, `private_review_gate.py` writes
+`<phase>/private-review-request.json` and creates an owner-only
+`<phase>/review-inbox/`. The phase is `pre` or `post`.
+The request binds the exact source, workflow, run, attempt, job, phase, archive,
+OCI graph, scanner source, confidentiality policy, authorization, report and
+complete ledger. Preserve the original input paths and metadata until review
+finishes. Moving the scan tree invalidates its original input authorization.
+
+Independently investigate and review every occurrence using the existing
+adjudication protocol. Stage its `manifest.json`, `review.json` and all
+referenced proof/evidence files privately beneath the analysis root. Only after
+that review accepts the exact manifest and review hashes may the operator sign
+the envelope. The exact envelope fields and canonical representation are defined
+in `private_review_gate.py`: Ed25519 signs its fixed domain prefix plus
+the canonical JSON envelope bytes. It includes the reviewed manifest/review
+hashes, entire scan context, workflow identity, authorized public-key digest and
+verified signature-program digest.
+
+Deliver `review-inbox/signed-envelope.json` last, atomically. It contains
+exactly `envelope`, `public_key_hex` and `signature_hex`, with lowercase
+hexadecimal encodings of the raw 32-byte public key and 64-byte signature.
+The gate waits for this explicit evidence; elapsed time never supplies approval.
+A malformed, unsigned, changed or replayed bundle fails. The trusted workflow
+verifies the signature and runs the unchanged occurrence adjudicator against its
+original inputs before later publication steps proceed.
+
+Pre-publication and post-pull scans need separate exact approvals. Saved archive
+serialization and occurrence identities can differ between them. Keep the raw
+failed verdict and actual scan exit alongside the separate signed acceptance;
+native findings remain distinct from total native/regex/literal occurrences.
+The public receipt rechecks the signature and prior acceptance bindings and
+exports only approved hashes, counts, fixed enums and booleans. It is a summary
+of prior gates, not a new scan or independent semantic review.
+
+The operator and independent collector must also verify the private signature,
+review evidence and key pin against the retained authenticated dispatch request.
+Keep the raw policy, matches, proof bundles and signature envelopes out of Git,
+image layers and public Actions artifacts. This gate assumes the reviewed
+workflow and builder execute faithfully; the private signing key prevents the
+builder from supplying its own review authority, but does not turn an untrusted
+host into a trusted execution environment. All other publication checks and real
+GPU validation remain required.

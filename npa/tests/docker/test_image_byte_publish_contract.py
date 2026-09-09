@@ -79,10 +79,13 @@ elif operation == "authorize":
     out = pathlib.Path(option("--output-dir"))
     out.mkdir(mode=0o700)
     (out / "authorization.json").write_text('{"bound":true}')
-elif script == "scan_image_bytes.py":
+elif script == "private_review_gate.py":
     assert json.loads(pathlib.Path(option("--authorization")).read_text())["bound"]
     assert option("--trusted-root") == os.environ["GITHUB_WORKSPACE"]
+    assert option("--source-sha") == os.environ["DEVELOPMENT_SHA"]
+    assert option("--review-public-key-sha256") == ""
     out = pathlib.Path(option("--output-dir"))
+    assert option("--phase") == out.parent.name
     out.mkdir(mode=0o700)
     assert option("--public-native-policy") == os.environ["GITHUB_WORKSPACE"] + "/npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
     assert option("--public-native-policy-sha256") == os.environ["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"]
@@ -119,6 +122,8 @@ print(json.loads(pathlib.Path(sys.argv[3]).read_text())["expected_image_id"])
         "IMAGE": "local-image",
         "RUNNER_TEMP": str(runtime),
         "CUROBO_BYTE_GATE_ROOT": str(analysis),
+        "DEVELOPMENT_SHA": "a" * 40,
+        "CUROBO_REVIEW_PUBLIC_KEY_SHA256": "",
         "CUROBO_PUBLIC_NATIVE_POLICY_SHA256": yaml.safe_load(PUBLISH.read_text())["jobs"]["build-development"]["env"]["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"],
         "GITHUB_WORKSPACE": str(checkout),
         "GATE_LOG": str(tmp_path / "gate.jsonl"),
@@ -160,7 +165,7 @@ def test_native_preparation_forwards_optional_cache_without_skipping_gates(
 
 
 @pytest.mark.parametrize("step_name,phase,suffix", [(PRE, "pre", ""), (POST, "post", "-pushed")])
-@pytest.mark.parametrize("failure", ["", "verify_image.py", "authorize", "scan_image_bytes.py"])
+@pytest.mark.parametrize("failure", ["", "verify_image.py", "authorize", "private_review_gate.py"])
 def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
     shell_environment, step_name, phase, suffix, failure
 ):
@@ -175,7 +180,7 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
         ["bash", "-c", script], cwd=checkout, env=env, capture_output=True, text=True, check=False,
     )
     calls = [json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()]
-    expected = ["verify_image.py", "authorize", "scan_image_bytes.py"]
+    expected = ["verify_image.py", "authorize", "private_review_gate.py"]
     if failure:
         assert result.returncode == 17, result.stderr
         assert "gate completed" not in result.stdout

@@ -260,8 +260,8 @@ def population(report, rows):
                 if set(finding) == {"rule_id", "start_line", "end_line"}:
                     integer(finding["start_line"])
                     integer(finding["end_line"])
-                    # The pinned detector uses zero-based lines for a fragment
-                    # with StartLine=0. Byte length bounds its LF line count.
+                    # The pinned detector uses zero-based LF lines throughout
+                    # each whole fragment. Byte length bounds its line count.
                     W.require(row["bytes"] > 0 and finding["start_line"] <= finding["end_line"] <= row["bytes"],
                               "adjudication_native_range")
                     native_count += 1

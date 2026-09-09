@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 
 TOOLS = frozenset({"curobo", "openpi", "robocasa", "cosmos3-nano-video", "cosmos3-super-benchmark"})
@@ -168,6 +169,37 @@ def _native(phase_root, graph, graph_hash, source_sha):
             "catalog_sha256": _hex(policy.get("catalog_sha256")), **counts, **accepted}
 
 
+def _private_occurrences(phase_root, graph, graph_hash, source_sha, key_pin):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from image_byte_scan import private_review_gate as review_gate
+
+    identity = review_gate._identity(source_sha, phase_root.name, os.environ)
+    with review_gate.W.authorized_roots(phase_root.parent, Path(__file__).resolve().parents[2]):
+        try:
+            policy, policy_hash = review_gate.verified_acceptance(phase_root, key_pin, identity,
+                phase_root.parent / "review-signature/dependency-receipt.json")
+        except review_gate.S.B.BuildError as error:
+            raise ReceiptError("review signature build evidence refused") from error
+        raw, raw_hash = _read_json(phase_root / "scan/report.json")
+        rows = [review_gate.A.decode(line) for line in (phase_root / "scan/records.jsonl").read_bytes().splitlines()]
+        population = review_gate.A.population(raw, rows)
+    counts = _counts(raw, SCAN_COUNTS)
+    accepted = _counts(policy, ("raw_findings", "accepted_occurrences", "native_findings", "unresolved_occurrences"))
+    _require(len(population) == accepted["accepted_occurrences"] == counts["findings"])
+    _require(accepted["native_findings"] == raw["helper_summary"]["findings"])
+    _require(policy["raw_scan_valid"] is raw["valid"])
+    _require(counts["regular_files"] == graph["regular_files_read"] and counts["regular_bytes"] == graph["content_bytes_read"])
+    _require(counts["records"] > 0 and counts["scanned_bytes"] >= counts["regular_bytes"])
+    _require([row.get("diff_id") for row in raw["layers"]] == graph["verified_layer_diff_ids"])
+    _native_links(phase_root, graph, graph_hash, raw, raw_hash, policy["context"], source_sha)
+    safe = {key: _hex(policy[key]) for key in ("public_key_sha256", "signed_envelope_sha256",
+                                             "manifest_sha256", "review_sha256", "verifier_sha256", "scan_command_sha256")}
+    return {"report_sha256": raw_hash, "acceptance_report_sha256": policy_hash,
+            "mode": "signed-private-occurrence-review", "complete": True, "helper_joined": True,
+            "raw_scan_valid": raw["valid"], "raw_scan_exit_code": policy["raw_scan_exit_code"],
+            "accepted": True, **safe, **counts, **accepted}
+
+
 def _sbom(runner_temp, tool):
     raw, digest = _read_json(runner_temp / f"{tool}-sbom.spdx.json")
     _require(raw.get("spdxVersion") == "SPDX-2.3")
@@ -175,7 +207,7 @@ def _sbom(runner_temp, tool):
     return {"sha256": digest, "format": "SPDX-2.3", "package_count": len(raw["packages"])}
 
 
-def _tool_evidence(tool, phase, prefix, runner_temp, gate_root, image_id, source_sha):
+def _tool_evidence(tool, phase, prefix, runner_temp, gate_root, image_id, source_sha, review_key):
     if tool.startswith("cosmos3-"):
         gate = _cosmos(runner_temp / f"{prefix}-cosmos3-serving-payload.json")
         archive_hash = _hex((runner_temp / f"{prefix}-archive.sha256").read_text().strip())
@@ -188,7 +220,10 @@ def _tool_evidence(tool, phase, prefix, runner_temp, gate_root, image_id, source
     raw, graph = _graph(graph_path, tool, image_id)
     gates = {"layer_graph": graph}
     if tool == "curobo":
-        gates["complete_byte_scan"] = _native(gate_root / phase, raw, graph["report_sha256"], source_sha)
+        if review_key:
+            gates["complete_byte_scan"] = _private_occurrences(gate_root / phase, raw, graph["report_sha256"], source_sha, review_key)
+        else:
+            gates["complete_byte_scan"] = _native(gate_root / phase, raw, graph["report_sha256"], source_sha)
     binding = runner_temp / f"{prefix}-archive.sha256"
     if binding.exists():
         _require(_hex(binding.read_text().strip()) == graph["archive_sha256"])
@@ -197,7 +232,8 @@ def _tool_evidence(tool, phase, prefix, runner_temp, gate_root, image_id, source
 
 def create_receipt(*, tool: str, source_sha: str, image_id: str, phase: str,
                    runner_temp: Path, digest: str | None = None,
-                   curobo_byte_gate_root: Path | None = None) -> dict:
+                   curobo_byte_gate_root: Path | None = None,
+                   curobo_review_public_key_sha256: str = "") -> dict:
     """Read fixed gate outputs and return an allowlisted public evidence summary.
 
     Args:
@@ -208,6 +244,7 @@ def create_receipt(*, tool: str, source_sha: str, image_id: str, phase: str,
         runner_temp: Private directory containing the workflow's fixed report names.
         digest: Exact public registry digest, required only for post-publication.
         curobo_byte_gate_root: Private cuRobo scanner root with the selected phase.
+        curobo_review_public_key_sha256: Dispatch-authorized key pin, empty for native-only policy.
 
     Returns:
         Hashes, validated counts and fixed status enums; no raw findings or paths.
@@ -217,6 +254,9 @@ def create_receipt(*, tool: str, source_sha: str, image_id: str, phase: str,
         OSError: Required evidence cannot be read.
     """
     _require(tool in TOOLS and phase in {"pre", "post"})
+    if curobo_review_public_key_sha256:
+        _require(tool == "curobo")
+        _hex(curobo_review_public_key_sha256)
     _hex(source_sha, length=40)
     _hex(image_id, prefix="sha256:")
     _require((phase == "post") == (digest is not None))
@@ -224,7 +264,8 @@ def create_receipt(*, tool: str, source_sha: str, image_id: str, phase: str,
         _hex(digest, prefix="sha256:")
     prefix = tool + ("-pushed" if phase == "post" else "")
     gates = {"restricted_payload": _payload(runner_temp / f"{prefix}-payload.json")}
-    selected, archive_hash = _tool_evidence(tool, phase, prefix, runner_temp, curobo_byte_gate_root, image_id, source_sha)
+    selected, archive_hash = _tool_evidence(tool, phase, prefix, runner_temp, curobo_byte_gate_root,
+                                          image_id, source_sha, curobo_review_public_key_sha256)
     gates.update(selected)
     result = {"schema_version": "npa.public-image-validation-receipt.v1", "tool": tool,
               "source_sha": source_sha, "image_id": image_id, "phase": phase,
@@ -269,6 +310,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--digest")
     parser.add_argument("--curobo-byte-gate-root", type=Path)
+    parser.add_argument("--curobo-review-public-key-sha256", default="")
     args = vars(parser.parse_args())
     output = args.pop("output")
     try:

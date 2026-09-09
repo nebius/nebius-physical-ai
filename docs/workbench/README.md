@@ -45,6 +45,7 @@ For Python or HTTP integration, start with the
 | [npa-workflow-guide.md](npa-workflow-guide.md) | Author, validate, plan, submit, and resume declarative workflows |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
+| [image-byte-scanning.md](image-byte-scanning.md) | Complete cuRobo image-byte checks; optional `curobo_private_review_public_key_sha256` dispatch pin for externally signed exact pre/post reviews, empty by default |
 | [isaac-lab-3.md](isaac-lab-3.md) | Isaac Lab 3 beta pin, payload-clean runtime bootstrap, hardened RL sweep, and generation 2 comparison method |
 | [model-weight-cache.md](model-weight-cache.md) | Durable cache for model weights and reviewed SDKs the public images do not bake, so a second run is a cache hit |
 | [rerun-sharing.md](rerun-sharing.md) | Time-boxed Rerun browser shares, one-time least-privilege bucket CORS setup, and native local fallback |
