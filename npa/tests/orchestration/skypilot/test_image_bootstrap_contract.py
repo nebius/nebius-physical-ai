@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -18,6 +19,7 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     immutable_image_reference,
     is_trusted_npa_image,
     _observe_terminal_phase,
+    _runtime_bootstrap_script,
     load_cached_evidence,
     parse_oci_reference,
     probe_image_capabilities,
@@ -178,6 +180,93 @@ def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
 
     assert evidence.ok
     assert "--request-timeout=1800s" in observed[0]
+
+
+def test_vendor_probe_overrides_application_entrypoint_and_is_not_cached(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runtime_bootstrap=True,
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
+        nonce_factory=lambda: "b" * 16,
+    )
+
+    command = calls[0]
+    assert command.index("--command") < command.index("--")
+    assert command[command.index("--") + 1] == "/bin/bash"
+    assert evidence.ok and evidence.cleanup == "verified"
+    assert evidence.source == "ephemeral_runtime_bootstrap_probe"
+    assert "kubernetes_command_override" in evidence.checks
+    cache = tmp_path / "cache.json"
+    store_cached_evidence(cache, evidence)
+    assert not cache.exists()
+
+
+def _bootstrap_environment(tmp_path: Path, *, uid: str = "0", apt_exit: int = 0):
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    (directory / "env").symlink_to("/usr/bin/env")
+    scripts = {
+        "id": f"printf '%s\\n' {uid}\n",
+        "sudo": "exit 1\n",
+        "apt-get": (
+            'printf "%s\\n" "$*" >> "$PROBE_APT_LOG"\n'
+            f"exit {apt_exit}\n"
+        ),
+    }
+    for name, script in scripts.items():
+        path = directory / name
+        path.write_text("#!/bin/sh\n" + script)
+        path.chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": str(directory),
+        "PROBE_APT_LOG": str(tmp_path / "apt.log"),
+    }
+
+
+@pytest.mark.parametrize("uid,apt_exit", [("1000", 0), ("0", 23)])
+def test_vendor_bootstrap_refuses_privilege_or_package_failures(
+    tmp_path: Path, uid: str, apt_exit: int
+) -> None:
+    environment = _bootstrap_environment(tmp_path, uid=uid, apt_exit=apt_exit)
+    result = subprocess.run(
+        ["/bin/sh", "-c", _runtime_bootstrap_script()],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    if uid != "0":
+        assert not (tmp_path / "apt.log").exists()
+    else:
+        assert (tmp_path / "apt.log").read_text().splitlines() == ["update"]
+
+
+def test_vendor_bootstrap_still_requires_installed_capabilities(tmp_path: Path) -> None:
+    environment = _bootstrap_environment(tmp_path)
+    calls: list[list[str]] = []
+    probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runtime_bootstrap=True,
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
+    )
+    result = subprocess.run(
+        ["/bin/sh", "-c", calls[0][-1]],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "install -y" in (tmp_path / "apt.log").read_text()
 
 
 def test_probe_observation_timeout_is_configurable_and_zero_means_no_deadline() -> None:
