@@ -186,21 +186,35 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy runner script to the dev VM
+        id: stage
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
         run: |
+          remote_dir="$(ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
+            'umask 077; mktemp -d /tmp/npa-daily.XXXXXXXXXX')"
+          if ! [[ "$remote_dir" =~ ^/tmp/npa-daily\.[A-Za-z0-9]{10}$ ]]; then
+            echo "::error::The VM returned an invalid staging directory."
+            exit 1
+          fi
+          # Publish before copying so a failed upload still gets cleaned up.
+          printf 'directory=%s\n' "$remote_dir" >> "$GITHUB_OUTPUT"
           scp -P "$SSH_PORT" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
             -o StrictHostKeyChecking=yes \
             scripts/dev-vm-daily-tests.sh \
-            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}:/tmp/npa-dev-vm-daily-tests.sh"
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}:${remote_dir}/runner.sh"
 
       - name: Run test tier on the dev VM
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
           TIER: ${{ steps.plan.outputs.tier }}
           REF: ${{ steps.plan.outputs.ref }}
           # Optional passthroughs; empty when not configured.
@@ -223,6 +237,7 @@ jobs:
           # git refs and Nebius ids/flags never legitimately contain such chars.
           safe='^[A-Za-z0-9._/-]*$'
           for pair in "git_ref=$REF" \
+                      "REMOTE_RUN_DIR=$REMOTE_RUN_DIR" \
                       "test_tier=$TIER" \
                       "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
                       "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
@@ -247,7 +262,7 @@ jobs:
             allow_gpu=1
           fi
 
-          remote_cmd="chmod +x /tmp/npa-dev-vm-daily-tests.sh && \
+          remote_cmd="chmod 700 '${REMOTE_RUN_DIR}/runner.sh' && \
             NPA_DAILY_ALLOW_LIVE_GPU=${allow_gpu} \
             NPA_E2E_SERVERLESS_PROJECT='${NPA_E2E_SERVERLESS_PROJECT}' \
             NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
@@ -257,7 +272,7 @@ jobs:
             NPA_E2E_REGISTRY='${NPA_E2E_REGISTRY}' \
             NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
             NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \
-            bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
+            bash '${REMOTE_RUN_DIR}/runner.sh' '${TIER}' '${REF}'"
 
           ssh -p "$SSH_PORT" \
             -o BatchMode=yes \
@@ -266,6 +281,24 @@ jobs:
             -o ServerAliveInterval=30 -o ServerAliveCountMax=1200 \
             "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
             "bash -lc \"${remote_cmd}\""
+
+      - name: Clean up the remote runner script
+        if: ${{ always() && steps.stage.outputs.directory != '' }}
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
+        run: |
+          if ! [[ "$REMOTE_RUN_DIR" =~ ^/tmp/npa-daily\.[A-Za-z0-9]{10}$ ]]; then
+            echo "::error::Refusing to clean an invalid remote staging directory."
+            exit 1
+          fi
+          ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
+            "rm -f -- '${REMOTE_RUN_DIR}/runner.sh' && rmdir -- '${REMOTE_RUN_DIR}'"
 
       - name: Clean up SSH key
         if: always()

@@ -32,6 +32,11 @@ with owner-only permissions and removes it after the job. Host keys must come
 from a trusted existing connection; the workflow does not trust a fresh network
 scan automatically.
 
+Each invocation stages its runner script in a new owner-private directory under
+`/tmp` on the VM. Concurrent callers cannot overwrite a shared script filename.
+Cleanup removes that run's script and empty directory before discarding the SSH
+key and disconnecting the private network, including when upload or testing fails.
+
 Optional repository **variables** (not secrets) forwarded to the run:
 
 | Variable | Purpose |
