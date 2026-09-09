@@ -2262,6 +2262,12 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     )[0]
     assert '"run_id": "franka-demo"' in franka_src
     assert '"artifact_render": "rerun"' in franka_src
+    selection_src = source.split('@app.post("/sim-assets/selection")')[1].split(
+        '@app.get("/sim-assets/selection")'
+    )[0]
+    assert selection_src.index("viz = _wire_franka_demo") < selection_src.index(
+        "_save_state(state)"
+    )
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[
         1
     ].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]

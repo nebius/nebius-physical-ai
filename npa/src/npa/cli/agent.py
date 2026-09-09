@@ -8450,6 +8450,10 @@ def set_sim_assets_selection(payload: dict):
     if preset == "franka":
         cam = str((state.get("camera_selection") or ["workspace"])[0])
         viz = _wire_franka_demo(state, camera=cam)
+        # A run-specific recording can already be fully staged, in which case
+        # _wire_franka_demo returns it without writing state. Persist the
+        # operator's selection before returning that fast path.
+        _save_state(state)
         # Return the persisted selection (post-wire) so response matches state.
         persisted = state.get("selection") if isinstance(state.get("selection"), dict) else selection
         return {{"ok": True, "selection": persisted, "sim_viz": viz}}
