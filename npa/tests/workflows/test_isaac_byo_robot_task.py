@@ -12,6 +12,7 @@ import json
 from dataclasses import MISSING
 from pathlib import Path
 from types import SimpleNamespace
+from types import FunctionType
 
 import pytest
 
@@ -395,7 +396,9 @@ def _assigns(statement, name):
 
 def _exec_wrapper_statements(statements, namespace):
     module = ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[]))
-    exec(compile(module, "<actual-robot-training-wrapper>", "exec"), namespace)
+    FunctionType(
+        compile(module, "<actual-robot-training-wrapper>", "exec"), namespace
+    )()
 
 
 @pytest.mark.parametrize(

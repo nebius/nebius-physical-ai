@@ -115,12 +115,15 @@ class _UniqueMappingLoader(yaml.SafeLoader):
 
 
 def _strict_mapping(contents: bytes) -> dict | None:
+    loader = _UniqueMappingLoader(contents)
     try:
-        value = yaml.load(contents, Loader=_UniqueMappingLoader)
+        value = loader.get_single_data()
         return value if isinstance(value, dict) else None
     except (yaml.YAMLError, ValueError, TypeError):
         # No parser diagnostic or credential-bearing input may leave this boundary.
         return None
+    finally:
+        loader.dispose()
 
 
 def _nebius_service_account_identity(environment: Mapping[str, str], home: Path, execs: list[dict]) -> dict[Path, str]:

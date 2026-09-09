@@ -5,6 +5,7 @@ import copy
 import json
 import math
 from types import SimpleNamespace
+from types import FunctionType
 
 import pytest
 
@@ -143,10 +144,10 @@ def test_actual_isaac_sensor_boundary_converts_without_changing_artifact_poses(
         "sim_utils": SimpleNamespace(PinholeCameraCfg=SimpleNamespace),
     }
     module = ast.Module(body=[*imports, camera_key, sensor_loop], type_ignores=[])
-    exec(
+    FunctionType(
         compile(ast.fix_missing_locations(module), "<actual-camera-boundary>", "exec"),
         namespace,
-    )
+    )()
     assert len(vars(scene)) == 3
     for pose, sensor in zip(poses, vars(scene).values(), strict=True):
         w, x, y, z = pose["rotation"]
