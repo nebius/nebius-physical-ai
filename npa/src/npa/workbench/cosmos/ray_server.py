@@ -99,6 +99,7 @@ def _run_server() -> None:
     guardrails = _env_bool("NPA_COSMOS3_RAY_GUARDRAILS", True)
     world_size = _env_int("NPA_COSMOS3_RAY_WORLD_SIZE", 1, minimum=1)
     max_batch_size = _env_int("NPA_COSMOS3_RAY_MAX_BATCH_SIZE", 4, minimum=1)
+    max_ongoing_requests = max_batch_size
     wait_timeout = _env_float("NPA_COSMOS3_RAY_BATCH_WAIT_TIMEOUT_S", 0.05, minimum=0.0)
     host = os.environ.get("NPA_COSMOS3_RAY_HOST", "0.0.0.0")
     port = _env_int("NPA_COSMOS3_RAY_PORT", 8000, minimum=1024)
@@ -131,6 +132,7 @@ def _run_server() -> None:
         cast(ray.serve.Deployment, OmniModelDeployment)
         .options(
             name=model_name,
+            max_ongoing_requests=max_ongoing_requests,
             user_config={
                 "max_batch_size": max_batch_size,
                 "batch_wait_timeout_s": wait_timeout,
@@ -201,6 +203,7 @@ def _run_server() -> None:
                 "guardrails": guardrails,
                 "world_size": world_size,
                 "max_batch_size": max_batch_size,
+                "model_max_ongoing_requests": max_ongoing_requests,
                 "batch_wait_timeout_s": wait_timeout,
                 "framework_revision": framework_revision,
                 "server_source_revision": source_revision,

@@ -125,6 +125,7 @@ def test_guarded_batch_publishes_two_decodable_samples_and_rejects_incomplete_re
     ready = ray_serve.service_health()
     assert ready["status"] == "ready"
     assert ready["guardrails"] is True
+    assert ready["model_max_ongoing_requests"] == ready["max_batch_size"]
     storage = StorageClient.from_environment()
     request_id = uuid.uuid4().hex
     root = prefix + "/" + request_id
