@@ -244,6 +244,11 @@ plan an earlier stage wrote rather than a hardcoded string.
   missing, duplicate, or extra evaluations before PPO. Preserve request
   IDs, token usage, latency, retries, and an authoritative returned cost or
   explicit null separately from model-agent tokens.
+  Hosted rollout requests use a strict JSON response schema for required event
+  fields, selected camera filenames, action indices, and nonempty error-tag
+  arrays. The parser still rejects incomplete coverage, invalid values, and
+  substituted model identities; an endpoint that rejects the schema must fail
+  visibly instead of retrying without it.
 - **Sim2Real preflight is stronger than model listing.** Its submit and prepared
   action paths declare `NEBIUS_TOKEN_FACTORY_KEY` by name only, then require
   both key-scoped model availability and a minimal inference before provisioning.

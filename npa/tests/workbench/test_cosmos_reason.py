@@ -180,6 +180,8 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
 
         def chat_completion(self, **kwargs):
             assert kwargs["model"] == model
+            assert kwargs["response_format"]["type"] == "json_schema"
+            assert kwargs["response_format"]["json_schema"]["strict"] is True
             prompt = kwargs["messages"][0]["content"][0]["text"]
             assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
             images = kwargs["messages"][0]["content"][1:]
@@ -552,6 +554,39 @@ def _complete_hosted_payload() -> dict:
             "camera_observation": "frame.png",
         }],
     }
+
+
+@pytest.mark.parametrize("tags", [[], ["invented"], "ok", ["ok", "invented"]])
+def test_hosted_response_schema_rejects_invalid_error_tags(tags):
+    import jsonschema
+
+    response_format = reason_module._hosted_rollout_response_format([{"step": 0}], ["frame.png"])
+    schema = response_format["json_schema"]["schema"]
+    payload = _complete_hosted_payload()
+    jsonschema.validate(payload, schema)
+    payload["per_step"][0]["error_tags"] = tags
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
+
+
+def test_hosted_response_schema_uses_selected_frames_and_actual_action_indices():
+    import jsonschema
+
+    response_format = reason_module._hosted_rollout_response_format(
+        [{"step": 4}, {"step": 19}], ["first.png", "last.png"]
+    )
+    schema = response_format["json_schema"]["schema"]
+    payload = _complete_hosted_payload()
+    template = payload["per_step"][0]
+    payload["per_step"] = [
+        {**template, "step": step, "camera_observation": frame}
+        for step, frame in [(4, "first.png"), (19, "last.png")]
+    ]
+    jsonschema.validate(payload, schema)
+    payload["per_step"].pop()
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
 
 
 @pytest.mark.parametrize("score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None])

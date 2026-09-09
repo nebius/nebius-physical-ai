@@ -549,6 +549,9 @@ def run_token_factory_rollout_vlm(
             messages=[{"role": "user", "content": content}],
             temperature=0.0,
             max_tokens=DEFAULT_REASON_MAX_NEW_TOKENS,
+            response_format=_hosted_rollout_response_format(
+                actions, [path.name for path in selected_paths]
+            ),
         )
         if response.get("model") != resolved_model:
             raise CosmosReasonError(
@@ -600,6 +603,45 @@ def run_token_factory_rollout_vlm(
         }
     )
     return payload
+
+
+def _hosted_rollout_response_format(
+    actions: list[dict[str, Any]], frame_names: list[str]
+) -> dict[str, Any]:
+    """Constrain generation to the same event vocabulary the parser requires."""
+
+    event = {
+        "step": {"type": "integer", "enum": [a.get("step", i) for i, a in enumerate(actions)]},
+        "critique_text": {"type": "string", "minLength": 1},
+        "error_tags": {
+            "type": "array", "minItems": 1,
+            "items": {"type": "string", "enum": list(ERROR_SEVERITY)},
+        },
+        "camera_observation": {"type": "string", "enum": frame_names},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    }
+    properties = {
+        "success": {"type": "boolean"},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "per_step": {
+            "type": "array", "minItems": len(actions), "maxItems": len(actions),
+            "items": {
+                "type": "object", "properties": event,
+                "required": list(event), "additionalProperties": False,
+            },
+        },
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "rollout_evaluation", "strict": True,
+            "schema": {
+                "type": "object", "properties": properties,
+                "required": list(properties), "additionalProperties": False,
+            },
+        },
+    }
 
 
 def _parse_hosted_rollout_output(
@@ -655,7 +697,7 @@ def _parse_hosted_rollout_output(
     if not isinstance(events, list) or len(events) != len(expected):
         raise invalid("per_step must cover every input action exactly once")
     indices = []
-    allowed_tags = {"collision", "missed_target", "unstable", "late_grasp", "minor_alignment", "ok"}
+    allowed_tags = set(ERROR_SEVERITY)
     for event in events:
         if not isinstance(event, dict) or type(event.get("step")) is not int:
             raise invalid("event step must be an integer")
@@ -773,7 +815,8 @@ def _cosmos_reason_prompt(
         "corresponding frame filename rather than another description; never copy or "
         "broadcast the rollout summary into step entries. If a step cannot be "
         "judged visually, use a step-specific 'insufficient visual evidence' "
-        "critique with confidence 0. Use only these error tags when applicable: "
+        "critique with confidence 0. error_tags must be a nonempty array using "
+        "only the following vocabulary (use ok when no error is observed): "
         "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
         "Judge actual visual rollout behavior, not metadata or requested actions."
     )
