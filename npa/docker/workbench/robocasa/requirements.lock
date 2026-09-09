@@ -4,10 +4,6 @@ absl-py==2.5.0 \
     --hash=sha256:0c996f25c0490700fadabe6351630f6111534fa0ae252cc6d2014ea3b141135f \
     --hash=sha256:0f17b89f2a4eaaedc4f28c622998aa690564b3012a396a4ffad0821007fe03ba
     # via mujoco
-accelerate==1.14.0 \
-    --hash=sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d \
-    --hash=sha256:e94390c2863b873be18f623f9df48a0d8fe5eff13ea7f1a00092b0a7904888c6
-    # via -r npa/docker/workbench/robocasa/requirements.in
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d \
     --hash=sha256:9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472
@@ -1187,7 +1183,6 @@ huggingface-hub==1.30.0 \
     --hash=sha256:e6a6120bc8c8e2723d03648434ee247088cceb55ba7067e7d34d692cad5fdb57
     # via
     #   -r npa/docker/workbench/robocasa/requirements.in
-    #   accelerate
     #   datasets
     #   diffusers
 idna==3.19 \
@@ -2009,7 +2004,6 @@ numpy==2.2.5 \
     # via
     #   -r npa/docker/workbench/robocasa/requirements.in
     #   npa (npa/pyproject.toml)
-    #   accelerate
     #   contourpy
     #   datasets
     #   diffusers
@@ -2137,7 +2131,6 @@ packaging==25.0 \
     --hash=sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f
     # via
     #   -r npa/docker/workbench/robocasa/requirements.in
-    #   accelerate
     #   datasets
     #   deprecation
     #   hatchling
@@ -2449,7 +2442,7 @@ psutil==7.2.2 \
     --hash=sha256:ed0cace939114f62738d808fdcecd4c869222507e266e574799e9c0faa17d486 \
     --hash=sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00 \
     --hash=sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8
-    # via accelerate
+    # via -r npa/docker/workbench/robocasa/requirements.in
 pyarrow==25.0.1 \
     --hash=sha256:0b1edbb2f385a6a65e9711b62ba86ac54a7816a3f8d17bb3e8a5929d65fb2485 \
     --hash=sha256:0b726ad7e7b669be982b0c71c07fe4b037d654354130da79a7902a669e93a66b \
@@ -2843,7 +2836,6 @@ pyyaml==6.0.3 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
     #   npa (npa/pyproject.toml)
-    #   accelerate
     #   datasets
     #   draccus
     #   huggingface-hub
@@ -3060,7 +3052,6 @@ safetensors==0.8.0 \
     --hash=sha256:fd6f3f93c9a0a7cc2788ee63fb763353d4bd2e89b0751bc78fcf7dda00bea774
     # via
     #   -r npa/docker/workbench/robocasa/requirements.in
-    #   accelerate
     #   diffusers
 scipy==1.15.3 \
     --hash=sha256:05dc6abcd105e1a29f95eada46d4a3f251743cfd7d3ae8ddb4088047f24ea477 \
@@ -3163,7 +3154,6 @@ torch==2.13.0+cu130 \
     --hash=sha256:e85d18b0c51744b25fab85dbf590a4f00644da432af0e9d03c62acbd2f96ea94
     # via
     #   -r npa/docker/workbench/robocasa/requirements.in
-    #   accelerate
     #   torchvision
 torchvision==0.28.0+cu130 \
     --hash=sha256:19c2d18bbc8c3b1a666f0d41f91d8f624f912faffad421371061dddda52ba8ea \

@@ -51,7 +51,15 @@ runtime deliberately keeps RoboCasa's Gymnasium 0.29.1, the current NPA AV/Rerun
 pins, patched CUDA Python wheels, and diffusers 0.38.0, which fixes
 [CVE-2026-44513](https://github.com/huggingface/diffusers/security/advisories/GHSA-98h9-4798-4q5v)
 and [CVE-2026-45804](https://github.com/huggingface/diffusers/security/advisories/GHSA-7wx4-6vff-v64p).
-No wheel metadata is rewritten, and no
+Accelerate is excluded because the full LeRobot trainer is outside this image's
+supported subset; the ACT model, processor factory and service imports do not
+need it. The build verifies that both its module and distribution metadata are absent.
+psutil remains pinned because RoboCasa's `dataset_states_to_obs.py` utility uses
+it to report process memory. All other package versions and hashes are unchanged.
+This removes the unused dependency affected by
+[CVE-2026-69112](https://github.com/advisories/GHSA-4j2p-28q2-5m79).
+LeRobot's full `lerobot_train` entrypoint requires Accelerate and is outside this
+image's compatibility subset. No wheel metadata is rewritten, and no
 successful whole-distribution `pip check` is claimed. ACT training or held-out
 policy evaluation requires separate real evidence; a kitchen rollout/export
 does not establish those capabilities.

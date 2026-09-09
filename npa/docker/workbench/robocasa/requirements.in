@@ -14,12 +14,13 @@ tqdm
 termcolor>=2.4,<4
 imageio>=2.34,<3
 h5py
+# RoboCasa dataset_states_to_obs reports process memory through psutil.
+psutil==7.2.2
 lxml
 hidapi
 huggingface-hub>=1,<2
 uvicorn>=0.52.4
 datasets>=4,<5
-accelerate>=1.10,<2
 packaging>=24.2,<26
 einops>=0.8,<0.9
 draccus==0.10.0

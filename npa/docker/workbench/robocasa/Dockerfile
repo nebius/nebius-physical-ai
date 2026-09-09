@@ -77,7 +77,7 @@ RUN curl --fail --location https://codeload.github.com/ARISE-Initiative/robosuit
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-cache-dir --no-compile --no-deps --no-build-isolation /opt/npa-src \
-    && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors; from npa.workbench.robocasa.service import create_app; assert create_app().title == 'NPA RoboCasa'" \
+    && python -c "import importlib.util, importlib.metadata; assert importlib.util.find_spec('accelerate') is None; assert all(dist.metadata['Name'].lower() != 'accelerate' for dist in importlib.metadata.distributions()); import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors; from npa.workbench.robocasa.service import create_app; assert create_app().title == 'NPA RoboCasa'" \
     && rm -rf /root/.cache /tmp/pip-*
 
 COPY --chmod=0444 docker/workbench/robocasa/REDISTRIBUTION.md docker/workbench/robocasa/ASSET-NOTICES.md docker/workbench/robocasa/LICENSE-APACHE-2.0 docker/workbench/robocasa/LICENSE-SAWYER /usr/share/doc/npa-robocasa/

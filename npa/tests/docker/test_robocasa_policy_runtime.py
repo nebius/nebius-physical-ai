@@ -1,6 +1,14 @@
-"""Static contract for the combined RoboCasa + LeRobot ACT evaluation runtime."""
+"""Check RoboCasa packaging and execute its dependency-absence build guard."""
 
+import ast
+import os
 from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+
+import pytest
 
 
 DOCKERFILE = (
@@ -66,3 +74,30 @@ def test_robocasa_keeps_runtime_only_cudnn_and_source_asset_notices() -> None:
     notices = DOCKERFILE.with_name("ASSET-NOTICES.md").read_text()
     assert "Creative Commons Attribution 4.0" in notices
     assert "Rethink Robotics Inc." in " ".join(notices.split())
+
+
+def _dependency_absence_program() -> str:
+    line = next(line for line in DOCKERFILE.read_text().splitlines() if "python -c" in line and "ACTPolicy" in line)
+    arguments = shlex.split(line.strip().removeprefix("&& ").rstrip(" \\"))
+    tree = ast.parse(arguments[2])
+    gymnasium_import = next(index for index, node in enumerate(tree.body)
+                           if isinstance(node, ast.Import) and any(name.name == "gymnasium" for name in node.names))
+    return ast.unparse(ast.Module(body=tree.body[:gymnasium_import], type_ignores=[]))
+
+
+@pytest.mark.parametrize("installation,expected_exit", [("absent", 0), ("module", 1), ("metadata", 1), ("both", 1)])
+def test_actual_build_guard_rejects_accelerate_module_or_metadata(tmp_path, installation, expected_exit):
+    if installation in {"module", "both"}:
+        (tmp_path / "accelerate.py").write_text("# Synthetic importable package.\n")
+    if installation in {"metadata", "both"}:
+        metadata = tmp_path / "accelerate-0.0.0.dist-info"
+        metadata.mkdir()
+        (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: Accelerate\nVersion: 0.0.0\n")
+    result = subprocess.run([sys.executable, "-S", "-c", _dependency_absence_program()],
+                            env={"PATH": os.defpath, "PYTHONPATH": str(tmp_path)}, capture_output=True, text=True)
+    assert result.returncode == expected_exit, result.stderr
+
+
+def test_policy_subset_does_not_install_accelerate():
+    for filename in ("requirements.in", "requirements.lock"):
+        assert not re.search(r"(?m)^accelerate(?:[<>=!~\[]|$)", DOCKERFILE.with_name(filename).read_text())
