@@ -894,16 +894,22 @@ def test_image_bootstrap_probe_paths_share_observing_progress_helper(
             source="oci_attestation",
         ),
     )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
-        lambda **_kwargs: ImageContractEvidence(
+    probes = []
+
+    def probe(**kwargs):
+        probes.append(kwargs)
+        return ImageContractEvidence(
             image=immutable,
             digest=digest,
             contract_version=CONTRACT_VERSION,
             state="compatible",
             source="ephemeral_capability_probe",
             cleanup="verified",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
     )
     progress: list[tuple[str, int]] = []
     monkeypatch.setattr(
@@ -920,6 +926,8 @@ def test_image_bootstrap_probe_paths_share_observing_progress_helper(
     )
 
     assert progress == [(digest, 1800)]
+    assert len(probes) == 1
+    assert probes[0].get("runtime_bootstrap", False) is not runtime_probe_required
 
 
 def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(

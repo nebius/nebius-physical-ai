@@ -3182,6 +3182,7 @@ def _preflight_image_bootstrap_contracts(
                         image=image,
                         digest=digest,
                         context=context,
+                        runtime_bootstrap=True,
                         kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
                         image_pull_secrets=tuple(
                             (pull_secrets_by_image or {}).get(image, ())
@@ -3199,7 +3200,10 @@ def _preflight_image_bootstrap_contracts(
                 f"image bootstrap contract {CONTRACT_VERSION} failed for "
                 f"{evidence.image}: {evidence.detail or evidence.state}"
             )
-        if evidence.source == "ephemeral_capability_probe":
+        if evidence.source in {
+            "ephemeral_capability_probe",
+            "ephemeral_runtime_bootstrap_probe",
+        }:
             typer.echo(
                 json.dumps(
                     {

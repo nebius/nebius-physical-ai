@@ -19,7 +19,7 @@ The container starts `npa workbench cosmos3 ray-serve`. Important settings:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `NPA_COSMOS3_RAY_WORLD_SIZE` | `1` | GPUs used by one persistent model replica |
-| `NPA_COSMOS3_RAY_MAX_BATCH_SIZE` | `4` | Maximum samples coalesced by upstream Ray Serve |
+| `NPA_COSMOS3_RAY_MAX_BATCH_SIZE` | `4` | Maximum samples coalesced by upstream Ray Serve; also sets the model replica's admission capacity so the configured batch can form |
 | `NPA_COSMOS3_RAY_BATCH_WAIT_TIMEOUT_S` | `0.05` | Coalescing window in seconds |
 | `NPA_COSMOS3_RAY_PARALLELISM_PRESET` | `throughput` | Upstream Cosmos parallelism preset |
 | `NPA_COSMOS3_RAY_GUARDRAILS` | `true` | Guardrails remain on unless explicitly disabled |
@@ -49,7 +49,9 @@ exact access probe to pass before starting the client.
 
 The service exposes authenticated `GET /health`, model-backed `GET /ready`,
 `GET /models`, `GET /system-info`, `POST /v1/batches`, and artifact retrieval at
-`GET /v1/artifacts/{path}`.
+`GET /v1/artifacts/{path}`. Readiness reports both `max_batch_size` and
+`model_max_ongoing_requests`; they must match for this single-concurrent-batch
+deployment.
 
 ### Trusted batch callers and conditioning downloads
 

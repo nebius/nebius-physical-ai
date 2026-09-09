@@ -107,7 +107,13 @@ class _SessionFactory:
 
     def _create(self, count, cached, total=7):
         """Create real committed Parquet fixtures before a new invocation."""
-        arguments = SimpleNamespace(actors=count, model_revision="revision", output_path=str(self.path))
+        arguments = SimpleNamespace(
+            actors=count,
+            model_revision="revision",
+            output_path=str(self.path),
+            records=total,
+            batch_size=1,
+        )
         result = self.application._InferenceSession(arguments, [[index] for index in range(total)])
         result.fingerprint = "execution"
         prepared = [self.application.worker.preprocess_shard([index]) for index in range(total)]

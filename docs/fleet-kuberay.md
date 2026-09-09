@@ -39,7 +39,11 @@ cluster.validate()
 
 Counts and resources must be positive integers. A nonempty, explicit CPU pool
 is required. Size it for the head (1 CPU, 4 GiB), workers and Kubernetes system
-pods; Fleet does not scale infrastructure to satisfy Ray tasks. A per-cluster
+pods; Fleet rejects a head or worker larger than one declared CPU node and
+rejects fixed pod requests above the pool's nominal aggregate CPU or memory.
+Leave additional capacity for Kubernetes system pods because this validation is
+only an impossibility check, not an allocatable-resource readiness result. Fleet
+does not scale infrastructure to satisfy Ray tasks. A per-cluster
 `kuberay: {enabled: false}` replaces an enabled defaults block completely.
 Unknown fields, RayService, GPU workers, autoscaling and arbitrary image/chart
 values are rejected. A GPU pool may coexist, but these Ray pods select only the

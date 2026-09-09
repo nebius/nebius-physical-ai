@@ -289,6 +289,18 @@ def _capture_batch_router(monkeypatch, tmp_path):
     return captured["router"]
 
 
+def test_model_admission_capacity_can_form_configured_batch(monkeypatch, tmp_path):
+    import sys
+
+    monkeypatch.setenv("NPA_COSMOS3_RAY_MAX_BATCH_SIZE", "8")
+    _capture_batch_router(monkeypatch, tmp_path)
+
+    deployment = sys.modules[
+        "cosmos_framework.inference.ray.serve"
+    ].OmniModelDeployment
+    assert deployment.options.call_args.kwargs["max_ongoing_requests"] == 8
+
+
 def _rewritten_batch_api(router):
     import inspect
 

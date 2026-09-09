@@ -122,6 +122,14 @@ transport, reconcile the exact remote setup marker and authenticated
 `/api/models`: adopt matching healthy evidence, resume incomplete phases, and
 preserve ambiguous/mismatched evidence without replacing the VM.
 
+If service installation completed before credential staging lost its SSH
+connection, a retry can reuse the private remote installer receipt. Reuse requires
+the same verified owner and an identical rendered installer (source revision,
+settings, and authentication included); the original bootstrap timestamp is
+preserved. Credentials are restaged and deployment identity and health are checked
+again. Missing or changed receipts run installation normally, and an explicit
+bootstrap of a healthy agent still reinstalls services.
+
 Agent VM creation is credential-free: Terraform/cloud-init receives no S3 HMAC
 keys, product tokens, or basic-auth password. After the exact VM identity and SSH
 channel are verified, bootstrap stages runtime credentials with owner-only SFTP
