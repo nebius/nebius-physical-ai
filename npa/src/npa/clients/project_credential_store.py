@@ -188,9 +188,7 @@ def project_credential_record(
         result = deepcopy(dict(record)) if isinstance(record, Mapping) else {}
         if result and alias:
             aliases = sorted({*(str(item) for item in result.get("aliases", []) if item), alias})
-            # Resolving an existing alias must preserve the credential bytes
-            # bound to an owned API. Timestamp only an actual record change.
-            if result.get("aliases") != aliases or result.get("project_id") != exact:
+            if aliases != result.get("aliases") or result.get("project_id") != exact:
                 result["aliases"] = aliases
                 result["project_id"] = exact
                 result["updated_at"] = _now()
