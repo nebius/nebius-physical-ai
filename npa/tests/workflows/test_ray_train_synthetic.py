@@ -103,6 +103,7 @@ def journal(recipe):
     return [dict(optimizer_step=step, loss=1 / step, gradient_norm=0.5, parameter_delta=0.1,
                  learning_rate=0.1, samples_per_second=10., ranks=[dict(
                      rank=rank, world_size=2, device_type="cuda", device_fingerprint=str(rank) * 64,
+                     node_fingerprint=str(rank + 2) * 64,
                      parameter_sha256="a" * 64, restored_from_step=0,
                  ) for rank in range(2)]) for step in range(1, 5)]
 
@@ -154,6 +155,15 @@ def test_every_restarted_rank_must_restore_exact_committed_step(journal, recipe)
     load("train").validate_journal(journal, recipe)
     journal[2]["ranks"][1]["restored_from_step"] = 0
     with pytest.raises(ValueError, match="Every worker"):
+        load("train").validate_journal(journal, recipe)
+
+
+def test_distinct_devices_on_one_host_cannot_claim_multi_node_training(journal, recipe):
+    """Ray SPREAD is best-effort, so exported evidence must prove distinct nodes."""
+    for row in journal:
+        for rank in row["ranks"]:
+            rank["node_fingerprint"] = "2" * 64
+    with pytest.raises(ValueError, match="distinct Ray hosts"):
         load("train").validate_journal(journal, recipe)
 
 
