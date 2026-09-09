@@ -139,12 +139,33 @@ def checkpoint_identity(shard: dict, model_revision: str, execution_fingerprint:
     }
 
 
-def verify_execution(directory: Path, fingerprint: str) -> None:
+def verify_checkpoint_layout(directory: Path, checkpoint_layout: dict) -> None:
+    """Reject an existing output whose shard boundaries differ.
+
+    Args:
+        directory: Existing driver-owned output directory.
+        checkpoint_layout: Record count and batch size defining shard boundaries.
+    Returns:
+        None when no execution exists yet or its layout matches.
+    Raises:
+        ValueError: Existing output belongs to another checkpoint layout.
+        OSError: Existing execution metadata cannot be read.
+    """
+    marker = directory / "execution.json"
+    if not marker.exists():
+        return
+    observed = json.loads(marker.read_text())
+    if observed.get("checkpoint_layout") != checkpoint_layout:
+        raise ValueError("Output directory belongs to a different checkpoint layout")
+
+
+def verify_execution(directory: Path, fingerprint: str, checkpoint_layout: dict) -> None:
     """Associate an output directory with exactly one execution identity.
 
     Args:
         directory: Existing driver-owned output directory.
         fingerprint: Expected source, model and runtime identity.
+        checkpoint_layout: Record count and batch size defining shard boundaries.
     Returns:
         None after the identity is verified or first recorded.
     Raises:
@@ -152,10 +173,15 @@ def verify_execution(directory: Path, fingerprint: str) -> None:
         OSError: Output metadata cannot be read or written.
     """
     marker = directory / "execution.json"
-    expected = {"execution_fingerprint": fingerprint}
+    expected = {
+        "execution_fingerprint": fingerprint,
+        "checkpoint_layout": checkpoint_layout,
+    }
     if marker.exists():
-        if json.loads(marker.read_text()) != expected:
+        observed = json.loads(marker.read_text())
+        if observed.get("execution_fingerprint") != fingerprint:
             raise ValueError("Output directory belongs to a different execution fingerprint")
+        verify_checkpoint_layout(directory, checkpoint_layout)
         return
     if any(directory.iterdir()):
         raise ValueError("Nonempty output directory has no execution fingerprint")

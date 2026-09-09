@@ -30,7 +30,10 @@ Three-tier contract:
 Use `kuberay: {enabled: true, worker_replicas: 2, worker_cpus: 2,
 worker_memory_gib: 4}` in a cluster/default profile for a fixed CPU worker group.
 The shared backend validates strict types, explicit CPU placement and the exact
-reviewed recipe before provisioning. `KubeRaySpec` is exported by `npa.sdk.fleet`.
+reviewed recipe before provisioning. It also rejects head or worker pods larger
+than one declared CPU node and fixed requests above the pool's nominal aggregate
+CPU or memory; operators must still leave room for Kubernetes system pods.
+`KubeRaySpec` is exported by `npa.sdk.fleet`.
 A disabled block replaces enabled defaults atomically. Omitted policy remains off.
 Enabled deployments require the default local Terraform workspace without
 `TF_CLI_ARGS*` or `TF_DATA_DIR` overrides. Reapply rejects extra effective inputs

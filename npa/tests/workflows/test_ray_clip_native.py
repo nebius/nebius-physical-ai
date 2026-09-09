@@ -356,3 +356,78 @@ def test_file_hashing_supports_python310_without_file_digest(example, tmp_path, 
     source = tmp_path / "source.bin"
     source.write_bytes(content)
     assert example.sha256(source) == hashlib.sha256(content).hexdigest()
+
+
+class _PendingBatch:
+    """Represent one pending actor result in the deterministic Ray stub."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+
+class _InferenceMethod:
+    """Record the number of actor calls submitted before backpressure."""
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+
+    def remote(self, shard):
+        self.runtime.pending += 1
+        self.runtime.peak_pending = max(self.runtime.peak_pending, self.runtime.pending)
+        rows = [{"record_id": row["record_id"], "image_bytes": b"processed"}
+                for row in shard["rows"]]
+        return _PendingBatch(rows)
+
+
+class _BackpressureRuntime:
+    """Implement the Ray calls needed by the batch-submission loop."""
+
+    def __init__(self):
+        self.pending = 0
+        self.peak_pending = 0
+        self.wait_calls = 0
+
+    @staticmethod
+    def remote(**_resources):
+        return lambda function: SimpleNamespace(remote=function)
+
+    @staticmethod
+    def is_initialized():
+        return False
+
+    def wait(self, references, *, num_returns, fetch_local):
+        assert num_returns == 1
+        assert fetch_local is False
+        self.wait_calls += 1
+        self.pending -= 1
+        return references[:1], references[1:]
+
+    @staticmethod
+    def get(reference):
+        return {"rows": reference.rows}
+
+
+def test_batch_submission_applies_backpressure_before_queue_grows(example, monkeypatch):
+    """Keep preprocessing and actor calls bounded as record count grows.
+
+    Args:
+        example: Isolated embedding module fixture.
+        monkeypatch: Pytest module fixture for the deterministic Ray stub.
+    Returns:
+        None after the bounded-submission assertions pass.
+    Raises:
+        AssertionError: The application exceeds its actor-scaled queue window.
+    """
+    runtime = _BackpressureRuntime()
+    monkeypatch.setitem(sys.modules, "ray", runtime)
+    options = SimpleNamespace(records=10, batch_size=1, actors=2)
+    models = [SimpleNamespace(infer=_InferenceMethod(runtime)) for _ in range(options.actors)]
+
+    results, submitted_at = example._run_inference_batches(options, models)
+
+    assert runtime.peak_pending == 4
+    assert runtime.wait_calls == 10
+    assert submitted_at > 0
+    assert [result["rows"][0]["record_id"] for result in results] == list(range(10))
+    assert all("image_bytes" in result["rows"][0] for result in results[:8])
+    assert all("image_bytes" not in result["rows"][0] for result in results[8:])

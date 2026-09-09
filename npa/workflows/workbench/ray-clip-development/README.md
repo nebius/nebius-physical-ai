@@ -7,6 +7,10 @@ Python edit, result download and cleanup. The customer interface is ordinary
 
 The source is split by purpose:
 
+- `fast_sync.py`: CPU-only endpoint qualification that submits two synthetic
+  source revisions through Ray 2.58 `runtime_env.working_dir`, verifies the
+  exact imported bytes and changed remote result, and records exact Job cleanup
+  privately.
 - `embed.py`: the normal Ray Core application—CPU preprocessing, CUDA CLIP actor,
   Parquet vectors, Lance table, retrieval and RGB preview.
 - `report.py`: CPU-only conversion of downloaded results to a validated Rerun recording.

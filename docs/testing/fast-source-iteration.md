@@ -122,6 +122,35 @@ between its trusted pods. Ray 2.58 offers optional token authentication; this
 recipe does not enable it. Access is protected by SSH and network policy, and a
 Ray namespace is not a security boundary.
 
+Before loading CLIP, qualify source delivery itself with the checked-in
+two-revision harness. It creates a fresh two-file synthetic working directory,
+submits it, changes one module value locally, and submits the same directory
+again. A remote Ray task reports the imported file hash and value on both Jobs;
+the command fails if the second Job sees stale bytes or an unchanged result.
+
+```bash
+mkdir -p "$RESULTS"
+python fast_sync.py --address http://127.0.0.1:8265 \
+  --evidence-dir "$RESULTS/fast-sync-evidence"
+```
+
+The evidence directory must be new and outside Git. Exact submission IDs,
+native logs, and cleanup status are written there with owner-only permissions;
+stdout contains only source hashes, values, Ray version, and terminal statuses.
+The harness stops any exact nonterminal Job it created and leaves the Ray and
+SkyPilot services running for the application loop.
+
+This is Ray 2.58's public per-Job `runtime_env.working_dir` behavior, exercised
+through `JobSubmissionClient`; it is not an NPA submission protocol. Ray uploads
+the local directory to the cluster and makes it the working directory of the
+driver, tasks, and actors. For application directories, keep generated output
+and secrets outside the upload. The pinned upstream
+[runtime-environment reference](https://github.com/ray-project/ray/blob/ray-2.58.0/doc/source/ray-core/handling-dependencies.rst)
+also documents `.gitignore` and `.rayignore`, default exclusions such as `.git`,
+`.venv`, `venv`, and `__pycache__`, follows symbolic links, and the 500 MiB
+unpacked limit for a local directory. Review those rules before pointing
+`--working-dir` at a larger tree.
+
 ## Embed images and see the result
 
 Submit a normal Python application:
