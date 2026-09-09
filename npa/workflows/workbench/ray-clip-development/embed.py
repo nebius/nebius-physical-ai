@@ -17,6 +17,7 @@ import worker
 MODEL_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
 WEIGHT_SHA256 = "a63082132ba4f97a80bea76823f544493bffa8082296d62d71581a4feff1576f"
 SOURCE_FILES = ("embed.py", "worker.py", "npa_lancedb_bdd100k_udfs.py")
+BATCHES_PER_ACTOR = 2
 
 
 def sha256(path: Path) -> str:
@@ -383,17 +384,88 @@ def _start_model_actors(options: argparse.Namespace, expected_sources: dict) -> 
     return models
 
 
-def _preprocess_batches(options: argparse.Namespace) -> list:
-    """Partition record IDs into ordinary Ray CPU tasks for GPU inference."""
+def _in_flight_batch_limit(actors: int) -> int:
+    """Scale the global queued-batch bound with CUDA actor capacity.
+
+    Args:
+        actors: Positive number of model actors receiving batches.
+    Returns:
+        Maximum number of end-to-end batches submitted at once.
+    Raises:
+        ValueError: The actor count is nonpositive.
+    """
+    if actors < 1:
+        raise ValueError("actors must be positive")
+    return actors * BATCHES_PER_ACTOR
+
+
+def _compact_completed_batch(result: dict) -> dict:
+    """Release processed image bytes after the preview sample range.
+
+    Args:
+        result: Completed inference batch returned by a CUDA actor.
+    Returns:
+        The same batch with non-preview image payloads removed.
+    Raises:
+        KeyError: A result row lacks its record identity.
+    """
+    for row in result["rows"]:
+        if row["record_id"] >= 8:
+            row.pop("image_bytes", None)
+    return result
+
+
+def _batch_record_ids(index: int, records: int, batch_size: int) -> list[int]:
+    """Build one requested batch without materializing the full input range.
+
+    Args:
+        index: Zero-based batch position.
+        records: Total number of records in the application run.
+        batch_size: Maximum records assigned to one batch.
+    Returns:
+        Consecutive record IDs for the selected batch.
+    Raises:
+        None.
+    """
+    start = index * batch_size
+    stop = min(start + batch_size, records)
+    return list(range(start, stop))
+
+
+def _run_inference_batches(options: argparse.Namespace, models: list) -> tuple[list, float]:
+    """Apply backpressure across CPU preprocessing and CUDA inference.
+
+    Args:
+        options: Validated record, batch, and actor counts.
+        models: Initialized Ray CUDA actor handles.
+    Returns:
+        Ordered completed batches and the initial-window submission timestamp.
+    Raises:
+        RuntimeError: A Ray preprocessing or actor task fails.
+    """
     import ray
 
     prepare = ray.remote(num_cpus=1)(worker.preprocess_shard)
-    batches = []
-    for start in range(0, options.records, options.batch_size):
-        stop = min(start + options.batch_size, options.records)
-        record_ids = list(range(start, stop))
-        batches.append(prepare.remote(record_ids))
-    return batches
+    batch_count = (options.records + options.batch_size - 1) // options.batch_size
+    pending = {}
+    results = [None] * batch_count
+    next_batch = 0
+    limit = _in_flight_batch_limit(options.actors)
+    initial_window_submitted_at = 0.0
+    while next_batch < batch_count or pending:
+        while next_batch < batch_count and len(pending) < limit:
+            record_ids = _batch_record_ids(next_batch, options.records, options.batch_size)
+            shard = prepare.remote(record_ids)
+            model = models[next_batch % options.actors]
+            pending[model.infer.remote(shard)] = next_batch
+            next_batch += 1
+        if not initial_window_submitted_at:
+            initial_window_submitted_at = time.perf_counter()
+        ready, _ = ray.wait(list(pending), num_returns=1, fetch_local=False)
+        for reference in ready:
+            index = pending.pop(reference)
+            results[index] = _compact_completed_batch(ray.get(reference))
+    return results, initial_window_submitted_at
 
 
 def _write_execution_report(options, models, results, expected_sources, boundaries) -> dict:
@@ -423,6 +495,7 @@ def _write_execution_report(options, models, results, expected_sources, boundari
         "actors": actors,
         "ray_nodes": len({actor["node_id"] for actor in actors}),
         "preprocessors": [result["preprocessor"] for result in results],
+        "in_flight_batch_limit": _in_flight_batch_limit(options.actors),
         "timings_seconds": timings,
     }
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -454,13 +527,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         models = _start_model_actors(options, expected_sources)
         ready = time.perf_counter()
-        shards = _preprocess_batches(options)
-        prepared = time.perf_counter()
-        submissions = []
-        for index, shard in enumerate(shards):
-            model = models[index % options.actors]
-            submissions.append(model.infer.remote(shard))
-        results = ray.get(submissions)
+        results, prepared = _run_inference_batches(options, models)
         inferred = time.perf_counter()
         boundaries = (started, ready, prepared, inferred)
         _write_execution_report(options, models, results, expected_sources, boundaries)
