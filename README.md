@@ -92,10 +92,9 @@ Foxglove viewer. This diagram describes workflow execution; the
 development with native Ray Jobs.
 
 The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
-manual GitHub workflow, pinned SSH access, and private network setup. Set
-`NPA_DAILY_NETWORK=tailscale` with `NPA_DAILY_TAILSCALE_CLIENT_ID` and
-`NPA_DAILY_TAILSCALE_AUDIENCE` for a VM behind a Tailscale subnet router;
-network access otherwise defaults to `direct`.
+manual GitHub workflow, a dedicated VM with public SSH, pinned host keys, and
+isolated test execution. The workflow connects directly from GitHub without a
+VPN or an identity-federation service.
 
 Python and HTTP coverage varies by tool. The
 [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) explains

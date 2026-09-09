@@ -35,7 +35,7 @@ scan automatically.
 Each invocation stages its runner script in a new owner-private directory under
 `/tmp` on the VM. Concurrent callers cannot overwrite a shared script filename.
 Cleanup removes that run's script and empty directory before discarding the SSH
-key and disconnecting the private network, including when upload or testing fails.
+key, including when upload or testing fails.
 
 Optional repository **variables** (not secrets) forwarded to the run:
 
@@ -56,60 +56,34 @@ remote and valid `~/.npa` credentials. The runner script uses a dedicated CI
 checkout (`~/npa-ci-daily` by default) with its own venv, so it never disturbs
 the shared dev clone or other agents' worktrees.
 
-## Private network access
+## Public SSH access
 
-A laptop's SSH connection can work through a VPN or subnet router even when the
-VM's address is unreachable from GitHub. The daily workflow uses an Ubuntu
-hosted runner. Set these repository variables when the VM needs Tailscale:
+Use a dedicated CPU VM with a public IPv4 address and SSH reachable from the
+GitHub-hosted Ubuntu runner. A public address in the cloud console alone does
+not prove that GitHub can reach it. Validate by manually dispatching this
+workflow and checking that both the upload and remote test steps succeed.
+A laptop can reach the same address through a VPN or subnet route while direct
+connections from GitHub still fail.
 
-| Variable | Value |
-| --- | --- |
-| `NPA_DAILY_NETWORK` | `tailscale` for the private route; defaults to `direct` for a reachable public endpoint |
-| `NPA_DAILY_TAILSCALE_CLIENT_ID` | Client ID from the Tailscale OIDC trust credential; required in `tailscale` mode |
-| `NPA_DAILY_TAILSCALE_AUDIENCE` | Audience from the same credential; required in `tailscale` mode |
+Provision the VM with a dedicated CI public key, disable password and root
+login, and expose only the SSH port needed by this workflow. Keep application
+ports closed. Obtain its SSH host key through authenticated provider serial
+logs or another independently trusted connection before setting
+`DEV_VM_SSH_KNOWN_HOSTS`. Store all connection values in the secrets above;
+never commit live addresses, private keys, or project identifiers.
 
-The client ID and audience are not secrets. The workflow uses GitHub's temporary
-OIDC identity with Tailscale's native token discovery, so no Tailscale auth key
-or OAuth secret is needed. Missing federation settings fail before SSH access.
-The pinned Tailscale archive is checksum-verified, the ephemeral node keeps its
-identity in memory, and cleanup logs it out and stops the daemon even after a
-test failure. Authentication output stays in an owner-private temporary
-directory that cleanup removes; it is never uploaded as an artifact. Tokens
-are read from the process environment and are not expanded into command arguments.
+Install `git`, `python3-venv`, and `make`, plus `skopeo` (or another supported
+registry inspector). Initialize the dedicated checkout at `~/npa-ci-daily`
+from this repository so the runner can discover its remote URL. Configure NPA
+using its credential APIs and non-interactive configuration commands; keep
+model and storage credentials on the VM, outside the checkout. Set
+`NPA_E2E_PROJECT` to its configured project alias. Verify the selected service
+credentials before dispatching a live tier.
 
-A Tailscale admin must complete this setup once:
-
-1. Add `tag:npa-daily` to the tailnet's `tagOwners` with the appropriate admin
-   owner. Grant that tag access only to the VM's exact destination and TCP SSH
-   port. Use the private values corresponding to `DEV_VM_SSH_HOST` and
-   `DEV_VM_SSH_PORT`; do not commit them to this repository. Ensure existing
-   broad grants do not give this tag additional access.
-2. Confirm the subnet router is online and its route covering the VM is
-   approved. The CI client enables `--accept-routes`. This does not require
-   installing Tailscale on the VM itself when an existing subnet router reaches it.
-3. Create an **OpenID Connect** credential in the Tailscale admin console's
-   **Trust credentials** page. Select GitHub's issuer
-   `https://token.actions.githubusercontent.com`, the `auth_keys` write scope,
-   and `tag:npa-daily`. Permit preauthorized ephemeral nodes so scheduled jobs
-   do not wait for manual device approval.
-4. Restrict the subject to
-   `repo:nebius/nebius-physical-ai:ref:refs/heads/main` and add a `workflow_ref`
-   custom claim equal to
-   `nebius/nebius-physical-ai/.github/workflows/dev-vm-daily-tests.yml@refs/heads/main`.
-   For validation before merge, use a separate temporary credential restricted
-   to the exact reviewed branch in both claims, then remove it after validation.
-   Do not use a wildcard that admits arbitrary branches or pull requests.
-5. Copy the generated client ID and audience into the repository variables above,
-   set `NPA_DAILY_NETWORK=tailscale`, and manually dispatch the daily workflow
-   with `test_tier=e2e-daily` on the trusted ref. Verify both the network connection
-   and the remote test step before relying on the schedule.
-
-Tailscale documents the trust setup and native token discovery in
-[Workload identity federation](https://tailscale.com/docs/features/workload-identity-federation).
-If authentication fails, inspect that credential's error in the admin console.
-If authentication passes but SSH times out, verify the subnet route and the
-tag's destination/port grant. A host-key mismatch requires independently
-re-verifying the VM's host key before updating the pinned secret.
+The workflow needs no Tailscale client, OAuth secret, OIDC permission, or
+`NPA_DAILY_NETWORK` variable. When replacing a host, verify the new public route
+and server identity before updating the SSH secrets. Retain a shared old host
+until its other workloads are handled separately.
 
 ## Schedule
 
