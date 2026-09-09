@@ -41,6 +41,7 @@ For Python or HTTP integration, start with the
 | Path | Purpose |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Runtime and storage setup after the platform quickstart |
+| [ray.md](ray.md) | Supported Ray Jobs, Core, Train, Serve, and KubeRay paths, plus explicit Data and Tune limitations |
 | [guides/README.md](guides/README.md) | Choose a robot, generation, reconstruction, or data workflow |
 | [npa-workflow-guide.md](npa-workflow-guide.md) | Author, validate, plan, submit, and resume declarative workflows |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
@@ -82,6 +83,7 @@ For Python or HTTP integration, start with the
 | Customer running their first Workbench workload | [Quickstart](../quickstart.md), then [guides](guides/README.md) |
 | Customer or operator using managed Kubernetes | [kubernetes.md](kubernetes.md) |
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |
+| Developer or operator using Ray | [ray.md](ray.md) |
 | Partner onboarding an OSS repo | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) |
 | Engineer packaging or hardening a container | [container-packaging.md](container-packaging.md) |
 | Operator watching the same weights download every run | [model-weight-cache.md](model-weight-cache.md) |

@@ -41,19 +41,19 @@ def _agent_deploy_failure_hint(detail: str) -> str:
     if "cloud-init status: error" in runtime or "cloud-init finished with status" in runtime:
         return (
             "The agent VM booted but its cloud-init bootstrap failed (cloud-init "
-            "status: error), so the deploy rolled the VM back. The failing "
+            "status: error). The failing "
             "bootstrap step is named in the `cloud-init status --long` output "
-            "that streamed above; because the VM is gone, capture that output "
-            "(or SSH in during a re-run and read "
-            "/var/log/npa-agent-cloud-init.log) before retrying."
+            "that streamed above. Check `npa agent status` and the operation's "
+            "recovery instructions for the retained VM before retrying; inspect "
+            "/var/log/npa-agent-cloud-init.log over verified SSH when available."
         )
     if "never authenticated" in runtime:
         # The wait distinguishes a closed port from a refused key; when tcp/22 did
         # open, reachability is not the problem.
         return (
             "The agent VM booted and its tcp/22 was reachable, but SSH never "
-            "authenticated, so the deploy timed out and rolled the VM back. This is "
-            "the key or the login user, not the network:\n"
+            "authenticated before the deploy timed out. Check `npa agent status` "
+            "and the operation's recovery instructions before retrying:\n"
             "  - does the private key next to --ssh-public-key-path match the public "
             "key the VM was created with?\n"
             "  - is --ssh-user right for this image (Nebius Ubuntu images use "
@@ -61,12 +61,14 @@ def _agent_deploy_failure_hint(detail: str) -> str:
         )
     return (
         "The agent VM booted (RUNNING, with a public IP) but its tcp/22 never "
-        "opened from this machine, so the deploy timed out and rolled the VM back. "
-        "This is almost always local reachability, not the VM:\n"
+        "opened from this machine before the deploy timed out. Check `npa agent "
+        "status` and the operation's recovery instructions before retrying:\n"
         "  - can this host reach the VM's tcp/22? (corporate VPN / split-tunnel / "
         "firewall commonly block outbound SSH to fresh public IPs, even when they "
         "allow SSH to known hosts such as github.com)\n"
-        "  - does the security group allow tcp/22 from your address?\n"
+        "  - do ssh_cidr_block and application_cidr_block allow the source address "
+        "actually used to reach this VM? A VPN subnet route can use a different "
+        "egress address from an internet IP-check service.\n"
         "Deploy from a host with direct network access to the VM; the full "
         "provisioner log streamed above."
     )
