@@ -49,6 +49,14 @@ Submit with `--runtime --resume`. Pass tenant-specific data only through
 `--max-wait-seconds 0`; the runtime still records wave/job status in
 `<run-root>/npa-workflow/runtime.json`.
 
+The runtime driver stays on the submitting host. Run it on an always-on
+operator VM for long jobs; a laptop entering sleep interrupts network access
+even when GPU jobs continue on the cluster. After a driver interruption, verify
+recorded jobs before using `--resume-run` for the same run. Never start two
+runtime drivers for one run concurrently. Status includes stages discovered in
+the runtime ledger when the initial manifest has no steps. Successful recorded
+jobs alone do not prove that the remaining workflow graph completed.
+
 The graph owns every stage Job. Isaac rollout/PPO/eval execute their proven
 payload inside their already admitted SkyPilot GPU task and must report
 `npa_workflow_skypilot_task`; a hidden sibling Job is a contract failure.

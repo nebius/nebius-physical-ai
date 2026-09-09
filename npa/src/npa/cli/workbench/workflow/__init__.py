@@ -4334,6 +4334,7 @@ def _durable_workflow_status(
             build_actionable_run_status,
             reconstruct_stage_job_attribution,
             reconcile_submitted_manifest,
+            runtime_manifest_view,
         )
 
         run_manifest = RunManifest.from_dict(manifest)
@@ -4347,6 +4348,8 @@ def _durable_workflow_status(
             for item in resolution.runtime_state.get("stages") or []
             if isinstance(item, dict)
         ]
+        run_manifest = runtime_manifest_view(run_manifest, runtime_waves)
+        recorded_manifest_status = str(run_manifest.status or "").upper()
         for step in run_manifest.steps:
             name = str(step.get("state") or "")
             candidates = [
@@ -4371,7 +4374,9 @@ def _durable_workflow_status(
         job_observations: dict[str, dict[str, object]] = {}
         controller_output = ""
         diagnostics: list[str] = []
-        verification_errors: list[str] = []
+        verification_errors: list[str] = (
+            [resolution.runtime_state_error] if resolution.runtime_state_error else []
+        )
         attribution = reconstruct_stage_job_attribution(
             run_manifest, runtime_waves=runtime_waves
         )
@@ -4488,7 +4493,19 @@ def _durable_workflow_status(
             project=project or state.project,
             failure_threshold=startup_failure_threshold,
         )
-        manifest_terminal = str(run_manifest.status or "").upper()
+        runtime_status = str(resolution.runtime_state.get("status") or "").upper()
+        if (
+            runtime_waves
+            and run_payload.get("status") == "SUCCEEDED"
+            and recorded_manifest_status in {"PLANNED", "SUBMITTED", "RUNNING"}
+            and runtime_status != "SUCCEEDED"
+        ):
+            run_payload["status"] = runtime_status or recorded_manifest_status
+            verification_errors.append(
+                "All recorded jobs succeeded, but workflow completion is not recorded. "
+                "The runtime may need to continue with --resume-run."
+            )
+        manifest_terminal = recorded_manifest_status
         runtime_terminal_states = _latest_runtime_wave_states(runtime_waves)
         if (
             manifest_terminal == "SUCCEEDED"
