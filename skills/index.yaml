@@ -29,6 +29,19 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: ray-workbench
+    category: tools
+    when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."
+    path: skills/tools/ray-workbench/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/ray.md
+      - type: cli_help
+        args: ["workbench", "cosmos3", "ray-batch", "--help"]
+        contains: "durable SDG batch"
+      - type: cli_help
+        args: ["fleet", "plan", "--help"]
+        contains: "resolved deployment plan"
   - name: ray-train-synthetic
     category: tools
     when_to_use: "Run native Ray Train distributed CUDA synthetic regression, S3 checkpoints, optimizer recovery and factual Rerun metrics."
