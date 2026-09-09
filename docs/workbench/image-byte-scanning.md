@@ -227,3 +227,12 @@ workflow and builder execute faithfully; the private signing key prevents the
 builder from supplying its own review authority, but does not turn an untrusted
 host into a trusted execution environment. All other publication checks and real
 GPU validation remain required.
+
+The scanner wrapper and native detector receive a minimal child environment:
+`PATH`, plus GitHub Actions' nonempty `RUNNER_TRACKING_ID` when present. This
+process marker lets the runner identify those children during final orphan
+cleanup; credentials and other parent environment values are excluded. Direct
+scanner cancellation still invokes its own child-cleanup handlers. Forced runner
+termination can leave an incomplete report, so preserve interrupted evidence and
+verify that its writers have stopped before moving or reusing the scan tree.
+Cancellation never supplies scan acceptance.

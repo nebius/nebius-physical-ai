@@ -362,6 +362,14 @@ images and can separately preflight/promote selected validated tools. It uses th
 repository-scoped `GITHUB_TOKEN` with `packages: write`; no second registry token
 or namespace is part of the official flow. Run `--preflight` before promotion.
 
+Development builds default to `build_runner_label=ubuntu-latest` and GitHub's
+360-minute job deadline. For a verified self-hosted runner, select its label and
+set `build_runner_is_self_hosted=true` to use the provider's 7,200-minute maximum.
+The flag defaults to false; a custom label alone does not select that maximum.
+These are [GitHub execution limits](https://docs.github.com/en/actions/reference/limits),
+not workload qualification targets. GitHub's separate token lifetime still
+applies. The setting does not change any publication gate or extend a running job.
+
 | Code | Meaning | Fix |
 | --- | --- | --- |
 | `UNAUTHORIZED` on **every** image | the GHCR credential resolved to no identity | replace the scoped credential |

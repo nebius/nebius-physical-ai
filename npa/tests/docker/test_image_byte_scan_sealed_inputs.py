@@ -192,3 +192,31 @@ def test_spawn_failure_closes_both_sealed_inputs_and_stderr(tmp_path, monkeypatc
     for fd in passed:
         assert_closed(fd)
     (tmp_path / "stderr").unlink()
+
+
+@pytest.mark.parametrize("tracking_id", [None, "", "synthetic-runner-process-scope"])
+def test_actual_native_child_preserves_only_runner_tracking(tmp_path, monkeypatch, tracking_id):
+    monkeypatch.delenv("RUNNER_TRACKING_ID", raising=False)
+    if tracking_id is not None:
+        monkeypatch.setenv("RUNNER_TRACKING_ID", tracking_id)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-not-for-child")
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-not-for-child")
+    monkeypatch.setenv("UNRELATED_PARENT_VARIABLE", "synthetic-not-for-child")
+    program = (f"#!{sys.executable}\nimport json,os\nprint(json.dumps(dict(os.environ)),flush=True)\n").encode()
+    authorization = {
+        "helper": private_file(tmp_path / "helper", program, executable=True),
+        "config": private_file(tmp_path / "config", b"synthetic configuration"),
+    }
+    observed = []
+    monkeypatch.setattr(W.Detector, "_validate_ready", lambda self, _: observed.append(json.loads(self.process.stdout.readline())))
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        detector = W.Detector(authorization, tmp_path / "stderr")
+        try:
+            assert detector.process.wait() == 0
+        finally:
+            detector.abort()
+    assert detector.joined
+    child_environment = observed[0]
+    assert child_environment.get("RUNNER_TRACKING_ID") == (tracking_id or None)
+    assert child_environment["PATH"] == os.defpath
+    assert set(child_environment) <= {"PATH", "LC_CTYPE", "RUNNER_TRACKING_ID"}

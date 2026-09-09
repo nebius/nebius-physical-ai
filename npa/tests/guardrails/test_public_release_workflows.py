@@ -69,6 +69,18 @@ def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted(
     assert spec["jobs"]["build-development"]["runs-on"] == (
         "${{ inputs.build_runner_label || 'ubuntu-latest' }}"
     )
+    # GitHub documents 6-hour hosted and 5-day self-hosted execution ceilings:
+    # https://docs.github.com/en/actions/reference/limits
+    # A custom label alone must not opt into the self-hosted ceiling.
+    assert inputs["build_runner_is_self_hosted"] == {
+        "description": "Use the platform maximum for a verified self-hosted build runner",
+        "type": "boolean",
+        "required": False,
+        "default": False,
+    }
+    assert spec["jobs"]["build-development"]["timeout-minutes"] == (
+        "${{ inputs.build_runner_is_self_hosted && 7200 || 360 }}"
+    )
     for name, job in spec["jobs"].items():
         if name != "build-development":
             assert job["runs-on"] == "ubuntu-latest"

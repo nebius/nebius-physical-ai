@@ -479,11 +479,15 @@ class Detector:
                 sealed_execution_input(helper_source_fd, authorization["helper"]["sha256"], executable=True) as helper_fd,
                 sealed_execution_input(config_source_fd, authorization["config"]["sha256"]) as config_fd,
             ):
+                environment = {"PATH": os.defpath}
+                tracking_id = os.environ.get("RUNNER_TRACKING_ID")
+                if tracking_id:
+                    environment["RUNNER_TRACKING_ID"] = tracking_id
                 _SPAWNING = True
                 try:
                     self.process = subprocess.Popen([f"/proc/self/fd/{helper_fd}", "--config-fd", str(config_fd)],
                                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
-                                                    env={"PATH": os.defpath}, start_new_session=True,
+                                                    env=environment, start_new_session=True,
                                                     pass_fds=(helper_fd, config_fd))
                 finally:
                     _SPAWNING = False

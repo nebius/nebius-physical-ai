@@ -43,6 +43,11 @@ on:
         description: "Runner label for public development image builds"
         required: false
         default: "ubuntu-latest"
+      build_runner_is_self_hosted:
+        description: "Use the platform maximum for a verified self-hosted build runner"
+        type: boolean
+        required: false
+        default: false
       curobo_private_review_public_key_sha256:
         description: "Optional authorized review public-key SHA256; requires curobo-only build and private signed pre/post reviews"
         required: false
@@ -191,6 +196,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ${{ inputs.build_runner_label || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.build_runner_is_self_hosted && 7200 || 360 }}
     env:
       IMAGE: ${{ matrix.image }}
       TOOL: ${{ matrix.tool }}

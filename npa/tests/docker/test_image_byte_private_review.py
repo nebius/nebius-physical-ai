@@ -242,3 +242,25 @@ def test_review_gate_normalizes_real_verifier_receipt_alias_error(tmp_path, monk
     captured = capsys.readouterr()
     assert captured.out == "image byte publication gate failed\n"
     assert captured.err == "" and str(alias) not in captured.out
+
+
+@pytest.mark.parametrize("tracking_id", [None, "", "synthetic-runner-process-scope"])
+def test_actual_scan_child_preserves_only_runner_tracking(tmp_path, monkeypatch, tracking_id):
+    monkeypatch.delenv("RUNNER_TRACKING_ID", raising=False)
+    if tracking_id is not None:
+        monkeypatch.setenv("RUNNER_TRACKING_ID", tracking_id)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-not-for-child")
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-not-for-child")
+    monkeypatch.setenv("UNRELATED_PARENT_VARIABLE", "synthetic-not-for-child")
+    trusted = tmp_path / "trusted"
+    script = trusted / "npa/scripts/scan_image_bytes.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import json,os\nprint(json.dumps(dict(os.environ)))\n")
+    phase = tmp_path / "analysis/pre"
+    phase.mkdir(parents=True)
+    assert G._scan_command(trusted, phase, []) == 0
+    child_environment = json.loads((phase / "raw-scan.stdout.log").read_text())
+    assert child_environment.get("RUNNER_TRACKING_ID") == (tracking_id or None)
+    assert child_environment["PATH"] == os.defpath
+    # CPython may add its locale-coercion setting after exec.
+    assert set(child_environment) <= {"PATH", "LC_CTYPE", "RUNNER_TRACKING_ID"}

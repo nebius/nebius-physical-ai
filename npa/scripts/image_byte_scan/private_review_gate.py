@@ -365,11 +365,15 @@ def _run(args):
 def _scan_command(trusted_root, phase_root, scan_args):
     process = None
     try:
+        environment = {"PATH": os.defpath}
+        tracking_id = os.environ.get("RUNNER_TRACKING_ID")
+        if tracking_id:
+            environment["RUNNER_TRACKING_ID"] = tracking_id
         W._SPAWNING = True
         try:
             process = subprocess.Popen([sys.executable, str(trusted_root / "npa/scripts/scan_image_bytes.py"),
                                         *scan_args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, env={"PATH": os.defpath}, start_new_session=True)
+                stderr=subprocess.PIPE, env=environment, start_new_session=True)
         finally:
             W._SPAWNING = False
         W.require(not W._CANCEL_REQUESTED, "private_review_scan_cancelled")
