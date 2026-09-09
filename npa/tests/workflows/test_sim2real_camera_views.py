@@ -4,6 +4,7 @@ import ast
 import copy
 import json
 import math
+import runpy
 from types import SimpleNamespace
 
 import pytest
@@ -97,7 +98,7 @@ def test_camera_rotation_rejects_invalid_pose(rotation: tuple[float, ...]) -> No
     "script", [ISAAC_ROLLOUT_SCRIPT, ISAAC_EVAL_SCRIPT], ids=["rollout", "eval"]
 )
 def test_actual_isaac_sensor_boundary_converts_without_changing_artifact_poses(
-    version: str, script: str, monkeypatch: pytest.MonkeyPatch
+    version: str, script: str, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """Execute the real embedded sensor-construction block with a fake sensor API."""
     monkeypatch.setattr(camera_views.metadata, "version", lambda _: version)
@@ -143,10 +144,9 @@ def test_actual_isaac_sensor_boundary_converts_without_changing_artifact_poses(
         "sim_utils": SimpleNamespace(PinholeCameraCfg=SimpleNamespace),
     }
     module = ast.Module(body=[*imports, camera_key, sensor_loop], type_ignores=[])
-    exec(
-        compile(ast.fix_missing_locations(module), "<actual-camera-boundary>", "exec"),
-        namespace,
-    )
+    sensor_script = tmp_path / "actual_camera_boundary.py"
+    sensor_script.write_text(ast.unparse(ast.fix_missing_locations(module)), encoding="utf-8")
+    runpy.run_path(str(sensor_script), init_globals=namespace)
     assert len(vars(scene)) == 3
     for pose, sensor in zip(poses, vars(scene).values(), strict=True):
         w, x, y, z = pose["rotation"]

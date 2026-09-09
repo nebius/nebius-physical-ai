@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import runpy
 from dataclasses import MISSING
 from pathlib import Path
 from types import SimpleNamespace
@@ -393,9 +394,12 @@ def _assigns(statement, name):
     )
 
 
-def _exec_wrapper_statements(statements, namespace):
+def _run_wrapper_statements(statements, namespace, directory):
     module = ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[]))
-    exec(compile(module, "<actual-robot-training-wrapper>", "exec"), namespace)
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / "actual_training_wrapper.py"
+    script.write_text(ast.unparse(module), encoding="utf-8")
+    namespace.update(runpy.run_path(str(script), init_globals=namespace))
 
 
 @pytest.mark.parametrize(
@@ -424,7 +428,7 @@ def _exec_wrapper_statements(statements, namespace):
     ids=["legacy-policy", "rsl4-actor", "rsl5-actor-distribution"],
 )
 def test_actual_wrapper_initial_noise_reaches_migrated_model(
-    model_config, expected_path
+    model_config, expected_path, tmp_path
 ):
     cfg = {
         "algorithm": {"learning_rate": 1e-4, "entropy_coef": 0.006},
@@ -435,7 +439,7 @@ def test_actual_wrapper_initial_noise_reaches_migrated_model(
     body = _wrapper_training_body()
     start = next(i for i, node in enumerate(body) if _assigns(node, "algo"))
     end = next(i for i, node in enumerate(body) if _assigns(node, "env"))
-    _exec_wrapper_statements(
+    _run_wrapper_statements(
         body[start:end],
         {
             "acfg": cfg,
@@ -443,6 +447,7 @@ def test_actual_wrapper_initial_noise_reaches_migrated_model(
             "os": SimpleNamespace(environ={"ROBOT_INIT_NOISE_STD": "0.35"}),
             "json": json,
         },
+        tmp_path,
     )
     actual = cfg
     for key in expected_path:
@@ -524,7 +529,7 @@ def _execute_training_phases(output, resume=None):
         "ITERS": 2000,
         "json": json,
     }
-    _exec_wrapper_statements(body[start:end], namespace)
+    _run_wrapper_statements(body[start:end], namespace, output)
     return namespace["runner"], Path(namespace["final_path"])
 
 

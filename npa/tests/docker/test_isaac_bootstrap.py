@@ -835,13 +835,14 @@ class AppLauncher:
         PYTHONPATH=str(probe),
         NPA_TEST_STARTUP_OBSERVATIONS=str(observations),
     )
+    custom_kit_root = tmp_path / "custom-kit"
     if caller_enables_uploads:
         environment.update(
             OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA="0",
             OMNI_CRASHREPORTER_URL="https://diagnostics.invalid/submit",
             OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD="0",
             NPA_ISAAC_KIT_ARGS=(
-                "--portable-root /tmp/custom-kit --/app/window/enabled=false "
+                f"--portable-root {shlex.quote(str(custom_kit_root))} --/app/window/enabled=false "
                 "--/telemetry/enableAnonymousData=true --/structuredLog/enable=true "
                 "--/crashreporter/url=https://diagnostics.invalid/submit "
                 "--/crashreporter/skipOldDumpUpload=false --/app/uploadDumpsOnStartup=true"
@@ -890,10 +891,12 @@ class AppLauncher:
     # Local diagnostics remain available.
     assert "/crashreporter/enabled" not in settings
     if caller_enables_uploads:
-        assert arguments[:2] == ["--portable-root", "/tmp/custom-kit"]
+        assert arguments[:2] == ["--portable-root", str(custom_kit_root)]
         assert settings["/app/window/enabled"] == "false"
     else:
-        assert arguments[:2] == ["--portable-root", "/tmp/npa-isaac-kit"]
+        assert arguments[0] == "--portable-root"
+        portable_root = Path(arguments[1])
+        assert portable_root.is_absolute() and portable_root.name == "npa-isaac-kit"
     assert not harness.downloaded_anything()
 
 
