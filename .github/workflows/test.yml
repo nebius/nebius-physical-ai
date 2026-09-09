@@ -60,7 +60,18 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        # Runner vendor repositories (such as Chrome) can publish inconsistent
+        # indexes. Media-validator prerequisites come from Ubuntu's signed sources.
+        run: |
+          test -s /etc/apt/sources.list.d/ubuntu.sources
+          apt_options=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+          ffprobe -version
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
