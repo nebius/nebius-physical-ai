@@ -102,8 +102,6 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert 'names.isdisjoint({"tetgen", "wandb"})' in text
     assert "test ! -e /opt/nvidia/nsight-compute" in text
-    assert "gitpython-3.1.61-py3-none-any.whl#sha256=" in text
-    assert 'm.version("GitPython") == "3.1.61"' in text
 
     compat = (
         WORKBENCH / "common/envgen_compat/tetgen.py"
@@ -135,8 +133,10 @@ def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
         text = (WORKBENCH / relative).read_text()
         install = text.index("-r /opt/npa/sim2real-genesis-requirements.txt")
         assert install < text.index("python -m pip check"), relative
+        assert not re.search(r"GitPython\s*(?:@|==)", text, re.IGNORECASE), relative
         if relative == "sim2real-envgen/Dockerfile":
             assert install < text.index("FROM scratch AS runtime")
+            assert f'm.version("GitPython") == "{pin.group(1)}"' in text
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:
