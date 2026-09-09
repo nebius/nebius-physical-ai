@@ -64,6 +64,23 @@ not prove that GitHub can reach it. Validate by manually dispatching this
 workflow and checking that both the upload and remote test steps succeed.
 A laptop can reach the same address through a VPN or subnet route while direct
 connections from GitHub still fail.
+On Nebius, verify that the network uses an external public IPv4 pool available
+to the project in the VM's region. An address allocated from a pool reachable
+through a VPN does not establish an internet route. A subnet that inherits
+network pools uses the network's pool selection for new allocations.
+
+For an existing dedicated CI VM with a dynamic public address, stop the VM and
+verify that its previous allocation has been released before changing pools.
+Release can be delayed; follow the provider's
+[address lifecycle](https://docs.nebius.com/compute/virtual-machines/network)
+instead of assuming that a stop releases the address immediately. Update its
+network to the approved external pool, restart it, and verify that the new
+allocation belongs to that pool. Preserve the pool selection in the deployment's
+private Terraform configuration and state. Reverify the instance
+identity and its existing trusted SSH host key at the new address, then update
+`DEV_VM_SSH_HOST` and `DEV_VM_SSH_KNOWN_HOSTS`. Coordinate shared networks and
+static allocations separately; do not release another workload's address.
+
 The workflow probes TCP reachability before creating its private-key file. On
 failure it checks public GitHub HTTPS and SSH endpoints as controls, reporting
 only reachability labels without printing connection values.
@@ -93,6 +110,10 @@ until its other workloads are handled separately.
 The workflow runs daily at `07:00 UTC` and can also be triggered manually via
 **Run workflow** (`workflow_dispatch`). Change the `cron` line to match the
 operator's off-peak window.
+[GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+use the workflow on the default branch. A successful manual run from a
+pull-request branch verifies the proposed change; merge it before expecting
+the scheduled run to use that version.
 
 There is no pull-request trigger. The GitHub host performs network and SSH setup;
 the tests still execute in the isolated Linux checkout on the operator VM.
