@@ -13,6 +13,22 @@ import pytest
 from npa.orchestration.skypilot import local_api as api
 
 
+@pytest.mark.parametrize("contents", [
+    b"tokens: {}\ntokens: {}\n",
+    b"tokens: {principal: {token: first, token: second}}\n",
+    b"!!python/object/apply:builtins.str ['unsafe-constructor']\n",
+    b"!!python/object:builtins.object {}\n",
+    b"!!python/name:builtins.str\n",
+    b"tokens: {}\n---\ntokens: {}\n",
+])
+def test_strict_credential_yaml_rejects_duplicates_and_object_tags(contents):
+    assert api._strict_mapping(contents) is None
+
+
+def test_strict_credential_yaml_accepts_plain_safe_mapping():
+    assert api._strict_mapping(b"tokens: {}\n") == {"tokens": {}}
+
+
 @pytest.fixture
 def local_runtime(tmp_path):
     package = tmp_path / "modules" / "sky" / "server"

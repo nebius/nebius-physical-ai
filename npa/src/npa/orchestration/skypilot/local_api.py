@@ -116,7 +116,11 @@ class _UniqueMappingLoader(yaml.SafeLoader):
 
 def _strict_mapping(contents: bytes) -> dict | None:
     try:
-        value = yaml.load(contents, Loader=_UniqueMappingLoader)
+        loader = _UniqueMappingLoader(contents)
+        try:
+            value = loader.get_single_data()
+        finally:
+            loader.dispose()
         return value if isinstance(value, dict) else None
     except (yaml.YAMLError, ValueError, TypeError):
         # No parser diagnostic or credential-bearing input may leave this boundary.
