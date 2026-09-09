@@ -29,6 +29,12 @@ with an actionable migration to this canonical spec.
    unchanged wheel pins alone do not prove that a rebuilt image can reuse it.
    If absent, run `npa/docker/workbench/common/warm-isaac-cache.yaml` with that
    exact image digest to create its versioned tree; preserve older cache trees.
+   Inspect first and last frames from all three cameras for the robot and task;
+   successful PNG decoding alone does not prove useful rendered content. Serialized
+   camera poses remain WXYZ, while Isaac Lab 3 sensor offsets require XYZW. Use
+   `camera_rotation_for_isaac_lab` at each sensor boundary. Reject blank or
+   misdirected capture before hosted evaluation or PPO; rebuild the affected image
+   and regenerate the invalid rollouts rather than replaying them as complete.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.

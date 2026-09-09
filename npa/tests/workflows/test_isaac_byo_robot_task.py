@@ -6,7 +6,14 @@ probe, not here.
 
 from __future__ import annotations
 
+import ast
+import copy
 import json
+from dataclasses import MISSING
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from npa.workflows.sim2real import isaac_byo_robot_task as rt
 
@@ -335,13 +342,12 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     assert s.index("import isaaclab_tasks") < s.index("robotmod.register")
     assert '"--portable-root /tmp/npa-isaac-kit"' in s
     # trains via the rsl_rl runner and emits the done/ckpt markers
-    assert "OnPolicyRunner" in s and "runner.learn" in s
+    assert "OnPolicyRunner" in s and "robotmod.learn_ppo_phase" in s
     assert "ROBOT_TRAIN_DONE" in s
     assert "ROBOT_ENTROPY_ANNEALED" in s
     assert "runner.alg.entropy_coef = float(ENT_FINAL)" in s
-    # A resumed run must name its explicit final checkpoint with the runner's
-    # absolute iteration rather than overwrite model_<added iterations>.pt.
-    assert 'getattr(runner, "current_learning_iteration", ITERS)' in s
+    # Exact update counts and final/periodic checkpoint semantics are exercised
+    # by the behavioral wrapper tests below, including a fresh process resume.
     assert "ROBOT_FINAL_CHECKPOINT" in s
     # refuses a silent stock fallback when a customer USD was requested
     assert "ROBOT_USD_MISMATCH" in s
@@ -361,3 +367,265 @@ def test_train_wrapper_applies_zero_seed_to_env_and_ppo():
     assert "torch.manual_seed(SEED)" in seed_block
     assert 'acfg["seed"] = SEED' in seed_block
     assert 'print("ROBOT_SEED_APPLIED", SEED' in seed_block
+
+
+def _wrapper_training_body():
+    tree = ast.parse(rt.TRAIN_WRAPPER_SCRIPT)
+    return next(
+        node.body
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "runner"
+                for target in statement.targets
+            )
+            for statement in node.body
+        )
+    )
+
+
+def _assigns(statement, name):
+    return isinstance(statement, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == name
+        for target in statement.targets
+    )
+
+
+def _exec_wrapper_statements(statements, namespace):
+    module = ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[]))
+    exec(compile(module, "<actual-robot-training-wrapper>", "exec"), namespace)
+
+
+@pytest.mark.parametrize(
+    "model_config,expected_path",
+    [
+        ({"policy": {"init_noise_std": 1.0}}, ("policy", "init_noise_std")),
+        (
+            {"actor": {"init_noise_std": 1.0}, "policy": MISSING},
+            ("actor", "init_noise_std"),
+        ),
+        (
+            {
+                "actor": {
+                    "hidden_dims": [256, 128, 64],
+                    "distribution_cfg": {
+                        "class_name": "GaussianDistribution",
+                        "init_std": 1.0,
+                    },
+                },
+                "critic": {"hidden_dims": [256, 128, 64]},
+                "policy": MISSING,
+            },
+            ("actor", "distribution_cfg", "init_std"),
+        ),
+    ],
+    ids=["legacy-policy", "rsl4-actor", "rsl5-actor-distribution"],
+)
+def test_actual_wrapper_initial_noise_reaches_migrated_model(
+    model_config, expected_path
+):
+    cfg = {
+        "algorithm": {"learning_rate": 1e-4, "entropy_coef": 0.006},
+        "save_interval": 100,
+    }
+    cfg.update(copy.deepcopy(model_config))
+    before_algorithm = dict(cfg["algorithm"])
+    body = _wrapper_training_body()
+    start = next(i for i, node in enumerate(body) if _assigns(node, "algo"))
+    end = next(i for i, node in enumerate(body) if _assigns(node, "env"))
+    _exec_wrapper_statements(
+        body[start:end],
+        {
+            "acfg": cfg,
+            "robotmod": rt,
+            "os": SimpleNamespace(environ={"ROBOT_INIT_NOISE_STD": "0.35"}),
+            "json": json,
+        },
+    )
+    actual = cfg
+    for key in expected_path:
+        actual = actual[key]
+    assert actual == 0.35
+    assert cfg["algorithm"] == before_algorithm
+    if "critic" in cfg:
+        assert cfg["critic"] == model_config["critic"]
+
+
+def test_initial_noise_does_not_fall_back_from_invalid_actor_to_legacy_policy():
+    with pytest.raises(RuntimeError, match="actor config"):
+        rt.initial_action_noise_config({"actor": {}, "policy": {"init_noise_std": 1.0}})
+
+
+class _UpstreamLastIndexRunner:
+    """Contract double for verified RSL-RL 5.0.1 learn/save/load semantics.
+
+    This exercises wrapper control flow, not GPU training. The actual upstream
+    runner leaves its last loop index in current_learning_iteration and saves
+    that value in checkpoint iter, with infos=None for periodic saves.
+    """
+
+    def __init__(self, env, cfg, log_dir, device):
+        self.current_learning_iteration = 0
+        self.alg = SimpleNamespace(entropy_coef=0.01)
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.indices = []
+        self.phase_flags = []
+        self.timesteps = 0
+        self.saved = {}
+
+    def learn(self, num_learning_iterations, init_at_random_ep_len):
+        self.phase_flags.append(init_at_random_ep_len)
+        start = self.current_learning_iteration
+        for index in range(start, start + num_learning_iterations):
+            self.indices.append(index)
+            self.timesteps += 1024 * 24
+            self.current_learning_iteration = index
+            if index % 100 == 0:
+                self.save(self.log_dir / f"model_{index}.pt")
+        self.save(self.log_dir / f"model_{self.current_learning_iteration}.pt")
+
+    def save(self, path, infos=None):
+        payload = {"iter": self.current_learning_iteration, "infos": infos}
+        Path(path).write_text(json.dumps(payload))
+        self.saved[Path(path).name] = payload
+
+    def load(self, path):
+        payload = json.loads(Path(path).read_text())
+        self.current_learning_iteration = payload["iter"]
+        return payload["infos"]
+
+
+def _execute_training_phases(output, resume=None):
+    body = _wrapper_training_body()
+    start = next(i for i, node in enumerate(body) if _assigns(node, "runner"))
+    end = next(
+        i
+        for i, node in enumerate(body)
+        if isinstance(node, ast.Import)
+        and any(alias.name == "glob" for alias in node.names)
+    )
+    namespace = {
+        "OnPolicyRunner": _UpstreamLastIndexRunner,
+        "env": object(),
+        "acfg": {},
+        "OUT": str(output),
+        "robotmod": rt,
+        "os": SimpleNamespace(
+            environ={"ROBOT_RESUME_CKPT_LOCAL": str(resume) if resume else ""},
+            path=__import__("os").path,
+        ),
+        "ENT_FINAL": "0.001",
+        "ENT_FRACTION": "0.6",
+        "CONVERGENCE_STD": "",
+        "ENT": "0.01",
+        "ITERS": 2000,
+        "json": json,
+    }
+    _exec_wrapper_statements(body[start:end], namespace)
+    return namespace["runner"], Path(namespace["final_path"])
+
+
+def test_actual_wrapper_executes_2000_contiguous_updates_and_consistent_final_save(
+    tmp_path,
+):
+    runner, final_path = _execute_training_phases(tmp_path)
+    assert runner.indices == list(range(2000))
+    assert runner.phase_flags == [True, False]
+    assert runner.timesteps == 2000 * 1024 * 24
+    assert runner.saved["model_100.pt"] == {"iter": 100, "infos": None}
+    assert final_path.name == "model_1999.pt"
+    assert json.loads(final_path.read_text()) == {
+        "iter": 1999,
+        "infos": {
+            "npa_ppo_iteration": {
+                "value_semantics": "last_completed_zero_based",
+                "completed_updates": 2000,
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "checkpoint_name,next_index", [("model_100.pt", 101), ("model_1999.pt", 2000)]
+)
+def test_actual_wrapper_new_process_resume_adds_2000_updates(
+    tmp_path, checkpoint_name, next_index
+):
+    _execute_training_phases(tmp_path / "first")
+    runner, final_path = _execute_training_phases(
+        tmp_path / "resumed", tmp_path / "first" / checkpoint_name
+    )
+    assert runner.indices == list(range(next_index, next_index + 2000))
+    assert runner.timesteps == 2000 * 1024 * 24
+    assert final_path.name == f"model_{next_index + 1999}.pt"
+    payload = json.loads(final_path.read_text())
+    assert payload["iter"] == next_index + 1999
+    assert (
+        payload["infos"]["npa_ppo_iteration"]["completed_updates"] == next_index + 2000
+    )
+
+
+@pytest.mark.parametrize("semantics", ["next_zero_based", "completed_updates"])
+def test_actual_wrapper_honors_explicit_already_normalized_checkpoint(
+    tmp_path, semantics
+):
+    checkpoint = tmp_path / "normalized.pt"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "iter": 2000,
+                "infos": {
+                    "npa_ppo_iteration": {
+                        "value_semantics": semantics,
+                        "completed_updates": 2000,
+                    }
+                },
+            }
+        )
+    )
+    runner, final_path = _execute_training_phases(tmp_path / "resumed", checkpoint)
+    assert runner.indices == list(range(2000, 4000))
+    assert json.loads(final_path.read_text())["iter"] == 3999
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        [],
+        {"npa_ppo_iteration": "unknown"},
+        {"npa_ppo_iteration": {"value_semantics": "unknown", "completed_updates": 11}},
+        {
+            "npa_ppo_iteration": {
+                "value_semantics": "last_completed_zero_based",
+                "completed_updates": 10,
+            }
+        },
+        {
+            "npa_ppo_iteration": {
+                "value_semantics": "next_zero_based",
+                "completed_updates": True,
+            }
+        },
+    ],
+)
+def test_checkpoint_iteration_metadata_fails_closed(info):
+    with pytest.raises(RuntimeError, match="checkpoint"):
+        rt.next_ppo_iteration(
+            SimpleNamespace(current_learning_iteration=10),
+            resumed=True,
+            checkpoint_info=info,
+        )
+
+
+def test_phase_refuses_unverified_runner_update_count():
+    runner = SimpleNamespace(current_learning_iteration=0, learn=lambda **kwargs: None)
+    with pytest.raises(RuntimeError, match="final learning iteration"):
+        rt.learn_ppo_phase(
+            runner,
+            start_iteration=100,
+            num_learning_iterations=2000,
+            init_at_random_ep_len=True,
+        )

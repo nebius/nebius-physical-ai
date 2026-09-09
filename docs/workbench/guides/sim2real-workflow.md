@@ -194,6 +194,15 @@ also includes the bootstrap script, so matching wheel versions alone are not
 enough. Warm a missing version alongside existing trees before resuming a run
 that uses read-only/offline cache access.
 
+Before evaluating rollouts, inspect the first and last frames from primary,
+side, and overhead cameras. Confirm that each view captures the robot and task;
+valid PNG files can still contain only a background. The serialized camera poses
+use WXYZ quaternions. Isaac Lab 3 changed sensor offsets to XYZW, so the rollout
+and held-out evaluation adapters convert the ordering at the sensor boundary.
+See the [Isaac Lab 3 migration guide](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/migration/migrating_to_isaaclab_3-0.html).
+If capture is invalid, fix and rebuild the image and regenerate those rollouts
+before hosted evaluation or PPO.
+
 ## 5. Build/push once and prove the exact image pulls
 
 The workflow does not copy images between registries. Use the public GHCR
