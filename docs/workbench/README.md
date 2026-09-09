@@ -43,6 +43,7 @@ For Python or HTTP integration, start with the
 | [getting-started.md](getting-started.md) | Runtime and storage setup after the platform quickstart |
 | [ray.md](ray.md) | Supported Ray Jobs, Core, Train, Serve, and KubeRay paths, plus explicit Data and Tune limitations |
 | [guides/README.md](guides/README.md) | Choose a robot, generation, reconstruction, or data workflow |
+| [guides/living-lab-paidf-cosmos3.md](guides/living-lab-paidf-cosmos3.md) | Living Lab participant setup, Cosmos 3 submission, troubleshooting, and output inspection on a supplied cluster |
 | [npa-workflow-guide.md](npa-workflow-guide.md) | Author, validate, plan, submit, and resume declarative workflows |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |

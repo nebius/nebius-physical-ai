@@ -11,6 +11,7 @@ guide's input, access, and GPU requirements through to its output artifacts.
 | Train or evaluate a robot policy | Pick a [robot guide](#robot-and-reconstruction-guides) below |
 | Generate images with Cosmos 3 | [Cosmos 3 generation](../cosmos3-generate.md) |
 | Augment a source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) |
+| Run PAIDF with a supplied Living Lab test project | [Living Lab participant guide](living-lab-paidf-cosmos3.md) |
 | Build a labeled and curated dataset with Cosmos Transfer | [Physical AI Data Factory](physical-ai-data-factory-deploy.md) |
 | Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
 
