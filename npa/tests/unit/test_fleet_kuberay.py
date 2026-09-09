@@ -96,6 +96,48 @@ def test_sdk_cannot_bypass_type_or_cpu_pool_validation():
         replace(cluster(KubeRaySpec(True)), backend="soperator").validate()
 
 
+@pytest.mark.parametrize(
+    "policy, message",
+    [
+        (KubeRaySpec(True, worker_cpus=17), "worker pod requests 17 vCPU/4 GiB"),
+        (KubeRaySpec(True, worker_memory_gib=65), "worker pod requests 2 vCPU/65 GiB"),
+        (KubeRaySpec(True, worker_replicas=8), "fixed pod requests 17 vCPU/36 GiB"),
+        (KubeRaySpec(True, worker_replicas=16, worker_cpus=1), "fixed pod requests 17 vCPU/68 GiB"),
+    ],
+)
+def test_sdk_rejects_kuberay_pods_that_cannot_fit_declared_cpu_pool(policy, message):
+    desired = replace(
+        cluster(policy),
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="16vcpu-64gb"),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        desired.validate()
+
+
+def test_yaml_rejects_kuberay_head_that_cannot_fit_declared_cpu_pool():
+    declaration = spec_from_mapping({
+        "name": "ray-example",
+        "defaults": {
+            "cpu_nodes": {"count": 1, "platform": "cpu-d3", "preset": "1vcpu-2gb"},
+            "kuberay": {"enabled": True},
+        },
+        "projects": [{"name": "example"}],
+    })
+
+    with pytest.raises(ValueError, match="head pod requests 1 vCPU/4 GiB"):
+        declaration.validate()
+
+
+def test_kuberay_capacity_validation_accepts_feasible_nominal_requests():
+    desired = replace(
+        cluster(KubeRaySpec(True, worker_replicas=2, worker_cpus=4, worker_memory_gib=8)),
+        cpu_nodes=NodePoolSpec(count=2, platform="cpu-d3", preset="8vcpu-32gb"),
+    )
+
+    desired.validate()
+
+
 def test_disable_replaces_default_policy_and_explicit_envelope_works():
     declaration = {
         "name": "example", "defaults": {

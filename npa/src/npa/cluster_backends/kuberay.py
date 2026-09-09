@@ -18,6 +18,11 @@ RAY_IMAGE = (
     "507464fe56b3d24cec2e812a25850db91b97d52752d63119fecf6914f7b0a37a"
 )
 KUBERAY_STATE_FILES = frozenset({"terraform.tfstate", "terraform.tfstate.backup"})
+_CPU_NODE_PRESET = re.compile(
+    r"(?P<cpus>[1-9][0-9]*)vcpu-(?P<memory_gib>[1-9][0-9]*)gb"
+)
+_HEAD_CPUS = 1
+_HEAD_MEMORY_GIB = 4
 
 
 @dataclass(frozen=True)
@@ -63,9 +68,42 @@ class KubeRaySpec:
         if cpu_nodes is None or cpu_nodes.count <= 0 or cpu_nodes.is_gpu():
             raise ValueError("kuberay requires a nonempty CPU node pool")
         if not re.fullmatch(r"cpu-[a-z0-9-]+", cpu_nodes.platform) or not re.fullmatch(
-            r"[1-9][0-9]*vcpu-[1-9][0-9]*gb", cpu_nodes.preset
+            _CPU_NODE_PRESET, cpu_nodes.preset
         ):
             raise ValueError("kuberay requires an explicit CPU platform and preset")
+        self._validate_fixed_pod_capacity(cpu_nodes)
+
+    def _validate_fixed_pod_capacity(self, cpu_nodes: Any) -> None:
+        """Reject Ray pod requests that exceed nominal declared CPU capacity."""
+
+        match = _CPU_NODE_PRESET.fullmatch(cpu_nodes.preset)
+        if match is None:  # The caller validates the preset before this helper.
+            raise ValueError("kuberay requires an explicit CPU platform and preset")
+        node_cpus = int(match.group("cpus"))
+        node_memory_gib = int(match.group("memory_gib"))
+        if _HEAD_CPUS > node_cpus or _HEAD_MEMORY_GIB > node_memory_gib:
+            raise ValueError(
+                f"kuberay head pod requests {_HEAD_CPUS} vCPU/{_HEAD_MEMORY_GIB} GiB, "
+                f"which exceeds one declared {node_cpus} vCPU/{node_memory_gib} GiB CPU node"
+            )
+        if self.worker_cpus > node_cpus or self.worker_memory_gib > node_memory_gib:
+            raise ValueError(
+                f"kuberay worker pod requests {self.worker_cpus} vCPU/"
+                f"{self.worker_memory_gib} GiB, which exceeds one declared "
+                f"{node_cpus} vCPU/{node_memory_gib} GiB CPU node"
+            )
+        pool_cpus = cpu_nodes.count * node_cpus
+        pool_memory_gib = cpu_nodes.count * node_memory_gib
+        requested_cpus = _HEAD_CPUS + self.worker_replicas * self.worker_cpus
+        requested_memory_gib = (
+            _HEAD_MEMORY_GIB + self.worker_replicas * self.worker_memory_gib
+        )
+        if requested_cpus > pool_cpus or requested_memory_gib > pool_memory_gib:
+            raise ValueError(
+                f"kuberay fixed pod requests {requested_cpus} vCPU/"
+                f"{requested_memory_gib} GiB, which exceeds the declared CPU pool's "
+                f"nominal {pool_cpus} vCPU/{pool_memory_gib} GiB capacity"
+            )
 
     def plan(self) -> dict[str, Any]:
         """Describe the policy and its pinned Ray runtime.
