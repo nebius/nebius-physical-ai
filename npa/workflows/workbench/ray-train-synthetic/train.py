@@ -66,6 +66,8 @@ def _validate_ranks(ranks, recipe):
         raise ValueError("CUDA world-size evidence mismatch")
     if len({rank["device_fingerprint"] for rank in ranks}) != recipe["workers"]:
         raise ValueError("Ranks did not use distinct CUDA devices")
+    if len({rank["node_fingerprint"] for rank in ranks}) != recipe["workers"]:
+        raise ValueError("Ranks did not run on distinct Ray hosts")
     if len({rank["parameter_sha256"] for rank in ranks}) != 1:
         raise ValueError("DDP parameters diverged")
 

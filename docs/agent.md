@@ -196,6 +196,20 @@ final Terraform/SSH response, repeating the exact same command adopts a matching
 healthy VM or resumes its first incomplete phase. It does not replace a healthy
 VM because a response went missing.
 
+A completed service installer writes a private receipt before credential staging.
+On an interrupted retry, NPA reuses that install when the verified owner and
+rendered installer match, then restages credentials and verifies deployment
+identity and health. A changed revision, setting, or authentication value requires
+installation again. A normal bootstrap of a healthy agent also reinstalls services.
+The [live recovery test](../skills/workflows/agent-fresh-operate/SKILL.md)
+documents `NPA_AGENT_RECOVERY_LIVE_CONFIG` for testing this behavior on an isolated
+VM through deploy, injected interruption, resume, and destroy.
+
+For SSH reachability failures, check the route to the VM before changing ingress.
+A VPN subnet route may use a different egress address from an internet IP-check
+service. Set `ssh_cidr_block` and `application_cidr_block` for the source address
+used on that route, then follow the exact operation's recovery instructions.
+
 When an agent fails before its final config record is written,
 `npa agent status --project <alias> --name <name> --json` reads the operation
 journal instead. It reports the typed partial state, the exact created-resource

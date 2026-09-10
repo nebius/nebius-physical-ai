@@ -82,6 +82,25 @@ Use the **`-ga`** repositories. `npa workbench nurec check` reports
 `ngc_image: entitlement-required` rather than failing opaquely when a
 non-GA reference is configured.
 
+Image startup preflight overrides the vendor entrypoint with `/bin/bash`, as
+SkyPilot does, and installs missing SSH, rsync, and service helpers before
+checking worker capabilities. NRE's `/app/run` entrypoint cannot forward an
+arbitrary shell probe. Prepared results are never cached as image attestations;
+they depend on package access from the selected cluster. First-party image
+attestations and strict runtime byte probes keep their existing requirements.
+
+The live regression is `test_vendor_image_runtime_bootstrap_live` in
+`npa/tests/e2e/test_image_bootstrap_terminal_probe_live.py`. Select the exact
+preflighted image/digest, `NPA_E2E_KUBECONTEXT`, `KUBECONFIG`, and any existing
+pull Secret names through `NPA_E2E_IMAGE_PULL_SECRETS` (comma separated). It
+requires compatible worker capabilities and verified deletion of its probe pod.
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_image_bootstrap_terminal_probe_live.py \
+  -k vendor_image_runtime_bootstrap -q
+```
+
 ## Real Entrypoints
 
 Every stage is a real command; nothing here is a manifest stub.

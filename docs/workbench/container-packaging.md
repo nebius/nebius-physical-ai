@@ -33,8 +33,15 @@ attest the historical release bytes.
 
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
-Arbitrary unattested images get one bounded exact-context capability pod; probe
-cleanup failure also fails closed. Cache keys use digest plus contract version,
+Arbitrary unattested vendor images get an exact-context capability pod that
+reproduces SkyPilot's Kubernetes shell override and installs missing SSH, rsync,
+and service packages through the image's package manager. This supports vendor
+entrypoints such as NuRec's `/app/run` without invoking that application with
+shell arguments. Root or passwordless sudo, successful package installation,
+and all worker capabilities must still be verified. Runtime-prepared evidence
+is not cached as proof of baked image contents; first-party image probes and
+attestation requirements remain unchanged. Probe cleanup failure also fails
+closed. Cache keys use digest plus contract version,
 never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.

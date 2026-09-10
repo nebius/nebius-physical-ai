@@ -298,25 +298,33 @@ def test_checkpoint_replay_skips_actor_and_corruption_fails(recipe, tmp_path):
         recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "revision", "execution")
 
 
-def test_output_root_requires_matching_execution_fingerprint(recipe, tmp_path):
-    """Output root requires matching execution fingerprint.
+def test_output_root_requires_matching_execution_identity(recipe, tmp_path, monkeypatch):
+    """Output root requires matching runtime and checkpoint-layout identity.
 
     Args:
         recipe: Isolated example modules and canonical source paths.
         tmp_path: Temporary directory owned by this test.
+        monkeypatch: Pytest fixture preventing application Ray discovery.
     Returns:
         None after the assertions pass.
     Raises:
         pytest.fail.Exception: An expected exception is not raised.
     """
-    recipe.validation.verify_execution(tmp_path, "first")
-    recipe.validation.verify_execution(tmp_path, "first")
+    layout = {"records": 8, "batch_size": 2}
+    recipe.validation.verify_execution(tmp_path, "first", layout)
+    recipe.validation.verify_execution(tmp_path, "first", layout)
     with pytest.raises(ValueError, match="different execution fingerprint"):
-        recipe.validation.verify_execution(tmp_path, "different")
+        recipe.validation.verify_execution(tmp_path, "different", layout)
+    with pytest.raises(ValueError, match="different checkpoint layout"):
+        recipe.validation.verify_execution(tmp_path, "first", {"records": 4, "batch_size": 2})
+    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace())
+    changed = SimpleNamespace(output_path=str(tmp_path), records=4, batch_size=2)
+    with pytest.raises(ValueError, match="different checkpoint layout"):
+        recipe.application._InferenceSession(changed, [[0, 1], [2, 3]])
     (tmp_path / "execution.json").unlink()
     (tmp_path / "old-shard").write_bytes(b"old")
     with pytest.raises(ValueError, match="no execution fingerprint"):
-        recipe.validation.verify_execution(tmp_path, "first")
+        recipe.validation.verify_execution(tmp_path, "first", layout)
 
 
 def test_model_fingerprint_ignores_download_metadata_but_covers_model_bytes(recipe, tmp_path):

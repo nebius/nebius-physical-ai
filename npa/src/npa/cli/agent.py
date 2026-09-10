@@ -157,6 +157,7 @@ from npa.cli.agent_site import (
     DEFAULT_LICHTBLICK_PORT,
     nginx_agent_site_body as _nginx_agent_site_body,
 )
+from npa.cli.agent_service_install import install_agent_services
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     assert_remote_owner_if_present,
@@ -867,6 +868,7 @@ def _bootstrap_agent_stack(
     foxglove_cloud_import_timeout_seconds: str = "",
     deployment: dict[str, str] | None = None,
     preload_stock_demo: bool = True,
+    resume_services: bool = False,
 ) -> None:
     foxglove_env = agent_foxglove_config.bootstrap_env_values(
         embed_src=foxglove_embed_src,
@@ -907,12 +909,14 @@ def _bootstrap_agent_stack(
         name=agent_name,
         require_clean=False,
     )
-    deployment_json = json.dumps(deployment, sort_keys=True)
-    deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     # This check runs before staging source, writing manifests, or restarting
     # services. A stale/missing local record cannot authorize overwriting a VM
     # that is still advertising a different immutable owner.
-    assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
+    installed = assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
+    if resume_services and installed.get("bootstrap_timestamp"):
+        deployment = {**deployment, "bootstrap_timestamp": installed["bootstrap_timestamp"]}
+    deployment_json = json.dumps(deployment, sort_keys=True)
+    deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     preload_stock_demo_value = "1" if preload_stock_demo else "0"
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
@@ -9146,17 +9150,11 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
             rendered_agent_ui_from_record(_agent_record(project_alias, agent_name)),
         )
     )
-    # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
-    remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
-    try:
-        _stage_agent_npa_source(ssh)
-        ssh.upload_private_text(setup_script, remote_setup_script)
-        ssh.run_or_raise(
-            f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}",
-            label="run agent bootstrap",
-        )
-    finally:
-        ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
+    if install_agent_services(
+        ssh, setup_script=setup_script, stage_source=_stage_agent_npa_source,
+        resuming=resume_services,
+    ):
+        typer.echo("  Reusing completed agent service installation; restaging credentials.")
     agent_llm_config.write_agent_llm_env(
         ssh,
         api_key=llm_api_key or tf_api_key,

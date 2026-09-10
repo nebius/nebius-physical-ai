@@ -5,6 +5,10 @@ can resume a partial driver result directory through another native Ray Job.
 Keep the same application, worker, validation and canonical UDF bytes, model
 snapshot, runtime, inputs, batch size and output path. Use a new submission ID.
 The original Job must be terminal before another Job writes that directory.
+The durable `execution.json` binds both the runtime fingerprint and checkpoint
+layout, so a changed record count or batch size fails instead of accepting a
+different shard tree. Actor count is not part of that layout and may change to
+match the GPUs available to the resumed Job.
 
 After the original Job has committed multiple shards, stop that exact Job and
 verify its terminal status:
