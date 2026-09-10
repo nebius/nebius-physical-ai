@@ -35,6 +35,13 @@ with an actionable migration to this canonical spec.
    `camera_rotation_for_isaac_lab` at each sensor boundary. Reject blank or
    misdirected capture before hosted evaluation or PPO; rebuild the affected image
    and regenerate the invalid rollouts rather than replaying them as complete.
+   Hosted Stage 8 must bind each action to selected primary-frame metadata by
+   exact `sim_step`. Sample order and a final context frame are not action
+   timestamps. The v4 evaluator contract requires null camera references, zero
+   confidence, neutral tags, and explicit insufficient evidence for unsampled
+   actions. Stage 9 must reject older or inconsistent bindings before PPO; do not
+   rewrite archived critiques to attach a different frame. Unsupported visual
+   events contribute no auxiliary reward, corrective action, or PPO tag counts.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.

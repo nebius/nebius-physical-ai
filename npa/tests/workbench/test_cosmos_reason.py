@@ -183,6 +183,9 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
             assert kwargs["response_format"]["type"] == "json_schema"
             assert kwargs["response_format"]["json_schema"]["strict"] is True
             prompt = kwargs["messages"][0]["content"][0]["text"]
+            bindings = json.loads(next(line.removeprefix("Visual bindings by action: ")
+                                       for line in prompt.splitlines()
+                                       if line.startswith("Visual bindings by action: ")))
             assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
             images = kwargs["messages"][0]["content"][1:]
             assert len(images) == 8
@@ -195,10 +198,12 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
                     "score": 0.9,
                     "summary": "stable cube grasp",
                     "per_step": [
-                        {"step": index, "critique_text": f"event {index} stable",
-                         "error_tags": ["ok"], "confidence": 0.8,
-                         "camera_observation": "camera-000.png"}
-                        for index in range(10)
+                        {"step": binding["action_step"],
+                         "critique_text": (f"event {binding['action_step']} stable" if binding["supported"]
+                                           else f"Insufficient visual evidence for step {binding['action_step']}."),
+                         "error_tags": ["ok"], "confidence": 0.8 if binding["supported"] else 0,
+                         "camera_observation": binding["camera_observation"]}
+                        for binding in bindings
                     ],
                 })}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
@@ -207,14 +212,15 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
     result = run_token_factory_rollout_vlm(
         model_id=model,
         image_paths=frames,
-        actions=[{"step": index, "action": [0.0]} for index in range(10)],
+        actions=[{"step": index, "sim_step": index, "action": [0.0]} for index in range(10)],
+        frame_metadata=_frame_metadata([frame.name for frame in frames], "rollout-0000"),
         task_description="strict cube grasp",
         rollout_id="rollout-0000",
         threshold=0.5,
         client=Client(),
     )
     assert len(result["per_step"]) == 10
-    assert result["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert result["schema"] == "npa.sim2real.vlm_eval.v4"
     assert result["backend"] == "token_factory"
     assert result["model"] == model
     assert result["reason_family"] == family
@@ -539,10 +545,22 @@ def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path
 
     with pytest.raises(CosmosReasonError, match="different model identity"):
         run_token_factory_rollout_vlm(
-            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[],
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0, "sim_step": 0}],
+            frame_metadata=_frame_metadata([frame.name], "rollout-public"),
             task_description="task", rollout_id="rollout-public", threshold=0.5,
             client=Client(),
         )
+
+
+def _frame_metadata(names, rollout_id="synthetic"):
+    return [{"path": name, "sim_step": index, "view_name": "primary", "episode_id": rollout_id}
+            for index, name in enumerate(names)]
+
+
+def _single_frame_binding():
+    return {0: {"schema": "npa.sim2real.visual_grounding.v1", "action_step": 0,
+                "action_sim_step": 0, "frame_sim_step": 0,
+                "camera_observation": "frame.png", "supported": True}}
 
 
 def _complete_hosted_payload() -> dict:
@@ -595,8 +613,9 @@ def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
     payload["score"] = score
     with pytest.raises(CosmosReasonError, match="score must be a finite number"):
         reason_module._parse_hosted_rollout_output(
-            json.dumps(payload), actions=[{"step": 0, "action": [0.0]}],
+            json.dumps(payload), actions=[{"step": 0, "sim_step": 0, "action": [0.0]}],
             rollout_id="synthetic", threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
         )
 
 
@@ -611,8 +630,8 @@ def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
 def test_hosted_parser_does_not_recover_truncated_or_ambiguous_json(text):
     with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
         reason_module._parse_hosted_rollout_output(
-            text, actions=[{"step": 0}], rollout_id="synthetic", threshold=0.5,
-            family="minimax_m3", frame_names=["frame.png"],
+            text, actions=[{"step": 0, "sim_step": 0}], rollout_id="synthetic", threshold=0.5,
+            family="minimax_m3", frame_names=["frame.png"], visual_bindings=_single_frame_binding(),
         )
 
 
@@ -652,8 +671,9 @@ def test_hosted_requires_complete_model_local_event_contract(corruption):
         payload["summary"] = ""
     with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
         reason_module._parse_hosted_rollout_output(
-            json.dumps(payload), actions=[{"step": 0}], rollout_id="synthetic",
+            json.dumps(payload), actions=[{"step": 0, "sim_step": 0}], rollout_id="synthetic",
             threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
         )
 
 
@@ -672,17 +692,18 @@ def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_jso
 
     with pytest.raises(CosmosReasonError, match="incomplete completion"):
         run_token_factory_rollout_vlm(
-            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0}],
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0, "sim_step": 0}],
+            frame_metadata=_frame_metadata([frame.name]),
             task_description="task", rollout_id="synthetic", threshold=0.5, client=Client(),
         )
 
 
 def test_complete_hosted_output_retains_original_score_and_ground_truth():
     payload = _complete_hosted_payload()
-    actions = [{"step": 0, "action": [0.0], "simulator_ground_truth": {"placement_stable": True}}]
+    actions = [{"step": 0, "sim_step": 0, "action": [0.0], "simulator_ground_truth": {"placement_stable": True}}]
     result = reason_module._parse_hosted_rollout_output(
         json.dumps(payload), actions=actions, rollout_id="synthetic", threshold=0.5,
-        family="minimax_m3", frame_names=["frame.png"],
+        family="minimax_m3", frame_names=["frame.png"], visual_bindings=_single_frame_binding(),
     )
     assert result["score"] == payload["score"] and result["success"] is True
     assert result["per_step"][0]["critique_source"] == "model_per_step"
@@ -707,7 +728,10 @@ def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp
             assert indices == list(range(65))
             payload = _complete_hosted_payload()
             payload["per_step"] = [
-                {**payload["per_step"][0], "step": index, "critique_text": f"event {index} remains visible"}
+                {**payload["per_step"][0], "step": index,
+                 "critique_text": f"Insufficient visual evidence for step {index}.",
+                 "camera_observation": None, "confidence": 0}
+                if index else {**payload["per_step"][0], "step": index}
                 for index in indices
             ]
             return {
@@ -717,6 +741,7 @@ def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp
 
     result = run_token_factory_rollout_vlm(
         model_id=model, image_paths=[frame], actions=actions,
+        frame_metadata=_frame_metadata([frame.name]),
         task_description="synthetic event sequence", rollout_id="synthetic", threshold=0.5, client=Client(),
     )
     assert result["action_count"] == len(result["per_step"]) == 65

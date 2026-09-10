@@ -9,6 +9,11 @@ from pathlib import Path
 import re
 from typing import Any
 
+from npa.workbench.cosmos.visual_grounding import (
+    HOSTED_EVAL_SCHEMA,
+    validate_stored_visual_grounding,
+)
+
 
 class EvaluatorContractError(RuntimeError):
     """An evaluator boundary cannot be reused by the configured current run."""
@@ -196,7 +201,7 @@ def validate_hosted_evaluator(
             or artifacts["rollout_count"] != len(rows)
             or not _usage_matches(usage, requests, expected_model)
         ) or any(
-            item.get("schema") != "npa.sim2real.vlm_eval.v3"
+            item.get("schema") != HOSTED_EVAL_SCHEMA
             or item.get("backend") != "token_factory"
             or item.get("provider") != "nebius"
             or item.get("model") != evaluator.get("model")
@@ -215,6 +220,8 @@ def validate_hosted_evaluator(
             raise _migration_error(
                 "Stage 8 hosted evaluations have incompatible accounting or per-action coverage"
             )
+        for item in rows.values():
+            validate_stored_visual_grounding(item)
     except EvaluatorContractError:
         raise
     except (AttributeError, TypeError, ValueError) as exc:

@@ -33,7 +33,9 @@ def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: boo
     result = run_token_factory_rollout_vlm(
         model_id=DEFAULT_REASONER_MODEL,
         image_paths=frames,
-        actions=[{"step": index, "action": [0.0]} for index in range(len(frames))],
+        actions=[{"step": index, "sim_step": index, "action": [0.0]} for index in range(len(frames))],
+        frame_metadata=[{"path": frame.name, "sim_step": index, "view_name": "primary",
+                         "episode_id": "synthetic-visual-events"} for index, frame in enumerate(frames)],
         task_description=(
             "These are synthetic geometric diagrams. The task is to move the red "
             "square fully inside the green rectangular outline by the final frame. "
@@ -47,7 +49,7 @@ def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: boo
     artifact = tmp_path / "rollout-evaluation.json"
     artifact.write_text(json.dumps(result, indent=2) + "\n")
     saved = json.loads(artifact.read_text())
-    assert saved["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert saved["schema"] == "npa.sim2real.vlm_eval.v4"
     assert saved["model"] == DEFAULT_REASONER_MODEL
     assert saved["reason_family"] == hosted_rollout_model_family(DEFAULT_REASONER_MODEL)
     assert saved["backend"] == "token_factory"
@@ -62,7 +64,8 @@ def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: boo
         assert event["critique_source"] == "model_per_step"
         assert event["critique_text"].strip()
         assert event["confidence"] > 0
-        assert event["camera_observation"] in saved["selected_frames"]
+        assert event["camera_observation"] == saved["selected_frames"][event["step"]]
+        assert event["visual_grounding"]["supported"] is True
     assert saved["request"]["request_id"]
     assert saved["request"]["input_tokens"] > 0
     assert saved["request"]["output_tokens"] > 0

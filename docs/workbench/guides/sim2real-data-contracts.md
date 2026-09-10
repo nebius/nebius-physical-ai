@@ -49,7 +49,7 @@ policy rollouts.
 | `config.robot_spec_uri` | Customer (optional) | Exact S3 object containing `npa.sim2real.robot_spec.v1`; empty is stock Franka | 2 |
 | `train_envs_uri` / `validation_envs_uri` / `gold_heldout_envs_uri` | **Workflow** | Curated, disjoint, stratified NPA scenario JSONL with task/config digests | 4–6 |
 | `actions/train/…` | Workflow / policy job | Rollout dirs + `npa.sim2real.action_rollout.v1` | 7 |
-| `vlm_eval/…` | Workflow / hosted Cosmos3 evaluator | `npa.sim2real.vlm_eval.v3` | 8 |
+| `vlm_eval/…` | Workflow / configured hosted evaluator | `npa.sim2real.vlm_eval.v4` | 8 |
 | `training_signal/…` | Workflow | `npa.sim2real.rl_signal.v1` | 9 |
 | `eval/validation/outer-XX/iter-YY/report.json` | Workflow / eval job | Validation-only checkpoint comparison | 9 |
 | `eval/gold-heldout/outer-XX/report.json` | Workflow / eval job | Final untouched gold evaluation, `npa.sim2real.heldout_eval.v1` | 10 |
@@ -108,9 +108,20 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.reference_actions.v1` | policy job output | 7 | Reference policy contract |
 | `npa.sim2real.actions_summary.v1` | policy job summary | 7 | |
 | `npa.sim2real.policy_image_contract.v1` | policy job metadata | 7 | |
-| `npa.sim2real.vlm_eval.v3` | `vlm_eval/…/*.json` | 8 | Per-rollout Cosmos3 critique with provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; v1/v2 remain read-compatible only in archived/legacy readers |
+| `npa.sim2real.vlm_eval.v4` | `vlm_eval/…/*.json` | 8 | Per-rollout hosted critique with exact action/frame time bindings, selected primary-frame metadata, provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; older schemas remain available only to archived/legacy readers |
 | `npa.sim2real.rl_signal.v1` | `training_signal/…/*.json` | 9 | Converted RL training signal |
 | `npa.sim2real.inner_loop_evidence.v1` | `inner_loop/outer-XX/evidence.json` | 9 | Reward trend, trainer deltas |
+
+Hosted v4 evaluations retain `selected_frame_metadata` and a `visual_grounding`
+record for every action. The binding joins the action and primary frame by exact
+recorded `sim_step`; frame list positions and nearby timestamps are insufficient.
+An unsampled action has `camera_observation: null`, `confidence: 0`, `error_tags:
+["ok"]`, and an explicit insufficient-evidence critique. Its simulator state
+still contributes grounded reward, while visual auxiliary reward, corrective
+actions, and PPO tag counts are disabled. A final frame can inform the rollout
+score without being assigned to the final action. Stage 9 validates the bindings
+again before training. Old or misassociated evaluator outputs require a fresh
+run and must not be relabeled in place.
 
 Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 

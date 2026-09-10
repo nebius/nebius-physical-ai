@@ -142,6 +142,8 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     disagreement, low confidence, or contradiction with simulator state.
     """
 
+    from npa.workbench.cosmos.visual_grounding import supported_visual_event
+
     raw_steps = evaluation.get("per_step")
     if not isinstance(raw_steps, list) or not raw_steps:
         raise TemporalCreditError("evaluation must include a non-empty per_step list")
@@ -156,14 +158,25 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     low_confidence = 0
     contradictory = 0
     summary_broadcast = 0
+    unobserved_visual = 0
     for raw in raw_steps:
         if not isinstance(raw, dict) or "step" not in raw:
             raise TemporalCreditError("per_step entries must be objects with step")
         tags = _tags(raw)
         truth = dict(raw.get("simulator_ground_truth") or {})
-        confidence = _clip(float(raw.get("confidence", 0.65)), 0.0, 1.0)
+        raw_confidence = raw.get("confidence")
+        confidence = (
+            _clip(raw_confidence, 0.0, 1.0)
+            if type(raw_confidence) in (int, float) and math.isfinite(raw_confidence)
+            else 0.0
+        )
         source = str(raw.get("critique_source") or "model_per_step")
         reasons: set[str] = set()
+        visual_supported = supported_visual_event(raw)
+        if not visual_supported:
+            confidence = 0.0
+            unobserved_visual += 1
+            reasons.add("unobserved_visual_step")
         if source in {"model_missing", "model_malformed"}:
             confidence = 0.0
             missing_or_malformed += 1
@@ -199,8 +212,11 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         items.append(
             {
                 "step": int(raw["step"]),
+                "sim_step": raw.get("sim_step"),
+                "camera_observation": raw.get("camera_observation"),
+                "visual_grounding": dict(raw.get("visual_grounding") or {}),
                 "reward": round(reward, 6),
-                "target": _target(tags),
+                "target": _target(tags if visual_supported and confidence > 0 else ["ok"]),
                 "critique_text": str(raw.get("critique_text") or ""),
                 "error_tags": tags,
                 "confidence": round(confidence, 6),
@@ -256,6 +272,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         "vlm_accepted_steps": calibrated,
         "vlm_rejected_or_downweighted_steps": rejected,
         "vlm_missing_or_malformed_steps": missing_or_malformed,
+        "vlm_unobserved_visual_steps": unobserved_visual,
         "vlm_low_confidence_steps": low_confidence,
         "vlm_contradictory_steps": contradictory,
         "vlm_summary_broadcast_steps": summary_broadcast,

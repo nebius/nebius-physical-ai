@@ -665,6 +665,14 @@ def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
         goal_curriculum_fraction(1, 0)
 
 
+def _recorded_visual_fields(step: int) -> dict:
+    camera = f"camera-{step:03d}.png"
+    return {"sim_step": step, "camera_observation": camera,
+            "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v1", "action_step": step,
+                                 "action_sim_step": step, "frame_sim_step": step,
+                                 "camera_observation": camera, "supported": True}}
+
+
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     evaluation = {
         "rollout_id": "rollout-1",
@@ -672,6 +680,7 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
             {
                 "step": index,
                 "action": [0.1, -0.1],
+                **_recorded_visual_fields(index),
                 "error_tags": ["minor_alignment"],
                 "confidence": 0.9,
                 "model_disagreement": index == 1,
@@ -751,6 +760,7 @@ def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
                 "step": index,
                 "action": [0.1],
                 "critique_source": source,
+                **_recorded_visual_fields(index),
                 "confidence": confidence,
                 "model_disagreement": disagreement,
                 "error_tags": tags,
