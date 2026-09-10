@@ -168,7 +168,7 @@ def test_cached_archive_must_be_exact_regular_bytes(tmp_path: Path) -> None:
 
 def test_proof_directory_must_be_private_and_caller_owned(tmp_path: Path) -> None:
     original_mode = tmp_path.stat().st_mode & 0o777
-    os.chmod(tmp_path, 0o750)
+    os.chmod(tmp_path, 0o740)
     try:
         with pytest.raises(ValueError, match="caller-owned and private"):
             attribution.verify_public_notice(NOTICE.read_bytes(), tmp_path)
