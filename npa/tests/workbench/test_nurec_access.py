@@ -29,7 +29,7 @@ WORKFLOW = (
 )
 SPEC = (
     REPO_ROOT
-    / "workflows" / "testing" / "nurec-reconstruct.yaml"
+    / "workflows" / "main" / "nurec-reconstruct.yaml"
 )
 
 #: GPUs with no RT cores. Reconstruction and rasterization are RT-core work, so a
