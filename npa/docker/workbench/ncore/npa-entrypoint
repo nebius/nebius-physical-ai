@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+unset PYTHONHOME PYTHONPATH
+exec /opt/venv/bin/python -I -B -m npa.workflows.ncore "$@"

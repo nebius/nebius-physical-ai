@@ -74,6 +74,32 @@ The real regression workload generates inert Python, workflow and vulnerable
 dependency fixtures, scans them with the actual binaries/database, and verifies
 rejection. It never launches the fixtures.
 
+The customer confidentiality scan retains every raw redacted finding and reports
+raw, dispositioned, and unresolved counts separately. One NCore-specific source
+correction recognizes only lines 633 and 640 of the exact regular Git `100644`
+file at
+`npa/docker/workbench/ncore/notices/cpython/LICENSE.third-party`. Before those two
+locations can be dispositioned, the scanner verifies the complete notice bytes
+against fixed hashes and sizes for both the official Python 3.12.14 archive and
+the official archive of its pinned CPython commit. Each archive must contain one
+exact regular `Doc/license.rst` member whose complete bytes equal the notice.
+Other paths, lines, policies, stdin patches, modified notices, and failed or
+missing proof remain unresolved. The private proof directory is caller-owned and
+must have mode `0700`; CI creates it under the runner's temporary directory.
+The shared `npa.guardrails.ncore_attribution.verify_public_notice` API accepts
+only the complete notice bytes and that private directory; it returns public
+URL/member/hash/size provenance and never returns cache paths.
+
+To exercise that same source proof locally, use an ephemeral private directory:
+
+```bash
+umask 077
+proof_directory="$(mktemp -d)"
+npa/.venv/bin/python -m npa.guardrails.confidentiality \
+  --repo-root . --tree --pattern-env CUSTOMER_DENYLIST \
+  --ncore-attribution-proof-directory "${proof_directory}"
+```
+
 ## Merge enforcement and limits
 
 Require the **security-regression**, **gitleaks**, and **scan** (confidentiality)

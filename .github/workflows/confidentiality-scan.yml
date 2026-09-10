@@ -69,6 +69,11 @@ jobs:
             fi
 
             echo "Running ${label} confidentiality scan"
+            if [ "${pattern_env}" = "CUSTOMER_DENYLIST" ]; then
+              proof_directory="${RUNNER_TEMP}/ncore-source-attribution-proof"
+              install -d -m 0700 "${proof_directory}"
+              set -- "$@" --ncore-attribution-proof-directory "${proof_directory}"
+            fi
             npa/.venv/bin/python -m npa.guardrails.confidentiality "${args[@]}" --pattern-env "${pattern_env}" "$@"
           }
 

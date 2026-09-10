@@ -197,8 +197,8 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # cuRobo's additional byte scanner uses a verified CPython 3.12 wheel.
-          python-version: ${{ matrix.tool == 'curobo' && '3.12' || '3.11' }}
+          # Both complete-byte paths require the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -261,7 +261,23 @@ jobs:
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
 
+      - name: Prepare NCore native scanners and separate source inputs
+        if: matrix.tool == 'ncore'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$IMAGE" = "ghcr.io/nebius/nebius-physical-ai/npa-ncore:dev-$DEVELOPMENT_SHA"
+          root="$(mktemp -d "$RUNNER_TEMP/ncore-oci.XXXXXXXX")"
+          echo "NCORE_OCI_ROOT=$root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/scripts/publish_ncore_oci.py prepare \
+            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$root" \
+            --keyring "$root/keyring/debian-archive-keyring.gpg"
+
       - name: Prove destination cannot expose unvalidated tagged bytes
+        if: matrix.tool != 'ncore'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -322,11 +338,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage supported workflow catalog in the package build context
+        if: matrix.tool != 'ncore'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+
+      - name: Build NCore committed attested OCI archive
+        if: matrix.tool == 'ncore'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          set -euo pipefail
+          npa/.venv/bin/python npa/scripts/publish_ncore_oci.py build \
+            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
+            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg"
 
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
+        if: matrix.tool != 'ncore'
         run: |
           set -euo pipefail
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
@@ -345,6 +374,7 @@ jobs:
             npa
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
+        if: matrix.tool != 'ncore'
         env:
           CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
@@ -444,11 +474,13 @@ jobs:
       # discarded. Trivy's export goes on the hosted runner's large temp disk so
       # the unchanged vulnerability/secret/license gates inspect every layer.
       - name: Prepare capacity for full-image security scans
+        if: matrix.tool != 'ncore'
         run: |
           docker buildx prune --all --force
           sudo install -d -m 0777 /mnt/npa-trivy
 
       - name: Pre-publication vulnerability, secret, and license scan
+        if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
         shell: bash
@@ -474,6 +506,7 @@ jobs:
               "$IMAGE"
 
       - name: Generate pre-publication SBOM
+        if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
         shell: bash
@@ -498,7 +531,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Gate and publish the exact NCore OCI graph
+        if: matrix.tool == 'ncore'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          cp "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "$NCORE_OCI_ROOT/registry-auth.json"
+          chmod 0600 "$NCORE_OCI_ROOT/registry-auth.json"
+          npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
+            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
+            --output-dir "$NCORE_OCI_ROOT/prepublication" \
+            --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
+            --metadata "$NCORE_OCI_ROOT/metadata" --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
+            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
+            --authfile "$NCORE_OCI_ROOT/registry-auth.json"
+          echo "NCore exact OCI development publication verified anonymously; RTX acceptance remains required." >> "$GITHUB_STEP_SUMMARY"
+          # Raw scanner output, denylist inputs and auth remain private. Never
+          # upload the analysis root as a public Actions artifact.
+
       - name: Push only after every pre-publication gate passes
+        if: matrix.tool != 'ncore'
         id: push
         run: |
           set -euo pipefail
@@ -509,6 +567,7 @@ jobs:
           echo "repository=${IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - name: Attest exact pushed digest provenance
+        if: matrix.tool != 'ncore'
         id: provenance-attestation
         uses: actions/attest-build-provenance@v3
         with:
@@ -517,6 +576,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest exact pushed digest SBOM
+        if: matrix.tool != 'ncore'
         id: sbom-attestation
         uses: actions/attest-sbom@v3
         with:
@@ -526,6 +586,7 @@ jobs:
           push-to-registry: true
 
       - name: Require both digest-bound attestation results
+        if: matrix.tool != 'ncore'
         env:
           PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
           PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
@@ -536,6 +597,7 @@ jobs:
           test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
 
       - name: Verify pushed bytes, revision, payload, visibility, and anonymous pull
+        if: matrix.tool != 'ncore'
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -736,6 +798,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Remove an exact run-owned dev tag after a failed build batch
+        if: matrix.tool != 'ncore'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}

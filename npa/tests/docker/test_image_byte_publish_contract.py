@@ -180,12 +180,17 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
     assert names.index(PRE) < names.index(push) < names.index(POST)
     assert named(check)["if"] == "matrix.tool == 'curobo'"
     assert named(prepare)["if"] == "matrix.tool == 'curobo'"
+    ncore_steps = {"Prepare NCore native scanners and separate source inputs",
+                   "Build NCore committed attested OCI archive",
+                   "Gate and publish the exact NCore OCI graph"}
     for step in all_steps:
         env = step.get("env", {})
         if "CUSTOMER_DENYLIST" in env or "INFRA_DENYLIST" in env:
-            assert step["name"] in {check, PRE, POST}
+            assert step["name"] in {check, PRE, POST} | ncore_steps
             assert {"CUSTOMER_DENYLIST", "INFRA_DENYLIST"} <= env.keys()
-            if step["name"] != check:
+            if step["name"] in ncore_steps:
+                assert step["if"] == "matrix.tool == 'ncore'"
+            elif step["name"] != check:
                 assert all("matrix.tool == 'curobo'" in env[key] for key in ("CUSTOMER_DENYLIST", "INFRA_DENYLIST"))
     assert "--policy-mode ci-regex" in named(check)["run"]
     assert "--build-arg" in named(build)["run"]
@@ -196,7 +201,7 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     publish = yaml.safe_load(PUBLISH.read_text())
     build_steps = publish["jobs"]["build-development"]["steps"]
     setup = next(step for step in build_steps if step.get("uses") == "actions/setup-python@v6")
-    assert setup["with"]["python-version"] == "${{ matrix.tool == 'curobo' && '3.12' || '3.11' }}"
+    assert setup["with"]["python-version"] == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
     for name, job in publish["jobs"].items():
         if name == "build-development":
             continue

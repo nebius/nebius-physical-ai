@@ -51,7 +51,10 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
-    assert [path.name for path in specs].count("sim2real.yaml") == 1
+    for name in ("sim2real.yaml", "paidf-cosmos3.yaml", "nurec-reconstruct.yaml"):
+        expected = NPA_WORKFLOWS / "main" / name
+        assert [path for path in specs if path.name == name] == [expected]
+        assert not (NPA_WORKFLOWS / "testing" / name).exists()
 
 
 def test_tool_catalog_is_reachable_or_explicitly_public_reusable() -> None:

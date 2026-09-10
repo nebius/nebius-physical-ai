@@ -86,6 +86,13 @@ npa/.venv/bin/python -c "import importlib.metadata as m; print(m.metadata('<pkg>
 A package whose `License` field literally reads *"NVIDIA Proprietary Software"*
 settles the question regardless of what the GitHub repo's badge says.
 
+For compiled wheels, inspect embedded dependencies, certificate data and fonts,
+not only the package's top-level grant. An SBOM license expression does not
+deliver required copyright or permission text. Bind the exact notices and any
+required corresponding source to the shipped artifact/member hashes, then
+verify that recipients actually receive those bytes, including obligations for
+superseded components retained in ancestor layers.
+
 ### 3. Ask the redistribution question explicitly
 
 For every component, answer these four separately — permission for one is not

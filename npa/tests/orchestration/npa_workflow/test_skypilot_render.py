@@ -509,7 +509,7 @@ def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
-    spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")
+    spec = load_spec(NPA_SPECS.parent / "main" / "nurec-reconstruct.yaml")
     plan = build_plan(spec, run_id="demo")
 
     authorities = plan_image_pull_secrets(

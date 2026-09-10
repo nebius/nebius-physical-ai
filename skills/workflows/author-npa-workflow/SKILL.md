@@ -12,7 +12,8 @@ Load when creating or editing **NPA workflow YAML** under
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
 
-Keep `workflows/main/` limited to `sim2real.yaml` and `paidf-cosmos3.yaml`.
+Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
+`nurec-reconstruct.yaml`.
 Add all other catalog specs under `workflows/testing/`; keep catalog
 documentation in `workflows/README.md`.
 

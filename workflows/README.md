@@ -75,8 +75,9 @@ workflow. Matrix source of truth:
 
 ## Layout
 
-- `main/` contains only [sim2real.yaml](main/sim2real.yaml) and
-  [paidf-cosmos3.yaml](main/paidf-cosmos3.yaml), the two main workflows.
+- `main/` contains [sim2real.yaml](main/sim2real.yaml),
+  [paidf-cosmos3.yaml](main/paidf-cosmos3.yaml), and
+  [nurec-reconstruct.yaml](main/nurec-reconstruct.yaml).
 - `testing/` contains all other supported declarative workflow YAMLs, including
   examples, integration workflows, and component validation pipelines.
 - [`guides/`](guides/README.md) contains setup and operating guides alongside
@@ -103,6 +104,7 @@ of every stage. Consult each guide and spec for prerequisites and evidence.
 
 | Spec | Notes |
 | --- | --- |
+| [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun ([participant guide](guides/living-lab-paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
 
@@ -148,7 +150,7 @@ of every stage. Consult each guide and spec for prerequisites and evidence.
 | [`living-lab-nurec-fanout.yaml`](testing/living-lab-nurec-fanout.yaml) | Parallel NuRec reconstructions → joined digital-twin report and panorama ([guide](../docs/workbench/guides/living-lab-nurec-fanout.md)) |
 | [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
 | [`multi-node-probe.yaml`](testing/multi-node-probe.yaml) | Gang-scheduled multi-node stage with evidence from every rank |
-| [`nurec-reconstruct.yaml`](testing/nurec-reconstruct.yaml) | NCore capture → NuRec 3DGUT training → USDZ, novel views, and Rerun evidence ([guide](../docs/workbench/guides/neural-reconstruction.md)) |
+| [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |

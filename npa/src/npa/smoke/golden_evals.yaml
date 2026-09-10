@@ -96,6 +96,29 @@ containers:
       timeout_seconds: 300
       status: blocked-on-upstream
 
+  ncore:
+    image: npa-ncore
+    dockerfile: npa/docker/workbench/ncore/Dockerfile
+    physical_ai:
+      useful: true
+      role: CPU COLMAP source-capture ingestion into NCore V4 for downstream reconstruction.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12.12-slim-bookworm
+      network: source fetched at build; packaging check fetches locked Python dependencies on a cold runtime
+      external_fetch: [github-ncore-build, github-trueprice-pycolmap-build, pypi-build]
+      notes: >-
+        Apache-2.0 converter and reader, MIT trueprice reader, no model/data/NRE
+        payload. Import and CLI-schema checks only. A real complete capture
+        conversion and independent decode are required for capability acceptance.
+        Explicit development image required until image acceptance.
+    golden_eval:
+      kind: build-import
+      command: /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py
+      gpu: none
+      timeout_seconds: unlimited
+      status: needs-image-update
+
   content-agents:
     image: npa-content-agents
     dockerfile: npa/docker/workbench/content-agents/Dockerfile

@@ -360,7 +360,7 @@ call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
 ## Workflow YAML Conventions
 The supported, customer-facing workflow catalog is the declarative
 `npa.workflow` spec set under `workflows/`. Keep `workflows/main/` limited to
-`sim2real.yaml` and `paidf-cosmos3.yaml`; author all other catalog workflows in
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`; author new catalog workflows in
 `workflows/testing/`. Keep catalog documentation in `workflows/README.md`.
 Do not add raw SkyPilot task templates to
 the package as a workflow catalog; the old catalog path is guardrail-retired.
