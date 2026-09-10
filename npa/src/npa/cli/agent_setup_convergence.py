@@ -168,6 +168,7 @@ def converge_remote_agent_setup(
             )
         remote_kwargs = dict(bootstrap_kwargs)
         remote_kwargs.pop("instance_id", None)
+        remote_kwargs["resume_services"] = resuming
         try:
             with operation_heartbeats(
                 operation, phase="remote_bootstrap", emit=progress

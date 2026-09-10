@@ -566,7 +566,7 @@ def _arguments(argv):
     return parser.parse_args(argv)
 
 
-def _validate_output_directory(output):
+def _validate_output_directory(output, checkpoint_layout):
     """Keep durable output separate from Ray's cached application source."""
     if not output.is_absolute():
         raise ValueError("output-path must be an absolute run-owned driver path outside working_dir")
@@ -575,6 +575,7 @@ def _validate_output_directory(output):
     output.mkdir(parents=True, exist_ok=True)
     if (output / "report.json").exists():
         raise ValueError("Use a new output directory for each application job")
+    validation.verify_checkpoint_layout(output, checkpoint_layout)
 
 
 def _verify_actor_allocations(initializations, actors):
@@ -616,7 +617,11 @@ class _InferenceSession:
         self.arguments = arguments
         self.shards = shards
         self.output = Path(arguments.output_path)
-        _validate_output_directory(self.output)
+        self.checkpoint_layout = {
+            "records": arguments.records,
+            "batch_size": arguments.batch_size,
+        }
+        _validate_output_directory(self.output, self.checkpoint_layout)
         self.actors = []
         self.initializations = []
         self.barrier = None
@@ -649,7 +654,7 @@ class _InferenceSession:
         self.actors = [self._new_actor() for _ in range(self.arguments.actors)]
         self.initializations = self.ray.get([actor.status.remote() for actor in self.actors])
         self.fingerprint = _verify_actor_allocations(self.initializations, self.arguments.actors)
-        validation.verify_execution(self.output, self.fingerprint)
+        validation.verify_execution(self.output, self.fingerprint, self.checkpoint_layout)
         self.model_ready = time.perf_counter()
 
     def _commit_first_shard(self):

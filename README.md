@@ -88,8 +88,8 @@ Workbench submits workflow tasks through SkyPilot. Selected tools exchange
 inputs and outputs through S3; workflows can call Token Factory for hosted
 inference. Inspect artifacts through the CLI, Python, or a compatible Rerun or
 Foxglove viewer. This diagram describes workflow execution; the
-[Ray development guide](docs/testing/fast-source-iteration.md) covers direct
-development with native Ray Jobs.
+[Workbench Ray guide](docs/workbench/ray.md) routes direct native Jobs/Core,
+Train, Serve, and KubeRay use to the supported paths.
 
 The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
 manual GitHub workflow, a dedicated VM with public SSH, pinned host keys, and
