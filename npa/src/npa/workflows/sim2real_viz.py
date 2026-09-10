@@ -567,6 +567,21 @@ def _merge_iteration_evidence(
     return merged
 
 
+def _adapter_training_metrics(record: dict[str, Any]) -> dict[str, Any]:
+    """Exclude Isaac's synthetic adapter fields from measured training charts."""
+
+    update = record.get("update") or {}
+    if update.get("backend") == "isaac_rsl_rl_ppo":
+        # Isaac fills these compatibility fields from input signals and the
+        # requested iteration count; its measured losses live in ppo_telemetry.
+        return {}
+    return {
+        "training/loss_before": update.get("loss_before"),
+        "training/loss_after": update.get("loss_after"),
+        "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
+    }
+
+
 def _log_training_iteration_metrics(
     rr: Any,
     recording: Any,
@@ -599,9 +614,7 @@ def _log_training_iteration_metrics(
             "progress/inner_loop/outer_iteration": outer,
             "progress/inner_loop/iteration": iteration,
             "training/reward": record.get("mean_reward"),
-            "training/loss_before": (record.get("update") or {}).get("loss_before"),
-            "training/loss_after": (record.get("update") or {}).get("loss_after"),
-            "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
+            **_adapter_training_metrics(record),
             "signal/reward_variance": (record.get("signal_calibration") or {}).get(
                 "mean_reward_variance"
             ),

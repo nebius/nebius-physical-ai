@@ -473,6 +473,55 @@ def test_rrd_roundtrip_preserves_run_identity_and_each_ppo_pass_once(
     assert [value for _time, value in observed] == pytest.approx(expected_values)
 
 
+def _rrd_training_scalars(path: Path) -> dict[str, Any]:
+    """Decode training scalars from an actual closed RRD file."""
+
+    from rerun.recording import load_recording
+
+    measured = {}
+    for chunk in load_recording(path).chunks():
+        if not chunk.entity_path.startswith("/training/"):
+            continue
+        batch = chunk.to_record_batch()
+        if "Scalars:scalars" in batch.schema.names:
+            measured[chunk.entity_path] = batch.column("Scalars:scalars").to_pylist()
+    return measured
+
+
+@pytest.mark.parametrize("backend", ["isaac_rsl_rl_ppo", "vlm_signal_adapter"])
+def test_rrd_excludes_isaac_adapter_proxies_but_preserves_measured_losses(
+    tmp_path: Path, backend: str
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    update = inner_evidence["iterations"][0]["update"]
+    update["backend"] = backend
+    update["ppo_telemetry"] = {
+        "curves": [{"iteration": 0, "value_loss": 1.25, "surrogate_loss": -0.125}]
+    }
+    original = json.loads(json.dumps(inner_evidence))
+    output = tmp_path / "reports" / "metric-provenance.rrd"
+    emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=output,
+    )
+    measured = _rrd_training_scalars(output)
+    assert measured["/training/ppo/value_loss"] == [[1.25]]
+    assert measured["/training/ppo/surrogate_loss"] == [[-0.125]]
+    for name, value in (
+        ("loss_before", 1.0),
+        ("loss_after", 0.7),
+        ("policy_delta_vs_control", 0.1),
+    ):
+        entity = f"/training/{name}"
+        if backend == "isaac_rsl_rl_ppo":
+            assert entity not in measured
+        else:
+            assert measured[entity][0] == pytest.approx([value])
+    assert inner_evidence == original
+
+
 def test_emit_raises_when_rerun_unavailable(monkeypatch, tmp_path: Path) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
 

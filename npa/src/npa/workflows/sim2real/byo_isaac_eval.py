@@ -840,22 +840,18 @@ try:
         obs, _, dones, extras = env.step(actions)
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
-        except Exception:
-            done_np = np.zeros(N, dtype=bool)
-        from npa.workflows.sim2real.byo_isaac_eval import first_episode_masks
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac evaluation could not read episode termination at step {_step}"
+            ) from exc
+        from npa.workflows.sim2real.byo_isaac_eval import (
+            first_episode_masks,
+            manipulator_contact_signal,
+        )
         active, newly_terminal, completed = first_episode_masks(completed, done_np)
         if _step % CAPTURE_STRIDE == 0:
             capture(_step, active & ~newly_terminal)
-        # object-to-goal distance: prefer an explicit metric, else infer.
-        d = None
-        log = (extras or {}).get("log") or {}
-        for k, v in log.items():
-            if "object" in k.lower() and ("dist" in k.lower() or "error" in k.lower()):
-                try:
-                    d = float(v);
-                except Exception:
-                    d = None
-                break
+        # Strict success requires per-environment state, never an aggregate log.
         try:
             uenv = env.unwrapped
             if hasattr(uenv, "command_manager"):
@@ -889,12 +885,9 @@ try:
                     stable_grasp_steps,
                 )
                 grasp |= active & (stable_grasp_steps >= 3)
-                try:
-                    obj_speed = torch.linalg.norm(
-                        uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
-                    ).detach().cpu().numpy()
-                except Exception:
-                    obj_speed = np.full(N, 1.0)
+                obj_speed = torch.linalg.norm(
+                    uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
+                ).detach().cpu().numpy()
                 in_strict_basin = per < 0.05
                 min_speed_in_strict_basin = np.where(
                     active & in_strict_basin,
@@ -942,14 +935,11 @@ try:
                     ]
                     termination[newly_terminal] = "task_or_timeout"
                 continue
-        except Exception:
-            pass
-        if d is not None:
-            min_dist = np.where(
-                active,
-                np.minimum(min_dist, np.full(N, d)),
-                min_dist,
-            )
+            raise RuntimeError("Isaac evaluation requires object-pose commands")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac per-environment metric capture failed at step {_step}"
+            ) from exc
     capture(STEPS, ~completed)  # final frame only for a still-live first episode
     episodes = [
         {

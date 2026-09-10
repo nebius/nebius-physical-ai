@@ -2604,17 +2604,21 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(
     active = 0
     peak = 0
     lock = threading.Lock()
+    first_pair = threading.Barrier(2)
     calls: list[str] = []
 
     def fake_evaluate(rollout, **kwargs):
         nonlocal active, peak
         manifest = json.loads((Path(rollout) / "manifest.json").read_text())
         rollout_id = str(manifest["rollout_id"])
-        calls.append(rollout_id)
         try:
             with lock:
+                calls.append(rollout_id)
+                call_number = len(calls)
                 active += 1
                 peak = max(peak, active)
+            if call_number <= 2:
+                first_pair.wait(timeout=5)
             time.sleep(0.02)
             return {
                 "schema": SCHEMA_VLM_EVAL,

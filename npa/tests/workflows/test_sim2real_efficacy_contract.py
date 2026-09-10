@@ -928,6 +928,7 @@ Total timesteps: 24576
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 500
+    assert telemetry["final_iteration"]["action_noise_std"] == 1.0
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
     assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
@@ -945,6 +946,7 @@ def test_parse_ppo_telemetry_accepts_rsl_rl_5_console_format() -> None:
     # no longer prints a "Total timesteps" line in the iteration table.
     log = """
 Learning iteration 199/199
+Mean action std: 0.49
 Mean value loss: 1.4190
 Mean surrogate loss: -0.0027
 Mean entropy loss: 11.9853
@@ -955,6 +957,7 @@ Metrics/object_pose/position_error: 0.3215
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 199
+    assert telemetry["final_iteration"]["action_noise_std"] == 0.49
     assert telemetry["final_iteration"]["value_loss"] == 1.419
     assert telemetry["final_iteration"]["surrogate_loss"] == -0.0027
     assert telemetry["final_iteration"]["episode_return"] == 19.96

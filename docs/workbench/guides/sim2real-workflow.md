@@ -389,6 +389,19 @@ can cover 6,000 cumulative updates without weakening the fixed validation or
 gold predicates. Reduced plumbing proofs may override this value explicitly;
 effectiveness runs should retain the convergence-capable default.
 
+For Isaac PPO runs, Rerun plots measured optimizer losses from
+`training/ppo/value_loss` and `training/ppo/surrogate_loss`. It omits the
+adapter's compatibility loss and policy-delta fields: those are synthetic
+proxies derived from input signals and requested updates, not measured losses
+or checkpoint parameter differences. They remain in the original training
+report for schema compatibility. Checkpoint selection and promotion use the
+recorded validation and gold results.
+
+Validation and gold evaluation require each environment's object pose, velocity,
+goal, and episode termination state. Missing or unreadable required state fails
+the evaluation instead of substituting aggregate log values. Terminal metrics
+retain the final pre-reset sample from the evaluated episode.
+
 On the curated stock-Franka scenario task, training also includes three dense
 grasp-and-lift precursors. Finger closure is rewarded only while the end
 effector is near the object, a closed near-object end effector receives a

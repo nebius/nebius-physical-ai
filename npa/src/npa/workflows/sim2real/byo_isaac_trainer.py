@@ -367,6 +367,7 @@ _PPO_ITERATION_RE = re.compile(r"Learning iteration\s+(\d+)/(\d+)")
 _PPO_METRIC_RE = re.compile(r"^\s*([^:]+):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$")
 _PPO_FIELDS = {
     "Mean action noise std": "action_noise_std",
+    "Mean action std": "action_noise_std",
     "Mean value_function loss": "value_loss",
     # rsl-rl >= 5.0 renamed the console field and dropped the timesteps line.
     "Mean value loss": "value_loss",
