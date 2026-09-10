@@ -220,6 +220,26 @@ def _repository_without_tag(image_ref: str) -> str:
     return ref[:colon] if colon > slash else ref
 
 
+def _source_prune_path(value: str) -> str:
+    """Validate one repo-relative path removed in the source checkout layer."""
+
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    parts = path.split("/")
+    if (
+        path.startswith("/")
+        or re.fullmatch(r"[A-Za-z0-9._/-]+", path) is None
+        or ".." in path
+        or any(part in {"", ".", "..", ".git"} for part in parts)
+        or path == "npa_source_metadata.json"
+    ):
+        raise argparse.ArgumentTypeError(
+            "--source-prune-path must be a safe relative repository path"
+        )
+    return path
+
+
 def _resolve_pushed_image_digest(
     image_ref: str, *, env: dict[str, str] | None = None
 ) -> str:
@@ -320,6 +340,7 @@ def _dockerfile_text() -> str:
         "ARG BYOF_SOURCE_CACHE_KEY=public\n"
         "ARG BYOF_SOURCE_LABEL_REPO\n"
         "ARG BYOF_SOURCE_LABEL_REF\n"
+        'ARG BYOF_SOURCE_PRUNE_PATH=""\n'
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
@@ -361,13 +382,23 @@ def _dockerfile_text() -> str:
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
         f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
+        f'    observed_commit="$(git -C {BYOF_REPO_MOUNT} rev-parse HEAD)"; \\\n'
+        '    git_objects_removed=false; \\\n'
+        '    if [ -n "${BYOF_SOURCE_PRUNE_PATH}" ]; then \\\n'
+        '      case "${BYOF_SOURCE_PRUNE_PATH}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
+        f'      test -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
+        f'      rm -rf -- "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}" {BYOF_REPO_MOUNT}/.git; \\\n'
+        f'      test ! -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
+        f'      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n'
+        '      git_objects_removed=true; \\\n'
+        "    fi; \\\n"
         f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"${{BYOF_SOURCE_PRUNE_PATH}}\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -517,6 +548,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Optional shell command run during image build from /opt/byof.",
     )
     parser.add_argument(
+        "--source-prune-path",
+        type=_source_prune_path,
+        default="",
+        help=(
+            "Optional safe repo-relative path removed with .git in the source clone "
+            "layer, before later image layers can retain its bytes."
+        ),
+    )
+    parser.add_argument(
         "--smoke-command",
         default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
         help="Optional documented shell command run during solution-smoke from /opt/byof.",
@@ -647,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
         "run_id": args.run_id,
         "workload": args.workload,
         "build_command": args.build_command,
+        "source_prune_path": args.source_prune_path,
         "smoke_command": args.smoke_command,
         "solution_name": args.solution_name,
         "capability_name": args.capability_name,
@@ -749,6 +790,10 @@ def _run_byof(
                 f"registered solution {postprocess_key!r} cannot use --skip-run "
                 "because verified postprocessing is mandatory"
             )
+        if args.source_prune_path and skip_build:
+            raise ValueError(
+                "--source-prune-path requires building the source image in this invocation"
+            )
         if not skip_build:
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
@@ -788,6 +833,8 @@ def _run_byof(
                                 f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
                                 "--build-arg",
                                 f"BYOF_BUILD_COMMAND={args.build_command}",
+                                "--build-arg",
+                                f"BYOF_SOURCE_PRUNE_PATH={args.source_prune_path}",
                                 "-t",
                                 image,
                                 str(context),

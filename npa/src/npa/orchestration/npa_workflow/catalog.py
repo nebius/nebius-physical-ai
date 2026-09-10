@@ -83,6 +83,8 @@ _BYOF_REPO_ARGV = [
     "{{config.base_image}}",
     "--build-command",
     "{{config.build_command}}",
+    "--source-prune-path",
+    "{{config.source_prune_path}}",
     "--workload",
     "{{config.workload}}",
     "--smoke-command",
@@ -116,6 +118,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "source_prune_path": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
