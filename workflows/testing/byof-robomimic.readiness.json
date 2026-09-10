@@ -1,0 +1,67 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "354f476ab4abb69c7375bd146e44a41a07dad663ccb1eae73183ac76ffaa2bcf",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The checked-in workflow passed the repository schema validator.",
+      "evidence": [
+        "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The rendered plan contains one workbench.byof.repo step with the pinned source, runtime-only dataset smoke, dedicated B200 profile, and both declared outputs.",
+      "evidence": [
+        "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, robomimic-smoke.json output",
+        "npa/tests/workflows/test_byof_robomimic.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "The checked-in bucket is a placeholder. The manager runtime plan is prepared but undeployed and child cloud authorization is false, so no run-owned S3 prefix may be selected or preflighted yet.",
+      "evidence": [
+        "config.bucket=example-bucket",
+        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Source and dataset metadata, licenses, revision, LFS hash, and byte count were independently verified, but the exact HDF5 payload has not yet been downloaded and hashed by the B200 workload.",
+      "evidence": [
+        "ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05 exact MIT LICENSE",
+        "robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203 tree entry: sha256:2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540, 21084088 bytes"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may only be selected after the prepared manager runtime plan is deployed and this child is explicitly authorized. The operator must also explicitly accept the NVIDIA Deep Learning Container terms for the private build and one-run validation scope.",
+      "evidence": [
+        "Public source and dataset require no token",
+        "docs/workbench/byof-robomimic.md: NVIDIA terms acceptance and temporary Pod-read RBAC preflight",
+        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The base image tag resolved to an immutable OCI digest and the headless CPython 3.11 x86-64 closure is pinned to 48 exact wheel hashes, but the private derivative has not been built, pushed, resolved by digest, or scanned.",
+      "evidence": [
+        "pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime -> sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2",
+        "dependency lock sha256:910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71; artifact_count=48",
+        "declared build command sha256:40934ad75e79127e2b494adf73c59e0cd2164dda71dac2a142891cdda7a43bf6",
+        "docs/workbench/byof-robomimic.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "Exactly one STRICT-bound B200 and a temporary service account with get-only Pod access are required. Capacity is preflighted, but the manager plan is undeployed and this child has no authorized project, cluster, namespace, or network binding.",
+      "evidence": [
+        "byof-solution-smoke-robomimic-b200-gpu resources.accelerators=B200:1",
+        "profile serviceAccountName=npa-robomimic-observer; smoke requires status.containerStatuses[].imageID",
+        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+      ]
+    }
+  }
+}
