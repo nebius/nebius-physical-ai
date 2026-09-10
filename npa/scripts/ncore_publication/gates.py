@@ -12,7 +12,7 @@ from npa.deploy.publish_public import _TRIVY_CONTAINER_IMAGE
 from . import artifact, bootstrap, components, provenance
 from .diagnostics import phase, run_phase
 from .process import guard_command, guard_snapshot, verify_guard_execution
-from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, write_json
+from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, run_byte_scanner, write_json
 
 
 def eligibility(sha):
@@ -65,9 +65,10 @@ def byte_scan(args, directory, archive, digest, verification):
         digest: Exact publication index identity.
         verification: Actual native graph verification receipt.
     Returns:
-        None.
+        None for a clean raw pass, or the separate NCore attribution receipt.
     Raises:
-        ValueError, OSError: Authorization, native tools or complete scan fails.
+        ValueError, OSError, ImportError: Authorization, native tools, provenance,
+            or complete scanning fails.
     """
     write_json(directory / "graph.json", verification)
     common = ["--analysis-root", str(args.analysis_root), "--trusted-root", str(ROOT)]
@@ -75,12 +76,15 @@ def byte_scan(args, directory, archive, digest, verification):
     scan = [str(PYTHON), "npa/scripts/scan_image_bytes.py", *common,
             "--authorization", str(authorization / "authorization.json"),
             "--output-dir", str(directory / "bytes")]
-    try:
-        run_phase("byte-scan-execution", run, scan, directory / "bytes.log")
-    except (OSError, ValueError):
-        _failed_byte_scan_summary(directory)
-        raise
-    run_phase("byte-scan-report", _byte_scan_report, directory)
+    status = run_phase("byte-scan-execution", run_byte_scanner, scan, directory / "bytes.log")
+    if status == 0:
+        run_phase("byte-scan-report", _byte_scan_report, directory)
+        return None
+    _failed_byte_scan_summary(directory)
+    from . import attribution
+
+    return run_phase("byte-scan-attribution", attribution.verify, args, directory, archive,
+                     digest, verification, status)
 
 
 def _authorize_byte_scan(args, directory, archive, digest, common):
@@ -160,7 +164,9 @@ def verify(args, directory, build):
     archive = args.analysis_root / "build/image.oci.tar"
     digest = build["image_digest"]
     graph, verification = _graph_provenance(args, directory, build, archive)
-    run_phase("byte-scan", byte_scan, args, directory, archive, digest, verification)
+    attribution_receipt = run_phase(
+        "byte-scan", byte_scan, args, directory, archive, digest, verification
+    )
     run_phase("inspection-archives", artifact.inspection_archives, archive, digest, graph, directory)
     run_phase("shipped-source", provenance.shipped_source, directory / "rootfs.tar", args.source_sha)
     run_phase("source-delivery", _source_delivery, args, directory)
@@ -173,6 +179,10 @@ def verify(args, directory, build):
     with phase("source-recheck"):
         artifact.assert_unchanged(archive, verification)
         W.require(committed_source(args.source_sha) == build["context_sha256"], "source_changed_during_gates")
+        if attribution_receipt is not None:
+            from . import attribution
+
+            attribution.recheck(directory, attribution_receipt, archive, verification)
     return graph, verification
 
 

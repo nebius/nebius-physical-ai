@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 PYTHON = ROOT / "npa/.venv/bin/python"
 CONTEXT = ("npa/src/npa", "npa/docker/workbench/ncore")
 SOURCE_PATHS = ("npa/docker/workbench/ncore", "npa/scripts/image_byte_scan", "npa/scripts/ncore_publication",
+                "npa/src/npa/guardrails/ncore_attribution.py",
+                "npa/src/npa/guardrails/__init__.py", "npa/src/npa/guardrails/confidentiality.py",
                 "npa/src/npa/deploy/images.py", "npa/src/npa/deploy/publish_public.py",
                 "npa/src/npa/deploy/ncore_selected_sbom.py", "npa/src/npa/_public_https.py",
                 "npa/src/npa/deploy/ncore_component_scan.py", "npa/src/npa/deploy/ncore_component_inventory.py",
@@ -28,6 +30,7 @@ SOURCE_PATHS = ("npa/docker/workbench/ncore", "npa/scripts/image_byte_scan", "np
                 "npa/scripts/publish_ncore_oci.py", "npa/scripts/scan_image_bytes.py",
                 "npa/scripts/scan_image_omniverse_payload.py",
                 "npa/tests/docker/test_image_byte_go_build.py",
+                "npa/tests/docker/test_ncore_public_attribution.py",
                 "npa/tests/docker/test_packaging_contract.py",
                 "npa/tests/docker/test_ncore_image_contract.py",
                 "npa/tests/deploy/test_ncore_component_scan.py",
@@ -66,6 +69,32 @@ def run(argv, output, *, env=None, input_bytes=None, cwd=None):
         result = subprocess.run(argv, cwd=ROOT if cwd is None else cwd, env=environment, input=input_bytes,
                                 stdout=stdout, stderr=stderr, check=False)
     W.require(result.returncode == 0, "publication_subprocess_failed_see_private_evidence")
+
+
+def run_byte_scanner(argv, output):
+    """Run the raw image scanner and return only its documented verdict status.
+
+    Args:
+        argv: Exact raw-scanner argument vector without credentials.
+        output: New private stdout path; stderr uses the .stderr suffix.
+    Returns:
+        Zero for a clean scan or one for a completed scan with findings/failure.
+    Raises:
+        OSError: Private output or process execution fails.
+        ValueError: The scanner returns an undocumented status.
+    """
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("PYTHON", "PYTEST"))}
+    environment.update(PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1",
+                       PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
+    cache = output.with_suffix(output.suffix + ".python-cache")
+    cache.mkdir(mode=0o700)
+    environment["PYTHONPYCACHEPREFIX"] = str(cache)
+    with output.open("xb") as stdout, output.with_suffix(output.suffix + ".stderr").open("xb") as stderr:
+        result = subprocess.run(argv, cwd=ROOT, env=environment, stdout=stdout,
+                                stderr=stderr, check=False)
+    W.require(result.returncode in {0, 1}, "image_byte_scanner_unexpected_exit")
+    return result.returncode
 
 
 def file_sha(path):

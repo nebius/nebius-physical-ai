@@ -45,12 +45,16 @@ def test_byte_authorization_preserves_selected_policy(tmp_path, monkeypatch, mod
 
     def run(argv, output, **_):
         commands.append(argv)
-        if len(commands) == 2:
-            target = tmp_path / "bytes"
-            target.mkdir()
-            (target / "report.json").write_text(json.dumps(dict(complete=True, valid=True, helper_joined=True)))
+
+    def scanner(argv, _output):
+        commands.append(argv)
+        target = tmp_path / "bytes"
+        target.mkdir()
+        (target / "report.json").write_text(json.dumps(dict(complete=True, valid=True, helper_joined=True)))
+        return 0
 
     monkeypatch.setattr(gates, "run", run)
+    monkeypatch.setattr(gates, "run_byte_scanner", scanner)
     gates.byte_scan(args, tmp_path, tmp_path / "image.tar", "sha256:" + "a" * 64, {})
     authorization = commands[0]
     assert authorization[authorization.index("--policy-mode") + 1] == mode

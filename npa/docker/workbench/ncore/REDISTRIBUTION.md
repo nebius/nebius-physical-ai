@@ -164,6 +164,29 @@ that a scanner rejects.
 
 ## Build and acceptance contract
 
+The NCore publication gate has one product-specific disposition for the
+mandatory CPython `LICENSE.third-party` notice. The unchanged complete-byte
+scanner must first finish with exit status 1, retain its `valid=false` report
+and complete ledger, and report exactly two `customer-denylist` regex findings
+on notice lines 633 and 640. A separate receipt is issued only after the gate
+revalidates the complete raw population, policy and authorization; proves one
+regular canonical notice in the sole scratch filesystem layer and one regular
+Git blob at the canonical source path; and verifies the complete notice bytes
+against two fixed official CPython archives through
+`npa.guardrails.ncore_attribution`. The receipt binds the source revision, OCI
+index/platform/config/archive, raw report, ledger, policy, and both occurrence
+identities. A second raw scan of the same bound authorization must reproduce the
+report and ledger byte for byte. The receipt records two dispositions and zero
+unresolved findings without changing the raw verdict.
+
+Any other finding remains fatal, including native-detector, credential,
+infrastructure, exact-literal, header, path, link, padding, trailer, history, or
+configuration findings. Changed or duplicated notice bytes, aliases, ancestor
+copies, incomplete scanner execution, unexpected scanner exit status, missing
+upstream proof, and changed evidence also fail. This is not a reusable image
+scanner exception or a licensing acceptance; NCore remains subject to every
+other publication and quarantine gate described below.
+
 The parent builds only after integration into a committed SHA:
 
 ```sh

@@ -10,7 +10,7 @@ _PHASES = frozenset({
     "prepare-native-checks", "prepare-source-inputs", "prepare-source-annex",
     "prepare-bootstrap-sources",
     "prepublication", "source-binding", "source-guards", "oci-graph", "provenance",
-    "byte-scan", "byte-scan-authorization", "byte-scan-execution", "byte-scan-report",
+    "byte-scan", "byte-scan-authorization", "byte-scan-execution", "byte-scan-report", "byte-scan-attribution",
     "inspection-archives", "shipped-source", "source-delivery",
     "payload", "payload-history", "image-security", "selected-base", "components",
     "bootstrap", "source-recheck", "registry-transfer", "registry-tag-lookup",

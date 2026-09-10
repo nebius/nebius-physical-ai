@@ -241,6 +241,7 @@ def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, repor
     (tmp_path / "bytes").mkdir()
     (tmp_path / "bytes/report.json").write_text(json.dumps(report))
     monkeypatch.setattr(gates, "run", lambda *_: None)
+    monkeypatch.setattr(gates, "run_byte_scanner", lambda *_: 0)
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with pytest.raises(ValueError):
         diagnostics.run_phase("byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {})
@@ -265,11 +266,17 @@ def test_byte_scan_subprocess_failure_is_private_and_preserved(
 
     def run(argv, output, **_kwargs):
         calls.append(output.name)
-        current = "authorization" if output.name == "authorize.log" else "execution"
-        if current == failure:
+        if failure == "authorization":
             raise error
 
+    def scanner(_argv, output):
+        calls.append(output.name)
+        if failure == "execution":
+            raise error
+        return 0
+
     monkeypatch.setattr(gates, "run", run)
+    monkeypatch.setattr(gates, "run_byte_scanner", scanner)
     monkeypatch.setenv("CUSTOMER_DENYLIST", SYNTHETIC_SECRET)
     args = SimpleNamespace(analysis_root=tmp_path / SYNTHETIC_SECRET,
                            policy_mode="ci-regex")
@@ -307,6 +314,7 @@ def test_byte_scan_report_summarizes_secret_findings_without_disclosure(
     (tmp_path / "bytes").mkdir()
     (tmp_path / "bytes/report.json").write_text(json.dumps(report))
     monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gates, "run_byte_scanner", lambda *_args: 0)
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with pytest.raises(ValueError, match="^complete_byte_scan_required$"):
         diagnostics.run_phase(
@@ -327,6 +335,7 @@ def test_byte_scan_numeric_summary_is_bounded(tmp_path, monkeypatch, capsys, uns
     (tmp_path / "bytes").mkdir()
     (tmp_path / "bytes/report.json").write_text(json.dumps(report))
     monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gates, "run_byte_scanner", lambda *_args: 0)
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with pytest.raises(ValueError):
         gates.byte_scan(args, tmp_path, tmp_path / "image", "synthetic", {})
@@ -340,18 +349,19 @@ def test_byte_scan_numeric_summary_is_bounded(tmp_path, monkeypatch, capsys, uns
     "complete": True, "valid": False, "helper_joined": True,
     "findings": 3, "helper_summary": {"findings": 1}, "failure_code": SYNTHETIC_SECRET,
 }])
-def test_nonzero_scanner_reports_counts_and_preserves_failure(tmp_path, monkeypatch, capsys, payload):
+def test_scanner_execution_error_is_not_treated_as_an_attribution_finding(
+    tmp_path, monkeypatch, capsys, payload
+):
     failure = ValueError(HOSTILE)
 
-    def run(argv, output):
-        if output.name != "bytes.log":
-            return
+    def scanner(_argv, _output):
         if payload is not None:
             (tmp_path / "bytes").mkdir()
             (tmp_path / "bytes/report.json").write_text(json.dumps(payload))
         raise failure
 
-    monkeypatch.setattr(gates, "run", run)
+    monkeypatch.setattr(gates, "run", lambda *_: None)
+    monkeypatch.setattr(gates, "run_byte_scanner", scanner)
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with pytest.raises(ValueError) as raised:
         gates.byte_scan(args, tmp_path, tmp_path / "image", "synthetic", {})
@@ -361,11 +371,8 @@ def test_nonzero_scanner_reports_counts_and_preserves_failure(tmp_path, monkeypa
     assert HOSTILE not in output.out + output.err
     assert "phase=byte-scan-execution status=failure" in output.err
     assert "phase=byte-scan-report status=pass" not in output.err
-    if isinstance(payload, dict):
-        assert "category=findings available=true findings=3" in output.err
-        assert "category=credential-findings available=true findings=1" in output.err
-    else:
-        assert "byte-scan-summary available=false" in output.err
+    assert "byte-scan-summary" not in output.err
+    assert "byte-scan-attribution" not in output.err
 
 
 class _HostileIdentifier(str):
