@@ -1,8 +1,9 @@
 # Living Lab participant guide: PAIDF with Cosmos 3
 
-Run the Physical AI Data Factory (PAIDF) Cosmos 3 workflow on the Nebius GPU
-cluster supplied with your Living Lab test project. You can follow this guide
-in a terminal or give it to a coding agent that operates your terminal.
+Run the [Physical AI Data Factory (PAIDF) Cosmos 3 workflow](../main/paidf-cosmos3.yaml)
+on the Nebius GPU cluster supplied with your Living Lab test project. You can
+follow this guide in a terminal or give it to a coding agent that operates your
+terminal.
 
 The workflow selects a robot video, captions it with a hosted vision-language
 model through Token Factory, generates appearance variants with Cosmos3-Nano
@@ -32,7 +33,7 @@ disks caused evictions. That is an observed working size for those images and
 weights, not a guarantee for future releases.
 
 This guide adopts your supplied cluster. For a project that does not already
-have one, start with [Workbench Kubernetes setup](../kubernetes.md).
+have one, start with [Workbench Kubernetes setup](../../docs/workbench/kubernetes.md).
 
 ## P — Prerequisites
 
@@ -45,7 +46,7 @@ brew install python@3.12 git kubectl awscli ffmpeg socat netcat jq
 ```
 
 On Ubuntu, install the equivalent packages and Python 3.12 using the
-[platform installation guide](../../install.md). Use Python 3.12 for both the
+[platform installation guide](../../docs/install.md). Use Python 3.12 for both the
 NPA environment and isolated SkyPilot environment in this guide. The supported
 SkyPilot runtime requires Python 3.9–3.12; a newer interpreter can fail at submit.
 Terraform is not needed to adopt the cluster supplied to participants.
@@ -97,7 +98,7 @@ model terms and request access where the model page requires it:
 The current `health access --capability cosmos3` command checks these repository
 entries. Follow any additional dependency or access requirements reported by
 your installed version; do not treat a token's presence as proof of model access.
-See [Cosmos 3 access preflight](../cosmos3-access-preflight.md).
+See [Cosmos 3 access preflight](../../docs/workbench/cosmos3-access-preflight.md).
 
 For Token Factory, sign in to the [Token Factory console](https://tokenfactory.nebius.com/)
 and follow your cohort's credit instructions. Under **API keys**, create a key
@@ -127,7 +128,7 @@ changing the workflow filename cannot fix it. Follow the
 
 Run the remaining commands from this repository root. Participant installation
 uses `.venv`; contributor validation tooling uses `npa/.venv` as described in
-the [installation guide](../../install.md).
+the [installation guide](../../docs/install.md).
 
 #### If `submit` is missing
 
@@ -202,7 +203,7 @@ chmod 600 ~/.npa/credentials.yaml
 
 Storage keys belong to the selected project's record under
 `project_credentials.projects`. Use the
-[credential-file reference](../../credentials.yaml.example) to inspect the
+[credential-file reference](../../docs/credentials.yaml.example) to inspect the
 shape without copying credential values into the repository or shell history.
 Submit resolves the named secrets from this store or the process environment.
 
@@ -258,7 +259,7 @@ npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 Verification must report Kubernetes enabled for this context. Copy the exact
 GPU spelling from discovery; for example, an RTX PRO 6000 cluster may advertise
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`. Use it with the requested count in the run
-section. See [SkyPilot setup](../../orchestration/skypilot-setup.md).
+section. See [SkyPilot setup](../../docs/orchestration/skypilot-setup.md).
 
 ### S7. Configure the AWS profile for direct artifact downloads
 
@@ -405,7 +406,7 @@ For your own video, add **one** of these input options to the submit command:
 The original participant runs used short robot clips. Check the resulting
 duration and motion: basic `video2video` conditioning does not establish
 full-episode motion preservation. For LeRobot episode/camera selection and the
-generation contract, see the [Cosmos 3 workflow guide](paidf-cosmos3.md).
+generation contract, see the [Cosmos 3 workflow guide](../../docs/workbench/guides/paidf-cosmos3.md).
 
 ### R4. Monitor and recover
 
@@ -451,7 +452,7 @@ retaining the project, runtime, inputs, configuration, and secret names.
 `--run-id` and `--resume-run` are mutually exclusive. Resume reconciles recorded
 work; it does not turn a rejected result into an accepted one. Use `prepare-run`
 to create a fresh run after changing the experiment. See the
-[run lifecycle](../../run-lifecycle.md).
+[run lifecycle](../../docs/run-lifecycle.md).
 
 ## Troubleshooting
 
@@ -465,25 +466,25 @@ appears.
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
 | `invalid IAM subject` or `PermissionDenied` | Invitation and project permissions | Accept the pending invite, or ask your cohort contact to resend an expired one; retry P3. |
 | `The active Nebius CLI profile cannot authenticate non-interactively` | CLI compatibility as well as authentication | Check the version first; install the compatible CLI from P2 before replacing the profile. |
-| `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../credentials.yaml.example). Do not assign ambiguous keys to the new project. |
+| `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../docs/credentials.yaml.example). Do not assign ambiguous keys to the new project. |
 | Missing bootstrap-contract attestation for `npa-rerun-viewer` | Old checkout or image override | Use current supported pins and rerun `preflight-images`; retain the failing check. |
 | Private-registry `403` when expecting GHCR | Explicit image/registry overrides or an older client | Use the current default public mirror and remove unintended overrides. Current runtime image selection does not inherit `NPA_REGISTRY`. |
 | `No NPA cluster identity exists ... refusing controller adoption` | Cluster fetched but not adopted | Complete S5 with the exact cluster name, project alias, and context. |
 | `No shared controller owner is bound` | Missing controller binding | Run `npa skypilot bind-controller` as shown in S5. |
-| SkyPilot requires Python 3.9–3.12 | Interpreter used by the isolated runtime | Recreate the isolated SkyPilot environment with Python 3.12; see [SkyPilot setup](../../orchestration/skypilot-setup.md). |
-| `ClusterOwnerIdentityMismatchError` | Reused local/controller state from another cluster | Verify the project and context, then follow [controller setup](../../orchestration/skypilot-setup.md#managed-jobs-controller). Preserve unrelated projects' state. |
-| `StorageBucketGetError` or inaccessible bucket | Selected project's keys, bucket, region, and endpoint | Recheck S2/S7 and rerun credential preflight. For controller recovery, use the exact project and context in [SkyPilot setup](../../orchestration/skypilot-setup.md#managed-jobs-controller). |
-| `FAILED_SETUP: Forced include not found` | Incomplete manually staged source | Use current automatic source staging. For a persisted bad source URI, follow the [source-staging recovery guide](physical-ai-data-factory-deploy.md#if-submit-fails). |
+| SkyPilot requires Python 3.9–3.12 | Interpreter used by the isolated runtime | Recreate the isolated SkyPilot environment with Python 3.12; see [SkyPilot setup](../../docs/orchestration/skypilot-setup.md). |
+| `ClusterOwnerIdentityMismatchError` | Reused local/controller state from another cluster | Verify the project and context, then follow [controller setup](../../docs/orchestration/skypilot-setup.md#managed-jobs-controller). Preserve unrelated projects' state. |
+| `StorageBucketGetError` or inaccessible bucket | Selected project's keys, bucket, region, and endpoint | Recheck S2/S7 and rerun credential preflight. For controller recovery, use the exact project and context in [SkyPilot setup](../../docs/orchestration/skypilot-setup.md#managed-jobs-controller). |
+| `FAILED_SETUP: Forced include not found` | Incomplete manually staged source | Use current automatic source staging. For a persisted bad source URI, follow the [source-staging recovery guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md#if-submit-fails). |
 | `--run-id` and `--resume-run` are mutually exclusive | Recovery command combines both options | Use only `--resume-run` for the existing run, or `prepare-run` for a fresh experiment. |
 | Workflow GPU discovery says `Kubeconfig not found` | Missing NPA-managed kubeconfig | Complete S5/S6 and verify the selected context. |
-| Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../run-lifecycle.md) and correct its image. Keep image preflight enabled. |
+| Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../docs/run-lifecycle.md) and correct its image. Keep image preflight enabled. |
 | GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Ask your cohort operator to inspect disk pressure. The historical run needed a 185 GB boot disk. |
 | Token Factory returns `404` / model does not exist | Hosted model availability | List models again and set `caption_model` to an available vision model. |
 | Evaluator reports `reasoning-only response with no visible answer` | An older bundled NPA client may be running | Update the checkout, enable `NPA_SRC_OVERLAY=1` as in S8, and start a fresh run. Treat the original report as degraded; empty answers do not establish an attribute-quality verdict. |
 | `source_motion_weight must be 0` | Configuration copied from the old guide | Remove the old override or set it to `0.0`; current publication preserves unmodified model output. |
 
 For pod-level and artifact triage, see
-[known Workbench issues](../troubleshooting/known-footguns.md).
+[known Workbench issues](../../docs/workbench/troubleshooting/known-footguns.md).
 
 ## September 9 live validation
 
@@ -573,7 +574,7 @@ code requires `source_motion_weight=0.0` and publishes the model's output bytes
 unchanged. The old measurements do not prove that every current configuration
 will fail or that calibration alone explains every rejection. Inspect the
 actual evaluator report and Rerun evidence before accepting generated data.
-See [double exposure in older runs](paidf-cosmos3.md#double-exposure-in-older-runs).
+See [double exposure in older runs](../../docs/workbench/guides/paidf-cosmos3.md#double-exposure-in-older-runs).
 
 ### What changed from the earlier participant setup
 
@@ -616,9 +617,9 @@ without accepted data or a final curation report. Check the variant MP4s and
 the evaluator's individual dispositions as well as its aggregate score.
 
 The commands above retrieve evidence from your own run. For browser viewing
-or sharing, see [Rerun sharing](../rerun-sharing.md).
+or sharing, see [Rerun sharing](../../docs/workbench/rerun-sharing.md).
 
 For help with an invitation or the supplied cluster, contact your Living Lab
 cohort channel. For the workflow itself, continue with the
-[Cosmos 3 reference guide](paidf-cosmos3.md) and
-[workflow lifecycle](../../run-lifecycle.md).
+[Cosmos 3 reference guide](../../docs/workbench/guides/paidf-cosmos3.md) and
+[workflow lifecycle](../../docs/run-lifecycle.md).
