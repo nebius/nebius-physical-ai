@@ -78,6 +78,7 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_confidentiality_scan` | The scanner, its built-in Nebius patterns, or the gitleaks wiring changed. Keep `.gitleaks.toml` and `npa/src/npa/guardrails/confidentiality.py` in sync. |
+| `test_ncore_attribution` / `test_ncore_source_attribution` | NCore's exact CPython notice, immutable dual-archive proof, Git path/mode boundary, diff line mapping, or source disposition drifted. Restore the exact provenance-bound contract; never add a general exemption or hide raw findings. |
 | `test_security_source` | Source scanner output, inventory, ignore handling or stable finding identity is incomplete. Restore fail-closed scanning; run the real scanner workload in `docs/security/merge-security-gate.md`. |
 | `test_security_gate` | A regression comparison, snapshot boundary or dependency report check failed. Preserve duplicate detection and reject incomplete reports or source paths outside the snapshot. |
 | `test_security_scan_input` | The manual image-scan input became shell syntax. Pass it through a step environment variable and quote that variable in the command. |

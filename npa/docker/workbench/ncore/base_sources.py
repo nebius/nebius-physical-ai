@@ -1,0 +1,1219 @@
+"""Selected base delivery and offline inventory of Docker-save layers.
+
+This is a source correspondence tool, not a security scanner or release gate.
+Inventory never executes image code. Explicit source preparation extracts only
+verified source archives using Python's data filter and runs their build rules.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from email.parser import BytesParser
+import gzip
+import hashlib
+import io
+import json
+import lzma
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
+
+try:
+    from npa._public_https import download_public_https
+except ModuleNotFoundError as error:
+    if error.name != "npa":
+        raise
+    # Docker copies the same stdlib-only helper beside this bootstrap recipe.
+    from _public_https import download_public_https
+
+
+SOURCE_DOWNLOAD_HOSTS = frozenset(
+    {"archive.ubuntu.com", "raw.githubusercontent.com", "snapshot.debian.org"}
+)
+SOURCE_ANNEX = "opt/ncore/base-sources"
+# BuildKit's OCI exporter retains the WORKDIR no-op as a canonical empty tar.
+# Bind both decoded bytes and stored bytes; arbitrary gzip metadata is not empty.
+EMPTY_OCI_DIFF_ID = (
+    "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+)
+EMPTY_OCI_BLOB_SHA256 = (
+    "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+)
+
+
+def digest(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def file_digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def safe_path(name: str) -> str:
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise ValueError(f"unsafe path: {name}")
+    return str(path)
+
+
+def copy_locked_file(root: Path, output: Path, item: dict) -> None:
+    """Copy a reviewed file, not an entire package or a builder directory."""
+    path = safe_path(item["path"])
+    source = root / safe_path(item.get("source_path", path))
+    target = output / path
+    if "content_base64" in item:
+        raw = base64.b64decode(item["content_base64"], validate=True)
+        if digest(raw) != item["sha256"]:
+            raise ValueError(f"retained notice SHA256 changed: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        target.chmod(0o644)
+    elif "link" in item:
+        if not source.is_symlink() or os.readlink(source) != item["link"]:
+            raise ValueError(f"retained link changed: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink() and os.readlink(target) == item["link"]:
+            return
+        target.symlink_to(item["link"])
+    else:
+        if not source.resolve().is_relative_to(root.resolve()):
+            raise ValueError(f"retained file escapes root: {path}")
+        if not source.is_file() or file_digest(source) != item["sha256"]:
+            raise ValueError(f"retained file SHA256 changed: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        target.chmod(item.get("mode", 0o644))
+
+
+def retained_files(lock: dict) -> list[dict]:
+    return [
+        *(f for p in lock["debian_binaries"] for f in p["files"]),
+        *lock["cpython_files"],
+        *lock["notices"],
+    ]
+
+
+def _validate_component_delivery(lock: dict, artifacts: dict) -> None:
+    for component in lock["components"]:
+        delivery = component["delivery"]
+        if not component.get("license_reason"):
+            raise ValueError("missing binary-specific license reasoning")
+        if delivery == "source":
+            if (
+                not component["artifacts"]
+                or not set(component["artifacts"]) <= artifacts.keys()
+                or any(
+                    artifacts[sha].get("delivery", "source") != "source"
+                    for sha in component["artifacts"]
+                )
+            ):
+                raise ValueError("required corresponding source is not delivered")
+        elif delivery != "notice" or component["artifacts"]:
+            raise ValueError("invalid notice-only source boundary")
+
+
+def _validate_metadata_delivery(lock: dict, artifacts: dict) -> None:
+    signed = {}
+    for repo in lock.get("debian_repositories", []):
+        if set(repo["indexes"]) != {"Packages.xz", "Sources.xz"}:
+            raise ValueError("signed metadata requires both Packages.xz and Sources.xz")
+        entries = {"InRelease": repo["inrelease"]}
+        entries.update(
+            (name, entry["artifact"]) for name, entry in repo["indexes"].items()
+        )
+        for name, sha in entries.items():
+            if sha in signed:
+                raise ValueError("duplicate signed metadata identity")
+            signed[sha] = (f"metadata/{safe_path(repo['id'])}/{name}", name)
+    build_only = {
+        sha: item
+        for sha, item in artifacts.items()
+        if item.get("delivery") == "build-only"
+    }
+    if build_only.keys() != signed.keys():
+        raise ValueError("build-only artifacts must exactly match signed metadata")
+    for sha, item in build_only.items():
+        if (item["path"], item["filename"]) != signed[sha] or "transformation" in item:
+            raise ValueError("build-only metadata path or identity changed")
+
+
+def validate_delivery(lock: dict) -> None:
+    """Require delivered source and classify only signed indexes as build-only.
+
+    Args:
+        lock: Source and selected-file lock.
+    Returns:
+        None.
+    Raises:
+        ValueError: Source, transformation or metadata delivery is inconsistent.
+    """
+    if lock.get("schema") != 2:
+        return
+    artifacts = {
+        a.get("transformation", {}).get("input_sha256", a["sha256"]): a
+        for a in lock["artifacts"]
+    }
+    if len(artifacts) != len(lock["artifacts"]):
+        raise ValueError("duplicate source artifact identity")
+    _validate_component_delivery(lock, artifacts)
+    for item in lock["artifacts"]:
+        if item.get("delivery", "source") not in {"source", "build-only"}:
+            raise ValueError("invalid artifact delivery classification")
+        recipe = item.get("transformation")
+        if recipe and (
+            recipe.get("output_sha256") != item["sha256"]
+            or not recipe.get("reason")
+            or not recipe.get("build_proof")
+        ):
+            raise ValueError("source transformation lacks reviewed buildability proof")
+    _validate_metadata_delivery(lock, artifacts)
+
+
+def assemble_package_state(output: Path) -> None:
+    """Initialize a real, empty dpkg database for the selected loose files.
+
+    Copying selected .deb files is not a package installation. In particular,
+    inventing ``install ok installed`` records makes SkyPilot skip required
+    installs and makes APT trust missing dependencies and maintainer scripts.
+    The lock inventories those files; only actual runtime dpkg installations
+    may populate status, info/*.list, conffiles, alternatives and triggers.
+    """
+    for path in (
+        "var/lib/dpkg/info",
+        "var/lib/dpkg/updates",
+        "var/lib/dpkg/triggers",
+        "var/lib/dpkg/alternatives",
+        "var/lib/apt/lists/partial",
+        "var/cache/apt/archives/partial",
+        "var/log/apt",
+        "etc/alternatives",
+        "etc/apt/apt.conf.d",
+        "etc/apt/preferences.d",
+        "etc/apt/sources.list.d",
+        "etc/apt/trusted.gpg.d",
+    ):
+        (output / path).mkdir(parents=True, exist_ok=True)
+    (output / "var/lib/dpkg/status").write_bytes(b"")
+    # SkyPilot installs its required packages explicitly. Avoid bringing back
+    # recommended services, locale packs and CA reconfiguration merely because
+    # these loose bootstrap files have no fabricated installed-package records.
+    (output / "etc/apt/apt.conf.d/90npa-bootstrap").write_text(
+        'APT::Install-Recommends "false";\nAcquire::Languages "none";\n'
+    )
+
+
+def assemble_root(lock: dict, root: Path, output: Path) -> dict:
+    """Construct the only filesystem copied into the scratch publication stage.
+
+    Input must be the digest-pinned build stage, never the operator's machine.
+    Real APT/dpkg bootstrap; no broad /etc, inherited pip, build tree or cache copy.
+    """
+    if output.exists():
+        raise ValueError("public root must not already exist")
+    output.mkdir(parents=True)
+    for item in retained_files(lock):
+        copy_locked_file(root, output, item)
+    for name in ("bin", "sbin", "lib", "lib64"):
+        (output / name).symlink_to("usr/" + name)
+    for path, target in {
+        "usr/bin/sh": "dash",
+        "usr/bin/awk": "mawk",
+        "usr/bin/nc": "nc.openbsd",
+        "usr/bin/which": "which.debianutils",
+    }.items():
+        (output / path).symlink_to(target)
+    # These are generated by the clean builder's package installation/useradd.
+    # SSH host keys, arbitrary config directories and operator files are never copied.
+    for path in (
+        "etc/passwd",
+        "etc/group",
+        "etc/shadow",
+        "etc/gshadow",
+        "etc/nsswitch.conf",
+        "etc/os-release",
+        "etc/ssh/sshd_config",
+        "etc/ssh/sshd_config.d/npa.conf",
+        "etc/sudoers",
+        "etc/sudoers.d/ubuntu",
+        "etc/default/ssh",
+        "etc/ssl/certs/ca-certificates.crt",
+        "etc/pam.d/common-account",
+        "etc/pam.d/common-auth",
+        "etc/pam.d/common-password",
+        "etc/pam.d/common-session",
+        "etc/pam.d/common-session-noninteractive",
+        "etc/apt/sources.list.d/debian.sources",
+        "etc/apt/apt.conf.d/99snapshot",
+    ):
+        source = root / path
+        if path.endswith(("/shadow", "/gshadow")):
+            allowed = {"*", "!", "!!", "!*"}
+            if path.endswith("/gshadow"):
+                allowed.add(
+                    ""
+                )  # No group password is normal; user passwords are locked.
+            if any(
+                line.split(":")[1] not in allowed
+                for line in source.read_text().splitlines()
+            ):
+                raise ValueError(
+                    "builder contains an unlocked or credential-bearing account"
+                )
+        target = output / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    (output / "etc/hosts").write_text(
+        "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n"
+    )
+    # A certificate source corpus is intentional public trust data, never private keys.
+    (output / "etc/localtime").symlink_to("../usr/share/zoneinfo/Etc/UTC")
+    for path in (
+        "dev",
+        "proc",
+        "sys",
+        "run/sshd",
+        "run/lock",
+        "etc/profile.d",
+        "tmp",
+        "var/tmp",
+        "workspace",
+        "home/ubuntu/.cache",
+    ):
+        (output / path).mkdir(parents=True, exist_ok=True)
+    for path in ("tmp", "var/tmp"):
+        (output / path).chmod(0o1777)
+    for path in (
+        "workspace",
+        "home/ubuntu",
+        "home/ubuntu/.cache",
+        "home/ubuntu/.bashrc",
+        "home/ubuntu/.profile",
+    ):
+        os.chown(output / path, 1000, 1000)
+    assemble_package_state(output)
+    (output / "var/run").symlink_to("../run")
+    (output / "var/lock").symlink_to("../run/lock")
+    return {"retained_base_files": len(retained_files(lock))}
+
+
+def transform_archive(source: Path, target: Path, recipe: dict) -> None:
+    """Reproducibly remove ONLY the reviewed source-only paths in a locked recipe.
+
+    This changes delivered bytes; it is not a scanner exclusion. Original input,
+    exact removal list and resulting archive must all match the reviewed lock.
+    The associated build/install proof is required when admitting a recipe.
+    """
+    if file_digest(source) != recipe["input_sha256"]:
+        raise ValueError("transformation input SHA256 mismatch")
+    remove = {safe_path(p) for p in recipe["remove"]}
+    found = set()
+    keep = {safe_path(p) for p in recipe.get("keep", [])}
+    # Preserve the immutable upstream member order. Random seeking in a large
+    # compressed source archive repeatedly decompresses it and is unnecessary.
+    with (
+        tarfile.open(source, "r|*") as original,
+        tarfile.open(
+            target, "w:xz", preset=recipe.get("xz_preset", 6), format=tarfile.PAX_FORMAT
+        ) as result,
+    ):
+        for member in original:
+            if member.name in (".", "./"):
+                continue
+            path = safe_path(member.name)
+            omitted = {p for p in remove if path == p or path.startswith(p + "/")}
+            if omitted and path not in keep:
+                found.update(omitted)
+                continue
+            member.uid = member.gid = member.mtime = 0
+            member.uname = member.gname = ""
+            member.pax_headers = {}
+            stream = original.extractfile(member) if member.isfile() else None
+            if path in recipe.get("nested", {}):
+                with tempfile.TemporaryDirectory(dir=target.parent) as directory:
+                    before, after = (
+                        Path(directory) / "before",
+                        Path(directory) / "after",
+                    )
+                    before.write_bytes(stream.read())
+                    transform_archive(before, after, recipe["nested"][path])
+                    raw = after.read_bytes()
+                member.size = len(raw)
+                stream = io.BytesIO(raw)
+            result.addfile(member, stream)
+    if found != remove:
+        target.unlink()
+        raise ValueError("source transformation removal paths changed")
+    if file_digest(target) != recipe["output_sha256"]:
+        target.unlink()
+        raise ValueError("transformed source SHA256 mismatch")
+
+
+def filtered_patch(raw: bytes, removed: set[str], kept: set[str]) -> bytes:
+    """Drop only patch sections targeting source paths removed by the recipe.
+
+    Original Debian patches remain delivered verbatim. This preparation helper
+    is needed for GCC's optional DejaGNU test-only patch hunks; production hunks
+    are applied normally and any failed hunk is fatal.
+    """
+    result = []
+    for section in re.split(rb"(?m)(?=^--- [^\n]+\n\+\+\+ )", raw):
+        if not section.startswith(b"--- "):
+            continue
+        line = section.splitlines()[1]
+        path = line.split()[1].decode()
+        if path == "/dev/null":
+            path = section.splitlines()[0].split()[1].decode()
+        path = path.split("/", 1)[-1]
+        if path not in kept and any(
+            path == p or path.startswith(p + "/") for p in removed
+        ):
+            continue
+        result.append(section)
+    return b"".join(result)
+
+
+def gcc_distro_defaults(root: Path) -> None:
+    """Run the original Debian header recipe after our checked patch application."""
+    rules = (root / "debian/rules.patch").read_text()
+    start = rules.index("\t: # generate the distro-defaults.h header\n")
+    end = rules.index("\n\tmv pxxx $@", start)
+    recipe = root / "NPA-distro-defaults.mk"
+    recipe.write_text("npa-distro-defaults:\n" + rules[start:end] + "\n")
+    subprocess.run(
+        [
+            "make",
+            "-f",
+            "debian/rules",
+            "-f",
+            recipe.name,
+            "npa-distro-defaults",
+            "distribution=Debian",
+            "derivative=Debian",
+            "distrelease=bookworm",
+        ],
+        cwd=root,
+        check=True,
+    )
+
+
+def prepare_source(lock: dict, annex: Path, component_id: str, output: Path) -> Path:
+    """Unpack delivered source and apply Debian patches without missing test hunks."""
+    validate_delivery(lock)
+    for item in lock["artifacts"]:
+        if item.get("delivery") != "build-only":
+            _verify_artifact(item, artifact_path(item, annex, annex))
+    component = next(c for c in lock["components"] if c["id"] == component_id)
+    if component["delivery"] != "source" or output.exists():
+        raise ValueError("source component and new output directory required")
+    artifacts = {
+        a.get("transformation", {}).get("input_sha256", a["sha256"]): a
+        for a in lock["artifacts"]
+    }
+    inputs = [artifacts[sha] for sha in component["artifacts"]]
+    original = next(a for a in inputs if ".orig.tar." in a["filename"])
+    debian = next(a for a in inputs if ".debian.tar." in a["filename"])
+    output.mkdir(parents=True)
+    with tarfile.open(annex / original["path"]) as archive:
+        archive.extractall(output, filter="data")
+    roots = list(output.iterdir())
+    if len(roots) != 1 or not roots[0].is_dir():
+        raise ValueError("unexpected source archive root")
+    root = roots[0]
+    with tarfile.open(annex / debian["path"]) as archive:
+        archive.extractall(root, filter="data")
+    removed, kept = set(), set()
+    if component["name"] == "gcc-12":
+        subprocess.run(
+            [
+                "make",
+                "-f",
+                "debian/rules",
+                "unpack",
+                "series",
+                "distribution=Debian",
+                "derivative=Debian",
+                "distrelease=bookworm",
+            ],
+            cwd=root,
+            check=True,
+        )
+        recipe = next(iter(original["transformation"]["nested"].values()))
+        removed = {"src/" + p.split("/", 1)[1] for p in recipe["remove"]}
+        kept = {"src/" + p.split("/", 1)[1] for p in recipe.get("keep", [])}
+    patches = root / "debian/patches"
+    receipt = []
+    for line in (patches / "series").read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        name = safe_path(line.split()[0])
+        raw = (patches / name).read_bytes()
+        applied = filtered_patch(raw, removed, kept) if removed else raw
+        if applied:
+            subprocess.run(
+                ["patch", "--batch", "--forward", "-p1"],
+                input=applied,
+                cwd=root,
+                check=True,
+            )
+        receipt.append(
+            {
+                "patch": name,
+                "original_sha256": digest(raw),
+                "applied_sha256": digest(applied),
+            }
+        )
+    if component["name"] == "gcc-12":
+        gcc_distro_defaults(root)
+    (root / "NPA-SOURCE-PREPARATION.json").write_text(
+        json.dumps(
+            {
+                "component": component_id,
+                "delivered_archives": {a["path"]: a["sha256"] for a in inputs},
+                "patches": receipt,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return root
+
+
+def deb822(raw: bytes) -> list[dict]:
+    result = []
+    for paragraph in raw.decode().split("\n\n"):
+        fields = {}
+        key = None
+        for line in paragraph.splitlines():
+            if line.startswith((" ", "\t")) and key:
+                fields[key] += "\n" + line[1:]
+            elif ": " in line:
+                key, value = line.split(": ", 1)
+                fields[key] = value
+            elif line.endswith(":"):
+                key = line[:-1]
+                fields[key] = ""
+        if fields:
+            result.append(fields)
+    return result
+
+
+def source_identity(fields: dict) -> tuple[str, str]:
+    match = re.fullmatch(
+        r"([^ ]+)(?: \(([^)]+)\))?", fields.get("Source", fields["Package"])
+    )
+    if not match:
+        raise ValueError("invalid Debian Source field")
+    return match[1], match[2] or fields["Version"]
+
+
+def debian_packages(raw: bytes) -> list[dict]:
+    result = []
+    for fields in deb822(raw):
+        if fields.get("Status") != "install ok installed":
+            continue
+        source, version = source_identity(fields)
+        result.append(
+            {
+                "name": fields["Package"],
+                "version": fields["Version"],
+                "architecture": fields["Architecture"],
+                "source": source,
+                "source_version": version,
+            }
+        )
+    return result
+
+
+def inventory(archive_path: Path) -> dict:
+    result = {"schema": 1, "archive_sha256": file_digest(archive_path), "layers": []}
+    merged = {}
+    with tarfile.open(archive_path) as outer:
+        manifests = json.load(outer.extractfile("manifest.json"))
+        if len(manifests) != 1:
+            raise ValueError("save exactly one image")
+        manifest = manifests[0]
+        config_raw = outer.extractfile(safe_path(manifest["Config"])).read()
+        config = json.loads(config_raw)
+        result["config_sha256"] = digest(config_raw)
+        diff_ids = config["rootfs"]["diff_ids"]
+        if len(diff_ids) != len(manifest["Layers"]):
+            raise ValueError("layer count mismatch")
+        for ordinal, name in enumerate(manifest["Layers"]):
+            name = safe_path(name)
+            with outer.extractfile(name) as blob:
+                compressed_sha = hashlib.file_digest(blob, "sha256").hexdigest()
+            if (
+                name.startswith("blobs/sha256/")
+                and name.split("/")[-1] != compressed_sha
+            ):
+                raise ValueError("layer blob SHA256 mismatch")
+            with outer.extractfile(name) as blob:
+                magic = blob.read(2)
+                blob.seek(0)
+                stream = gzip.GzipFile(fileobj=blob) if magic == b"\x1f\x8b" else blob
+                diff_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            if diff_ids[ordinal] != "sha256:" + diff_sha:
+                raise ValueError("layer diff_id mismatch")
+            row = {
+                "ordinal": ordinal,
+                "blob_sha256": compressed_sha,
+                "diff_id": diff_ids[ordinal],
+                "files": {},
+                "debian_packages": [],
+                "python_packages": [],
+            }
+            removals = []
+            with (
+                outer.extractfile(name) as blob,
+                tarfile.open(fileobj=blob, mode="r|*") as layer,
+            ):
+                for member in layer:
+                    if member.name in (".", "./"):
+                        continue
+                    path = safe_path(member.name)
+                    if path in row["files"]:
+                        raise ValueError(f"duplicate layer path: {path}")
+                    basename = PurePosixPath(path).name
+                    if basename.startswith(".wh."):
+                        parent = str(PurePosixPath(path).parent)
+                        prefix = "" if parent == "." else parent + "/"
+                        removals.append((prefix, basename))
+                    item = {
+                        "type": member.type.decode("ascii"),
+                        "size": member.size,
+                        "mode": member.mode,
+                    }
+                    if member.issym() or member.islnk():
+                        item["link"] = member.linkname
+                    if member.isfile():
+                        with layer.extractfile(member) as stream:
+                            head = stream.read(4)
+                            hasher = hashlib.sha256(head)
+                            # Only package metadata is retained as text. Other bytes are hashed.
+                            retain = path == "var/lib/dpkg/status" or path.endswith(
+                                ".dist-info/METADATA"
+                            )
+                            body = bytearray(head) if retain else None
+                            while chunk := stream.read(1024 * 1024):
+                                hasher.update(chunk)
+                                if body is not None:
+                                    body.extend(chunk)
+                        item.update(sha256=hasher.hexdigest(), elf=head == b"\x7fELF")
+                        if path == "var/lib/dpkg/status":
+                            row["debian_packages"] = debian_packages(bytes(body))
+                        elif path.endswith(".dist-info/METADATA"):
+                            meta = BytesParser().parsebytes(bytes(body))
+                            row["python_packages"].append(
+                                {
+                                    "name": meta["Name"],
+                                    "version": meta["Version"],
+                                    "metadata_path": path,
+                                    "metadata_sha256": item["sha256"],
+                                }
+                            )
+                    row["files"][path] = item
+            # Whiteouts affect lower layers, including opaque directories, independent of tar order.
+            for prefix, basename in removals:
+                target = prefix + basename[4:]
+                for path in list(merged):
+                    if (
+                        (basename == ".wh..wh..opq" and path.startswith(prefix))
+                        or path == target
+                        or path.startswith(target + "/")
+                    ):
+                        del merged[path]
+            lower_directories = {
+                str(parent) for path in merged for parent in PurePosixPath(path).parents
+            }
+            for path, item in row["files"].items():
+                if not PurePosixPath(path).name.startswith(".wh."):
+                    if item["type"] != "5" and path in lower_directories:
+                        for descendant in [
+                            p for p in merged if p.startswith(path + "/")
+                        ]:
+                            del merged[descendant]
+                    merged[path] = {**item, "layer": ordinal}
+            result["layers"].append(row)
+    result["final_files"] = merged
+    result["counts"] = {
+        "layers": len(result["layers"]),
+        "final_entries": len(merged),
+        "layer_entries": sum(len(row["files"]) for row in result["layers"]),
+        "layer_regular_bytes": sum(
+            item["size"]
+            for row in result["layers"]
+            for item in row["files"].values()
+            if "sha256" in item
+        ),
+    }
+    return result
+
+
+def _metadata_directory(output: Path, native: Path, metadata: Path | None) -> Path:
+    if metadata is None:
+        raise ValueError("build-only artifacts require an explicit metadata directory")
+    resolved = metadata.resolve()
+    for delivered in (output.resolve(), native.resolve()):
+        if resolved.is_relative_to(delivered) or delivered.is_relative_to(resolved):
+            raise ValueError(
+                "metadata directory must be separate from delivered source"
+            )
+    return metadata
+
+
+def artifact_path(
+    item: dict, output: Path, native: Path, metadata: Path | None = None
+) -> Path:
+    """Locate a locked artifact inside its delivery directory.
+
+    Args:
+        item: Locked artifact identity and delivery classification.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        metadata: Separate build-only directory; required for signed indexes.
+    Returns:
+        Artifact path inside the appropriate directory.
+    Raises:
+        ValueError: The filename or metadata directory is unsafe.
+    """
+    name = safe_path(item["filename"])
+    if "/" in name:
+        raise ValueError("unsafe artifact filename")
+    if item.get("delivery") == "build-only":
+        directory = _metadata_directory(output, native, metadata)
+        target = directory / safe_path(item["path"])
+        if not target.resolve().is_relative_to(directory.resolve()):
+            raise ValueError("build-only metadata escapes its directory")
+        return target
+    return (
+        native / name
+        if item.get("delivery") == "native"
+        else output / safe_path(item["path"])
+    )
+
+
+def _verify_artifact(item: dict, target: Path) -> int:
+    if not target.is_file() or file_digest(target) != item["sha256"]:
+        raise ValueError(f"SHA256 mismatch or missing artifact: {item['path']}")
+    return target.stat().st_size
+
+
+def verify_artifacts(
+    lock: dict, output: Path, native: Path, metadata: Path | None = None
+) -> dict:
+    """Verify every locked source and build-only input by exact hash.
+
+    Args:
+        lock: Source and metadata lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        metadata: Separate signed repository input directory.
+    Returns:
+        Verified artifact and byte counts.
+    Raises:
+        ValueError: Delivery classification, directory or artifact bytes changed.
+    """
+    validate_delivery(lock)
+    size = 0
+    for item in lock["artifacts"]:
+        target = artifact_path(item, output, native, metadata)
+        size += _verify_artifact(item, target)
+    return {"artifacts": len(lock["artifacts"]), "bytes": size}
+
+
+def assemble(
+    lock: dict,
+    output: Path,
+    native: Path,
+    caches: list[Path],
+    *,
+    offline: bool = False,
+    metadata: Path | None = None,
+) -> dict:
+    """Assemble source and authenticated build inputs in separate directories.
+
+    Args:
+        lock: Source and metadata lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        caches: Optional directories of cached locked inputs.
+        offline: Refuse network access when a required input is absent.
+        metadata: Separate build-only directory for signed repository inputs.
+    Returns:
+        Verified artifact and byte counts.
+    Raises:
+        ValueError: A required input, hash or delivery boundary is invalid.
+    """
+    validate_delivery(lock)
+    output.mkdir(parents=True, exist_ok=True)
+    for item in lock["artifacts"]:
+        target = artifact_path(item, output, native, metadata)
+        _assemble_artifact(item, target, caches, offline)
+    return verify_artifacts(lock, output, native, metadata)
+
+
+def _assemble_artifact(
+    item: dict, target: Path, caches: list[Path], offline: bool
+) -> None:
+    if item.get("delivery") == "native" or target.exists():
+        _verify_artifact(item, target)
+        return
+    cached = next(
+        (
+            p
+            for root in caches
+            for p in (root / item["path"], root / item["filename"])
+            if p.is_file()
+        ),
+        None,
+    )
+    if cached is None and offline:
+        raise ValueError(f"offline source missing: {item['path']}")
+    _stage_artifact(item, target, cached)
+
+
+def _stage_artifact(item: dict, target: Path, cached: Path | None) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".partial")
+    try:
+        if cached:
+            shutil.copyfile(cached, temporary)
+        else:
+            with temporary.open("wb") as destination:
+                download_public_https(
+                    item["url"], destination, allowed_hosts=SOURCE_DOWNLOAD_HOSTS
+                )
+        expected = item.get("transformation", {}).get("input_sha256", item["sha256"])
+        actual = file_digest(temporary)
+        if actual not in (expected, item["sha256"]):
+            raise ValueError(f"SHA256 mismatch: {item['path']}")
+        if "transformation" in item and actual != item["sha256"]:
+            transformed = temporary.with_suffix(".transformed")
+            try:
+                transform_archive(temporary, transformed, item["transformation"])
+                transformed.replace(temporary)
+            finally:
+                transformed.unlink(missing_ok=True)
+        temporary.replace(target)
+        target.chmod(0o644)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def verify_debian_metadata(
+    lock: dict, output: Path, native: Path, keyring: Path, metadata: Path | None = None
+) -> dict:
+    """Reauthenticate exact binary, source and archive mappings offline.
+
+    Args:
+        lock: Source and signed repository lock.
+        output: Delivered source annex.
+        native: Legacy native source directory.
+        keyring: Hash-locked Debian archive verification keyring.
+        metadata: Separate build-only signed repository input directory.
+    Returns:
+        Authenticated binary and source version counts.
+    Raises:
+        ValueError: An artifact, signed index or binary/source mapping changed.
+        OSError: A required keyring or artifact cannot be read.
+        subprocess.CalledProcessError: Signature verification failed.
+    """
+    if file_digest(keyring) != lock["debian_keyring_sha256"]:
+        raise ValueError("Debian archive keyring SHA256 mismatch")
+    verify_artifacts(lock, output, native, metadata)
+    artifacts = {
+        item.get("transformation", {}).get("input_sha256", item["sha256"]): item
+        for item in lock["artifacts"]
+    }
+    binaries = {
+        (p["name"], p["version"], p["architecture"]): p for p in lock["debian_binaries"]
+    }
+    components = {
+        c["id"]: c
+        for c in lock["components"]
+        if c["kind"] == "debian-source" and c.get("delivery", "source") == "source"
+    }
+    seen_binary, seen_source = set(), set()
+    for repo in lock["debian_repositories"]:
+        release = artifact_path(artifacts[repo["inrelease"]], output, native, metadata)
+        checked = subprocess.run(
+            [
+                "gpgv",
+                "--keyring",
+                str(keyring.resolve()),
+                "--output",
+                "-",
+                str(release),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        fields = deb822(checked.stdout)[0]
+        signed = {
+            line.split()[2]: (line.split()[0], int(line.split()[1]))
+            for line in fields["SHA256"].splitlines()
+            if line.strip()
+        }
+        for name, entry in repo["indexes"].items():
+            path = artifact_path(artifacts[entry["artifact"]], output, native, metadata)
+            if signed[entry["release_path"]] != (
+                file_digest(path),
+                path.stat().st_size,
+            ):
+                raise ValueError("signed index SHA256/size mismatch")
+            for record in deb822(lzma.decompress(path.read_bytes())):
+                if name == "Packages.xz":
+                    identity = (
+                        record["Package"],
+                        record["Version"],
+                        record["Architecture"],
+                    )
+                    expected = binaries.get(identity)
+                    if (
+                        expected is None
+                        or expected["package_index"] != entry["artifact"]
+                    ):
+                        continue
+                    source, version = source_identity(record)
+                    if (
+                        expected["sha256"] != record["SHA256"]
+                        or expected["source"] != f"debian:{source}@{version}"
+                        or not expected["url"].endswith("/" + record["Filename"])
+                    ):
+                        raise ValueError(
+                            f"authenticated binary/source mismatch: {identity}"
+                        )
+                    seen_binary.add(identity)
+                elif name == "Sources.xz":
+                    identity = f"debian:{record['Package']}@{record['Version']}"
+                    expected = components.get(identity)
+                    if (
+                        expected is None
+                        or expected["source_index"] != entry["artifact"]
+                    ):
+                        continue
+                    source_files = {
+                        line.split()[0]: line.split()[2]
+                        for line in record["Checksums-Sha256"].splitlines()
+                        if line.strip()
+                    }
+                    if set(source_files) != set(expected["artifacts"]):
+                        raise ValueError(f"incomplete authenticated source: {identity}")
+                    for sha, filename in source_files.items():
+                        if artifacts[sha]["filename"] != filename:
+                            raise ValueError(f"source filename mismatch: {identity}")
+                    seen_source.add(identity)
+                else:
+                    raise ValueError(f"unexpected index kind: {name}")
+    if seen_binary != set(binaries) or seen_source != set(components):
+        raise ValueError("unverified Debian binary/source mappings")
+    return {
+        "authenticated_binary_versions": len(seen_binary),
+        "authenticated_source_versions": len(seen_source),
+    }
+
+
+def _reject_published_metadata(lock: dict, inv: dict) -> None:
+    metadata = [a for a in lock["artifacts"] if a.get("delivery") == "build-only"]
+    hashes = {a["sha256"] for a in metadata}
+    paths = {safe_path(a["path"]) for a in metadata}
+    directories = (f"{SOURCE_ANNEX}/metadata", "build/base-metadata")
+    for row in inv["layers"]:
+        for path, item in row["files"].items():
+            forbidden_path = (
+                path in paths
+                or any(path.endswith("/" + name) for name in paths)
+                or any(
+                    path == name or path.startswith(name + "/") for name in directories
+                )
+            )
+            if forbidden_path or item.get("sha256") in hashes:
+                raise ValueError(f"published build-only metadata: {path}")
+
+
+def _verify_source_delivery(lock: dict, files: dict) -> None:
+    for item in lock["artifacts"]:
+        if item.get("delivery") == "build-only":
+            continue
+        path = f"{SOURCE_ANNEX}/{safe_path(item['path'])}"
+        if files.get(path, {}).get("sha256") != item["sha256"]:
+            raise ValueError(f"missing or changed delivered source: {path}")
+
+
+def _verify_assembled_layer_boundary(layers: list[dict]) -> None:
+    if len(layers) == 1:
+        return
+    if len(layers) == 2:
+        tail = layers[1]
+        if (
+            tail["diff_id"] == EMPTY_OCI_DIFF_ID
+            and tail["blob_sha256"]
+            in {EMPTY_OCI_BLOB_SHA256, EMPTY_OCI_DIFF_ID.removeprefix("sha256:")}
+            and tail["files"] == {}
+            and tail["debian_packages"] == []
+            and tail["python_packages"] == []
+        ):
+            return
+    raise ValueError("scratch publication must contain exactly one assembled layer")
+
+
+def verify_coverage(lock: dict, inv: dict, native: Path) -> dict:
+    """Fail on unknown package identities or ELF bytes, including ancestors."""
+    validate_delivery(lock)
+    if lock.get("schema") == 2:
+        _reject_published_metadata(lock, inv)
+    if [row["diff_id"] for row in inv["layers"][: len(lock["base_diff_ids"])]] != lock[
+        "base_diff_ids"
+    ]:
+        raise ValueError("digest-pinned base layers changed")
+    if lock.get("schema") == 2:
+        _verify_assembled_layer_boundary(inv["layers"])
+    debian = {
+        (p["name"], p["version"], p["architecture"]): p for p in lock["debian_binaries"]
+    }
+    python = {
+        (p["name"].lower().replace("_", "-"), p["version"])
+        for p in lock["python_distributions"]
+    }
+    known = {
+        (item["path"], item["sha256"])
+        for package in lock["debian_binaries"]
+        for item in package["elf_files"]
+    }
+    known.update((item["path"], item["sha256"]) for item in lock["cpython_elf_files"])
+    wheels = {
+        (item["path"], item["sha256"])
+        for wheel in lock["python_wheels"]
+        for item in wheel["elf_files"]
+    }
+    count = 0
+    for row in inv["layers"]:
+        for package in row["debian_packages"]:
+            identity = (package["name"], package["version"], package["architecture"])
+            expected = debian.get(identity)
+            if (
+                expected is None
+                or expected["source"]
+                != f"debian:{package['source']}@{package['source_version']}"
+            ):
+                raise ValueError(f"uncovered Debian source identity: {identity}")
+        for package in row["python_packages"]:
+            identity = (package["name"].lower().replace("_", "-"), package["version"])
+            if identity not in python:
+                raise ValueError(f"uncovered Python source identity: {identity}")
+        for path, item in row["files"].items():
+            if not item.get("elf"):
+                continue
+            if (path, item["sha256"]) not in known:
+                suffix = path.split("/site-packages/", 1)
+                if len(suffix) != 2 or (suffix[1], item["sha256"]) not in wheels:
+                    raise ValueError(f"unmapped ELF: {path}")
+            count += 1
+    if lock.get("schema") == 2:
+        # Package installation occurs in the worker's writable runtime layer.
+        # The published file selection must not claim configured packages or
+        # inherit stale builder lists, scripts, alternatives or trigger state.
+        if inv["final_files"].get("var/lib/dpkg/status", {}).get("sha256") != digest(
+            b""
+        ):
+            raise ValueError("selected loose files require an empty dpkg status")
+        if any(
+            path.startswith(
+                (
+                    "var/lib/dpkg/info/",
+                    "var/lib/dpkg/alternatives/",
+                    "var/lib/dpkg/triggers/",
+                    "var/lib/dpkg/updates/",
+                )
+            )
+            and ("sha256" in item or "link" in item)
+            for path, item in inv["final_files"].items()
+        ):
+            raise ValueError(
+                "selected loose files cannot inherit dpkg installation metadata"
+            )
+        for item in retained_files(lock):
+            actual = inv["final_files"].get(item["path"], {})
+            kind = "link" if "link" in item else "sha256"
+            if actual.get(kind) != item[kind]:
+                raise ValueError(f"missing or changed retained {kind}: {item['path']}")
+        _verify_source_delivery(lock, inv["final_files"])
+    return {"elf_occurrences": count, "inventoried_layers": len(inv["layers"])}
+
+
+def verify_root(lock: dict, root: Path) -> dict:
+    """The same retained-byte check before the single scratch COPY commits."""
+    files = {}
+    python_packages = []
+    for path in root.rglob("*"):
+        name = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            files[name] = {"link": os.readlink(path)}
+        elif path.is_file():
+            with path.open("rb") as stream:
+                elf = stream.read(4) == b"\x7fELF"
+            files[name] = {"sha256": file_digest(path), "elf": elf}
+            if name.endswith(".dist-info/METADATA"):
+                meta = BytesParser().parsebytes(path.read_bytes())
+                python_packages.append(
+                    {"name": meta["Name"], "version": meta["Version"]}
+                )
+    row = {
+        "diff_id": "",
+        "files": files,
+        "debian_packages": debian_packages((root / "var/lib/dpkg/status").read_bytes()),
+        "python_packages": python_packages,
+    }
+    return verify_coverage(lock, {"layers": [row], "final_files": files}, root)
+
+
+def verify_preferred_source(
+    lock: dict, files: dict, output: Path, native: Path
+) -> dict:
+    """Compare installed copyleft source to the complete accompanying sdists.
+
+    Wheels can normalize CRLF to LF. No other source transformation is accepted.
+    Binary extensions are covered separately by wheel hashes and their build source.
+    """
+    artifacts = {item["sha256"]: item for item in lock["artifacts"]}
+    hashes = {}
+    count = 0
+    for proof in lock["preferred_source"]:
+        sha = proof["artifact"]
+        if sha not in hashes:
+            hashes[sha] = set()
+            with tarfile.open(artifact_path(artifacts[sha], output, native)) as archive:
+                for member in archive:
+                    if member.isfile() and member.name.endswith(
+                        (
+                            ".py",
+                            ".pyx",
+                            ".pxd",
+                            ".c",
+                            ".cpp",
+                            ".h",
+                            ".hpp",
+                            ".sh",
+                            ".pem",
+                        )
+                    ):
+                        raw = archive.extractfile(member).read()
+                        hashes[sha].update(
+                            (digest(raw), digest(raw.replace(b"\r\n", b"\n")))
+                        )
+        found = 0
+        for path, item in files.items():
+            if path.startswith(proof["prefix"]) and path.endswith(
+                (".py", ".pyx", ".pxd", ".c", ".cpp", ".h", ".hpp", ".sh", ".pem")
+            ):
+                if item.get("sha256") not in hashes[sha]:
+                    raise ValueError(f"unmatched preferred source: {path}")
+                found += 1
+        if not found:
+            raise ValueError(f"missing preferred source: {proof['prefix']}")
+        count += found
+    return {"preferred_source_files": count}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    inv = commands.add_parser("inventory")
+    inv.add_argument("--image-archive", type=Path, required=True)
+    inv.add_argument("--output", type=Path, required=True)
+    root = commands.add_parser("assemble-root")
+    root.add_argument("--lock", type=Path, required=True)
+    root.add_argument("--root", type=Path, required=True)
+    root.add_argument("--output", type=Path, required=True)
+    prepare = commands.add_parser("prepare-source")
+    prepare.add_argument("--lock", type=Path, required=True)
+    prepare.add_argument("--annex", type=Path, required=True)
+    prepare.add_argument("--component", required=True)
+    prepare.add_argument("--output", type=Path, required=True)
+    for name in ("assemble", "verify"):
+        child = commands.add_parser(name)
+        child.add_argument("--lock", type=Path, required=True)
+        child.add_argument("--annex", type=Path, required=True)
+        child.add_argument("--native", type=Path, required=True)
+        child.add_argument(
+            "--metadata",
+            type=Path,
+            required=True,
+            help="Build-only signed repository inputs, separate from the delivered annex",
+        )
+        if name == "assemble":
+            child.add_argument("--cache", type=Path, action="append", default=[])
+            child.add_argument("--offline", action="store_true")
+        else:
+            child.add_argument(
+                "--keyring",
+                type=Path,
+                default=Path("/usr/share/keyrings/debian-archive-keyring.gpg"),
+            )
+            child.add_argument("--inventory", type=Path)
+            child.add_argument("--root", type=Path)
+    args = parser.parse_args()
+    if args.command == "inventory":
+        result = inventory(args.image_archive)
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+        print(json.dumps(result["counts"], sort_keys=True))
+    else:
+        lock = json.loads(args.lock.read_text())
+        if args.command == "prepare-source":
+            result = {
+                "prepared_source": str(
+                    prepare_source(lock, args.annex, args.component, args.output)
+                )
+            }
+        elif args.command == "assemble-root":
+            result = assemble_root(lock, args.root, args.output)
+        elif args.command == "assemble":
+            result = assemble(
+                lock,
+                args.annex,
+                args.native,
+                args.cache,
+                offline=args.offline,
+                metadata=args.metadata,
+            )
+        else:
+            result = verify_artifacts(lock, args.annex, args.native, args.metadata)
+            result.update(
+                verify_debian_metadata(
+                    lock, args.annex, args.native, args.keyring, args.metadata
+                )
+            )
+            if args.inventory:
+                inv = json.loads(args.inventory.read_text())
+                result.update(verify_coverage(lock, inv, args.native))
+                result.update(
+                    verify_preferred_source(
+                        lock, inv["final_files"], args.annex, args.native
+                    )
+                )
+            if args.root:
+                if lock.get("schema") == 2:
+                    result.update(verify_root(lock, args.root))
+                    print(json.dumps(result, sort_keys=True))
+                    return
+                files = {}
+                for proof in lock["preferred_source"]:
+                    for path in (args.root / safe_path(proof["prefix"])).rglob("*"):
+                        if path.is_file():
+                            files[path.relative_to(args.root).as_posix()] = {
+                                "sha256": file_digest(path)
+                            }
+                result.update(
+                    verify_preferred_source(lock, files, args.annex, args.native)
+                )
+        print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
