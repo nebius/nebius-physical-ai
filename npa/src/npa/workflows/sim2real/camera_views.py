@@ -78,17 +78,18 @@ def _camera_quaternion(
 
 
 CAMERA_VIEW_SPECS = {
-    # Existing proven oblique workspace view, retained as the compatibility stream.
+    # Stage 8 sees only primary frames. View across the table so the arm's base
+    # does not hide the manipulation object and end effector behind its links.
     "primary": CameraViewSpec(
         "primary",
-        (-2.0, 0.0, 1.0),
-        _camera_quaternion(yaw_degrees=0.0, pitch_degrees=12.0),
-    ),
-    # Orthogonal table-side view, looking from -Y toward the workspace origin.
-    "side": CameraViewSpec(
-        "side",
         (0.0, -2.0, 1.0),
         _camera_quaternion(yaw_degrees=90.0, pitch_degrees=12.0),
+    ),
+    # Retain the orthogonal rear view as context alongside the primary stream.
+    "side": CameraViewSpec(
+        "side",
+        (-2.0, 0.0, 1.0),
+        _camera_quaternion(yaw_degrees=0.0, pitch_degrees=12.0),
     ),
     # Top-down view. A +90 degree pitch turns the +X optical axis toward -Z.
     "overhead": CameraViewSpec(

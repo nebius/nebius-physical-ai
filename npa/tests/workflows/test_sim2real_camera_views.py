@@ -58,8 +58,8 @@ def test_camera_rotation_preserves_world_optical_axis(version: str, name: str) -
         w, x, y, z = converted
     forward = (1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y))
     expected = {
-        "primary": (math.cos(math.radians(12)), 0, -math.sin(math.radians(12))),
-        "side": (0, math.cos(math.radians(12)), -math.sin(math.radians(12))),
+        "primary": (0, math.cos(math.radians(12)), -math.sin(math.radians(12))),
+        "side": (math.cos(math.radians(12)), 0, -math.sin(math.radians(12))),
         "overhead": (0, 0, -1),
     }
     assert forward == pytest.approx(expected[name], abs=1e-12)

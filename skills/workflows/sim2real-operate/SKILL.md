@@ -23,6 +23,12 @@ with an actionable migration to this canonical spec.
    source SHA; never use source overlays or best-effort bootstrap.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
+   Inspect the primary frames selected for hosted evaluation for object and
+   end-effector visibility, including intermediate action times. Stage 8 sees
+   only primary images; clear secondary views and valid temporal bindings cannot
+   make an occluded primary image useful for task-specific visual credit.
+   Rebuild and regenerate rollouts when this visibility check fails; never
+   relabel an existing view or rewrite its pose metadata in place.
    Run the selected Isaac image's `isaac-bootstrap status` against the cache
    PVC and require `ready=yes` for its reported `expected_tree` before using
    read-only/offline mode. The cache stamp includes the bootstrap script, so

@@ -123,6 +123,11 @@ score without being assigned to the final action. Stage 9 validates the bindings
 again before training. Old or misassociated evaluator outputs require a fresh
 run and must not be relabeled in place.
 
+Temporal support establishes that an action has an exactly timed selected
+primary image; it does not establish that the object or contact is visible.
+Inspect the selected primary frames before hosted evaluation. Secondary camera
+images remain review context and are not inputs to this single-view evaluator.
+
 Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 
 ### Outer loop & finalize (Stages 10–14)
