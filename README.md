@@ -91,6 +91,13 @@ Foxglove viewer. This diagram describes workflow execution; the
 [Workbench Ray guide](docs/workbench/ray.md) routes direct native Jobs/Core,
 Train, Serve, and KubeRay use to the supported paths.
 
+The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
+manual GitHub workflow, a dedicated VM with public SSH, pinned host keys, and
+isolated test execution. The workflow connects directly from GitHub without a
+VPN or an identity-federation service. The guide also covers selecting an
+external public address pool and updating trusted SSH settings after an address
+change.
+
 Python and HTTP coverage varies by tool. The
 [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) explains
 typed clients, callback wrappers, and their return values.
