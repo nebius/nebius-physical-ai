@@ -6,6 +6,10 @@ project setup, new or existing Kubernetes clusters, credential-file formats,
 Token Factory key creation, Python and CLI installation checks, submission, and
 artifact inspection.
 Use this page for the workflow's input, generation, and acceptance contracts.
+For the configuration keys and timing limitations, see the setup guide's
+[generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
+For rejected runs, see its
+[quality-rejection diagnostics](../../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run).
 
 `workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
@@ -39,9 +43,11 @@ using the episode metadata timestamps; per-episode v2 video layouts are also
 supported.
 
 The committed `example-bucket` and run-scoped fixture path are placeholders.
-They fail closed unless an operator stages input or the live harness seeds its
-repository-owned synthetic MP4. No customer dataset, episode, camera, bucket, or
-infrastructure identifier is embedded.
+The generic workflow submit command stages a verified, pinned starter video
+when no input is supplied; use `--input-video` or `--input-uri` for your own
+source as shown in the setup guide. Direct stage execution still requires a
+staged input. The starter is not a known passing quality fixture. No customer
+dataset, episode, camera, bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
