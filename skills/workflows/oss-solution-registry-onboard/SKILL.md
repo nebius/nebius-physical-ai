@@ -99,6 +99,7 @@ Read upstream README/docs/examples. Produce a capability table with columns:
 
 Use the project's own vocabulary. Examples of good ids:
 
+- LIBERO: `libero_spatial_bc_rnn_train_reload_heldout`
 - ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
 - MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
 - RoboCasa: `kitchen_task_registration`, `download_kitchen_assets_lw`
@@ -193,6 +194,32 @@ Specs: `workflows/testing/byof-<solution>.yaml`.
 Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
+
+### LIBERO (`byof-libero.yaml`)
+
+Pinned: `Lifelong-Robot-Learning/LIBERO`
+`8f1084e3132a39270c3a13ebe37270a43ece2a01`.
+
+Hard-gate capability: `libero_spatial_bc_rnn_train_reload_heldout`.
+
+The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
+LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL
+and initial-state hashes, split whole trajectories into disjoint train and
+held-out partitions, execute more than zero upstream `Sequential.observe`
+optimizer steps with `BCRNNPolicy`, save and strictly reload an upstream
+checkpoint, and report finite held-out loss plus finite reloaded actions. It
+must run headlessly on exactly one STRICT-bound B200 (`sm_100`) and record the
+Pod-observed immutable private-image digest. Imports, BDDL parsing, dataset
+inventory, or zero-step training are not acceptance evidence.
+
+The source is MIT and the upstream LIBERO publisher declares its datasets CC BY
+4.0. Preserve the publisher's license when a mirror card conflicts. Keep the
+demonstration in a run-scoped runtime cache outside `$NPA_SMOKE_OUTPUT_DIR` and
+never bake it. The selected task names Google Scanned Objects and a HOPE
+distractor; the headless qualification deletes the entire unused render-asset
+tree during the private build while retaining the hash-bound MIT task
+definitions. Do not publish a LIBERO image. Rendered closed-loop sweeps, all 130
+tasks, lifelong-algorithm comparison, and physical-robot use remain deferred.
 
 ### ManiSkill (`byof-maniskill.yaml`)
 

@@ -76,6 +76,16 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
