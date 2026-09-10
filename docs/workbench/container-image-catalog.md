@@ -282,6 +282,13 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **LIBERO** remains a private BYOF qualification candidate, not an NPA image.
+  The operator builds the exact pinned MIT source on the digest-pinned NVIDIA
+  CUDA base into the task-owned private registry. The build deletes LIBERO's
+  unused render-asset tree, and the exact CC BY 4.0 demonstration is
+  hash-verified into a run-scoped cache only at runtime. No public image name,
+  tag, or digest is claimed. See the
+  [LIBERO qualification contract](byof-libero.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

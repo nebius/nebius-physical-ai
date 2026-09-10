@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import subprocess
@@ -1176,6 +1177,9 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "sha256sum" in text
     assert "npa_build_metadata.json" in text
     assert "npa_source_metadata.json" in text
+    assert "BYOF_SOURCE_PRUNE_PATH" in text
+    assert 'observed_commit="$(git -C /opt/byof rev-parse HEAD)"' in text
+    assert 'rm -rf -- "/opt/byof/${BYOF_SOURCE_PRUNE_PATH}" /opt/byof/.git' in text
     assert "printf" in text
     assert "/opt/byof" in text
     assert "USER ubuntu" in text
@@ -1193,6 +1197,55 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["/absolute", "../escape", "assets/../escape", ".git/objects", "with space"],
+)
+def test_source_prune_path_rejects_unsafe_values(value: str) -> None:
+    module = _load_module()
+
+    with pytest.raises(argparse.ArgumentTypeError, match="safe relative repository path"):
+        module._source_prune_path(value)
+
+
+def test_source_prune_path_is_passed_to_the_clone_layer(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    build_args: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/example/project",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["docker", "build"]:
+            build_args.extend(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--repo-url",
+            "https://github.com/example/demo.git",
+            "--repo-ref",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--source-prune-path",
+            "assets/render-only",
+            "--skip-push",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 0
+    assert "BYOF_SOURCE_PRUNE_PATH=assets/render-only" in build_args
+    assert json.loads(capsys.readouterr().out)["source_prune_path"] == (
+        "assets/render-only"
+    )
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

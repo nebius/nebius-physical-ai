@@ -154,6 +154,12 @@ Container layout: source repo cloned to `/opt/byof` + `npa_source_metadata.json`
 Public metadata retains the source URL/ref. Private metadata contains only
 SHA-256 identities and private-source markers; image labels use placeholders.
 
+When one reviewed source subtree must not enter even a private image, pass its
+safe repository-relative path with `--source-prune-path`. The clone layer
+records the observed public commit, removes that subtree and `.git`, and fails
+closed if the path is missing. A later `rm` in `--build-command` is not an
+equivalent boundary because earlier image layers retain deleted bytes.
+
 ### LeRobot-dependent solutions
 
 If the OSS repo installs or imports Hugging Face LeRobot, pin a workbench-

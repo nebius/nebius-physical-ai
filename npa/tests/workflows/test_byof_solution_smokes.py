@@ -34,6 +34,16 @@ SOLUTION_SPECS = sorted(
 # Keep in sync with skills/workflows/oss-solution-registry-onboard/SKILL.md
 # and docs/workbench/oss-solution-catalog.md.
 SOLUTION_CAPABILITY_CONTRACTS = {
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",

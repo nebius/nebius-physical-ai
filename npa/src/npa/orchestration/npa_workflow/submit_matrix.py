@@ -898,6 +898,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "byof-libero.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "the dedicated one-B200 LIBERO live evidence gate owns the immutable "
+            "private-image qualification"
+        ),
+        notes=(
+            "Official LIBERO-Spatial BC-RNN train/reload/heldout qualification; "
+            "covered by test_byof_onboarding_live_e2e.py."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,

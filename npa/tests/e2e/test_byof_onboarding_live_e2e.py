@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -532,3 +534,132 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_LIBERO_LIVE_B200") != "1",
+    reason="Set NPA_BYOF_LIBERO_LIVE_B200=1 to verify an operator-selected one-B200 qualification report.",
+)
+def test_libero_b200_qualification_report() -> None:
+    """Verify the downloaded, immutable-image LIBERO qualification evidence."""
+
+    result_path = os.environ.get("NPA_BYOF_LIBERO_RESULT", "").strip()
+    assert result_path, "NPA_BYOF_LIBERO_RESULT must select the downloaded libero-smoke.json"
+    report = json.loads(Path(result_path).read_text(encoding="utf-8"))
+
+    assert report["schema"] == "npa.workbench.libero.bc-smoke.v1"
+    assert report["status"] == "passed"
+    assert report["exit_status"] == 0
+    assert report["solution"] == "libero"
+    assert report["capability"] == "libero_spatial_bc_rnn_train_reload_heldout"
+    assert set(report["capabilities_exercised"]) == {
+        "libero_official_demo_sha256",
+        "libero_trajectory_disjoint_heldout_split",
+        "libero_spatial_bc_rnn_train_reload_heldout",
+    }
+
+    source = report["source"]
+    assert source["repository"] == "https://github.com/Lifelong-Robot-Learning/LIBERO"
+    assert source["revision"] == "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+    assert source["observed_revision"] == source["revision"]
+    assert source["license"] == "MIT"
+
+    dataset = report["dataset"]
+    assert dataset["repository"] == "yifengzhu-hf/LIBERO-datasets"
+    assert dataset["revision"] == "f13aa24a3da8c43c7225569f28c562979fa0e35a"
+    assert dataset["suite"] == "libero_spatial"
+    assert dataset["task"] == (
+        "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate"
+    )
+    assert dataset["license"] == "CC-BY-4.0"
+    assert dataset["observed_sha256"] == (
+        "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
+    )
+    assert dataset["observed_size_bytes"] == 508779600
+    assert dataset["demo_count"] == 50
+    assert dataset["sample_count"] == report["sample_count"] == 5068
+
+    assets = report["task_assets"]
+    assert assets["bddl_sha256"] == (
+        "9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b"
+    )
+    assert assets["initial_states_sha256"] == (
+        "c3a6a01fdc53ae1914fe24c8935088d723baee8f6ee3cd5f8d68e86aea3e2f1c"
+    )
+    assert assets["source_license"] == "MIT"
+
+    split = report["split"]
+    assert split["strategy"] == "deterministic_trajectory_disjoint_sha256_rank"
+    assert split["seed"] == 20260910
+    assert split["disjoint"] is True
+    assert split["train_demo_count"] == 40
+    assert split["heldout_demo_count"] == 10
+    assert split["train_sample_count"] == 4020
+    assert split["heldout_sample_count"] == 1048
+    assert split["train_demo_ids_sha256"] == (
+        "9397e01984d1c213fc4bef667baca0492c0368dbbe55f20cb36a19e2f9f48fb4"
+    )
+    assert split["heldout_demo_ids_sha256"] == (
+        "5e8cdf0d4435052e8304008542fccbd09196830ebf442a2a5db02fec3fa523d1"
+    )
+
+    training = report["training"]
+    assert training["algorithm"] == "upstream_libero_Sequential.observe_BCRNNPolicy.compute_loss"
+    assert training["optimizer"] == "torch.optim.AdamW"
+    assert training["requested_optimizer_steps"] == 8
+    assert training["optimizer_steps"] == 8
+    assert training["all_losses_finite"] is True
+    assert math.isfinite(float(training["first_loss"]))
+    assert math.isfinite(float(training["final_loss"]))
+    assert math.isfinite(float(training["parameter_max_abs_delta"]))
+    assert float(training["parameter_max_abs_delta"]) > 0
+
+    heldout = report["heldout_metrics"]
+    assert heldout["partition"] == "heldout_trajectories_only"
+    assert heldout["evaluated_sample_count"] == 1048
+    assert math.isfinite(float(heldout["negative_log_likelihood"]))
+
+    checkpoint = report["checkpoint"]
+    assert checkpoint["strict_state_dict_load"] is True
+    assert checkpoint["reloaded_with"] == "libero.lifelong.utils.torch_load_model"
+    assert re.fullmatch(r"[0-9a-f]{64}", checkpoint["sha256"])
+
+    action = report["reloaded_action"]
+    assert action["dtype"] == "float32"
+    assert action["shape"][-1] == 7
+    assert action["finite"] is True
+    assert action["evaluated_sample_count"] == 1048
+    assert re.fullmatch(r"[0-9a-f]{64}", action["prediction_sha256"])
+    assert math.isfinite(float(action["value_min"]))
+    assert math.isfinite(float(action["value_max"]))
+
+    runtime = report["runtime"]
+    assert "B200" in runtime["gpu_model"].upper()
+    assert runtime["gpu_architecture"] == "sm_100"
+    assert runtime["compute_capability"] == [10, 0]
+    assert runtime["gpu_count"] == 1
+    assert "sm_100" in runtime["torch_cuda_arch_list"]
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", runtime["pod_observed_image_digest"])
+    assert runtime["observation_method"] == (
+        "kubernetes_status_containerStatuses_imageID"
+    )
+
+    build = report["build"]
+    assert build["dataset_baked"] is False
+    assert build["weights_baked"] is False
+    assert build["render_assets_baked"] is False
+    assert build["render_assets_removed_path"] == "libero/libero/assets"
+    assert build["git_objects_baked"] is False
+    assert build["source_metadata"]["source_prune_path"] == "libero/libero/assets"
+    assert build["source_metadata"]["git_objects_removed"] is True
+    assert build["base_image_digest"] == (
+        "sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+    )
+    assert report["boundaries"]["cache_uploaded"] is False
+    assert report["boundaries"]["rendering_invoked"] is False
+    assert set(report["deferred"]) == {
+        "rendered_closed_loop_success_sweeps",
+        "all_130_tasks",
+        "lifelong_algorithm_comparison",
+        "physical_robot_use",
+    }
