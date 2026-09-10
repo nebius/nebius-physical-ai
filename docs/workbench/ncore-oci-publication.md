@@ -66,6 +66,32 @@ is still emitted and the original failure is preserved. A missing or unreadable
 report emits only `available=false`. The optional `credential-findings` count
 comes from the native credential detector; the total includes confidentiality
 findings too. These diagnostic counts never approve findings or publication.
+The NCore path also hashes the complete private `report.json` and
+`records.jsonl` bytes. These `raw-report` and `raw-ledger` SHA-256 values let an
+operator correlate retained evidence without uploading it. If, and only if,
+the separate attribution verifier succeeds, an `attribution-acceptance` line
+hashes that complete receipt as separate provenance evidence. None of these
+hashes is a scan verdict, disposition, exemption or release acceptance.
+
+When both raw files have the expected scanner schema and mutually consistent
+bounded counts, fixed `byte-scan-detail` lines count the implementation's
+`customer-denylist`, `infra-denylist` and `private_literal` rule identifiers,
+plus fixed native-credential, structural and unclassified categories. They
+also count each fixed byte-scanner record kind. Unexpected classes contribute
+only to the fixed `unclassified` field; malformed, partial or inconsistent
+evidence emits only `byte-scan-detail available=false`. Arbitrary rule names,
+record kinds, report metadata, paths, offsets, lines, patterns, matches,
+exceptions, arguments and environment values are never printed.
+
+For a `layer_regular_content` record with findings, the diagnostic prints its
+bounded byte size and finding count with
+`SHA256(ASCII(raw-content-sha256))`. It never prints the raw content digest or
+logical path, and it never fingerprints path or structural records. To compare
+a separately built local image's known-public dependency file, hash the file's
+exact bytes once, encode that lowercase digest as 64 ASCII characters, and hash
+those characters again. Equality identifies equal whole-file content without
+making the diagnostic an allowlist: any finding still fails and still requires
+the existing attribution verifier or policy outcome.
 Phases distinguish source and provenance checks, byte and payload scans,
 image and component security, bootstrap, registry transfer, visibility and
 anonymous verification. The anonymous verification phase includes a second

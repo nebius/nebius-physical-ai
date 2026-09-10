@@ -9,7 +9,7 @@ import yaml
 from image_byte_scan import core as W
 from npa.deploy import images
 from npa.deploy.publish_public import _TRIVY_CONTAINER_IMAGE
-from . import artifact, bootstrap, components, provenance
+from . import artifact, bootstrap, byte_findings, components, provenance
 from .diagnostics import phase, run_phase
 from .process import guard_command, guard_snapshot, verify_guard_execution
 from .process import ROOT, PYTHON, committed_source, file_sha, public_environment, run, run_byte_scanner, write_json
@@ -83,8 +83,10 @@ def byte_scan(args, directory, archive, digest, verification):
     _failed_byte_scan_summary(directory)
     from . import attribution
 
-    return run_phase("byte-scan-attribution", attribution.verify, args, directory, archive,
-                     digest, verification, status)
+    receipt = run_phase("byte-scan-attribution", attribution.verify, args, directory, archive,
+                        digest, verification, status)
+    byte_findings.emit_attribution_receipt(directory, receipt)
+    return receipt
 
 
 def _authorize_byte_scan(args, directory, archive, digest, common):
@@ -111,13 +113,20 @@ def _failed_byte_scan_summary(directory):
         report = None
     if not isinstance(report, dict):
         print("NCore OCI byte-scan-summary available=false", file=sys.stderr, flush=True)
+        byte_findings.emit_raw(directory)
         return
     _byte_scan_summary(report)
+    byte_findings.emit_raw(directory)
 
 
 def _byte_scan_report(directory):
-    report = json.loads((directory / "bytes/report.json").read_bytes())
+    try:
+        report = json.loads((directory / "bytes/report.json").read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        byte_findings.emit_raw(directory)
+        raise
     _byte_scan_summary(report)
+    byte_findings.emit_raw(directory)
     W.require(report.get("complete") is True and report.get("valid") is True
               and report.get("helper_joined") is True, "complete_byte_scan_required")
 

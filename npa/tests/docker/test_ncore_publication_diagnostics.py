@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "npa/scripts"))
 
+from image_byte_scan import core as W  # noqa: E402
 from ncore_publication import artifact, cli, diagnostics, gates, process, registry  # noqa: E402
 
 
@@ -238,22 +239,34 @@ def test_preparation_failures_identify_only_the_public_phase(tmp_path, monkeypat
 
 @pytest.mark.parametrize("report", [{}, {"complete": True, "valid": False, "helper_joined": True}])
 def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, report):
-    (tmp_path / "bytes").mkdir()
-    (tmp_path / "bytes/report.json").write_text(json.dumps(report))
+    tmp_path.chmod(0o700)
+    (tmp_path / "bytes").mkdir(mode=0o700)
+    report_path = tmp_path / "bytes/report.json"
+    report_path.write_text(json.dumps(report))
+    report_path.chmod(0o600)
     monkeypatch.setattr(gates, "run", lambda *_: None)
     monkeypatch.setattr(gates, "run_byte_scanner", lambda *_: 0)
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
-    with pytest.raises(ValueError):
-        diagnostics.run_phase("byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {})
+    with W.authorized_roots(tmp_path, ROOT), pytest.raises(ValueError):
+        diagnostics.run_phase(
+            "byte-scan", gates.byte_scan, args, tmp_path,
+            tmp_path / "image", "synthetic", {},
+        )
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err.splitlines() == (_markers("byte-scan", "begin")
-                                       + _completed(["byte-scan-authorization",
-                                                     "byte-scan-execution"])
-                                       + _markers("byte-scan-report", "begin")
-                                       + _byte_summary(report)
-                                       + _markers("byte-scan-report", "failure")
-                                       + _markers("byte-scan", "failure"))
+    lines = output.err.splitlines()
+    prefix = (_markers("byte-scan", "begin")
+              + _completed(["byte-scan-authorization", "byte-scan-execution"])
+              + _markers("byte-scan-report", "begin") + _byte_summary(report))
+    assert lines[:len(prefix)] == prefix
+    assert lines[-2:] == (_markers("byte-scan-report", "failure")
+                          + _markers("byte-scan", "failure"))
+    assert "artifact=raw-report available=true sha256=" in lines[len(prefix)]
+    assert lines[len(prefix) + 1:] == [
+        "NCore OCI byte-scan-evidence artifact=raw-ledger available=false",
+        "NCore OCI byte-scan-detail available=false",
+        *lines[-2:],
+    ]
 
 
 @pytest.mark.parametrize("failure", ["authorization", "execution"])
@@ -373,6 +386,36 @@ def test_scanner_execution_error_is_not_treated_as_an_attribution_finding(
     assert "phase=byte-scan-report status=pass" not in output.err
     assert "byte-scan-summary" not in output.err
     assert "byte-scan-attribution" not in output.err
+
+
+def test_attribution_rejection_is_preserved_after_safe_raw_diagnostics(
+    tmp_path, monkeypatch, capsys
+):
+    failure = ValueError(HOSTILE)
+    tmp_path.chmod(0o700)
+    (tmp_path / "bytes").mkdir(mode=0o700)
+    report_path = tmp_path / "bytes/report.json"
+    ledger_path = tmp_path / "bytes/records.jsonl"
+    report_path.write_text("{partial")
+    ledger_path.write_text("{partial")
+    report_path.chmod(0o600)
+    ledger_path.chmod(0o600)
+    monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gates, "run_byte_scanner", lambda *_args: 1)
+    from ncore_publication import attribution
+
+    def reject(*_args):
+        raise failure
+
+    monkeypatch.setattr(attribution, "verify", reject)
+    args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
+    with W.authorized_roots(tmp_path, ROOT), pytest.raises(ValueError) as raised:
+        gates.byte_scan(args, tmp_path, tmp_path / "image", "synthetic", {})
+    assert raised.value is failure
+    output = capsys.readouterr().err
+    assert HOSTILE not in output
+    assert "byte-scan-detail available=false" in output
+    assert "phase=byte-scan-attribution status=failure" in output
 
 
 class _HostileIdentifier(str):
