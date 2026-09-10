@@ -139,6 +139,16 @@ offset. Both GPU stages explicitly request
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`; B200, H100 and H200 cannot run this
 RT-core path.
 
+The visualization stage binds COLMAP provenance to the review artifact. If its
+pre-download S3 inventory or local run contains any COLMAP lineage marker, it
+requires all of `source/attribution.json`, `ncore/sequence/conversion.json`, and
+`ncore/sequence/npa-rig.json`. A missing, unreadable, or failed download aborts
+RRD creation; novel-view media alone is not sufficient provenance. Subtrees
+that are unrelated to COLMAP lineage remain optional for other visualization
+workflows.
+Source attribution and the conversion report identify a COLMAP run; a rig
+sidecar alone also occurs in preconverted NCore and does not trigger this rule.
+
 ## Run with an operator-selected development image
 
 Stage the original archive at a configurable S3 object, retaining its dataset

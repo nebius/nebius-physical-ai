@@ -319,6 +319,13 @@ run by when it **started** (`npa.workflows.artifacts._run_started_at`).
 the agent has no USDZ viewer. Viewability comes from the `.rrd`, `.png`, `.mp4`
 and `.json`.
 
+For a COLMAP-derived run, visualization fails closed unless the source
+attribution, conversion report, and rig-derivation sidecar are all readable.
+Detection uses both the pre-download S3 inventory and local files, so a partial
+subtree download cannot produce an RRD backed only by novel-view media. This
+strict trio applies only after a COLMAP lineage marker is present; optional
+data-factory subtrees and legacy preconverted-NCore runs remain best effort.
+
 ## Which Capability Answers This?
 
 Adapted from the NVIDIA router skill's picker table, re-pointed at what this

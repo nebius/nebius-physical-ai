@@ -37,7 +37,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 #: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
 #: neural-reconstruction workflow (source/ncore/reconstruction/novel_views).
 #: Only source attribution is fetched; the original capture archive is not
-#: needed to visualize the converted run. Missing subtrees are skipped.
+#: needed to visualize the converted run. Missing subtrees are skipped unless
+#: a COLMAP marker makes its three lineage documents mandatory.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
@@ -53,6 +54,31 @@ RUN_SUBDIRS = (
     "novel_views",
     "reports",
 )
+
+_COLMAP_LINEAGE_ARTIFACTS = (
+    (
+        "source",
+        "source/attribution.json",
+        "COLMAP source attribution",
+        "dataset revision sha256 creator license selected_capture source_counts",
+    ),
+    (
+        "conversion",
+        "ncore/sequence/conversion.json",
+        "COLMAP to NCore conversion",
+        "",
+    ),
+    (
+        "rig",
+        "ncore/sequence/npa-rig.json",
+        "NCore rig derivation",
+        "status reference_camera pose_count cameras already_present poses_component_group "
+        "copied_dynamic_edges copied_static_edges",
+    ),
+)
+_COLMAP_LINEAGE_PATHS = tuple(row[1] for row in _COLMAP_LINEAGE_ARTIFACTS)
+# Rig sidecars also belong to preconverted NCore; they alone do not identify COLMAP.
+_COLMAP_LINEAGE_MARKERS = _COLMAP_LINEAGE_PATHS[:2]
 
 
 def _int_env(name: str, default: int) -> int:
@@ -187,6 +213,7 @@ def build_run_rrd(
     run_id = _run_id_from_uri(input_uri)
     active_storage = storage_client
     source_inventory: list[dict[str, Any]] = []
+    require_colmap_lineage = False
     output_object_key = ""
     output_exists = False
     if input_uri.startswith("s3://"):
@@ -204,13 +231,19 @@ def build_run_rrd(
                 "remote RRD publication must remain inside the canonical run prefix"
             )
         source_inventory = _s3_inventory(active_storage, input_uri)
+        require_colmap_lineage = _inventory_has_colmap_lineage(
+            source_inventory, source_prefix
+        )
         output_exists = any(
             row["key"] == output_object_key for row in source_inventory
         )
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
-            input_uri, Path(tmp) / "run", storage_client=active_storage
+            input_uri,
+            Path(tmp) / "run",
+            storage_client=active_storage,
+            require_colmap_lineage=require_colmap_lineage,
         )
         captions = _load_captions(local)
 
@@ -451,6 +484,13 @@ def _s3_inventory(storage_client: Any, uri: str) -> list[dict[str, Any]]:
             if item.get("Key")
         )
     return sorted(rows, key=lambda row: row["key"])
+
+
+def _inventory_has_colmap_lineage(
+    inventory: list[dict[str, Any]], run_prefix: str
+) -> bool:
+    lineage_keys = {run_prefix + relative for relative in _COLMAP_LINEAGE_MARKERS}
+    return any(str(row.get("key") or "") in lineage_keys for row in inventory)
 
 
 def _inventory_sha256(rows: list[dict[str, Any]]) -> str:
@@ -1033,29 +1073,6 @@ def _read_yaml(path: Path) -> Any:
         return None
 
 
-_COLMAP_LINEAGE_ARTIFACTS = (
-    (
-        "source",
-        "source/attribution.json",
-        "COLMAP source attribution",
-        "dataset revision sha256 creator license selected_capture source_counts",
-    ),
-    (
-        "conversion",
-        "ncore/sequence/conversion.json",
-        "COLMAP to NCore conversion",
-        "",
-    ),
-    (
-        "rig",
-        "ncore/sequence/npa-rig.json",
-        "NCore rig derivation",
-        "status reference_camera pose_count cameras already_present poses_component_group "
-        "copied_dynamic_edges copied_static_edges",
-    ),
-)
-
-
 def _lineage_fields(payload: dict, names: str) -> dict:
     return {name: payload[name] for name in names.split() if name in payload}
 
@@ -1086,17 +1103,14 @@ def _colmap_conversion_lineage(report: dict) -> dict:
 
 def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
     """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
-    if not any(
-        (local / name).exists()
-        for name in ("source/attribution.json", "ncore/sequence/conversion.json")
-    ):
+    if not any((local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS):
         return {}
     docs: dict[str, str] = {}
     for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
         path = local / relative
         report = _read_lineage(path)
         if report is None:
-            continue
+            raise DataFactoryVizError(f"NuRec lineage artifact is missing: {relative}")
         payload = (
             _colmap_conversion_lineage(report)
             if entity == "conversion"
@@ -1274,7 +1288,13 @@ def _load_captions(local: Path) -> dict[str, str]:
     return out
 
 
-def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClient | None") -> Path:
+def _materialize_run(
+    input_uri: str,
+    dest: Path,
+    *,
+    storage_client: "StorageClient | None",
+    require_colmap_lineage: bool = False,
+) -> Path:
     if not input_uri.startswith("s3://"):
         return Path(input_uri)
     from npa.clients.storage import StorageClient
@@ -1283,17 +1303,30 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     dest.mkdir(parents=True, exist_ok=True)
     root = input_uri.rstrip("/")
     for sub in RUN_SUBDIRS:
+        if sub == "source":
+            continue
         try:
-            if sub == "source":
-                client.download_file(
-                    f"{root}/source/attribution.json", str(dest / "source/attribution.json")
-                )
-            else:
-                client.download_path(f"{root}/{sub}/", str(dest / sub))
+            client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue
+    _download_colmap_lineage(client, root, dest, required=require_colmap_lineage)
     return dest
+
+
+def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -> None:
+    lineage_paths = (
+        _COLMAP_LINEAGE_PATHS
+        if required
+        else ("source/attribution.json",)
+    )
+    for relative in lineage_paths:
+        local_path = dest / relative
+        try:
+            client.download_file(f"{root}/{relative}", str(local_path))
+        except Exception:
+            if required:
+                raise
 
 
 def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient | None") -> str:

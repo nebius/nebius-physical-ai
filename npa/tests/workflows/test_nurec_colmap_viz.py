@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from npa.clients.storage import StorageError
 from npa.workflows import data_factory_viz as viz
 
 
@@ -171,6 +172,70 @@ def test_present_but_corrupt_lineage_fails_instead_of_silently_disappearing(
     (colmap_run / relative).write_text("{truncated")
     with pytest.raises(viz.DataFactoryVizError, match="lineage"):
         viz._load_nurec_docs(colmap_run, [])
+
+
+@pytest.mark.parametrize("relative", COLMAP_DOCUMENTS)
+def test_incomplete_local_lineage_fails_for_each_missing_member(colmap_run, relative):
+    (colmap_run / relative).unlink()
+    with pytest.raises(viz.DataFactoryVizError, match=f"missing: {relative}"):
+        viz._load_nurec_docs(colmap_run, [])
+
+
+@pytest.mark.parametrize("marker", ["source/attribution.json", "ncore/sequence/conversion.json"])
+def test_each_local_lineage_marker_requires_the_complete_trio(colmap_run, marker):
+    for relative in COLMAP_DOCUMENTS:
+        if relative != marker:
+            (colmap_run / relative).unlink()
+    with pytest.raises(viz.DataFactoryVizError, match="lineage artifact is missing"):
+        viz._load_nurec_docs(colmap_run, [])
+
+
+class _PartialColmapStorage:
+    def __init__(self, missing):
+        self.missing = missing
+        self.published = []
+        self.s3 = self
+
+    def get_paginator(self, operation):
+        assert operation == "list_objects_v2"
+        return self
+
+    def paginate(self, **kwargs):
+        assert kwargs == {"Bucket": "unit-bucket", "Prefix": "run/"}
+        keys = [
+            *("run/" + name for name in COLMAP_DOCUMENTS),
+            "run/novel_views/camera2/000001.png",
+            *self.published,
+        ]
+        return [{"Contents": [{"Key": key, "Size": 10, "ETag": key} for key in keys]}]
+
+    def download_path(self, uri, destination):
+        if uri.endswith("/ncore/"):
+            raise StorageError("synthetic ncore prefix failure")
+        if uri.endswith("/novel_views/"):
+            frame = Path(destination) / "camera2/000001.png"
+            frame.parent.mkdir(parents=True)
+            Image.new("RGB", (32, 24), (40, 50, 60)).save(frame)
+
+    def download_file(self, uri, destination):
+        relative = uri.removeprefix("s3://unit-bucket/run/")
+        if relative == self.missing:
+            raise StorageError(f"synthetic required download failure: {relative}")
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(COLMAP_DOCUMENTS[relative]))
+
+    def put_bytes_conditional(self, payload, uri, **kwargs):
+        self.published.append(uri.removeprefix("s3://unit-bucket/"))
+
+
+@pytest.mark.parametrize("missing", COLMAP_DOCUMENTS)
+def test_remote_colmap_partial_download_propagates_required_failure(missing):
+    storage = _PartialColmapStorage(missing)
+    output = "s3://unit-bucket/run/reports/sim2real.rrd"
+    with pytest.raises(StorageError, match=f"required download failure: {missing}"):
+        viz.build_run_rrd("s3://unit-bucket/run", output, storage_client=storage)
+    assert storage.published == []
 
 
 def test_source_materialization_fetches_only_attribution(tmp_path):
