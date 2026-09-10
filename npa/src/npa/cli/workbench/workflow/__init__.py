@@ -5805,6 +5805,18 @@ def logs_cmd(
                                     **selected_attempt,
                                     "sky_task_id": str(task_id),
                                 }
+                        elif (
+                            job_id
+                            and len(matching_waves) == 1
+                            and selected_wave.get("kind") == "serial"
+                            and wave_states == [selected_stage]
+                            and selected_wave.get("tasks", []) == []
+                        ):
+                            # A driver can stop after recording the job ID but
+                            # before its first task observation. The renderer's
+                            # single-state serial wave has exactly task 0; its
+                            # provider name is the full job name, not the stage.
+                            selected_attempt = {**selected_attempt, "sky_task_id": "0"}
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.

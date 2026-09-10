@@ -1022,6 +1022,107 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(
     assert persisted["steps"][0]["status"] == "submitted"
 
 
+def _put_workflow_log_waves(fake_s3: FakeWorkflowS3, waves: list[dict]) -> str:
+    prefix = "crashed-driver/npa-workflow"
+    common = {
+        "workflow": "sim2real", "api_version": "npa.workflow/v0.0.1",
+        "run_id": "crashed-driver", "status": "running",
+        "run_prefix_uri": "s3://bucket/crashed-driver",
+    }
+    documents = {
+        "manifest": {**common, "schema_version": "npa.workflow.run.v1", "steps": []},
+        "runtime": {**common, "schema_version": "npa.workflow.runtime.v1", "waves": waves},
+    }
+    for name, payload in documents.items():
+        fake_s3.put_object(
+            Bucket="bucket", Key=f"{prefix}/{name}.json",
+            Body=json.dumps(payload).encode(),
+        )
+    return f"s3://bucket/{prefix}/manifest.json"
+
+
+@pytest.mark.parametrize(
+    ("kind", "states", "tasks", "duplicate_wave", "expected_task"),
+    [
+        ("serial", ["rollout"], [], False, "0"),
+        ("serial", ["rollout"], [{"task_id": 7}], False, "7"),
+        ("serial", ["rollout"], [{"task_id": 0}, {"task_id": 1}], False, "rollout"),
+        ("parallel", ["rollout", "evaluate"], [], False, "rollout"),
+        ("", ["rollout"], [], False, "rollout"),
+        ("serial", ["rollout"], [], True, "rollout"),
+    ],
+)
+def test_workflow_logs_after_driver_crash_without_task_timeline(
+    monkeypatch, kind, states, tasks, duplicate_wave, expected_task,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    wave = {
+        "key": "wave-1", "kind": kind, "states": states,
+        "attempt": 1, "status": "running", "sky_status": "SUBMITTED",
+        "job_id": "42", "job_name": "crashed-driver-rollout", "tasks": tasks,
+    }
+    uri = _put_workflow_log_waves(fake_s3, [wave, wave] if duplicate_wave else [wave])
+    calls = []
+
+    def logs(**kwargs):
+        calls.append((kwargs["job_id"], kwargs["stage"]))
+        return subprocess.CompletedProcess([], 0, "rendered rollout\n", "")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", logs,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: "synthetic-sky",
+    )
+    result = runner.invoke(app, [
+        "workbench", "workflow", "logs", uri,
+        "--stage", "rollout", "--json",
+    ])
+    assert result.exit_code == 0, result.output
+    assert calls == [("42", expected_task)]
+    assert json.loads(result.output)["log"] == "rendered rollout\n"
+
+
+def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import sys
+    from npa.orchestration.skypilot import _bin
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(fake_s3, [{
+        "key": "wave-1", "kind": "parallel", "states": ["rollout", "evaluate"],
+        "attempt": 1, "status": "running", "job_id": "42", "tasks": [],
+    }])
+    diagnostic = (
+        "No task found matching 'rollout' in job 42. Valid task IDs are 0-1.\n"
+        "command terminated with exit code 102\n"
+    )
+    executable = tmp_path / "sky"
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\nsys.stdout.write({diagnostic!r})\n"
+    )
+    executable.chmod(0o700)
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: str(executable),
+    )
+
+    result = runner.invoke(app, [
+        "workbench", "workflow", "logs", uri, "--stage", "rollout", "--json",
+    ])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["verification_status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["live_verified"] is False
+    assert payload["live_log_state"] == "unavailable"
+    assert payload["managed_job_id"] == "42"
+    assert "No task found matching 'rollout'" in payload["reason"]
+
+
 def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visible(
     monkeypatch,
 ) -> None:
