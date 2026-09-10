@@ -2,6 +2,7 @@
 
 import io
 import json
+from copy import deepcopy
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,11 @@ IMAGE_PATH = "usr/share/doc/npa-ncore/cpython/LICENSE.third-party"
 NOTICE = (ROOT / REPOSITORY_PATH).read_bytes()
 NOTICE_SHA = W.sha(NOTICE)
 POLICY_SHA = "a" * 64
+PHYSICAL_KINDS = {
+    "raw_tar_header", "raw_tar_extension", "outer_regular_content",
+    "layer_regular_content", "nonzero_tar_padding", "unexplained_tar_trailer",
+    "verified_zero_content",
+}
 
 
 def _api():
@@ -61,7 +67,7 @@ def _population():
               "helper_summary": {"type": "summary", "files": 2,
                                  "bytes": path["bytes"] + notice["bytes"], "findings": 0},
               "outer": {"decoded_bytes": 0},
-              "layers": [{"ordinal": 0, "decoded_bytes": path["bytes"] + notice["bytes"]}]}
+              "layers": [{"ordinal": 0, "decoded_bytes": notice["bytes"]}]}
     return report, rows
 
 
@@ -74,7 +80,10 @@ def _refresh_report(report, rows):
     report["regular_bytes"] = sum(row["bytes"] for row in regular)
     report["findings"] = sum(len(row["findings"]) for row in records)
     report["helper_summary"].update(files=len(records), bytes=report["scanned_bytes"])
-    report["layers"][0]["decoded_bytes"] = report["scanned_bytes"]
+    report["layers"][0]["decoded_bytes"] = sum(
+        row["bytes"] for row in records
+        if row["kind"] in PHYSICAL_KINDS and row.get("scope") == "layer"
+    )
 
 
 def test_exact_raw_population_remains_failed_and_two_occurrences_are_dispositioned():
@@ -94,6 +103,159 @@ def test_compressed_header_is_scanned_but_not_counted_as_decoded_layer_bytes():
     _refresh_report(report, rows)
     report["layers"][0]["decoded_bytes"] = decoded
     attribution._ledger_population(report, rows, POLICY_SHA)
+
+
+def test_population_counts_only_physical_records_and_not_zero_range_twice():
+    report, rows = _population()
+    logical = _record(3, "logical_tar_link", b"synthetic-target", [], 8, 2048)
+    header = _record(4, "raw_tar_header", bytes(512), [], 8, 2560)
+    zeros = _record(5, "verified_zero_content", bytes(1024), [], 9, 3072)
+    outer = _record(6, "outer_regular_content", b"encoded-layer", [], 1, 512)
+    outer["scope"] = "outer"
+    outer.pop("layer_ordinal")
+    for record in (logical, header, zeros, outer):
+        rows.extend([
+            _confidentiality(record["record_ordinal"], record["sha256"], record["bytes"], []),
+            record,
+        ])
+    rows.insert(-2, {"type": "verified_zero_range", "bytes": zeros["bytes"],
+                     "sha256": zeros["sha256"], "scope": "layer", "layer_ordinal": 0,
+                     "entry_ordinal": 9, "tar_offset": 3072})
+    rows.append({"type": "encoded_layer_blob", "bytes": outer["bytes"],
+                 "sha256": outer["sha256"], "scope": "outer", "entry_ordinal": 1,
+                 "tar_offset": 512})
+    _refresh_report(report, rows)
+    report["verified_zero_bytes"] = zeros["bytes"]
+    report["outer"]["decoded_bytes"] = outer["bytes"]
+
+    records, issues = attribution._ledger_population(report, rows, POLICY_SHA)
+
+    assert len(records) == 6
+    assert len(issues) == 2
+    assert report["layers"][0]["decoded_bytes"] == len(NOTICE) + 512 + 1024
+
+
+def test_population_rejects_unknown_record_kind():
+    report, rows = _population()
+    rows[1]["kind"] = "future_semantic_alias"
+    with pytest.raises(ValueError, match="ncore_attribution_record_kind"):
+        attribution._ledger_population(report, rows, POLICY_SHA)
+
+
+def _native_authorization():
+    bindings = {
+        role: {"path": f"/synthetic/{role}", "sha256": digest}
+        for role, digest in W.AHO_PINS.items()
+    }
+    return {
+        "confidentiality": {"synthetic": "binding"},
+        "literal_engine": {"kind": "aho-corasick-v1", **bindings},
+        "sources": {"npa/scripts/image_byte_scan/aho_matcher.py": bindings["source"]},
+    }
+
+
+def _native_receipt():
+    return {"kind": "aho-corasick-v1", "pinned_sha256": W.AHO_PINS,
+            "sealed_native_copy": True}
+
+
+def test_regex_policy_requires_and_authenticates_native_engine(monkeypatch):
+    configured = {"customer_pattern": "synthetic-customer", "infra_pattern": None}
+    policy = W.C.compile_policy(**configured).receipt()
+    monkeypatch.setattr(W, "bound_json", lambda _: configured)
+    report = {"confidentiality_policy": policy, "literal_engine": _native_receipt()}
+
+    assert attribution._policy(_native_authorization(), report) == policy
+
+
+@pytest.mark.parametrize("damage", [
+    "missing", "inventory", "pin", "source", "receipt", "regex-receipt",
+])
+def test_regex_policy_rejects_unbound_or_misreported_native_engine(monkeypatch, damage):
+    configured = {"customer_pattern": "synthetic-customer", "infra_pattern": None}
+    monkeypatch.setattr(W, "bound_json", lambda _: configured)
+    authorization = _native_authorization()
+    report = {"confidentiality_policy": W.C.compile_policy(**configured).receipt(),
+              "literal_engine": _native_receipt()}
+    if damage == "missing":
+        authorization.pop("literal_engine")
+    elif damage == "inventory":
+        authorization["literal_inventory"] = {"synthetic": "binding"}
+    elif damage == "pin":
+        authorization["literal_engine"]["extension"]["sha256"] = "0" * 64
+    elif damage == "source":
+        authorization["sources"]["npa/scripts/image_byte_scan/aho_matcher.py"] = {
+            "path": "/synthetic/other", "sha256": W.AHO_PINS["source"],
+        }
+    elif damage == "receipt":
+        report["literal_engine"]["sealed_native_copy"] = False
+    else:
+        report["literal_engine"] = {"kind": "regex-reference-v1"}
+    with pytest.raises(ValueError):
+        attribution._policy(authorization, report)
+
+
+def _oci_report_graph():
+    config_digest = "sha256:" + "b" * 64
+    manifest_digest = "sha256:" + "c" * 64
+    layer_digest = "sha256:" + "d" * 64
+    descriptor = {"mediaType": "application/vnd.oci.image.layer.v1.tar",
+                  "digest": layer_digest, "size": 2048}
+    graph = {
+        "receipt": {"schema_version": "npa.ncore.oci-graph.v1", "blobs": []},
+        "layers": [{"ordinal": 0, "name": "blobs/sha256/" + "d" * 64,
+                    "size": 2048, "diff_id": "sha256:" + "e" * 64,
+                    "descriptor": descriptor}],
+    }
+    verification = {"archive_sha256": "f" * 64, "expected_image_id": "sha256:" + "1" * 64,
+                    "image_config_digest": config_digest,
+                    "image_manifest_digest": manifest_digest,
+                    "regular_files_read": 1, "content_bytes_read": len(NOTICE)}
+    report = {
+        "schema_version": "npa.image-byte-scan.v1", "valid": False, "complete": True,
+        "authorization_sha256": "2" * 64, "archive_sha256": verification["archive_sha256"],
+        "image_config_digest": config_digest, "image_manifest_digest": manifest_digest,
+        "expected_image_id": verification["expected_image_id"],
+        "private_literals_configured": False, "private_literal_count": 0,
+        "literal_matching_policy": "exact-substring-v1",
+        "layers": [{"ordinal": 0, "diff_id": graph["layers"][0]["diff_id"],
+                    "compressed_sha256": layer_digest.removeprefix("sha256:"),
+                    "compressed_bytes": 2048, "codec": "raw", "headers": 1,
+                    "decoded_bytes": 2048, "zero_end_blocks": 2}],
+        "oci_graph": graph["receipt"],
+        "outer": {"headers": 4, "decoded_bytes": 4096, "zero_end_blocks": 2},
+        "confidentiality_policy": {"mode": "regex-v1"},
+        "helper_summary": {"type": "summary", "files": 1, "bytes": len(NOTICE),
+                           "findings": 0},
+        "literal_engine": _native_receipt(), "input_snapshot_receipts": [],
+        "helper_joined": True, "records": 1, "scanned_bytes": len(NOTICE),
+        "verified_zero_bytes": 0, "regular_files": 1, "regular_bytes": len(NOTICE),
+        "findings": 2,
+    }
+    return report, graph, verification
+
+
+def test_native_oci_report_is_accepted_before_population_replay():
+    report, graph, verification = _oci_report_graph()
+
+    attribution._report_graph(report, graph, verification, 4096)
+
+
+@pytest.mark.parametrize("damage", ["regex-engine", "changed-pin", "private", "private-count"])
+def test_native_oci_report_rejects_engine_or_private_literal_drift(damage):
+    report, graph, verification = _oci_report_graph()
+    report = deepcopy(report)
+    if damage == "regex-engine":
+        report["literal_engine"] = {"kind": "regex-reference-v1"}
+    elif damage == "changed-pin":
+        report["literal_engine"]["pinned_sha256"] = dict(W.AHO_PINS, source="0" * 64)
+    elif damage == "private":
+        report["private_literals_configured"] = True
+    else:
+        report["private_literal_count"] = 1
+
+    with pytest.raises(ValueError, match="ncore_attribution_report_artifact_binding"):
+        attribution._report_graph(report, graph, verification, 4096)
 
 
 @pytest.mark.parametrize("damage", [

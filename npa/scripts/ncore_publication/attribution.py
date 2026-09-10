@@ -18,6 +18,15 @@ SCHEMA = "npa.ncore.public-attribution-acceptance.v1"
 _REPOSITORY_PATH = "npa/docker/workbench/ncore/notices/cpython/LICENSE.third-party"
 _IMAGE_PATH = "usr/share/doc/npa-ncore/cpython/LICENSE.third-party"
 _LINES = frozenset({633, 640})
+_PHYSICAL_RECORD_KINDS = frozenset({
+    "raw_tar_header", "raw_tar_extension", "outer_regular_content",
+    "layer_regular_content", "nonzero_tar_padding", "unexplained_tar_trailer",
+    "verified_zero_content",
+})
+_LOGICAL_RECORD_KINDS = frozenset({"logical_tar_path", "logical_tar_link"})
+_COMPRESSED_RECORD_KINDS = frozenset({"raw_gzip_header"})
+_KNOWN_RECORD_KINDS = (_PHYSICAL_RECORD_KINDS | _LOGICAL_RECORD_KINDS
+                       | _COMPRESSED_RECORD_KINDS)
 
 
 def _notice_api():
@@ -175,7 +184,8 @@ def _ledger_population(report, rows, policy_sha):
             _confidentiality_row(pending, row, policy_sha)
             pending = None
             records.append((line_number, row, context))
-            if row["kind"] != "raw_gzip_header":
+            W.require(row["kind"] in _KNOWN_RECORD_KINDS, "ncore_attribution_record_kind")
+            if row["kind"] in _PHYSICAL_RECORD_KINDS:
                 scope_bytes[_scope_key(context)] = scope_bytes.get(_scope_key(context), 0) + row["bytes"]
             issues.extend((line_number, index, row, finding)
                           for index, finding in enumerate(row["findings"]))
@@ -183,7 +193,6 @@ def _ledger_population(report, rows, policy_sha):
             W.require(pending is None, "ncore_attribution_ledger_order")
             amount, context = _other_row(row)
             zero_bytes += amount
-            scope_bytes[_scope_key(context)] = scope_bytes.get(_scope_key(context), 0) + amount
     W.require(pending is None, "ncore_attribution_ledger_order")
     _report_population(report, records, issues, zero_bytes, scope_bytes)
     return records, issues
@@ -216,9 +225,12 @@ def _report_population(report, records, issues, zero_bytes, scope_bytes):
 
 
 def _policy(authorization, report):
-    W.require("literal_inventory" not in authorization and "literal_engine" not in authorization
+    W.require("literal_inventory" not in authorization
               and authorization.get("confidentiality") is not None,
               "ncore_attribution_regex_policy_required")
+    engine_receipt = _native_engine_receipt(authorization)
+    W.require(report.get("literal_engine") == engine_receipt,
+              "ncore_attribution_native_engine_changed")
     configured = W.bound_json(authorization["confidentiality"])
     W.require(isinstance(configured, dict)
               and set(configured) <= {"customer_pattern", "infra_pattern"},
@@ -228,6 +240,28 @@ def _policy(authorization, report):
     W.require(receipt == report.get("confidentiality_policy"),
               "ncore_attribution_policy_changed")
     return receipt
+
+
+def _native_engine_receipt(authorization):
+    engine = authorization.get("literal_engine")
+    W.require(isinstance(engine, dict) and set(engine) == {"kind", *W.AHO_PINS}
+              and engine.get("kind") == "aho-corasick-v1",
+              "ncore_attribution_native_engine_binding")
+    for role, digest in W.AHO_PINS.items():
+        binding = engine.get(role)
+        W.require(isinstance(binding, dict) and set(binding) == {"path", "sha256"}
+                  and binding.get("sha256") == digest,
+                  "ncore_attribution_native_engine_binding")
+    sources = authorization.get("sources")
+    source_name = "npa/scripts/image_byte_scan/aho_matcher.py"
+    W.require(isinstance(sources, dict) and engine["source"] == sources.get(source_name),
+              "ncore_attribution_native_engine_source")
+    return _expected_native_engine_receipt()
+
+
+def _expected_native_engine_receipt():
+    return {"kind": "aho-corasick-v1", "pinned_sha256": W.AHO_PINS,
+            "sealed_native_copy": True}
 
 
 def _report_graph(report, graph, verification, archive_size):
@@ -248,7 +282,7 @@ def _report_graph(report, graph, verification, archive_size):
               and set(report) == expected_fields and report.get("oci_graph") == graph["receipt"]
               and report.get("private_literals_configured") is False
               and report.get("private_literal_count") == 0
-              and report.get("literal_engine") == {"kind": "regex-reference-v1"},
+              and report.get("literal_engine") == _expected_native_engine_receipt(),
               "ncore_attribution_report_artifact_binding")
     layers = report.get("layers")
     W.require(isinstance(layers, list) and len(layers) == len(graph["layers"]),
