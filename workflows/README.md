@@ -60,8 +60,9 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 
 ## Layout
 
-- `main/` contains only [sim2real.yaml](main/sim2real.yaml) and
-  [paidf-cosmos3.yaml](main/paidf-cosmos3.yaml), the two main workflows.
+- `main/` contains [sim2real.yaml](main/sim2real.yaml),
+  [paidf-cosmos3.yaml](main/paidf-cosmos3.yaml), and
+  [nurec-reconstruct.yaml](main/nurec-reconstruct.yaml).
 - `testing/` contains all other supported declarative workflow YAMLs, including
   examples, integration workflows, and component validation pipelines.
 - This README documents the catalog. The non-YAML robot specification example
@@ -109,10 +110,12 @@ not OSMO or Airflow.
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`cosmos3-reason.yaml`](testing/cosmos3-reason.yaml) | Cosmos3 reason |
 | [`cosmos3-checkpoint-eval.yaml`](testing/cosmos3-checkpoint-eval.yaml) | B200-only guarded Cosmos3 still-image checkpoint evaluation |
+| [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
+| [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes ([guide](../docs/workbench/curobo.md)) |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |

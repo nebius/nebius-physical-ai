@@ -35,6 +35,7 @@ from npa.cli.agent_workflow import (
     _TEMPLATES,
 )
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = (
@@ -42,6 +43,7 @@ EXAMPLE_YAML = (
 )
 
 _GOLDEN_YAMLS = [
+    "nurec-reconstruct.yaml",
     "byof.yaml",
     "rl-policy-training-sim-success.yaml",
     "sim2real-two-step-agent.yaml",
@@ -1458,10 +1460,8 @@ def test_generate_workflow_yaml_aliases() -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_validates(yaml_name: str) -> None:
     """All golden NPA workflow YAMLs in the repo should parse and validate."""
-    tier = "main" if yaml_name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
-    yaml_path = REPO_ROOT / "workflows" / tier / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     yaml_text = yaml_path.read_text(encoding="utf-8")
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True, f"{yaml_name} failed: {result.get('error')}"
@@ -1470,10 +1470,8 @@ def test_golden_yaml_validates(yaml_name: str) -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
     """Golden YAMLs should plan successfully with the CLI."""
-    tier = "main" if yaml_name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
-    yaml_path = REPO_ROOT / "workflows" / tier / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     result = runner.invoke(
         app,
         [

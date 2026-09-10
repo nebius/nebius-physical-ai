@@ -12,8 +12,9 @@ description: Use when working on NPA reference workflow specs, runner scripts, c
 > surfaces. SkyPilot remains the engine that executes rendered specs.
 
 The catalog has exactly two workflow directories: `workflows/main/` contains
-only `sim2real.yaml` and `paidf-cosmos3.yaml`; `workflows/testing/` contains all
-other catalog specs. Keep catalog documentation in `workflows/README.md` and
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
+`workflows/testing/` contains all other catalog specs.
+Keep catalog documentation in `workflows/README.md` and
 add new reference workflows under `workflows/testing/`.
 
 ## When To Use

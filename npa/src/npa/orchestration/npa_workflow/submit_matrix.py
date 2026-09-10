@@ -580,6 +580,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
     ),
     SubmitLiveCase(
+        "nurec-colmap-reconstruct.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
+        image_overrides=(
+            ("workbench.nurec.convert_colmap", "ncore"),
+            ("workbench.nurec.visualize", "rerun-viewer"),
+        ),
+        notes=(
+            "Full pinned public struktur28 COLMAP source (518 images, 3 cameras) "
+            "is seeded before submit. CPU Apache-2.0 NCore conversion feeds the "
+            "existing separately licensed NRE full-default recipe on RTX PRO "
+            "6000, render, Rerun and finalize stages. Select the development "
+            "NCore digest with NPA_E2E_IMAGE_OVERRIDE_NCORE. Not yet live validated."
+        ),
+    ),
+    SubmitLiveCase(
         "nurec-reconstruct.yaml",
         "gpu",
         secret_envs=(

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
-import sys
+import time
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -13,7 +16,117 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CONVERGE = REPO_ROOT / "npa" / "scripts" / "golden_eval_converge.sh"
 START = REPO_ROOT / "npa" / "scripts" / "start_golden_evals_converge_tmux.sh"
 AUTOFIX = REPO_ROOT / "npa" / "scripts" / "golden_eval_autofix.sh"
-IN_CONVERGE_LOOP = os.environ.get("GOLDEN_EVAL_CONVERGE_LOOP") == "1"
+TMUX = shutil.which("tmux")
+
+# Keep the real shell flow, but never install into the pytest runner's venv or
+# recursively run its tests. Record every interpreter boundary, including cwd.
+PYTHON_STUB = r"""#!/bin/sh
+set -eu
+root="$(cd "$(dirname "$0")/../../.." && pwd)"
+{
+  printf '%s\t' "$PWD" "$@"
+  printf '\n'
+} >> "$root/calls.log"
+case "$*" in
+  "-c import sys" | \
+  "-m pip install -e $root/npa -q" | \
+  "$root/npa/scripts/run_golden_evals.py validate" | \
+  "npa/scripts/audit_workbench_image_tags.py") exit 0 ;;
+  "-m pytest npa/tests/smoke/test_golden_eval_fixture.py -q")
+    test "${GOLDEN_EVAL_CONVERGE_LOOP:-}" = 1
+    exit "$(cat "$root/unit-exit")" ;;
+  *) echo "unexpected interpreter invocation: $*" >&2; exit 97 ;;
+esac
+"""
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+
+
+@pytest.fixture
+def golden_checkout(tmp_path: Path) -> Path:
+    """Copy scripts so autofix and launcher chmod only touch fixture files."""
+    root = tmp_path / "checkout"
+    scripts = root / "npa/scripts"
+    scripts.mkdir(parents=True)
+    for source in (CONVERGE, START, AUTOFIX):
+        shutil.copy2(source, scripts / source.name)
+    interpreter = root / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    _write_executable(interpreter, PYTHON_STUB)
+    tests = root / "npa/tests/smoke"
+    tests.mkdir(parents=True)
+    (tests / "test_golden_eval_fixture.py").write_text(
+        'raise AssertionError("pytest must use the fixture boundary")\n',
+        encoding="utf-8",
+    )
+    (root / "unit-exit").write_text("0\n", encoding="utf-8")
+    (root / "state").mkdir()
+    (root / "home").mkdir()
+    (root / "bin").mkdir()
+    # A mistaken fleet or git route must fail locally, never reach host tools.
+    blocked = (
+        '#!/bin/sh\nprintf "%s\\n" "$0 $*" '
+        '>> "$GOLDEN_EVAL_STATE_DIR/unexpected.log"\nexit 97\n'
+    )
+    for path in (
+        root / "bin/git",
+        root / "bin/tmux",
+        scripts / "start_golden_evals_tmux.sh",
+    ):
+        _write_executable(path, blocked)
+    return root
+
+
+@pytest.fixture
+def golden_env(golden_checkout: Path) -> dict[str, str]:
+    """Exclude ambient auto-push, interpreter, state and tmux settings."""
+    root = golden_checkout
+    path = f"{root / 'bin'}:{os.defpath}"
+    bash_env = root / "bash-env"
+    # The launcher uses login shells, which can otherwise reset the stub PATH.
+    bash_env.write_text(f"export PATH={shlex.quote(path)}\n", encoding="utf-8")
+    return {
+        "PATH": path,
+        "BASH_ENV": str(bash_env),
+        "HOME": str(root / "home"),
+        "SHELL": "/bin/bash",
+        "TERM": "xterm",
+        "GOLDEN_EVAL_STATE_DIR": str(root / "state"),
+        "GOLDEN_EVAL_SOURCE_REF": "fixture",
+        "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
+        "GOLDEN_EVAL_AUTO_COMMIT": "0",
+        "GOLDEN_EVAL_AUTO_PUSH": "0",
+        "GOLDEN_EVAL_PYTHON": str(root / "npa/.venv/bin/python"),
+    }
+
+
+def _assert_interpreter_calls(root: Path, *, unit_gate: bool) -> None:
+    calls = [
+        line.split("\t")[:-1] for line in (root / "calls.log").read_text().splitlines()
+    ]
+    expected = [
+        [str(root), "-m", "pip", "install", "-e", str(root / "npa"), "-q"],
+        [str(root), str(root / "npa/scripts/run_golden_evals.py"), "validate"],
+    ]
+    if unit_gate:
+        expected.insert(0, [str(root), "-c", "import sys"])
+        expected.extend(
+            [
+                [str(root), "npa/scripts/audit_workbench_image_tags.py"],
+                [
+                    str(root),
+                    "-m",
+                    "pytest",
+                    "npa/tests/smoke/test_golden_eval_fixture.py",
+                    "-q",
+                ],
+            ]
+        )
+    assert calls == expected
+    assert not (root / "state/unexpected.log").exists()
 
 
 def test_converge_script_help() -> None:
@@ -78,81 +191,127 @@ def test_fleet_iam_block_detection_pattern(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
-def test_converge_unit_gate_runs_when_paused_iam_marker_present(tmp_path: Path) -> None:
-    if IN_CONVERGE_LOOP:
-        pytest.skip("avoid recursive converge subprocess inside converge loop")
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
+@pytest.mark.parametrize("unit_exit", [0, 1], ids=["pass", "fail"])
+def test_converge_unit_gate_runs_when_paused_iam_marker_present(
+    golden_checkout: Path, golden_env: dict[str, str], unit_exit: int
+) -> None:
+    state_dir = golden_checkout / "state"
     (state_dir / "PAUSED-IAM").write_text("blocked\n", encoding="utf-8")
+    (golden_checkout / "unit-exit").write_text(str(unit_exit), encoding="utf-8")
     proc = subprocess.run(
-        [
-            "bash",
-            str(CONVERGE),
-            "--once",
-        ],
-        cwd=REPO_ROOT,
+        ["bash", str(golden_checkout / "npa/scripts" / CONVERGE.name), "--once"],
+        cwd=golden_checkout,
         capture_output=True,
         text=True,
         check=False,
         timeout=180,
-        env={
-            **os.environ,
-            "GOLDEN_EVAL_STATE_DIR": str(state_dir),
-            "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
-            "GOLDEN_EVAL_PYTHON": sys.executable,
-        },
+        env=golden_env,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "PAUSED-IAM" in proc.stdout + proc.stderr
-    assert "unit gate pass" in proc.stdout + proc.stderr
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == unit_exit, output
+    assert "PAUSED-IAM" in output
+    _assert_interpreter_calls(golden_checkout, unit_gate=True)
+    if unit_exit == 0:
+        assert "unit gate pass" in output
+        assert output.index("unit tests:") < output.index("unit gate pass")
+    else:
+        assert "unit tests failed attempt=1" in output
+        assert "giving up (--once)" in output
+        assert "unit gate pass" not in output
+        assert "unit gate ok" not in output
+    assert (state_dir / "PAUSED-IAM").read_text(encoding="utf-8") == "blocked\n"
     assert not (state_dir / "golden-evals-complete").exists()
 
 
-def test_autofix_script_runs() -> None:
+def test_autofix_script_runs(golden_checkout: Path, golden_env: dict[str, str]) -> None:
     proc = subprocess.run(
-        ["bash", str(AUTOFIX), "test-smoke"],
-        cwd=REPO_ROOT,
+        ["bash", str(golden_checkout / "npa/scripts" / AUTOFIX.name), "test-smoke"],
+        cwd=golden_checkout,
         capture_output=True,
         text=True,
         check=False,
         timeout=120,
-        env={
-            **os.environ,
-            "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
-        },
+        env=golden_env,
     )
     assert proc.returncode == 0, proc.stderr
+    _assert_interpreter_calls(golden_checkout, unit_gate=False)
+    assert "run_id=test-smoke" in (golden_checkout / "state/autofix.log").read_text()
 
 
-@pytest.mark.skipif(
-    IN_CONVERGE_LOOP,
-    reason="avoid recursive tmux launcher inside converge loop",
-)
-@pytest.mark.skipif(
-    subprocess.run(["bash", "-lc", "command -v tmux"], capture_output=True).returncode
-    != 0,
-    reason="tmux not installed",
-)
-def test_converge_tmux_launches_session() -> None:
-    session = "golden-evals-converge-test-smoke"
+@pytest.fixture
+def fixture_tmux(golden_checkout: Path, golden_env: dict[str, str]):
+    """Route real tmux to a fixture socket, including cleanup after assertions."""
+    wrapper = golden_checkout / "bin/tmux"
+    # A relative socket path also works when pytest's temporary path exceeds
+    # the Unix socket path length limit. Every client starts in this checkout.
+    _write_executable(
+        wrapper,
+        f"#!/bin/sh\ncd {shlex.quote(str(golden_checkout))}\n"
+        f'exec {shlex.quote(TMUX)} -S tmux.sock -f /dev/null "$@"\n',
+    )
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(wrapper), *args],
+            cwd=golden_checkout,
+            env=golden_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    try:
+        yield run
+    finally:
+        run("kill-server")
+
+
+def _wait_for_converge_exit(root: Path, deadline: float) -> str:
+    log = root / "state/converge-tmux.log"
+    while time.monotonic() < deadline:
+        if log.exists():
+            output = log.read_text(encoding="utf-8")
+            if "converge_exit=" in output:
+                return output
+        time.sleep(0.05)
+    pytest.fail(
+        "fixture converge did not finish: "
+        + (log.read_text() if log.exists() else "no log")
+    )
+
+
+@pytest.mark.skipif(TMUX is None, reason="tmux not installed")
+def test_converge_tmux_launches_session(
+    golden_checkout: Path, golden_env: dict[str, str], fixture_tmux
+) -> None:
+    session = f"golden-evals-converge-test-{uuid4().hex}"
+    deadline = time.monotonic() + 30
     proc = subprocess.run(
         [
             "bash",
-            str(START),
+            str(golden_checkout / "npa/scripts" / START.name),
             "--if-dead",
             "--unit-only",
             "--once",
         ],
-        cwd=REPO_ROOT,
+        cwd=golden_checkout,
         capture_output=True,
         text=True,
         check=False,
         timeout=30,
         env={
-            **os.environ,
+            **golden_env,
             "GOLDEN_EVAL_CONVERGE_SESSION": session,
         },
     )
     assert proc.returncode == 0, proc.stderr
     assert f"TMUX_SESSION={session}" in proc.stdout
-    subprocess.run(["tmux", "kill-session", "-t", session], check=False)
+    assert fixture_tmux("has-session", "-t", session).returncode == 0
+    windows = fixture_tmux("list-windows", "-t", session, "-F", "#{window_name}")
+    assert windows.returncode == 0, windows.stderr
+    assert set(windows.stdout.splitlines()) == {"dashboard", "converge"}
+    output = _wait_for_converge_exit(golden_checkout, deadline)
+    assert "converge_exit=0" in output
+    assert "golden-eval converge complete" in output
+    assert (golden_checkout / "state/golden-evals-complete").exists()
+    _assert_interpreter_calls(golden_checkout, unit_gate=True)

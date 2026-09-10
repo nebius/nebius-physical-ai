@@ -1,0 +1,35 @@
+NVIDIA NCore COLMAP ingestion
+
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+The COLMAP ingestion documentation and the neural-reconstruction skill describe
+and adapt semantics from NVIDIA NCore's COLMAP converter, pinned at:
+https://github.com/NVIDIA/ncore/tree/59c698d206da92b406a4f72619fce3b3a2c64bfd/tools/data_converter/colmap
+Source license: Apache-2.0. Preserve the upstream LICENSE and source copyright
+headers in redistributed source/runtime packaging.
+
+NCore pins the MIT-licensed trueprice/pycolmap model reader at
+fe7a7c45df803b6c391777e349f0d8d65d39d777, with its own Python 3 map patch:
+https://github.com/trueprice/pycolmap/tree/fe7a7c45df803b6c391777e349f0d8d65d39d777
+Preserve that reader's license and copyright notice with runtime packaging.
+
+Reference dataset attribution:
+  Creator/publisher: NVIDIA
+  Dataset: nvidia/PhysicalAI-NuRec-PPISP
+  Revision: 2521064a3af6ab1c1caa2ba1b01ddde7eecded69
+  Member: colmap/struktur28_colmap.zip
+  Source: https://huggingface.co/datasets/nvidia/PhysicalAI-NuRec-PPISP/tree/2521064a3af6ab1c1caa2ba1b01ddde7eecded69
+  License: CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/
+  Modification: the full struktur28 capture is converted to NCore V4 and receives
+  an additional derived rig pose component for the existing NRE consumer.
+
+Dataset bytes are fetched at runtime, never baked into the converter image.
+Retain this attribution, the immutable source revision, source hashes and a
+description of conversion/rig changes alongside derived runtime artifacts.
+The live-matrix seeder writes source/attribution.json beside the original ZIP.
+That sidecar is separate from the converter's conversion.json provenance.
+
+NRE reconstruction and rendering remain proprietary, separately licensed
+NVIDIA runtimes. The Apache-2.0 contribution is source-capture conversion;
+neither NRE nor its outputs acquire that source license through this workflow.
+NVIDIA, NCore, NuRec, NRE and Omniverse are NVIDIA trademarks.

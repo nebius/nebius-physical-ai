@@ -11,6 +11,7 @@ from npa.orchestration.npa_workflow import (
     load_spec,
     validate_spec,
 )
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
@@ -24,6 +25,7 @@ SPECS = REPO_ROOT / "workflows" / "testing"
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",
+        "nurec-reconstruct.yaml",
         "bdd100k-pipeline.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
@@ -32,8 +34,9 @@ SPECS = REPO_ROOT / "workflows" / "testing"
     ],
 )
 def test_example_specs_validate(name: str) -> None:
-    tier = "main" if name in {"sim2real.yaml", "paidf-cosmos3.yaml"} else "testing"
-    spec = load_spec(SPECS.parent / tier / name)
+    path = resolve_npa_workflow_spec(name)
+    assert path is not None, f"example YAML not found: {name}"
+    spec = load_spec(path)
     validate_spec(spec)
     assert spec.api_version == "npa.workflow/v0.0.1"
 

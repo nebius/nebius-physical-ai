@@ -6,6 +6,7 @@ from dataclasses import fields
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import pytest
 import yaml
 
 from npa.deploy.images import (
@@ -23,6 +24,10 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / "workflows"
 PACKAGING_CONTRACT = REPO_ROOT / "npa/docker/workbench/packaging-contract.yaml"
+# Synthetic offline renderer input, never a publication or acceptance record.
+NCORE_VALIDATION_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
+)
 
 
 def _is_restricted_operator_placeholder(image: str) -> bool:
@@ -52,8 +57,6 @@ def test_only_restricted_non_runnable_defaults_are_operator_placeholders() -> No
     assert not _is_restricted_operator_placeholder(
         "registry.example.invalid/npa-paidf-anomalygen-sky@sha256:" + "a" * 64
     )
-
-
 def test_every_published_tool_ignores_ambient_private_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/"
@@ -89,6 +92,47 @@ def test_sim2real_custom_registry_is_scoped_and_explicit(monkeypatch) -> None:
     assert config.augment_image.startswith(f"{custom}/")
 
 
+def _prepare_registry_workflow(spec_path):
+    spec = load_spec(spec_path)
+    requires_baked_image = str(
+        spec.config.get("require_baked_npa") or ""
+    ).lower() in {"1", "true", "yes", "on"}
+    public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
+    image_overrides = (
+        {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
+        if requires_baked_image else {}
+    )
+    if spec_path.name == "nurec-colmap-reconstruct.yaml":
+        # This validation workflow documents a required per-tool override
+        # until genuine exact-image acceptance permits default selection.
+        image_overrides["workbench.nurec.convert_colmap"] = NCORE_VALIDATION_IMAGE
+    return prepare_npa_workflow_for_submit(
+        spec_path,
+        run_id=f"registry-guard-{spec_path.stem}",
+        assume_decision="promote_checkpoint",
+        config_overrides=(
+            {"source_sha": "0" * 40} if requires_baked_image else None
+        ),
+        render_options=SkypilotRenderOptions(
+            image_overrides=image_overrides,
+            materialize_registry_secrets=False,
+        ),
+    )
+
+
+def _rendered_images(prepared):
+    images = set()
+    for document in yaml.safe_load_all(
+        prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+    ):
+        if not isinstance(document, dict):
+            continue
+        image = str((document.get("resources") or {}).get("image_id") or "")
+        if image:
+            images.add(image.removeprefix("docker:"))
+    return images
+
+
 def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
     monkeypatch,
 ) -> None:
@@ -99,42 +143,35 @@ def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
 
     rendered_images: set[str] = set()
     for spec_path in sorted(WORKFLOW_DIR.glob("*/*.yaml")):
-        spec = load_spec(spec_path)
-        requires_baked_image = str(
-            spec.config.get("require_baked_npa") or ""
-        ).lower() in {"1", "true", "yes", "on"}
-        prepared = prepare_npa_workflow_for_submit(
-            spec_path,
-            run_id=f"registry-guard-{spec_path.stem}",
-            assume_decision="promote_checkpoint",
-            config_overrides=(
-                {"source_sha": "0" * 40} if requires_baked_image else None
-            ),
-            render_options=SkypilotRenderOptions(
-                image_overrides=(
-                    {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
-                    if requires_baked_image
-                    else {}
-                ),
-                materialize_registry_secrets=False,
-            ),
-        )
+        prepared = _prepare_registry_workflow(spec_path)
         try:
-            for document in yaml.safe_load_all(
-                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
-            ):
-                if not isinstance(document, dict):
-                    continue
-                image = str((document.get("resources") or {}).get("image_id") or "")
-                if image:
-                    rendered_images.add(image.removeprefix("docker:"))
+            rendered_images.update(_rendered_images(prepared))
         finally:
             prepared.temp_dir.cleanup()
 
     assert rendered_images
+    assert NCORE_VALIDATION_IMAGE in rendered_images
     assert not any(hostile_registry in image for image in rendered_images)
     assert all(
         image.startswith(public_prefix) or _is_restricted_operator_placeholder(image)
         for image in rendered_images
         if image.rsplit("/", 1)[-1].startswith("npa-")
     )
+
+
+@pytest.mark.parametrize("registry", [None, "registry.invalid/operator/private"])
+def test_ncore_validation_workflow_rejects_unaccepted_default(monkeypatch, registry):
+    if registry is None:
+        monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    else:
+        monkeypatch.setenv("NPA_REGISTRY", registry)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://test-fixtures/npa-source")
+
+    with pytest.raises(ValueError, match="NCore has no accepted release image"):
+        container_image_for_tool("ncore")
+    with pytest.raises(ValueError, match="NCore has no accepted release image"):
+        prepare_npa_workflow_for_submit(
+            WORKFLOW_DIR / "testing" / "nurec-colmap-reconstruct.yaml",
+            run_id="ncore-unaccepted-default",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )

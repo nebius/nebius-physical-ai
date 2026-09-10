@@ -105,6 +105,7 @@ def _provision_recovery_argv(
         ("gpu_workload_profile", "--gpu-workload-profile"),
         ("managed_driver_preset", "--managed-driver-preset"),
         ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
+        ("capacity_block_group", "--capacity-block-group"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
     ):
@@ -171,6 +172,9 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
+            capacity_block_group=str(
+                bound.arguments.get("capacity_block_group") or ""
+            ),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan
@@ -181,8 +185,11 @@ def _transactional_provision(function):
         requested_name = (
             _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
         )
+        recovery_arguments = dict(bound.arguments)
+        recovery_arguments["capacity_block_group"] = plan.topology.capacity_block_group
+        recovery_arguments["preemptible"] = plan.topology.gpu_preemptible
         resume_argv = _provision_recovery_argv(
-            dict(bound.arguments),
+            recovery_arguments,
             alias=alias,
             cluster_name=cluster_name,
             context=context,
@@ -363,6 +370,7 @@ def provision_if_absent(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         agent_exists=agent_exists,
     )
@@ -373,6 +381,7 @@ def provision_if_absent(
     cpu_preset = topology.cpu_preset
     gpu_platform = topology.gpu_platform
     gpu_preset = topology.gpu_preset
+    capacity_block_group = topology.capacity_block_group
     preemptible = topology.gpu_preemptible
     actions.extend(_preflight_actions(plan))
 
@@ -797,6 +806,7 @@ def _build_provision_plan(
     cpu_preset: str,
     gpu_platform: str,
     gpu_preset: str,
+    capacity_block_group: str,
     preemptible: bool | None,
     agent_exists: bool = False,
 ):
@@ -819,6 +829,7 @@ def _build_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         cpu_disk_gib=cpu_disk_gib,
         gpu_disk_gib=gpu_disk_gib,
@@ -866,6 +877,7 @@ def _build_provision_plan(
         cpu_preset=requested.cpu_preset,
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
+        capacity_block_group=requested.capacity_block_group,
         preemptible=requested.gpu_preemptible,
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
@@ -916,6 +928,7 @@ def resolve_provision_plan(
     cpu_preset: str = "",
     gpu_platform: str = "",
     gpu_preset: str = "",
+    capacity_block_group: str = "",
     preemptible: bool | None = None,
     mutation: bool = False,
 ):
@@ -939,6 +952,7 @@ def resolve_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
     )
 

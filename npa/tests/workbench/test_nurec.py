@@ -56,7 +56,7 @@ def _json_payload(result) -> dict:
     CliRunner merges stderr into ``result.output`` on this click version, so a
     human-facing note on stderr lands in the same string as the machine-readable
     payload. Production keeps them separate (asserted by
-    ``test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json``).
+    ``test_reconstruct_keeps_stdout_pure_json``).
     """
     text = strip_ansi(result.output)
     start = text.index("{")
@@ -1218,36 +1218,26 @@ def _ncore_with_cameras(path: Path, cameras: list[str], lidars: list[str] = []) 
     path.write_text(json.dumps({"version": "v4", "component_stores": stores}))
 
 
-def test_derived_rig_sequence_trains_on_the_reference_camera_only(tmp_path: Path) -> None:
-    """SfM point-cloud initialization supports exactly one camera.
+def test_derived_rig_sequence_plans_all_cameras(tmp_path: Path, monkeypatch) -> None:
+    """The native accumulated initializer keeps both derived-rig cameras."""
+    from types import SimpleNamespace
+    from npa.workbench.nurec import ncore_initialization
 
-    Live failure: "AssertionError / Only one camera sensor is currently supported
-    for sfm-point-cloud initialization" once discovery started passing both
-    cameras. The rig IS the reference camera, so that is the coherent choice.
-    """
     ncore = tmp_path / "scene.json"
     _ncore_with_cameras(ncore, ["camera1", "camera2"], ["virtual_lidar"])
     _sidecar(ncore, "camera2", ["camera1", "camera2"])
-
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "nurec",
-            "reconstruct",
-            "--ncore-json",
-            str(ncore),
-            "--out-dir",
-            str(tmp_path / "out"),
-            "--dry-run",
-            "--output",
-            "json",
-        ],
-    )
-
+    monkeypatch.setattr(ncore_initialization, "_point_readers", lambda _: {
+        "sfm_points": SimpleNamespace(pcs_count=1, get_pc_xyz=lambda _: [[1, 2, 3]]),
+    })
+    result = runner.invoke(app, [
+        "workbench", "nurec", "reconstruct", "--ncore-json", str(ncore),
+        "--out-dir", str(tmp_path / "out"), "--dry-run", "--output", "json",
+    ])
+    assert result.exit_code == 0, result.output
     command = " ".join(_json_payload(result)["command"])
-    assert "dataset.camera_ids=['camera2']" in command
-    assert "camera1" not in command
+    assert "dataset.camera_ids=['camera1','camera2']" in command
+    assert "=accumulated_point_cloud" in command
+    assert not (tmp_path / "out").exists()
 
 
 def test_sequence_without_a_derived_rig_keeps_all_cameras(tmp_path: Path) -> None:
@@ -1400,7 +1390,7 @@ def test_latest_usdz_still_prefers_a_newer_mtime_over_a_higher_step(tmp_path: Pa
     assert latest_usdz(tmp_path).name == "1000.usdz"
 
 
-def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path) -> None:
+def test_reconstruct_keeps_stdout_pure_json(tmp_path: Path) -> None:
     """The workflow pipes stdout into a JSON parser, so it must stay pure.
 
     Run as a real subprocess rather than through CliRunner, which merges the two
@@ -1425,6 +1415,8 @@ def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path
             str(ncore),
             "--out-dir",
             str(tmp_path / "out"),
+            "--override",
+            "model.layers.background.initialization.name=custom",
             "--dry-run",
             "--output",
             "json",
@@ -1437,10 +1429,8 @@ def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path
     assert proc.returncode == 0, proc.stderr
     # stdout parses as JSON on its own -- nothing else is written to it.
     payload = json.loads(proc.stdout)
-    assert "dataset.camera_ids=['camera2']" in " ".join(payload["command"])
-    # ...and the operator still gets told which camera was dropped.
-    assert "camera1" in proc.stderr
-    assert "reference camera" in proc.stderr
+    assert "dataset.camera_ids=['camera1','camera2']" in " ".join(payload["command"])
+    assert "restricting training" not in proc.stderr
 
 
 def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> None:
