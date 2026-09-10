@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import ssl
+import time
 from typing import BinaryIO
 from urllib.parse import urljoin, urlsplit
 
@@ -63,7 +64,9 @@ def _download_hops(url, output, allowed_hosts, redirect_hosts):
     host, target = _validate_url(url, allowed_hosts)
     visited = {url}
     context = ssl.create_default_context()
+    retries = 0
     while True:
+        retry_delay = 0
         connection = http.client.HTTPSConnection(host, port=443, context=context)
         try:
             connection.request("GET", target)
@@ -76,12 +79,17 @@ def _download_hops(url, output, allowed_hosts, redirect_hosts):
                     while chunk := response.read(1024 * 1024):
                         output.write(chunk)
                     return
+                elif response.status in (429, 500, 502, 503, 504) and retries < 3:
+                    retry_delay = 2 ** retries
+                    retries += 1
                 else:
                     raise PublicDownloadError(
                         "public download returned an unsuccessful HTTP status"
                     )
         finally:
             connection.close()
+        if retry_delay:
+            time.sleep(retry_delay)
 
 
 def download_public_https(
@@ -96,6 +104,9 @@ def download_public_https(
     Requests use exact approved hosts on port 443, with no caller headers,
     ambient proxy/auth configuration, cookies, or Referer. Signed queries stay
     on their request targets; errors omit URLs and server response data.
+    Transient HTTP responses before payload delivery receive three retries with
+    exponential backoff. Authentication, TLS, redirects and partial reads retain
+    their strict failure behavior; callers still verify the complete artifact.
 
     Args:
         url: Initial HTTPS URL without userinfo or fragments.

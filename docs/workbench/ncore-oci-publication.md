@@ -46,6 +46,15 @@ The CLI emits flushed stderr markers such as
 `NCore OCI phase=byte-scan status=begin`, followed by `status=pass` or
 `status=failure`. Only fixed, allowlisted action and phase identifiers appear;
 exception text, subprocess output, paths and policy matches remain private.
+Preparation separately identifies the pinned keyring, native scanner tools,
+literal engine, native integration checks, source annex and bootstrap-source
+downloads. A preparation failure therefore identifies the failing public
+operation without publishing its private subprocess log.
+Anonymous public dependency fetches retry HTTP 429, 500, 502, 503 and 504
+responses up to three times with exponential backoff before failing. No error
+body is delivered as artifact bytes, and hash, TLS, host, redirect and
+authentication checks remain mandatory. Interrupted payload reads still fail
+so the caller can discard its partial file.
 The byte scan has nested `byte-scan-authorization`, `byte-scan-execution` and
 `byte-scan-report` markers, so a stalled or failed boundary is distinguishable.
 Its report phase emits fixed `outcome`, `coverage` and `findings` summaries that

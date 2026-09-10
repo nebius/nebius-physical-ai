@@ -6,6 +6,9 @@ import sys
 
 _PHASES = frozenset({
     "prepare", "build", "check", "publish", "inputs", "build-receipt",
+    "prepare-keyring", "prepare-scanner-tools", "prepare-literal-engine",
+    "prepare-native-checks", "prepare-source-inputs", "prepare-source-annex",
+    "prepare-bootstrap-sources",
     "prepublication", "source-binding", "source-guards", "oci-graph", "provenance",
     "byte-scan", "byte-scan-authorization", "byte-scan-execution", "byte-scan-report",
     "inspection-archives", "shipped-source", "source-delivery",

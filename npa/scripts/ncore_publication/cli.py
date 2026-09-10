@@ -83,17 +83,20 @@ def _policy_input(args):
 
 
 def _prepare(args):
-    _prepare_keyring(args.analysis_root, args.keyring)
+    run_phase("prepare-keyring", _prepare_keyring, args.analysis_root, args.keyring)
     common = ["--analysis-root", str(args.analysis_root), "--trusted-root", str(ROOT)]
-    run([str(PYTHON), "npa/scripts/image_byte_scan/go_helper/build.py", *common,
+    run_phase("prepare-scanner-tools", run,
+        [str(PYTHON), "npa/scripts/image_byte_scan/go_helper/build.py", *common,
          "--output-dir", str(args.analysis_root / "tools")], args.analysis_root / "tools.log")
-    run([str(PYTHON), "npa/scripts/image_byte_scan/prepare.py", "dependencies", *common,
+    run_phase("prepare-literal-engine", run,
+        [str(PYTHON), "npa/scripts/image_byte_scan/prepare.py", "dependencies", *common,
          "--output-dir", str(args.analysis_root / "native")], args.analysis_root / "native.log")
-    run([str(PYTHON), "npa/scripts/image_byte_scan/real_helper_checks.py", *common,
+    run_phase("prepare-native-checks", run,
+        [str(PYTHON), "npa/scripts/image_byte_scan/real_helper_checks.py", *common,
          "--tools-receipt", str(args.analysis_root / "tools/dependency-receipt.json"),
          "--native-receipt", str(args.analysis_root / "native/dependencies.json"),
          "--output-dir", str(args.analysis_root / "native-checks")], args.analysis_root / "native-checks.log")
-    _source_inputs(args.analysis_root)
+    run_phase("prepare-source-inputs", _source_inputs, args.analysis_root)
 
 
 def _prepare_keyring(root, keyring):
@@ -131,15 +134,19 @@ def _extract_keyring(archive, keyring, digest):
 
 
 def _source_inputs(root):
-    from npa._public_https import download_public_https
-    from .process import file_sha
-
     env = public_environment()
     env["TMPDIR"] = str(root)
-    run([str(PYTHON), "npa/docker/workbench/ncore/base_sources.py", "assemble",
-         "--lock", str(ROOT / "npa/docker/workbench/ncore/base-source-lock.json"),
-         "--annex", str(root / "sources"), "--native", str(root / "sources"),
-         "--metadata", str(root / "metadata")], root / "source-inputs.log", env=env)
+    with phase("prepare-source-annex"):
+        run([str(PYTHON), "npa/docker/workbench/ncore/base_sources.py", "assemble",
+             "--lock", str(ROOT / "npa/docker/workbench/ncore/base-source-lock.json"),
+             "--annex", str(root / "sources"), "--native", str(root / "sources"),
+             "--metadata", str(root / "metadata")], root / "source-inputs.log", env=env)
+    run_phase("prepare-bootstrap-sources", _bootstrap_sources, root)
+
+
+def _bootstrap_sources(root):
+    from npa._public_https import download_public_https
+
     upstream = root / "bootstrap-source"
     upstream.mkdir(mode=0o700)
     lock = json.loads((ROOT / "npa/docker/workbench/ncore/base-source-lock.json").read_bytes())

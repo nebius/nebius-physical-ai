@@ -205,6 +205,37 @@ def test_hostile_process_logs_are_private(tmp_path, monkeypatch, capsys, returnc
     assert (tmp_path / "process.log.stderr").read_text() == HOSTILE
 
 
+@pytest.mark.parametrize("failure", [None, "prepare-keyring", "prepare-scanner-tools",
+                                     "prepare-literal-engine", "prepare-native-checks",
+                                     "prepare-source-inputs"])
+def test_preparation_failures_identify_only_the_public_phase(tmp_path, monkeypatch, capsys, failure):
+    phases = ["prepare-keyring", "prepare-scanner-tools", "prepare-literal-engine",
+              "prepare-native-checks", "prepare-source-inputs"]
+    names = {"tools.log": phases[1], "native.log": phases[2], "native-checks.log": phases[3]}
+    error = ValueError(HOSTILE)
+
+    def operation(name):
+        if name == failure:
+            raise error
+
+    monkeypatch.setattr(cli, "_prepare_keyring", lambda *_: operation(phases[0]))
+    monkeypatch.setattr(cli, "_source_inputs", lambda *_: operation(phases[-1]))
+    monkeypatch.setattr(cli, "run", lambda _argv, output: operation(names[output.name]))
+    args = SimpleNamespace(analysis_root=tmp_path, keyring=tmp_path / SYNTHETIC_SECRET)
+    with nullcontext() if failure is None else pytest.raises(ValueError) as raised:
+        cli._prepare(args)
+    if failure:
+        assert raised.value is error
+    expected = []
+    for name in phases:
+        expected += _markers(name, "begin", "failure" if name == failure else "pass")
+        if name == failure:
+            break
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.splitlines() == expected
+
+
 @pytest.mark.parametrize("report", [{}, {"complete": True, "valid": False, "helper_joined": True}])
 def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, report):
     (tmp_path / "bytes").mkdir()
