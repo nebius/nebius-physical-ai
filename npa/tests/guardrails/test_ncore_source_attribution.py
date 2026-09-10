@@ -320,3 +320,21 @@ def test_diff_disposition_requires_the_actual_canonical_post_image(tmp_path: Pat
     assert len(hits) == 1 and hits[0].repository_path is None
     assert not confidentiality._canonical_diff_matches(repo, f"{canonical}..{changed}")
     assert confidentiality._canonical_diff_matches(repo, f"{changed}..{restored}")
+
+
+def test_public_transport_failure_retains_all_unresolved_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from npa.guardrails import ncore_attribution
+    from npa._public_https import PublicDownloadError
+
+    def refused(*_args: object, **_kwargs: object) -> None:
+        raise PublicDownloadError("synthetic-sensitive-network-detail")
+
+    repo = _source_repo(tmp_path)
+    monkeypatch.setattr(ncore_attribution, "download_public_https", refused)
+    assert _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN) == 1
+    output = capsys.readouterr()
+    assert "raw=2 dispositioned=0 unresolved=2" in output.err
+    assert "NCore public-attribution proof could not be verified" in output.err
+    assert "synthetic-sensitive-network-detail" not in output.out + output.err

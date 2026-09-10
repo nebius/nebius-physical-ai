@@ -12,7 +12,7 @@ import tarfile
 import tempfile
 from typing import Any, BinaryIO
 
-from npa._public_https import download_public_https
+from npa._public_https import PublicDownloadError, download_public_https
 
 
 REPOSITORY_PATH = "npa/docker/workbench/ncore/notices/cpython/LICENSE.third-party"
@@ -117,10 +117,13 @@ def _download_archive(path: Path, archive: _Archive) -> None:
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
             temporary = Path(output.name)
-            download_public_https(
-                archive.url, _PinnedArchiveOutput(output, archive.size),
-                allowed_hosts=frozenset({archive.host}),
-            )
+            try:
+                download_public_https(
+                    archive.url, _PinnedArchiveOutput(output, archive.size),
+                    allowed_hosts=frozenset({archive.host}),
+                )
+            except PublicDownloadError:
+                raise OSError("official public archive download failed") from None
             output.flush()
             os.fsync(output.fileno())
         _verified_file(temporary, archive)
