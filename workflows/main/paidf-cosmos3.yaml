@@ -3,6 +3,7 @@ kind: Workflow
 
 metadata:
   name: paidf-cosmos3
+  executionMode: runtime
   description: >-
     Independent Physical AI Data Factory variant: select a generic direct video
     or LeRobot v2/v3 episode/camera, understand it with a hosted VLM, generate
@@ -277,7 +278,7 @@ states:
         goto: reject-quality
 
   require-accepted-quality:
-    description: Fail closed before annotation when a one-shot plan assumed promotion incorrectly.
+    description: Revalidate the durable accepted disposition before annotation.
     needs: [quality-route]
     resources: cpu
     run:

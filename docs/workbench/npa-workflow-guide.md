@@ -72,6 +72,8 @@ kind: Workflow
 
 metadata:
   name: my-workflow
+  # Set for workflows whose live branches depend on decision artifacts.
+  executionMode: runtime
 
 config:            # parameters; referenced by tokens
   bucket: my-bucket
@@ -97,6 +99,13 @@ states:
 ```
 
 ## State mechanics
+
+`metadata.executionMode: runtime` makes the generic submit command select the
+runtime orchestrator automatically. Use it when live execution must re-read a
+decision artifact to exit a loop or choose a transition. Read-only planning still
+flattens the selected `--assume-decision` path. An explicit `--no-runtime` is
+rejected for these workflows because a one-shot plan cannot honor their real
+data-dependent control flow.
 
 | Field | Purpose |
 | --- | --- |

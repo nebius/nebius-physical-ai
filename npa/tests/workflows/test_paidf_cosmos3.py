@@ -19,6 +19,19 @@ requires_ffmpeg = pytest.mark.skipif(
 )
 
 
+def _quality_disposition(*, accepted: bool) -> dict[str, object]:
+    return {
+        "schema": c3.QUALITY_DISPOSITION_SCHEMA,
+        "quality_status": "accepted" if accepted else "rejected",
+        "decision": "promote_checkpoint" if accepted else "loop_back",
+        "evaluator_status": "completed",
+        "score": 0.88 if accepted else 0.27,
+        "threshold": 0.75,
+        "hard_checks_passed": accepted,
+        "reasons": [] if accepted else ["aggregate score is below threshold"],
+    }
+
+
 def _tiny_video(path: Path, *, color: str = "blue") -> Path:
     assert FFMPEG is not None
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -382,7 +395,7 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -528,7 +541,7 @@ def test_finalize_missing_truthful_manifest_fields_raise_domain_error(
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -549,14 +562,7 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "rejected",
-                "decision": "loop_back",
-                "evaluator_status": "missing",
-                "hard_checks_passed": False,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=False)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -572,19 +578,13 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
         c3.require_accepted_quality(str(disposition))
 
 
-def test_quality_route_repairs_pre_decision_disposition_before_promotion(
+def test_quality_route_promotes_only_a_complete_accepted_disposition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "accepted",
-                "evaluator_status": "completed",
-                "hard_checks_passed": True,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=True)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -598,8 +598,37 @@ def test_quality_route_repairs_pre_decision_disposition_before_promotion(
         c3.route_quality_disposition(str(disposition), str(decision))
         == "promote_checkpoint"
     )
-    assert json.loads(disposition.read_text())["decision"] == "promote_checkpoint"
     c3.require_accepted_quality(str(disposition))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.pop("decision"), "incomplete"),
+        (lambda value: value.update(decision="loop_back"), "inconsistent"),
+        (lambda value: value.update(score=float("nan")), "finite number"),
+        (lambda value: value.update(reasons=[""]), "string list"),
+    ],
+)
+def test_quality_route_fails_closed_on_malformed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    message: str,
+) -> None:
+    disposition = tmp_path / "quality_disposition.json"
+    decision = tmp_path / "decision.json"
+    document = _quality_disposition(accepted=True)
+    mutation(document)
+    disposition.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, value: Path(uri).write_text(value, encoding="utf-8"),
+    )
+
+    with pytest.raises(c3.PaidfCosmos3Error, match=message):
+        c3.route_quality_disposition(str(disposition), str(decision))
+    assert not decision.exists()
 
 
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:

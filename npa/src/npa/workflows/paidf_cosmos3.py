@@ -11,6 +11,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -26,10 +27,84 @@ ATTEMPT_SCHEMA = "npa.paidf.cosmos3.refinement.v1"
 FINAL_SCHEMA = "npa.paidf.cosmos3.final.v1"
 ENGINE = "nvidia-cosmos/cosmos-framework"
 VIDEO_MODE = "video2video"
+QUALITY_DISPOSITION_SCHEMA = "npa.data_factory.quality_disposition.v1"
 
 
 class PaidfCosmos3Error(RuntimeError):
     """A PAIDF Cosmos 3 contract could not be satisfied."""
+
+
+def _disposition_number(document: Mapping[str, Any], field: str) -> float:
+    value = document.get(field)
+    if isinstance(value, bool):
+        raise PaidfCosmos3Error(
+            f"quality disposition {field} must be a finite number"
+        )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PaidfCosmos3Error(
+            f"quality disposition {field} must be a finite number"
+        ) from exc
+    if not math.isfinite(number):
+        raise PaidfCosmos3Error(
+            f"quality disposition {field} must be a finite number"
+        )
+    if not 0.0 <= number <= 1.0:
+        raise PaidfCosmos3Error(
+            f"quality disposition {field} must be between 0 and 1"
+        )
+    return number
+
+
+def _quality_disposition_fields(document: Any) -> tuple[Mapping[str, Any], list[str]]:
+    if not isinstance(document, dict):
+        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    required = {
+        "schema",
+        "quality_status",
+        "decision",
+        "evaluator_status",
+        "score",
+        "threshold",
+        "hard_checks_passed",
+        "reasons",
+    }
+    missing = sorted(required.difference(document))
+    if missing:
+        raise PaidfCosmos3Error(
+            "quality disposition is incomplete: " + ", ".join(missing)
+        )
+    if document["schema"] != QUALITY_DISPOSITION_SCHEMA:
+        raise PaidfCosmos3Error("quality disposition schema is unsupported")
+    if not isinstance(document["hard_checks_passed"], bool):
+        raise PaidfCosmos3Error("quality disposition hard_checks_passed must be boolean")
+    reasons = document["reasons"]
+    if not isinstance(reasons, list) or not all(
+        isinstance(reason, str) and reason.strip() for reason in reasons
+    ):
+        raise PaidfCosmos3Error("quality disposition reasons must be a string list")
+    return document, reasons
+
+
+def _validated_quality_status(document: Any) -> str:
+    disposition, reasons = _quality_disposition_fields(document)
+    score = _disposition_number(disposition, "score")
+    threshold = _disposition_number(disposition, "threshold")
+    accepted = (
+        disposition["evaluator_status"] == "completed"
+        and disposition["hard_checks_passed"] is True
+        and score >= threshold
+        and not reasons
+    )
+    expected_status = "accepted" if accepted else "rejected"
+    expected_decision = "promote_checkpoint" if accepted else "loop_back"
+    if (
+        disposition["quality_status"] != expected_status
+        or disposition["decision"] != expected_decision
+    ):
+        raise PaidfCosmos3Error("quality disposition is internally inconsistent")
+    return expected_status
 
 
 def validate_committed_augment_manifest(
@@ -909,11 +984,13 @@ def generate_variants(
 
 
 def reject_quality(disposition_uri: str) -> None:
-    disposition = _read_json(disposition_uri)
-    if (
-        not isinstance(disposition, dict)
-        or disposition.get("quality_status") != "rejected"
-    ):
+    try:
+        quality_status = _validated_quality_status(_read_json(disposition_uri))
+    except Exception as exc:
+        raise PaidfCosmos3Error(
+            "reject terminal requires a complete durable disposition"
+        ) from exc
+    if quality_status != "rejected":
         raise PaidfCosmos3Error(
             "reject terminal requires a durable rejected disposition"
         )
@@ -933,27 +1010,10 @@ def route_quality_disposition(disposition_uri: str, decision_uri: str) -> str:
         raise PaidfCosmos3Error(
             "quality disposition is missing or unreadable"
         ) from exc
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("quality disposition is not a JSON object")
-    quality_status = disposition.get("quality_status")
-    recorded_decision = disposition.get("decision")
-    expected = (
-        "promote_checkpoint" if quality_status == "accepted" else "loop_back"
-    )
-    if quality_status not in {"accepted", "rejected"}:
-        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
-    if recorded_decision is None:
-        # Runs started by the pre-decision disposition writer can reach this state
-        # after an operator repairs and resumes the driver.  Persist the uniquely
-        # derivable route before continuing so downstream acceptance checks still
-        # consume one durable, self-consistent disposition.  A present conflicting
-        # value remains a hard failure below.
-        disposition["decision"] = expected
-        _write_json(disposition, disposition_uri)
-    elif recorded_decision != expected:
-        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
-    write_decision(decision_uri, expected)
-    return expected
+    quality_status = _validated_quality_status(disposition)
+    decision = "promote_checkpoint" if quality_status == "accepted" else "loop_back"
+    write_decision(decision_uri, decision)
+    return decision
 
 
 def require_accepted_quality(disposition_uri: str) -> None:
@@ -965,14 +1025,7 @@ def require_accepted_quality(disposition_uri: str) -> None:
         raise PaidfCosmos3Error(
             "accepted quality disposition is missing or unreadable"
         ) from exc
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("accepted quality disposition is not a JSON object")
-    if (
-        disposition.get("quality_status") != "accepted"
-        or disposition.get("decision") != "promote_checkpoint"
-        or disposition.get("evaluator_status") != "completed"
-        or disposition.get("hard_checks_passed") is not True
-    ):
+    if _validated_quality_status(disposition) != "accepted":
         raise PaidfCosmos3Error(
             "annotation requires a complete accepted evaluator disposition"
         )
@@ -994,8 +1047,7 @@ def finalize(
     disposition = _read_json(root + "grade/quality_disposition.json", storage=client)
     curator = _read_json(root + "curation/cosmos_curator.json", storage=client)
     fiftyone = _read_json(root + "curation/report.json", storage=client)
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    quality_status = _validated_quality_status(disposition)
     if not isinstance(curator, dict):
         raise PaidfCosmos3Error("Cosmos Curator report is not a JSON object")
     if not isinstance(fiftyone, dict):
@@ -1055,10 +1107,7 @@ def finalize(
             "Cosmos 3 manifest does not prove real non-empty framework output; "
             f"missing or invalid fields: {', '.join(missing_or_invalid) or 'counts'}"
         )
-    if (
-        disposition.get("quality_status") != "accepted"
-        or evaluator.get("passed") is not True
-    ):
+    if quality_status != "accepted" or evaluator.get("passed") is not True:
         raise PaidfCosmos3Error(
             "finalization requires an accepted complete evaluator result"
         )

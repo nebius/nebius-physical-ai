@@ -21,6 +21,14 @@ first write the available input, generated-video, evaluator, decision, and
 quality-disposition evidence to `reports/sim2real.rrd`, then terminate with a
 failure. Missing or incomplete evaluator reports also reject.
 
+This workflow declares `metadata.executionMode: runtime`. The generic submit
+command therefore selects the runtime orchestrator even when `--runtime` is
+omitted, so every failed evaluation reaches the next bounded refinement pass and
+the terminal disposition controls the final branch. An explicit `--no-runtime`
+is rejected before staging or submission. `--assume-decision` remains a planning
+preview and missing-artifact fallback; it never overrides a readable runtime
+decision.
+
 ## Inputs and configuration
 
 Choose `input_kind: video` and set `input_video_uri` to one MP4, or choose
