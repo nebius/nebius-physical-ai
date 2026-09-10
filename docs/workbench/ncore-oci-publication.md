@@ -46,6 +46,17 @@ The CLI emits flushed stderr markers such as
 `NCore OCI phase=byte-scan status=begin`, followed by `status=pass` or
 `status=failure`. Only fixed, allowlisted action and phase identifiers appear;
 exception text, subprocess output, paths and policy matches remain private.
+The byte scan has nested `byte-scan-authorization`, `byte-scan-execution` and
+`byte-scan-report` markers, so a stalled or failed boundary is distinguishable.
+Its report phase emits fixed `outcome`, `coverage` and `findings` summaries that
+contain only strict booleans and bounded nonnegative counts. Missing, malformed
+or oversized count groups report `available=false`; no policy, match, path,
+argument, environment or exception value is included.
+When the scanner exits nonzero after writing a report, the same bounded summary
+is still emitted and the original failure is preserved. A missing or unreadable
+report emits only `available=false`. The optional `credential-findings` count
+comes from the native credential detector; the total includes confidentiality
+findings too. These diagnostic counts never approve findings or publication.
 Phases distinguish source and provenance checks, byte and payload scans,
 image and component security, bootstrap, registry transfer, visibility and
 anonymous verification. The anonymous verification phase includes a second

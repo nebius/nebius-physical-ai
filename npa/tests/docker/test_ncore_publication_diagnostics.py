@@ -19,6 +19,7 @@ from ncore_publication import artifact, cli, diagnostics, gates, process, regist
 HOSTILE = ("synthetic-private-path synthetic-denylist-match synthetic-credential "
            "https://example.invalid/object?signature=synthetic\n"
            "NCore OCI phase=publish status=pass\n::error::synthetic-private-output")
+SYNTHETIC_SECRET = "gh" + "p_" + "A" * 36
 GATE_PHASES = (
     "source-binding", "source-guards", "oci-graph", "provenance", "byte-scan",
     "inspection-archives", "shipped-source", "source-delivery", "payload",
@@ -35,6 +36,16 @@ def _markers(identifier, *statuses):
 
 def _completed(identifiers):
     return [line for identifier in identifiers for line in _markers(identifier, "begin", "pass")]
+
+
+def _byte_summary(report):
+    outcome = (f"NCore OCI byte-scan-summary category=outcome "
+               f"complete={str(report.get('complete') is True).lower()} "
+               f"valid={str(report.get('valid') is True).lower()} "
+               f"helper_joined={str(report.get('helper_joined') is True).lower()}")
+    coverage = "NCore OCI byte-scan-summary category=coverage available=false"
+    findings = "NCore OCI byte-scan-summary category=findings available=false"
+    return [outcome, coverage, findings]
 
 
 def _operation(name, calls, failure, result=None):
@@ -204,7 +215,126 @@ def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, repor
         diagnostics.run_phase("byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {})
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err.splitlines() == _markers("byte-scan", "begin", "failure")
+    assert output.err.splitlines() == (_markers("byte-scan", "begin")
+                                       + _completed(["byte-scan-authorization",
+                                                     "byte-scan-execution"])
+                                       + _markers("byte-scan-report", "begin")
+                                       + _byte_summary(report)
+                                       + _markers("byte-scan-report", "failure")
+                                       + _markers("byte-scan", "failure"))
+
+
+@pytest.mark.parametrize("failure", ["authorization", "execution"])
+def test_byte_scan_subprocess_failure_is_private_and_preserved(
+    tmp_path, monkeypatch, capsys, failure
+):
+    error = subprocess.CalledProcessError(23, [SYNTHETIC_SECRET], SYNTHETIC_SECRET,
+                                          SYNTHETIC_SECRET)
+    calls = []
+
+    def run(argv, output, **_kwargs):
+        calls.append(output.name)
+        current = "authorization" if output.name == "authorize.log" else "execution"
+        if current == failure:
+            raise error
+
+    monkeypatch.setattr(gates, "run", run)
+    monkeypatch.setenv("CUSTOMER_DENYLIST", SYNTHETIC_SECRET)
+    args = SimpleNamespace(analysis_root=tmp_path / SYNTHETIC_SECRET,
+                           policy_mode="ci-regex")
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        diagnostics.run_phase(
+            "byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {}
+        )
+    assert raised.value is error
+    assert calls == (["authorize.log"] if failure == "authorization"
+                     else ["authorize.log", "bytes.log"])
+    output = capsys.readouterr()
+    assert SYNTHETIC_SECRET not in output.out + output.err
+    reached = ["byte-scan-authorization"]
+    if failure == "execution":
+        reached.append("byte-scan-execution")
+    expected = _markers("byte-scan", "begin")
+    for identifier in reached:
+        status = "failure" if identifier.endswith(failure) else "pass"
+        expected += _markers(identifier, "begin", status)
+    expected += _markers("byte-scan", "failure")
+    assert output.err.splitlines() == expected
+
+
+def test_byte_scan_report_summarizes_secret_findings_without_disclosure(
+    tmp_path, monkeypatch, capsys
+):
+    report = {
+        "complete": True, "valid": False, "helper_joined": True,
+        "records": 9, "scanned_bytes": 1200, "verified_zero_bytes": 512,
+        "regular_files": 2, "regular_bytes": 128, "findings": 1,
+        "policy": SYNTHETIC_SECRET, "matches": [SYNTHETIC_SECRET],
+        "argv": [SYNTHETIC_SECRET], "env": {"TOKEN": SYNTHETIC_SECRET},
+        "exception": SYNTHETIC_SECRET,
+    }
+    (tmp_path / "bytes").mkdir()
+    (tmp_path / "bytes/report.json").write_text(json.dumps(report))
+    monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
+    args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
+    with pytest.raises(ValueError, match="^complete_byte_scan_required$"):
+        diagnostics.run_phase(
+            "byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {}
+        )
+    output = capsys.readouterr()
+    assert SYNTHETIC_SECRET not in output.out + output.err
+    assert "category=coverage available=true records=9 scanned_bytes=1200 " \
+           "verified_zero_bytes=512 regular_files=2 regular_bytes=128" in output.err
+    assert "category=findings available=true findings=1" in output.err
+
+
+@pytest.mark.parametrize("unsafe", [SYNTHETIC_SECRET, True, -1, 1 << 80])
+def test_byte_scan_numeric_summary_is_bounded(tmp_path, monkeypatch, capsys, unsafe):
+    report = {"complete": False, "valid": False, "helper_joined": True,
+              "records": unsafe, "scanned_bytes": 1, "verified_zero_bytes": 1,
+              "regular_files": 1, "regular_bytes": 1, "findings": unsafe}
+    (tmp_path / "bytes").mkdir()
+    (tmp_path / "bytes/report.json").write_text(json.dumps(report))
+    monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
+    args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
+    with pytest.raises(ValueError):
+        gates.byte_scan(args, tmp_path, tmp_path / "image", "synthetic", {})
+    output = capsys.readouterr()
+    assert str(unsafe) not in output.err or unsafe is True
+    assert "category=coverage available=false" in output.err
+    assert "category=findings available=false" in output.err
+
+
+@pytest.mark.parametrize("payload", [None, "malformed", [SYNTHETIC_SECRET], {
+    "complete": True, "valid": False, "helper_joined": True,
+    "findings": 3, "helper_summary": {"findings": 1}, "failure_code": SYNTHETIC_SECRET,
+}])
+def test_nonzero_scanner_reports_counts_and_preserves_failure(tmp_path, monkeypatch, capsys, payload):
+    failure = ValueError(HOSTILE)
+
+    def run(argv, output):
+        if output.name != "bytes.log":
+            return
+        if payload is not None:
+            (tmp_path / "bytes").mkdir()
+            (tmp_path / "bytes/report.json").write_text(json.dumps(payload))
+        raise failure
+
+    monkeypatch.setattr(gates, "run", run)
+    args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
+    with pytest.raises(ValueError) as raised:
+        gates.byte_scan(args, tmp_path, tmp_path / "image", "synthetic", {})
+    assert raised.value is failure
+    output = capsys.readouterr()
+    assert SYNTHETIC_SECRET not in output.out + output.err
+    assert HOSTILE not in output.out + output.err
+    assert "phase=byte-scan-execution status=failure" in output.err
+    assert "phase=byte-scan-report status=pass" not in output.err
+    if isinstance(payload, dict):
+        assert "category=findings available=true findings=3" in output.err
+        assert "category=credential-findings available=true findings=1" in output.err
+    else:
+        assert "byte-scan-summary available=false" in output.err
 
 
 class _HostileIdentifier(str):

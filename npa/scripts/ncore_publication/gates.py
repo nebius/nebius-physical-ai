@@ -1,6 +1,7 @@
 """Compose existing native byte, source, payload and Trivy gates for NCore."""
 
 import json
+import sys
 import tarfile
 
 import yaml
@@ -70,6 +71,19 @@ def byte_scan(args, directory, archive, digest, verification):
     """
     write_json(directory / "graph.json", verification)
     common = ["--analysis-root", str(args.analysis_root), "--trusted-root", str(ROOT)]
+    authorization = _authorize_byte_scan(args, directory, archive, digest, common)
+    scan = [str(PYTHON), "npa/scripts/scan_image_bytes.py", *common,
+            "--authorization", str(authorization / "authorization.json"),
+            "--output-dir", str(directory / "bytes")]
+    try:
+        run_phase("byte-scan-execution", run, scan, directory / "bytes.log")
+    except (OSError, ValueError):
+        _failed_byte_scan_summary(directory)
+        raise
+    run_phase("byte-scan-report", _byte_scan_report, directory)
+
+
+def _authorize_byte_scan(args, directory, archive, digest, common):
     authorization = directory / "authorization"
     argv = [str(PYTHON), "npa/scripts/image_byte_scan/prepare.py", "authorize", *common,
             "--tools-receipt", str(args.analysis_root / "tools/dependency-receipt.json"),
@@ -80,13 +94,51 @@ def byte_scan(args, directory, archive, digest, verification):
     if args.policy_mode == "exact-literals":
         argv.extend(["--literal-inventory", str(args.literal_inventory),
                      "--literal-matching-policy", "exact-substring-v1"])
-    run(argv, directory / "authorize.log")
-    run([str(PYTHON), "npa/scripts/scan_image_bytes.py", *common,
-         "--authorization", str(authorization / "authorization.json"),
-         "--output-dir", str(directory / "bytes")], directory / "bytes.log")
+    run_phase("byte-scan-authorization", run, argv, directory / "authorize.log")
+    return authorization
+
+
+def _failed_byte_scan_summary(directory):
+    # A finding makes the scanner exit nonzero after writing its private report.
+    # Reporting must neither hide that failure nor depend on a well-formed report.
+    try:
+        report = json.loads((directory / "bytes/report.json").read_bytes())
+    except (OSError, ValueError):
+        report = None
+    if not isinstance(report, dict):
+        print("NCore OCI byte-scan-summary available=false", file=sys.stderr, flush=True)
+        return
+    _byte_scan_summary(report)
+
+
+def _byte_scan_report(directory):
     report = json.loads((directory / "bytes/report.json").read_bytes())
+    _byte_scan_summary(report)
     W.require(report.get("complete") is True and report.get("valid") is True
               and report.get("helper_joined") is True, "complete_byte_scan_required")
+
+
+def _byte_scan_summary(report):
+    outcome = tuple(report.get(name) is True for name in ("complete", "valid", "helper_joined"))
+    print("NCore OCI byte-scan-summary category=outcome "
+          f"complete={str(outcome[0]).lower()} valid={str(outcome[1]).lower()} "
+          f"helper_joined={str(outcome[2]).lower()}", file=sys.stderr, flush=True)
+    _numeric_summary(report, "coverage", ("records", "scanned_bytes", "verified_zero_bytes",
+                                           "regular_files", "regular_bytes"))
+    _numeric_summary(report, "findings", ("findings",))
+    helper = report.get("helper_summary")
+    if isinstance(helper, dict):
+        _numeric_summary(helper, "credential-findings", ("findings",))
+
+
+def _numeric_summary(report, category, fields):
+    maximum = (1 << 63) - 1
+    values = [report.get(field) for field in fields]
+    available = all(type(value) is int and 0 <= value <= maximum for value in values)
+    suffix = "" if not available else " " + " ".join(
+        f"{field}={value}" for field, value in zip(fields, values, strict=True))
+    print(f"NCore OCI byte-scan-summary category={category} "
+          f"available={str(available).lower()}{suffix}", file=sys.stderr, flush=True)
 
 
 def verify(args, directory, build):

@@ -7,7 +7,8 @@ import sys
 _PHASES = frozenset({
     "prepare", "build", "check", "publish", "inputs", "build-receipt",
     "prepublication", "source-binding", "source-guards", "oci-graph", "provenance",
-    "byte-scan", "inspection-archives", "shipped-source", "source-delivery",
+    "byte-scan", "byte-scan-authorization", "byte-scan-execution", "byte-scan-report",
+    "inspection-archives", "shipped-source", "source-delivery",
     "payload", "payload-history", "image-security", "selected-base", "components",
     "bootstrap", "source-recheck", "registry-transfer", "registry-tag-lookup",
     "registry-copy", "registry-visibility", "anonymous-verification", "anonymous-copy",
