@@ -123,6 +123,14 @@ score without being assigned to the final action. Stage 9 validates the bindings
 again before training. Old or misassociated evaluator outputs require a fresh
 run and must not be relabeled in place.
 
+The hosted response schema encodes each input action at its own `per_step`
+array position using JSON Schema `prefixItems`. Its action index and camera
+reference are fixed to the recorded binding; unsampled actions also have fixed
+neutral confidence, tags, and critique text. The array requires every action
+exactly once and allows no trailing entries. This constrains generation before
+the unchanged strict parser checks the returned events. Hosted endpoints must
+honor this schema; schema rejection or invalid output is not silently repaired.
+
 Temporal support establishes that an action has an exactly timed selected
 primary image; it does not establish that the object or contact is visible.
 Inspect the selected primary frames before hosted evaluation. Secondary camera

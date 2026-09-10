@@ -567,7 +567,7 @@ def run_token_factory_rollout_vlm(
             temperature=0.0,
             max_tokens=DEFAULT_REASON_MAX_NEW_TOKENS,
             response_format=_hosted_rollout_response_format(
-                actions, [path.name for path in selected_paths]
+                actions, frame_names, visual_bindings=bindings,
             ),
         )
         if response.get("model") != resolved_model:
@@ -626,31 +626,54 @@ def run_token_factory_rollout_vlm(
     return payload
 
 
-def _hosted_rollout_response_format(
-    actions: list[dict[str, Any]], frame_names: list[str]
-) -> dict[str, Any]:
-    """Constrain generation to the same event vocabulary the parser requires."""
+def _hosted_event_schema(step: int, binding: dict[str, Any]) -> dict[str, Any]:
+    """Encode the camera authority of one action before model generation."""
 
+    camera = binding["camera_observation"]
     event = {
-        "step": {"type": "integer", "enum": [a.get("step", i) for i, a in enumerate(actions)]},
+        "step": {"type": "integer", "enum": [step]},
         "critique_text": {"type": "string", "minLength": 1},
         "error_tags": {
             "type": "array", "minItems": 1,
             "items": {"type": "string", "enum": list(ERROR_SEVERITY)},
         },
-        "camera_observation": {"type": ["string", "null"], "enum": [*frame_names, None]},
+        "camera_observation": {"type": "string" if camera is not None else "null", "enum": [camera]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     }
+    if not binding["supported"]:
+        event["critique_text"]["enum"] = [insufficient_visual_evidence(step)]
+        event["confidence"]["enum"] = [0]
+        event["error_tags"].update(maxItems=1, items={"type": "string", "enum": ["ok"]})
+    return {
+        "type": "object", "properties": event,
+        "required": list(event), "additionalProperties": False,
+    }
+
+
+def _hosted_rollout_response_format(
+    actions: list[dict[str, Any]], frame_names: list[str],
+    *, visual_bindings: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    """Constrain each generated event to its original action and visual evidence."""
+
+    steps = [action.get("step", index) for index, action in enumerate(actions)]
+    if (not steps or any(type(step) is not int for step in steps)
+            or len(set(steps)) != len(steps) or set(visual_bindings) != set(steps)):
+        raise CosmosReasonError("hosted response schema requires unique bound action indices")
+    events = []
+    for step in steps:
+        binding = visual_bindings[step]
+        if (not valid_visual_binding(binding, step=step)
+                or binding["supported"] and binding["camera_observation"] not in frame_names):
+            raise CosmosReasonError("hosted response schema requires recorded visual bindings")
+        events.append(_hosted_event_schema(step, binding))
     properties = {
         "success": {"type": "boolean"},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "summary": {"type": "string", "minLength": 1},
         "per_step": {
             "type": "array", "minItems": len(actions), "maxItems": len(actions),
-            "items": {
-                "type": "object", "properties": event,
-                "required": list(event), "additionalProperties": False,
-            },
+            "prefixItems": events, "items": False,
         },
     }
     return {

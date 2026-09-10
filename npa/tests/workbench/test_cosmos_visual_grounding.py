@@ -4,7 +4,9 @@ from copy import deepcopy
 
 import pytest
 
-from npa.workbench.cosmos.reason import CosmosReasonError, _parse_hosted_rollout_output
+from npa.workbench.cosmos.reason import (
+    CosmosReasonError, _hosted_rollout_response_format, _parse_hosted_rollout_output,
+)
 from npa.workflows.sim2real.byo_isaac_trainer import read_signal_stats
 from npa.workbench.cosmos.visual_grounding import (
     bind_action_frames, validate_stored_visual_grounding,
@@ -122,6 +124,53 @@ def test_wrong_temporal_evidence_is_rejected_without_relabeling(corruption):
                                     threshold=0.5, family="minimax_m3", frame_names=selected,
                                     visual_bindings=bindings)
     assert payload == before
+
+
+def _corrupt_generated_events(rows, corruption):
+    if corruption == "future_frame":
+        rows[1]["camera_observation"] = "camera-004.png"
+    elif corruption == "past_frame":
+        rows[4]["camera_observation"] = "camera-000.png"
+    elif corruption == "missing_null_camera":
+        rows[1].pop("camera_observation")
+    elif corruption == "unsupported_confidence":
+        rows[1]["confidence"] = 0.1
+    elif corruption == "unsupported_tag":
+        rows[1]["error_tags"] = ["collision"]
+    elif corruption == "unsupported_critique":
+        rows[1]["critique_text"] = "An unseen collision occurred."
+    elif corruption == "duplicate_step":
+        rows[1] = deepcopy(rows[0])
+    elif corruption == "reordered_steps":
+        rows[0], rows[4] = rows[4], rows[0]
+    elif corruption == "missing_step":
+        rows.pop()
+    elif corruption == "extra_step":
+        rows.append(deepcopy(rows[-1]))
+    else:
+        rows[-1]["camera_observation"] = "camera-032.png"
+
+
+@pytest.mark.parametrize("corruption", [
+    "future_frame", "past_frame", "missing_null_camera", "unsupported_confidence",
+    "unsupported_tag", "unsupported_critique", "duplicate_step", "reordered_steps",
+    "missing_step", "extra_step", "final_context_frame",
+])
+def test_generation_schema_rejects_wrong_event_bindings_and_coverage(corruption):
+    import jsonschema
+
+    actions, metadata, selected = _capture()
+    bindings = bind_action_frames(actions=actions, frame_metadata=metadata,
+                                  frame_names=selected, rollout_id="rollout-0000")
+    schema = _hosted_rollout_response_format(
+        actions, selected, visual_bindings=bindings,
+    )["json_schema"]["schema"]
+    payload = _bound_payload(bindings)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    jsonschema.validate(payload, schema)
+    _corrupt_generated_events(payload["per_step"], corruption)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
 
 
 def test_unobserved_events_keep_ground_truth_without_visual_training_effects(tmp_path):

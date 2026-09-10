@@ -578,7 +578,9 @@ def _complete_hosted_payload() -> dict:
 def test_hosted_response_schema_rejects_invalid_error_tags(tags):
     import jsonschema
 
-    response_format = reason_module._hosted_rollout_response_format([{"step": 0}], ["frame.png"])
+    response_format = reason_module._hosted_rollout_response_format(
+        [{"step": 0}], ["frame.png"], visual_bindings=_single_frame_binding(),
+    )
     schema = response_format["json_schema"]["schema"]
     payload = _complete_hosted_payload()
     jsonschema.validate(payload, schema)
@@ -592,7 +594,10 @@ def test_hosted_response_schema_uses_selected_frames_and_actual_action_indices()
     import jsonschema
 
     response_format = reason_module._hosted_rollout_response_format(
-        [{"step": 4}, {"step": 19}], ["first.png", "last.png"]
+        [{"step": 4}, {"step": 19}], ["first.png", "last.png"],
+        visual_bindings={step: {**_single_frame_binding()[0], "action_step": step,
+                               "camera_observation": frame}
+                         for step, frame in [(4, "first.png"), (19, "last.png")]},
     )
     schema = response_format["json_schema"]["schema"]
     payload = _complete_hosted_payload()

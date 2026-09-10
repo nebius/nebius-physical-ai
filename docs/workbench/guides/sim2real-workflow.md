@@ -26,6 +26,10 @@ results are not attributed to NVIDIA Cosmos. An explicit Cosmos3 model remains
 usable with an authorized endpoint serving it. Start a new run when changing
 models or upgrading this evaluator contract; Stage 9 verifies model identity,
 family, request accounting, and exact Stage 7 rollout coverage before PPO.
+The hosted endpoint must support the ordered JSON Schema response contract:
+each generated event has a fixed action index and recorded camera reference,
+including explicit neutral values for unsampled actions. Validate this with
+real rollout frames before a full run; invalid responses remain rejected.
 
 Select the model explicitly with one of these submit overrides:
 

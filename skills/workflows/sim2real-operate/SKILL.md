@@ -48,6 +48,10 @@ with an actionable migration to this canonical spec.
    actions. Stage 9 must reject older or inconsistent bindings before PPO; do not
    rewrite archived critiques to attach a different frame. Unsupported visual
    events contribute no auxiliary reward, corrective action, or PPO tag counts.
+   Generation must enforce those same bindings with one ordered JSON Schema
+   `prefixItems` entry per action, fixed step/camera fields, and neutral values
+   for unsupported events. Verify actual endpoint schema support with real
+   rollout input; retain strict parser rejection and never repair model output.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.
