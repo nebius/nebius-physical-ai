@@ -5,8 +5,8 @@ catalog operation. Author, validate, and submit these specs; NPA renders the
 scheduler YAML.
 
 Start with the [workflow guides](guides/README.md) for setup and execution.
-For PAIDF with Cosmos 3 on a supplied GPU cluster, follow the
-[Living Lab participant guide](guides/living-lab-paidf-cosmos3.md). It includes
+For PAIDF with Cosmos 3 on Nebius, follow the
+[PAIDF Cosmos 3 setup and run guide](guides/paidf-cosmos3.md). It includes
 credentials, current CLI installation, runtime submission, monitoring recovery,
 and output inspection, with explicit live-validation limits.
 
@@ -105,7 +105,7 @@ of every stage. Consult each guide and spec for prerequisites and evidence.
 | Spec | Notes |
 | --- | --- |
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
-| [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun ([participant guide](guides/living-lab-paidf-cosmos3.md)) |
+| [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun ([setup and run guide](guides/paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
 
 ### Testing and reference workflows

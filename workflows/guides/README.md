@@ -6,7 +6,7 @@ live in [`../main/`](../main/) and [`../testing/`](../testing/).
 
 | Workflow | Guide |
 | --- | --- |
-| [PAIDF with Cosmos 3](../main/paidf-cosmos3.yaml) | [Living Lab participant guide](living-lab-paidf-cosmos3.md): supplied-cluster setup, credentials, runtime submission, troubleshooting, and Rerun evidence |
+| [PAIDF with Cosmos 3](../main/paidf-cosmos3.yaml) | [PAIDF Cosmos 3 setup and run guide](paidf-cosmos3.md): project and cluster setup, credentials, runtime submission, troubleshooting, and Rerun evidence |
 
 See the [workflow catalog](../README.md) for all specifications and the
 [Workbench guide index](../../docs/workbench/guides/README.md) for other tool and

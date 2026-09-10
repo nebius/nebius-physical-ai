@@ -1,9 +1,9 @@
-# Living Lab participant guide: PAIDF with Cosmos 3
+# PAIDF with Cosmos 3: setup and run guide
 
 Run the [Physical AI Data Factory (PAIDF) Cosmos 3 workflow](../main/paidf-cosmos3.yaml)
-on the Nebius GPU cluster supplied with your Living Lab test project. You can
-follow this guide in a terminal or give it to a coding agent that operates your
-terminal.
+on Nebius AI Cloud. This guide covers account prerequisites, local installation,
+project storage, Kubernetes setup, submission, and output inspection. Follow it
+in a terminal or give it to a coding agent that operates your terminal.
 
 The workflow selects a robot video, captions it with a hosted vision-language
 model through Token Factory, generates appearance variants with Cosmos3-Nano
@@ -11,29 +11,38 @@ on your GPU, and evaluates them with Cosmos Evaluator. Accepted variants pass
 through captioning, Cosmos Curator, and FiftyOne Brain before a final report.
 Rejected variants produce Rerun quality evidence and stop before curation.
 
-> **Validation scope:** These instructions were checked against the repository
-> on September 9, 2026, with live execution on an existing RTX PRO 6000 Blackwell
-> cluster. Successful generation does not establish accepted augmentation data.
+> **Validation scope:** The existing-cluster setup and workflow execution were
+> tested on September 9, 2026, on RTX PRO 6000 Blackwell. The new-cluster path
+> in S5 is a provisioning example; these live runs did not create a new cluster.
+> Successful generation does not establish accepted augmentation data.
 > See the [current live checks](#september-9-live-validation) and separately
 > labeled [historical results](#historical-validation-results).
 
 ## Before you start
 
-Your welcome packet or cohort contact should provide:
+You need:
 
-- A project invitation. Accept it before authenticating; invitations can expire.
-- Your tenant ID, project ID, and region.
-- The pre-provisioned cluster's ID and name, plus access to its Kubernetes API.
-- Token Factory access and any credit instructions for your cohort.
+- A Nebius AI Cloud account with billing enabled. If you are new to Nebius,
+  follow the [account and billing setup](https://docs.nebius.com/signup-billing/sign-up).
+- A project in the region where you will run the GPU workload. You can use a
+  default project or [create a project](https://docs.nebius.com/iam/manage-projects).
+  Record its project ID, tenant ID, and region from the
+  [web console](https://console.nebius.com/).
+- Permission to configure project storage and create a Kubernetes cluster, or
+  access to an existing cluster. First-time storage provisioning requires
+  project admin permission. For a shared project, have its administrator grant
+  the required access before continuing.
+- Hugging Face and Token Factory accounts; P4 explains the required tokens and
+  model access.
 
-You also need a Hugging Face account and a read token. The cluster must have
-capacity for the workflow's GPU task, its CPU tasks, and the SkyPilot controller.
-The historical RTX PRO 6000 runs used a 185 GB GPU-node boot disk after smaller
-disks caused evictions. That is an observed working size for those images and
-weights, not a guarantee for future releases.
-
-This guide adopts your supplied cluster. For a project that does not already
-have one, start with [Workbench Kubernetes setup](../../docs/workbench/kubernetes.md).
+You do not need a cluster in advance. S5 shows how to create one or adopt an
+existing cluster. Each GPU task requests one GPU, 16 vCPUs, and 128 GiB RAM
+on a single node. CPU stages request 4 vCPUs and 16 GiB RAM; reserve additional
+capacity for the SkyPilot controller (2 vCPUs and 8 GiB by default), Kubernetes
+overhead, and other running workloads. Nodes also need disk space for container
+images and model weights. The live validation used RTX PRO 6000 Blackwell; S5
+uses that platform for the new-cluster example. Check quota and available
+capacity in your region before provisioning.
 
 ## P — Prerequisites
 
@@ -49,7 +58,12 @@ On Ubuntu, install the equivalent packages and Python 3.12 using the
 [platform installation guide](../../docs/install.md). Use Python 3.12 for both the
 NPA environment and isolated SkyPilot environment in this guide. The supported
 SkyPilot runtime requires Python 3.9–3.12; a newer interpreter can fail at submit.
-Terraform is not needed to adopt the cluster supplied to participants.
+For the new-cluster path in S5, also install Terraform 1.x using the
+[platform tool instructions](../../docs/install.md#5-optional-operator-tools)
+and have an SSH public key available. NPA discovers an existing key such as
+`~/.ssh/id_ed25519.pub`; if you need a new key, create it with
+`ssh-keygen -t ed25519` and keep the private key on your machine. Adopting an
+existing cluster does not require Terraform.
 
 ### P2. Install the Nebius CLI
 
@@ -58,34 +72,41 @@ the repository's CLI compatibility check:
 
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION=0.12.254 bash
+export PATH="$HOME/.nebius/bin:$PATH"
 ```
 
 Use the version requested by NPA if its compatibility check changes. An
 unsupported CLI can produce an authentication-looking error; check the version
 before recreating a working profile.
 
-### P3. Accept the project invitation and authenticate
+### P3. Select the project and authenticate
 
-Replace each angle-bracket placeholder with the value from your welcome packet.
-Keep these non-secret shell variables available for the setup steps:
+Select your project in the Nebius web console. Copy its project ID from the
+project selector and get its tenant ID and region from the project details;
+see [project management](https://docs.nebius.com/iam/manage-projects#how-to-get-a-project-id).
+Replace the placeholders below. `paidf` is a local profile/alias name you can
+choose; it is not a cloud project ID. Keep these non-secret variables available
+for the setup steps:
 
 ```bash
 export TENANT_ID='<your-tenant-id>'
 export PROJECT_ID='<your-project-id>'
 export REGION='<your-region>'
-export CLUSTER_ID='<your-cluster-id>'
-export CLUSTER_NAME='<your-cluster-name>'
-export PROJECT_ALIAS=living-lab
+export PROJECT_ALIAS=paidf
+export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
 
-nebius profile create living-lab \
+nebius profile create "$NPA_NEBIUS_PROFILE" \
   --endpoint api.nebius.cloud \
   --federation-endpoint auth.nebius.com \
   --parent-id "$PROJECT_ID"
 ```
 
-Authentication opens a browser. If it reports `invalid IAM subject` or
-`PermissionDenied`, check the invitation and project permissions in the Nebius
-console. Ask your cohort contact to resend an expired invitation.
+Authentication opens a browser. Sign in with the account that has access to
+this project. If the named profile already exists, use
+`nebius profile activate "$NPA_NEBIUS_PROFILE"` instead of creating it again.
+See [CLI authentication](https://docs.nebius.com/cli/configure) for service-account
+and multi-tenant setup. If you see `invalid IAM subject` or `PermissionDenied`,
+check the selected account and project permissions in the web console.
 
 ### P4. Prepare Hugging Face and Token Factory access
 
@@ -101,7 +122,7 @@ your installed version; do not treat a token's presence as proof of model access
 See [Cosmos 3 access preflight](../../docs/workbench/cosmos3-access-preflight.md).
 
 For Token Factory, sign in to the [Token Factory console](https://tokenfactory.nebius.com/)
-and follow your cohort's credit instructions. Under **API keys**, create a key
+and ensure your account can make API requests. Under **API keys**, create a key
 and save it when displayed; it cannot be reopened later. The
 [official authentication instructions](https://docs.tokenfactory.nebius.com/api-reference/introduction#authentication)
 describe this process. This key is separate from your Nebius Cloud IAM token.
@@ -126,8 +147,8 @@ NPA's version number alone does not identify the installed source revision.
 changing the workflow filename cannot fix it. Follow the
 [installation recovery steps](#if-submit-is-missing) below.
 
-Run the remaining commands from this repository root. Participant installation
-uses `.venv`; contributor validation tooling uses `npa/.venv` as described in
+Run the remaining commands from this repository root. This guide uses `.venv`;
+contributor validation tooling uses `npa/.venv` as described in
 the [installation guide](../../docs/install.md).
 
 #### If `submit` is missing
@@ -170,7 +191,7 @@ proceed to storage or cluster setup with a missing command.
 ### S2. Configure the project and provision its storage
 
 Use your active Nebius CLI profile to configure NPA and provision the bucket
-and storage credentials for the invited project. First verify that the profile
+and storage credentials for the selected project. First verify that the profile
 can authenticate without reopening the browser:
 
 ```bash
@@ -183,7 +204,7 @@ npa configure --show
 ```
 
 Note the bucket and storage endpoint it reports. `--provision` here performs
-storage setup; cluster adoption is a separate step below.
+storage setup; cluster creation or adoption is a separate step below.
 
 ### S3. Store the service tokens
 
@@ -219,7 +240,57 @@ before submitting. An NGC warning is not a requirement to add NGC credentials
 for this Cosmos 3 path. These checks establish access; they do not prove a
 successful GPU run or acceptable generated data.
 
-### S5. Adopt the supplied Kubernetes cluster
+### S5. Create or adopt a Kubernetes cluster
+
+Choose one path below. For an existing cluster, use the adoption path so NPA
+records its identity before considering provisioning.
+
+#### Create a new cluster
+
+After S4 passes, choose a cluster name and preview the topology. This example
+requests one RTX PRO 6000 GPU node and one CPU node for orchestration and CPU
+stages. Terraform and an SSH public key must be available as described in P1.
+
+```bash
+export CLUSTER_NAME=paidf-cosmos3
+npa workbench health preflight --checks nebius
+npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --dry-run --output-format json
+```
+
+Check the project, region, node types, and disk sizes in the plan. When they
+match your intended setup and quota, run the same `provision-if-absent` command
+without `--dry-run --output-format json`. Wait for provisioning and node health
+checks to succeed. Do not proceed with a degraded cluster. This creates cloud
+resources; use the [teardown guide](../../docs/teardown.md) when you finish with
+a cluster you own.
+
+Inspect the resulting cluster and load its kubeconfig:
+
+```bash
+npa cluster status --name "$CLUSTER_NAME" --project "$PROJECT_ALIAS"
+export KUBECONFIG="$HOME/.npa/clusters/$CLUSTER_NAME/kubeconfig"
+export KUBE_CONTEXT="$(kubectl config current-context)"
+npa skypilot bind-controller \
+  --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
+```
+
+If NPA reports a different kubeconfig path, use that path. Continue with S6.
+The [Workbench setup guide](../../docs/workbench/getting-started.md#verify-kubernetes-access)
+has more detail about provisioning and cluster access.
+
+#### Adopt an existing cluster
+
+Open **Managed Kubernetes** in the Nebius web console for your selected project
+and copy the cluster's ID and name:
+
+```bash
+export CLUSTER_ID='<your-cluster-id>'
+export CLUSTER_NAME='<your-cluster-name>'
+```
 
 Fetching Kubernetes credentials alone does not register the cluster with NPA.
 Fetch them, find the exact context name, then record the cluster and bind its
@@ -241,7 +312,7 @@ npa skypilot bind-controller \
 
 The Nebius CLI profile supplies cloud authentication, the NPA project alias
 selects saved project credentials, and the Kubernetes context selects the
-cluster. Use the values belonging to this participant project throughout.
+cluster. Use the values belonging to the selected project throughout.
 
 ### S6. Bootstrap and verify SkyPilot
 
@@ -324,7 +395,8 @@ accelerator from your setup results:
 
 ```bash
 source .venv/bin/activate
-export PROJECT_ALIAS=living-lab
+export PROJECT_ALIAS=paidf
+export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
 export KUBE_CONTEXT='<your-adopted-context>'
 export BUCKET='<your-configured-bucket-name>'
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
@@ -403,7 +475,7 @@ For your own video, add **one** of these input options to the submit command:
 - `--input-video /absolute/path/source.mp4` for a local H.264 MP4.
 - `--input-uri 's3://<your-bucket>/<your-prefix>/source.mp4'` for a stored MP4.
 
-The original participant runs used short robot clips. Check the resulting
+The recorded live validation used a short robot clip. Check the resulting
 duration and motion: basic `video2video` conditioning does not establish
 full-episode motion preservation. For LeRobot episode/camera selection and the
 generation contract, see the [Cosmos 3 workflow guide](../../docs/workbench/guides/paidf-cosmos3.md).
@@ -464,7 +536,7 @@ appears.
 | `No such command 'submit'` | Executable, active environment, and installed checkout | Follow [installation recovery](#if-submit-is-missing); verify `.venv/bin/npa workbench workflow submit --help` before setup. |
 | Workflow YAML does not exist | Path copied from a previous repository layout | Run from the repository root and use `workflows/main/paidf-cosmos3.yaml`. |
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
-| `invalid IAM subject` or `PermissionDenied` | Invitation and project permissions | Accept the pending invite, or ask your cohort contact to resend an expired one; retry P3. |
+| `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
 | `The active Nebius CLI profile cannot authenticate non-interactively` | CLI compatibility as well as authentication | Check the version first; install the compatible CLI from P2 before replacing the profile. |
 | `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../docs/credentials.yaml.example). Do not assign ambiguous keys to the new project. |
 | Missing bootstrap-contract attestation for `npa-rerun-viewer` | Old checkout or image override | Use current supported pins and rerun `preflight-images`; retain the failing check. |
@@ -478,7 +550,7 @@ appears.
 | `--run-id` and `--resume-run` are mutually exclusive | Recovery command combines both options | Use only `--resume-run` for the existing run, or `prepare-run` for a fresh experiment. |
 | Workflow GPU discovery says `Kubeconfig not found` | Missing NPA-managed kubeconfig | Complete S5/S6 and verify the selected context. |
 | Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../docs/run-lifecycle.md) and correct its image. Keep image preflight enabled. |
-| GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Ask your cohort operator to inspect disk pressure. The historical run needed a 185 GB boot disk. |
+| GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Inspect node disk pressure and available capacity, or ask the cluster administrator. Keep enough disk for image layers and runtime weights. |
 | Token Factory returns `404` / model does not exist | Hosted model availability | List models again and set `caption_model` to an available vision model. |
 | Evaluator reports `reasoning-only response with no visible answer` | An older bundled NPA client may be running | Update the checkout, enable `NPA_SRC_OVERLAY=1` as in S8, and start a fresh run. Treat the original report as degraded; empty answers do not establish an attribute-quality verdict. |
 | `source_motion_weight must be 0` | Configuration copied from the old guide | Remove the old override or set it to `0.0`; current publication preserves unmodified model output. |
@@ -487,6 +559,13 @@ For pod-level and artifact triage, see
 [known Workbench issues](../../docs/workbench/troubleshooting/known-footguns.md).
 
 ## September 9 live validation
+
+The portable bootstrap command in S6 was separately exercised on September 10
+with Python 3.12.14 on Linux: a fresh SkyPilot 0.12.2 install and a second run
+that reused it both exited successfully, and NPA resolved the saved executable.
+The new-cluster command in S5 returned a ready topology in a live `--dry-run`
+preview. That preview did not create a cluster; the execution below used an
+existing cluster.
 
 The updated setup was exercised from a fresh Python 3.12 environment on Linux
 against an existing cluster with two RTX PRO 6000 Blackwell GPU nodes and two
@@ -557,35 +636,6 @@ deadline or a current performance guarantee.
 | `visualize-quality-evidence` (Rerun) | About 2.5 minutes |
 | Submit through quality verdict | About 40 minutes |
 
-### Quality rejection in the original runs
-
-The original tests ended at `require-accepted-quality`: their per-variant
-checks did not accept Cosmos3-Nano's appearance edits. Curation and finalization
-therefore did not run. Reported tuning observations were:
-
-| Historical settings | Reported score | Observation |
-| --- | --- | --- |
-| `source_motion_weight=0.8` | 0.36–0.44 | Subtle variants; requested attributes could not be verified |
-| `source_motion_weight=0.4`, `steps=32` | 0.16 | Stronger changes with poor temporal consistency |
-
-These nonzero motion weights are **historical only**. They blended source and
-generated frames, which can produce double exposure when objects move. Current
-code requires `source_motion_weight=0.0` and publishes the model's output bytes
-unchanged. The old measurements do not prove that every current configuration
-will fail or that calibration alone explains every rejection. Inspect the
-actual evaluator report and Rerun evidence before accepting generated data.
-See [double exposure in older runs](../../docs/workbench/guides/paidf-cosmos3.md#double-exposure-in-older-runs).
-
-### What changed from the earlier participant setup
-
-- Supported images come from the anonymous public GHCR mirror.
-- `npa configure --provision` handles project storage setup.
-- The Cosmos 3 access check identifies the relevant model repositories.
-- Submit prepares a checksum-verified starter video for the first run.
-- Submit stages NPA source automatically and persists it for recovery.
-- The supplied GPU and CPU nodes avoid provisioning a new cluster during this
-  guide; scheduling and disk capacity still need verification.
-
 ## Inspect the outputs
 
 After `visualize-quality-evidence` succeeds, list the run artifacts and locate
@@ -619,7 +669,7 @@ the evaluator's individual dispositions as well as its aggregate score.
 The commands above retrieve evidence from your own run. For browser viewing
 or sharing, see [Rerun sharing](../../docs/workbench/rerun-sharing.md).
 
-For help with an invitation or the supplied cluster, contact your Living Lab
-cohort channel. For the workflow itself, continue with the
+For project or cluster permissions, contact your administrator. For workflow
+behavior and run management, continue with the
 [Cosmos 3 reference guide](../../docs/workbench/guides/paidf-cosmos3.md) and
 [workflow lifecycle](../../docs/run-lifecycle.md).
