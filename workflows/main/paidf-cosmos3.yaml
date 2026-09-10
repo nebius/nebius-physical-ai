@@ -3,6 +3,7 @@ kind: Workflow
 
 metadata:
   name: paidf-cosmos3
+  # Data-dependent refinement and terminal routing require the runtime driver.
   executionMode: runtime
   description: >-
     Independent Physical AI Data Factory variant: select a generic direct video

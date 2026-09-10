@@ -142,6 +142,26 @@ names into the spec.
 
 ## Live validation scope
 
+### Runtime rejection evidence
+
+On September 10, 2026, the generic submit command was exercised without an
+explicit `--runtime` against an operator-owned H.264 input on reserved B200
+capacity. The first real Cosmos Evaluator report scored `0.368409` at the
+unchanged `0.75` threshold and selected `loop_back`. The runtime then performed
+a second real Cosmos Framework `video2video` generation with the configured
+refinement changes (seed `1017`, guidance `4.5`, and 28 steps), followed by a
+second evaluator pass that scored `0.33303` and rejected the output.
+
+After the configured two passes, the run persisted a complete
+`npa.data_factory.quality_disposition.v1` document with `quality_status` set to
+`rejected`, `decision` set to `loop_back`, and `evaluator_status` set to
+`completed`. It produced a non-empty 34 MB Rerun evidence recording, routed to
+`reject-quality`, and did not create augmented captions, curation output, or a
+final acceptance report. This is expected terminal quality rejection, not a
+successful quality result. The validation used `NPA_SRC_OVERLAY=1` to exercise
+the branch code over the currently published Cosmos image; a future published
+image must independently prove that it contains the updated NPA code.
+
 The publication regression can reuse retained real GPU output without generating
 again. Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
 `NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded
