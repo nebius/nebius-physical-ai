@@ -1060,7 +1060,7 @@ skills:
           - npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/nurec-reconstruct.yaml
+          - workflows/main/nurec-reconstruct.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."

@@ -40,7 +40,7 @@ npa workbench workflow list \
 
 Author and submit `npa.workflow/v0.0.1` specs from the
 [`workflow catalog`](../../workflows/README.md). `workflows/main/` contains only
-`sim2real.yaml` and `paidf-cosmos3.yaml`; all other catalog specs, including new
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`; other specs, including new
 workflows, belong in `workflows/testing/`.
 
 **No-image tools** (Token Factory specs): set
