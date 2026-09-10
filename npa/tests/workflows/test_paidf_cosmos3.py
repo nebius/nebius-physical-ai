@@ -607,7 +607,21 @@ def test_quality_route_promotes_only_a_complete_accepted_disposition(
         (lambda value: value.pop("decision"), "incomplete"),
         (lambda value: value.update(decision="loop_back"), "inconsistent"),
         (lambda value: value.update(score=float("nan")), "finite number"),
+        (lambda value: value.update(score="0.88"), "finite number"),
+        (
+            lambda value: value.update(evaluator_status=None),
+            "non-empty string",
+        ),
         (lambda value: value.update(reasons=[""]), "string list"),
+        (
+            lambda value: value.update(
+                quality_status="rejected",
+                decision="loop_back",
+                hard_checks_passed=False,
+                reasons=[],
+            ),
+            "inconsistent",
+        ),
     ],
 )
 def test_quality_route_fails_closed_on_malformed_disposition(

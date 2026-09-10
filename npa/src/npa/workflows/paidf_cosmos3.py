@@ -36,28 +36,19 @@ class PaidfCosmos3Error(RuntimeError):
 
 def _disposition_number(document: Mapping[str, Any], field: str) -> float:
     value = document.get(field)
-    if isinstance(value, bool):
-        raise PaidfCosmos3Error(
-            f"quality disposition {field} must be a finite number"
-        )
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise PaidfCosmos3Error(
-            f"quality disposition {field} must be a finite number"
-        ) from exc
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PaidfCosmos3Error(f"quality disposition {field} must be a finite number")
+    number = float(value)
     if not math.isfinite(number):
-        raise PaidfCosmos3Error(
-            f"quality disposition {field} must be a finite number"
-        )
+        raise PaidfCosmos3Error(f"quality disposition {field} must be a finite number")
     if not 0.0 <= number <= 1.0:
-        raise PaidfCosmos3Error(
-            f"quality disposition {field} must be between 0 and 1"
-        )
+        raise PaidfCosmos3Error(f"quality disposition {field} must be between 0 and 1")
     return number
 
 
-def _quality_disposition_fields(document: Any) -> tuple[Mapping[str, Any], list[str]]:
+def _quality_disposition_fields(
+    document: Any,
+) -> tuple[Mapping[str, Any], list[str]]:
     if not isinstance(document, dict):
         raise PaidfCosmos3Error("quality disposition is not a JSON object")
     required = {
@@ -77,8 +68,16 @@ def _quality_disposition_fields(document: Any) -> tuple[Mapping[str, Any], list[
         )
     if document["schema"] != QUALITY_DISPOSITION_SCHEMA:
         raise PaidfCosmos3Error("quality disposition schema is unsupported")
+    if not isinstance(document["evaluator_status"], str) or not document[
+        "evaluator_status"
+    ].strip():
+        raise PaidfCosmos3Error(
+            "quality disposition evaluator_status must be a non-empty string"
+        )
     if not isinstance(document["hard_checks_passed"], bool):
-        raise PaidfCosmos3Error("quality disposition hard_checks_passed must be boolean")
+        raise PaidfCosmos3Error(
+            "quality disposition hard_checks_passed must be boolean"
+        )
     reasons = document["reasons"]
     if not isinstance(reasons, list) or not all(
         isinstance(reason, str) and reason.strip() for reason in reasons
@@ -102,6 +101,7 @@ def _validated_quality_status(document: Any) -> str:
     if (
         disposition["quality_status"] != expected_status
         or disposition["decision"] != expected_decision
+        or (expected_status == "rejected" and not reasons)
     ):
         raise PaidfCosmos3Error("quality disposition is internally inconsistent")
     return expected_status
