@@ -1066,7 +1066,7 @@ skills:
           - npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/nurec-reconstruct.yaml
+          - workflows/main/nurec-reconstruct.yaml
           - workflows/testing/nurec-colmap-reconstruct.yaml
   - name: generate-npa-workflow
     category: workflows

@@ -124,7 +124,7 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | CLI | `npa/src/npa/cli/nurec/__init__.py` |
 | SDK | `npa.sdk.workbench.nurec` (`check`, `convert_colmap`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, `status`); the framework-free API is re-exported from `npa.workbench.nurec` |
 | SkyPilot workflow | `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` |
-| Preconverted-NCore workflow | `workflows/testing/nurec-reconstruct.yaml` |
+| Main declarative workflow | `workflows/main/nurec-reconstruct.yaml` |
 | COLMAP source workflow (not yet live validated) | `workflows/testing/nurec-colmap-reconstruct.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |
 
@@ -340,7 +340,7 @@ yourself; do not invent a workbench command for it.
 | Train a reconstruction from an NCore clip and get a USDZ | `npa workbench nurec reconstruct` |
 | Render novel views along a shifted rig trajectory | `npa workbench nurec render` |
 | Get a Rerun recording the NPA agent will display | `npa workbench nurec visualize` |
-| Run all of the above on a GPU as one pipeline | `workflows/testing/nurec-reconstruct.yaml` |
+| Run all of the above on a GPU as one pipeline | `workflows/main/nurec-reconstruct.yaml` |
 | Measure PSNR / SSIM / LPIPS | Already emitted -- `reconstruction/metrics.yaml`, and `gaussians/summary` in the `.rrd` |
 | Convert a COLMAP reconstruction to NCore V4 | `npa workbench nurec convert-colmap` on CPU; not yet live validated |
 | Convert a non-COLMAP recording (drone, RGB-D, ROS 2 bag, ScanNet++) | Upstream `ncore`; these input-specific converters are not wired here |

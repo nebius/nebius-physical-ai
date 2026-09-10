@@ -374,7 +374,7 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   workflows/workbench/
     sim2real/              # Operator notes and legacy compatibility
 workflows/                 # Supported npa.workflow/v0.0.1 catalog; see README.md
-  main/                    # sim2real.yaml and paidf-cosmos3.yaml only
+  main/                    # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
   testing/                 # All other catalog workflow specs
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)
