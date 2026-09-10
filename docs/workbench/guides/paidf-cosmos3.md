@@ -1,5 +1,11 @@
 # PAIDF with Cosmos 3 video conditioning
 
+For a complete manual setup and run, start with the
+[Living Lab participant guide](living-lab-paidf-cosmos3.md). It covers a supplied
+Kubernetes cluster, the exact credential-file formats, creating a Token Factory
+key, Python and CLI installation checks, submission, and artifact inspection.
+Use this page for the workflow's input, generation, and acceptance contracts.
+
 `workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
