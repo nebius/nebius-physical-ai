@@ -149,6 +149,7 @@ def test_cached_archive_must_be_exact_regular_bytes(tmp_path: Path) -> None:
     path = tmp_path / archive.cache_name
     for forged in (payload + b"appended", b"x" + payload[1:]):
         path.write_bytes(forged)
+        os.chmod(path, 0o600)
         with pytest.raises(ValueError, match="public pin"):
             attribution._verified_file(path, archive)
 
