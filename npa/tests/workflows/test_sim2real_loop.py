@@ -128,7 +128,7 @@ print(json.dumps({"component": component, "output": str(out)}))
     return f"{sys.executable} {script}"
 
 
-def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
+def test_legacy_unbound_vlm_signal_does_not_update_policy(
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "component-marker.log"
@@ -164,7 +164,13 @@ def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
     assert "vlm_eval" in marker.read_text(encoding="utf-8")
     assert signal["schema"] == SCHEMA_RL_SIGNAL
     assert signal["per_step"][0]["target"]["nl_correction"]
-    assert update.policy_delta_l2 > control.policy_delta_l2
+    # This archived fixture has no simulator times or verified frame bindings.
+    # Its visual labels must not become corrective targets for the optimizer.
+    assert signal["calibration"]["vlm_unobserved_visual_steps"] == 3
+    for step in signal["per_step"]:
+        assert step["confidence"] == step["reward_components"]["vlm_auxiliary"] == 0
+        assert not any(step["target"]["action_delta"])
+    assert update.policy_delta_l2 == control.policy_delta_l2 == 0
     assert Path(update.checkpoint_path).exists()
 
 

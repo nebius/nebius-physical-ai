@@ -10,6 +10,9 @@ from npa.workbench.cosmos.visual_grounding import (
     bind_action_frames, validate_stored_visual_grounding,
 )
 from npa.workflows.sim2real.temporal_credit import convert_evaluation
+from npa.workbench.lerobot.policy_container import (
+    parse_vlm_signal_batch, run_vlm_signal_training_step,
+)
 
 
 def test_hosted_events_without_time_bindings_are_rejected():
@@ -147,6 +150,11 @@ def test_unobserved_events_keep_ground_truth_without_visual_training_effects(tmp
     stats = read_signal_stats(str(path))
     assert stats["step_count"] == 32 and stats["visual_step_count"] == 7
     assert stats["error_tags"] == {"missed_target": 7}
+    # Valid observed corrections still reach the real adapter optimizer.
+    parsed = parse_vlm_signal_batch(signal)
+    update = run_vlm_signal_training_step(parsed, output_dir=tmp_path / "update")
+    control = run_vlm_signal_training_step(parsed, output_dir=tmp_path / "control", control=True)
+    assert update.policy_delta_l2 > control.policy_delta_l2
     result["per_step"][1]["camera_observation"] = "camera-004.png"
     with pytest.raises(ValueError, match="binding"):
         validate_stored_visual_grounding(result)
