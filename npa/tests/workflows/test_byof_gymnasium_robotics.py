@@ -32,7 +32,7 @@ def test_phase_a_uses_only_the_unbuilt_prebuilt_candidate() -> None:
     assert config["base_profile"] == "prebuilt"
     assert (
         config["base_image"]
-        == "registry.example.invalid/npa-gymnasium-robotics:phase-a-unbuilt"
+        == "registry.example.invalid/gymnasium-robotics:phase-a-unbuilt"
     )
     assert config["build_command"] == ""
     assert config["smoke_command"].endswith(
