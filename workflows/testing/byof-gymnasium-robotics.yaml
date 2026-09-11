@@ -14,7 +14,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: "registry.example.invalid/npa-gymnasium-robotics:phase-a-unbuilt"
+  base_image: "registry.example.invalid/gymnasium-robotics:phase-a-unbuilt"
   build_command: ""
   workload: solution-smoke
   smoke_command: |
