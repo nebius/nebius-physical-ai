@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -208,7 +209,7 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
-    assert module.BYOF_CA_BOOTSTRAP_URL not in dockerfile
+    assert module.BYOF_CA_BOOTSTRAP_PATH not in dockerfile
     assert module.BYOF_CA_BOOTSTRAP_SHA256 not in dockerfile
     assert "npa-ca-bootstrap" not in dockerfile
     assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in dockerfile
@@ -1134,7 +1135,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
             "--base-profile",
             "ubuntu",
             "--apt-snapshot",
-            "20260801T053000Z",
+            "20260903T121500Z",
             "--build-command",
             "python3 -m pip install -e .",
             "--skip-run",
@@ -1143,9 +1144,9 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
-    assert any(part == "BYOF_APT_SNAPSHOT=20260801T053000Z" for part in build_args)
+    assert any(part == "BYOF_APT_SNAPSHOT=20260903T121500Z" for part in build_args)
     assert len(dockerfiles) == 1
-    assert module.BYOF_CA_BOOTSTRAP_URL in dockerfiles[0]
+    assert module._snapshot_ca_bootstrap_url("20260903T121500Z") in dockerfiles[0]
     assert "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap" in dockerfiles[0]
     assert "target=/tmp/npa-ca-certificates.deb,readonly" in dockerfiles[0]
     assert any(
@@ -1154,7 +1155,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
-    assert output["apt_snapshot"] == "20260801T053000Z"
+    assert output["apt_snapshot"] == "20260903T121500Z"
     assert output["build_command"] == "python3 -m pip install -e ."
     assert output["build"] == {
         "digest": "sha256:" + "b" * 64,
@@ -1229,10 +1230,12 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
 
 def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=True)
+    snapshot = "20260903T121500Z"
+    text = module._dockerfile_text(apt_snapshot=snapshot)
     pinned_add = (
         f"ADD --checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256} "
-        f"{module.BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb"
+        f"{module._snapshot_ca_bootstrap_url(snapshot)} "
+        "/npa-ca-certificates.deb"
     )
     read_only_mount = (
         "RUN --mount=type=bind,from=npa-ca-bootstrap,"
@@ -1266,13 +1269,15 @@ def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> N
 
 def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=True)
+    snapshot = "20260903T121500Z"
+    text = module._dockerfile_text(apt_snapshot=snapshot)
     snapshot_path = "snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"
 
     assert text.count(snapshot_path) == 2
-    assert module.BYOF_CA_BOOTSTRAP_URL.startswith(
-        "https://snapshot.ubuntu.com/ubuntu/20260801T053000Z/"
+    assert module._snapshot_ca_bootstrap_url(snapshot).startswith(
+        f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
     )
+    assert f'test "${{BYOF_APT_SNAPSHOT}}" = "{snapshot}"' in text
     assert module.BYOF_CA_BOOTSTRAP_SHA256 == (
         "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245"
     )
@@ -1281,9 +1286,80 @@ def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
     assert 'case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64' in text
 
 
+def test_dockerfile_checks_snapshot_perl_family_before_package_install() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
+
+    apt_update = text.index("apt-get update")
+    https_check = text.index("! grep -F 'URIs: http://'")
+    compatibility = text.index("installed_perl_base=")
+    apt_install = text.index("apt-get install -y")
+
+    assert apt_update < https_check < compatibility < apt_install
+    assert "snapshot_perl_candidate=" in text
+    assert "snapshot_perl_base_candidate=" in text
+    assert "base/snapshot Perl family mismatch" in text
+    assert "exit 66" in text
+    assert "5.34.0-3ubuntu1" not in module._snapshot_perl_compatibility_script()
+
+
+def test_snapshot_perl_family_check_accepts_match_and_refuses_mismatch(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    dpkg_query = tmp_path / "dpkg-query"
+    apt_cache = tmp_path / "apt-cache"
+    dpkg_query.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"${NPA_TEST_INSTALLED_PERL_BASE}\"\n",
+        encoding="utf-8",
+    )
+    apt_cache.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  perl) value=\"${NPA_TEST_PERL_CANDIDATE}\" ;;\n"
+        "  perl-base) value=\"${NPA_TEST_PERL_BASE_CANDIDATE}\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        "printf '  Candidate: %s\\n' \"$value\"\n",
+        encoding="utf-8",
+    )
+    dpkg_query.chmod(0o700)
+    apt_cache.chmod(0o700)
+    base_env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "NPA_TEST_INSTALLED_PERL_BASE": "5.34.0-3ubuntu1.8",
+        "NPA_TEST_PERL_BASE_CANDIDATE": "5.34.0-3ubuntu1.8",
+    }
+
+    compatible = subprocess.run(
+        ["/bin/sh", "-eu", "-c", module._snapshot_perl_compatibility_script()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**base_env, "NPA_TEST_PERL_CANDIDATE": "5.34.0-3ubuntu1.8"},
+    )
+    incompatible = subprocess.run(
+        ["/bin/sh", "-eu", "-c", module._snapshot_perl_compatibility_script()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **base_env,
+            "NPA_TEST_PERL_CANDIDATE": "5.34.0-3ubuntu1.7",
+            "NPA_TEST_PERL_BASE_CANDIDATE": "5.34.0-3ubuntu1.7",
+        },
+    )
+
+    assert compatible.returncode == 0
+    assert compatible.stderr == ""
+    assert incompatible.returncode == 66
+    assert "base/snapshot Perl family mismatch" in incompatible.stderr
+
+
 def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=True)
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
     snapshot_source = text[
         text.index("'Types: deb'") : text.index(
             "> /etc/apt/sources.list.d/npa-snapshot.sources"
@@ -1302,7 +1378,7 @@ def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
 
 def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=True)
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
     https_verification = (
         'grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/'
         '${BYOF_APT_SNAPSHOT}/"'
@@ -1319,7 +1395,7 @@ def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> Non
 
 def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=True)
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
     add = text.index("ADD --checksum=sha256:")
     final_stage = text.index("FROM ${BYOF_BASE_IMAGE}", add)
     mount = text.index("RUN --mount=type=bind,from=npa-ca-bootstrap", final_stage)
@@ -1334,9 +1410,9 @@ def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
 
 def test_dockerfile_without_snapshot_omits_ca_bootstrap_dependency() -> None:
     module = _load_module()
-    text = module._dockerfile_text(apt_snapshot_enabled=False)
+    text = module._dockerfile_text()
 
-    assert module.BYOF_CA_BOOTSTRAP_URL not in text
+    assert module.BYOF_CA_BOOTSTRAP_PATH not in text
     assert module.BYOF_CA_BOOTSTRAP_SHA256 not in text
     assert "npa-ca-bootstrap" not in text
     assert "ADD --checksum=sha256:" not in text
@@ -1344,6 +1420,8 @@ def test_dockerfile_without_snapshot_omits_ca_bootstrap_dependency() -> None:
     assert "target=/tmp/npa-ca-certificates.deb" not in text
     assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in text
     assert "find /usr/share/ca-certificates" not in text
+    assert "snapshot_perl_candidate" not in text
+    assert "base/snapshot Perl family mismatch" not in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

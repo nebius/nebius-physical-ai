@@ -152,7 +152,7 @@ def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
         "ubuntu:22.04@sha256:"
         "281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986"
     )
-    assert config["apt_snapshot"] == "20260801T053000Z"
+    assert config["apt_snapshot"] == "20260903T121500Z"
     assert config["workload"] == "solution-smoke"
     assert "git submodule update --init --jobs 8" in build
     assert "src/deps/bullet3" in build
@@ -429,7 +429,7 @@ def test_habitat_sim_workflow_validates_and_plans() -> None:
     assert CAPABILITY in rendered
     assert ARTIFACT in rendered
     assert "byof-solution-smoke-habitat-sim-rtxpro-gpu" in rendered
-    assert "20260801T053000Z" in rendered
+    assert "20260903T121500Z" in rendered
     assert len(spec.states["byof-run"].outputs) == 3
 
 
