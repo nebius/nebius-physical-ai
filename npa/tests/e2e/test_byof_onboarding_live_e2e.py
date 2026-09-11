@@ -801,7 +801,11 @@ def _require_gymnasium_scheduling_contract(
     config_path: str | None,
 ) -> None:
     assert config_path, "a task-private SkyPilot config is required"
-    document = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+    sky_config = Path(config_path)
+    assert sky_config.stat().st_mode & 0o777 == 0o600, (
+        "the task-private SkyPilot config must be mode 0600"
+    )
+    document = yaml.safe_load(sky_config.read_text(encoding="utf-8")) or {}
     kubernetes = document.get("kubernetes", {})
     assert isinstance(kubernetes, dict)
     allowed = kubernetes.get("allowed_nodes")
@@ -815,6 +819,24 @@ def _require_gymnasium_scheduling_contract(
         and isinstance(names[0], str)
         and names[0].strip()
     ), "SkyPilot must allow exactly one named node"
+
+    kubeconfig = Path(env.get("NPA_BYOF_KUBECONFIG", "").strip())
+    context = env.get("NPA_BYOF_K8S_CONTEXT", "").strip()
+    assert context and kubeconfig.is_file(), (
+        "a child-local kubeconfig and child-specific context are required"
+    )
+    assert kubeconfig.stat().st_mode & 0o777 == 0o600, (
+        "the child-local kubeconfig must be mode 0600"
+    )
+    kube_document = yaml.safe_load(kubeconfig.read_text(encoding="utf-8")) or {}
+    assert kube_document.get("current-context") == context
+    contexts = kube_document.get("contexts", [])
+    assert isinstance(contexts, list) and len(contexts) == 1
+    assert contexts[0].get("name") == context
+    assert contexts[0].get("context", {}).get("namespace") == namespace
+    assert kubernetes.get("allowed_contexts") == [context], (
+        "SkyPilot must allow only the selected child-specific context"
+    )
 
     expected_name = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME", "").strip()
     expected_uid = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_UID", "").strip()
@@ -958,6 +980,12 @@ def _gymnasium_pod_image_receipt(
         assert gpu_requests == gpu_limits == 1, (
             "the exact run Pod must request and limit one GPU"
         )
+        other_containers = [item for item in containers if item is not container]
+        assert all(
+            int(item.get("resources", {}).get(kind, {}).get("nvidia.com/gpu", 0)) == 0
+            for item in other_containers
+            for kind in ("requests", "limits")
+        ), "only the exact task container may request the one GPU"
         statuses = {
             item.get("name"): item
             for item in pod.get("status", {}).get("containerStatuses", [])

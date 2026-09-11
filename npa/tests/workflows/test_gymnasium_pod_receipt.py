@@ -21,6 +21,7 @@ NAMESPACE = "operator-private"
 NODE_NAME = "reserved-rtx-node"
 NODE_UID = "reserved-rtx-node-uid"
 PROVIDER_GROUP = "reserved-provider-group"
+CONTEXT = "child-context"
 
 
 class _RunningProcess:
@@ -160,10 +161,28 @@ def test_scheduling_contract_requires_one_exact_named_ready_rtx_node(
 ) -> None:
     config = tmp_path / "sky.yaml"
     config.write_text(
-        "kubernetes:\n  allowed_nodes:\n    names:\n      - reserved-rtx-node\n",
+        "kubernetes:\n"
+        "  allowed_contexts:\n"
+        "    - child-context\n"
+        "  allowed_nodes:\n"
+        "    names:\n"
+        "      - reserved-rtx-node\n",
         encoding="utf-8",
     )
+    config.chmod(0o600)
+    kubeconfig = tmp_path / "kubeconfig.yaml"
+    kubeconfig.write_text(
+        "current-context: child-context\n"
+        "contexts:\n"
+        "  - name: child-context\n"
+        "    context:\n"
+        "      namespace: operator-private\n",
+        encoding="utf-8",
+    )
+    kubeconfig.chmod(0o600)
     env = {
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": CONTEXT,
         "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME": NODE_NAME,
         "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_UID": NODE_UID,
         "NPA_BYOF_GYMNASIUM_ROBOTICS_PROVIDER_NODE_GROUP_ID": PROVIDER_GROUP,
@@ -210,6 +229,7 @@ def test_scheduling_contract_rejects_legacy_allowed_nodes_list(
         "kubernetes:\n  allowed_nodes:\n    - reserved-rtx-node\n",
         encoding="utf-8",
     )
+    config.chmod(0o600)
     with pytest.raises(AssertionError, match="supported names mapping"):
         live._require_gymnasium_scheduling_contract(
             {}, namespace=NAMESPACE, config_path=str(config)
@@ -250,6 +270,45 @@ def test_owner_receipt_scopes_gpu_request_to_matching_task_container(
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
     with pytest.raises(AssertionError, match="request and limit one GPU"):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+
+
+def test_owner_receipt_rejects_gpu_request_from_an_extra_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["spec"]["containers"].append(
+        {
+            "name": "sidecar",
+            "image": "registry.example/operator-private/sidecar:latest",
+            "resources": {
+                "requests": {"nvidia.com/gpu": "1"},
+                "limits": {"nvidia.com/gpu": "1"},
+            },
+        }
+    )
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        assert args[:2] == ("get", "pods")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    with pytest.raises(AssertionError, match="only the exact task container"):
         live._gymnasium_pod_image_receipt(
             _RunningProcess(),
             env=env,
