@@ -40,6 +40,9 @@ FORBIDDEN_PATH = re.compile(
     r"\.(pt|pth|ckpt|safetensors|onnx|engine)$",
     re.IGNORECASE,
 )
+# This candidate has no NVIDIA runtime or driver payload. Rejecting any whole
+# path component containing "nvidia" is intentionally broader than a package
+# inventory so an unexpected vendor byte fails closed before publication.
 SECRET_TEXT = re.compile(
     rb"BEGIN (?:RSA |OPENSSH )?PRIVATE"
     rb" KEY|"
@@ -323,6 +326,33 @@ def _entry_metadata(item: tarfile.TarInfo, kind: str) -> dict[str, Any]:
     }
 
 
+def _whiteout_metadata(
+    layer: tarfile.TarFile,
+    item: tarfile.TarInfo,
+    path: str,
+    layer_name: str,
+) -> dict[str, Any]:
+    """Validate one OCI whiteout before applying its filesystem semantics."""
+
+    if (
+        not item.isfile()
+        or item.size != 0
+        or item.linkname
+        or (item.devmajor or 0) != 0
+        or (item.devminor or 0) != 0
+        or item.pax_headers
+    ):
+        raise ValueError(f"invalid whiteout entry: {path}")
+    payload = layer.extractfile(item)
+    if payload is None or payload.read() != b"":
+        raise ValueError(f"invalid whiteout entry: {path}")
+    return {
+        **_entry_metadata(item, "whiteout"),
+        "layer": layer_name,
+        "path": path,
+    }
+
+
 def _layers(
     archive: tarfile.TarFile, names: list[str]
 ) -> tuple[
@@ -331,12 +361,14 @@ def _layers(
     int,
     int,
     list[str],
+    list[dict[str, Any]],
 ]:
     rootfs: dict[str, bytes] = {}
     entries: dict[str, dict[str, Any]] = {}
     total = 0
     nested = 0
     diff_ids: list[str] = []
+    whiteouts: list[dict[str, Any]] = []
     for layer_name in names:
         raw = _raw_member(archive, layer_name)
         _scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)
@@ -347,6 +379,7 @@ def _layers(
                 total += 1
                 leaf = PurePosixPath(path).name
                 if leaf == ".wh..wh..opq":
+                    whiteouts.append(_whiteout_metadata(layer, item, path, layer_name))
                     parent = str(PurePosixPath(path).parent)
                     if parent == ".":
                         rootfs.clear()
@@ -358,6 +391,7 @@ def _layers(
                                 rootfs.pop(key, None)
                     continue
                 if leaf.startswith(".wh."):
+                    whiteouts.append(_whiteout_metadata(layer, item, path, layer_name))
                     target = str(
                         PurePosixPath(path).with_name(leaf.removeprefix(".wh."))
                     )
@@ -418,7 +452,7 @@ def _layers(
                 raise ValueError(
                     f"hardlink target is not a retained regular file: {path}"
                 )
-    return rootfs, entries, total, nested, diff_ids
+    return rootfs, entries, total, nested, diff_ids, whiteouts
 
 
 def _missing(value: object) -> bool:
@@ -621,8 +655,11 @@ def _complete_locks(
     if (
         farama_delivery.get("archive_sha256")
         != source_lock["components"]["farama_gymnasium_robotics"]["archive_sha256"]
+        or farama_delivery.get("repository")
+        != EXPECTED_SOURCE_FIELDS["farama_gymnasium_robotics"]["repository"]
+        or farama_delivery.get("source_commit") != EXPECTED_SOURCE
     ):
-        raise ValueError("conveyed Farama source archive identity changed")
+        raise ValueError("conveyed Farama source identity changed")
     shadow_fields = {
         "build_instructions_sha256": None,
         "preferred_form_archive_sha256": shadow["preferred_form_sha256"],
@@ -731,9 +768,14 @@ def scan(path: Path) -> dict[str, Any]:
             _scan_policy_bytes(
                 "Docker-save repositories", _raw_member(archive, "repositories")
             )
-        rootfs, entries, layer_members, nested_members, layer_diff_ids = _layers(
-            archive, layers
-        )
+        (
+            rootfs,
+            entries,
+            layer_members,
+            nested_members,
+            layer_diff_ids,
+            whiteouts,
+        ) = _layers(archive, layers)
     config_rootfs = config.get("rootfs")
     if (
         not isinstance(config_rootfs, dict)
@@ -756,6 +798,10 @@ def scan(path: Path) -> dict[str, Any]:
         "layer_member_count": layer_members,
         "nested_archive_member_count": nested_members,
         "ordered_layer_diff_ids": layer_diff_ids,
+        "whiteout_entry_count": len(whiteouts),
+        "whiteout_metadata_sha256": hashlib.sha256(
+            json.dumps(whiteouts, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest(),
         "final_entry_count": len(entries),
         "final_regular_file_count": len(rootfs),
         "unresolved_findings": 0,

@@ -119,7 +119,14 @@ CORRESPONDING_LOCK = {
         {
             "binary_component": component,
             **(
-                {"archive_sha256": ANNEX_SHA256, "license": "MIT"}
+                {
+                    "archive_sha256": ANNEX_SHA256,
+                    "license": "MIT",
+                    "repository": SCAN.EXPECTED_SOURCE_FIELDS[
+                        "farama_gymnasium_robotics"
+                    ]["repository"],
+                    "source_commit": SCAN.EXPECTED_SOURCE,
+                }
                 if component == "farama-gymnasium-robotics"
                 else {
                     "build_instructions_sha256": "b" * 64,
@@ -345,6 +352,7 @@ def test_complete_synthetic_graph_passes_without_authorizing_release(
     result = SCAN.scan(archive)
     assert result["status"] == "passed"
     assert result["layer_count"] == 2
+    assert result["whiteout_entry_count"] == 0
     assert result["unresolved_findings"] == 0
     assert result["accepted_manifest_present"] is False
     assert result["release_authorized"] is False
@@ -568,6 +576,31 @@ def test_forbidden_link_target_and_unsupported_member_fail(tmp_path: Path) -> No
     _docker_save(fifo_archive, REQUIRED, fifos=("run/unclassified-fifo",))
     with pytest.raises(ValueError, match="unsupported image member type"):
         SCAN.scan(fifo_archive)
+
+
+@pytest.mark.parametrize("name", (".wh.hidden", "opt/.wh..wh..opq"))
+def test_typed_whiteout_entries_fail_before_semantics(
+    tmp_path: Path, name: str
+) -> None:
+    archive = tmp_path / (name.replace("/", "-") + ".tar")
+    _docker_save(archive, REQUIRED, fifos=(name,))
+    with pytest.raises(ValueError, match="invalid whiteout entry"):
+        SCAN.scan(archive)
+
+
+def test_nonempty_whiteout_fails_and_empty_regular_whiteout_is_hashed(
+    tmp_path: Path,
+) -> None:
+    nonempty = tmp_path / "nonempty-whiteout.tar"
+    _docker_save(nonempty, {**REQUIRED, ".wh.absent": b"not-empty"})
+    with pytest.raises(ValueError, match="invalid whiteout entry"):
+        SCAN.scan(nonempty)
+
+    valid = tmp_path / "valid-whiteout.tar"
+    _docker_save(valid, {**REQUIRED, ".wh.absent": b""})
+    result = SCAN.scan(valid)
+    assert result["whiteout_entry_count"] == 1
+    assert len(result["whiteout_metadata_sha256"]) == 64
 
 
 def test_raw_layer_trailing_bytes_are_scanned(tmp_path: Path) -> None:

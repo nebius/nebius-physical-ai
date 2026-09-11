@@ -16,6 +16,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         'entry.get("Layers", [])',
         'config_rootfs.get("diff_ids") != layer_diff_ids',
         '_scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)',
+        "_whiteout_metadata(layer, item, path, layer_name)",
         'leaf == ".wh..wh..opq"',
         'leaf.startswith(".wh.")',
         "rootfs[path] = content",
@@ -26,6 +27,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "final rootfs contains missing or unclassified entries",
         "final image must declare the non-root ubuntu user",
         '"unresolved_findings": 0',
+        '"whiteout_metadata_sha256"',
         '"release_authorized": False',
     ):
         assert token in text
@@ -53,3 +55,12 @@ def test_trusted_workflow_refuses_phase_a_selection_before_build() -> None:
     refusal = text.index("Phase A pre-registration candidate has no build authority")
     build = text.index("docker buildx build")
     assert refusal < build
+
+
+def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    proof = dockerfile.index('RUN test "$(id -u ubuntu)" = 1000')
+    user = dockerfile.index("USER ubuntu")
+    assert proof < user

@@ -8,6 +8,8 @@
       "binary_component": "farama-gymnasium-robotics",
       "archive_sha256": "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
       "license": "MIT",
+      "repository": "https://github.com/Farama-Foundation/Gymnasium-Robotics",
+      "source_commit": "4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
       "artifacts": null
     },
     {

@@ -38,6 +38,7 @@ COPY --chmod=0555 npa/docker/workbench/gymnasium-robotics/capability_smoke.py /o
 COPY --chmod=0555 npa/docker/workbench/gymnasium-robotics/verify_image.py /opt/npa/gymnasium-robotics/verify_image.py
 COPY --chmod=0555 npa/docker/workbench/gymnasium-robotics/build.sh /usr/local/bin/npa-gymnasium-entrypoint
 
+RUN test "$(id -u ubuntu)" = 1000 && test "$(id -g ubuntu)" = 1000
 USER ubuntu
 ENTRYPOINT ["/usr/local/bin/npa-gymnasium-entrypoint"]
 CMD ["/bin/sh"]
