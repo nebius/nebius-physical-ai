@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,63 @@ def _live_e2e_module():
         )
     finally:
         sys.path.remove(tests_root)
+
+
+def _fake_robomimic_kubectl(
+    *,
+    create_failure: bool = False,
+    foreign_owner_after_create: bool = False,
+    delete_failure: str = "",
+    delete_oserror: str = "",
+) -> tuple[list[list[str]], Callable[..., subprocess.CompletedProcess[str]]]:
+    calls: list[list[str]] = []
+    objects: dict[str, dict[str, object]] = {}
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "auth" in command:
+            verb = command[command.index("can-i") + 1]
+            resource = command[command.index("can-i") + 2]
+            allowed = (verb, resource) == ("get", "pods")
+            return subprocess.CompletedProcess(
+                command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
+            )
+        if "create" in command:
+            manifest = yaml.safe_load(str(kwargs.get("input") or ""))
+            resource = (
+                f"{str(manifest['kind']).lower()}/{manifest['metadata']['name']}"
+            )
+            objects[resource] = manifest
+            if create_failure:
+                if foreign_owner_after_create:
+                    manifest["metadata"]["annotations"][
+                        "npa.nebius.ai/owner-token"
+                    ] = "another-invocation"
+                return subprocess.CompletedProcess(command, 1, "", "response lost")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "delete" in command:
+            resource = command[-1]
+            if delete_oserror and resource.startswith(delete_oserror):
+                raise FileNotFoundError("simulated kubectl launch failure")
+            if delete_failure and resource.startswith(delete_failure):
+                return subprocess.CompletedProcess(
+                    command, 1, "", "simulated delete error"
+                )
+            objects.pop(resource, None)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "get" in command:
+            resource = command[command.index("--namespace") + 2]
+            manifest = objects.get(resource)
+            if manifest is None:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            output_format = command[command.index("-o") + 1]
+            stdout = json.dumps(manifest) if output_format == "json" else f"{resource}\n"
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return calls, fake_run
 
 
 @pytest.mark.parametrize(
@@ -137,6 +195,7 @@ def test_robomimic_observer_manifest_is_run_scoped_and_least_privilege() -> None
         run_id=run_id,
         namespace="robomimic-validation",
         service_account=name,
+        owner_token="unit-owner-token",
     )
 
     assert len(manifests) == 3
@@ -146,6 +205,11 @@ def test_robomimic_observer_manifest_is_run_scoped_and_least_privilege() -> None
         "RoleBinding",
     }
     assert all(manifest["metadata"]["name"] == name for manifest in manifests)
+    assert all(
+        manifest["metadata"]["annotations"]["npa.nebius.ai/owner-token"]
+        == "unit-owner-token"
+        for manifest in manifests
+    )
     role = next(manifest for manifest in manifests if manifest["kind"] == "Role")
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
@@ -167,23 +231,7 @@ def test_robomimic_observer_cleanup_runs_after_gate_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _live_e2e_module()
-    calls: list[list[str]] = []
-
-    def fake_run(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
-        if "auth" in command:
-            verb = command[command.index("can-i") + 1]
-            resource = command[command.index("can-i") + 2]
-            allowed = (verb, resource) == ("get", "pods")
-            return subprocess.CompletedProcess(
-                command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
-            )
-        if "get" in command:
-            return subprocess.CompletedProcess(command, 0, "", "")
-        return subprocess.CompletedProcess(command, 0, "", "")
-
+    calls, fake_run = _fake_robomimic_kubectl()
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     selectors = {
         "kubeconfig": "/owner-only/kubeconfig",
@@ -206,25 +254,7 @@ def test_robomimic_observer_cleanup_checks_every_resource_after_delete_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _live_e2e_module()
-    calls: list[list[str]] = []
-
-    def fake_run(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
-        if "auth" in command:
-            verb = command[command.index("can-i") + 1]
-            resource = command[command.index("can-i") + 2]
-            allowed = (verb, resource) == ("get", "pods")
-            return subprocess.CompletedProcess(
-                command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
-            )
-        if "delete" in command and "rolebinding/" in " ".join(command):
-            return subprocess.CompletedProcess(command, 1, "", "simulated delete error")
-        if "get" in command:
-            return subprocess.CompletedProcess(command, 0, "", "")
-        return subprocess.CompletedProcess(command, 0, "", "")
-
+    calls, fake_run = _fake_robomimic_kubectl(delete_failure="rolebinding/")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     selectors = {
         "kubeconfig": "/owner-only/kubeconfig",
@@ -247,18 +277,7 @@ def test_robomimic_observer_cleanup_covers_ambiguous_create_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _live_e2e_module()
-    calls: list[list[str]] = []
-
-    def fake_run(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
-        if "get" in command:
-            return subprocess.CompletedProcess(command, 0, "", "")
-        if "create" in command:
-            return subprocess.CompletedProcess(command, 1, "", "response lost")
-        return subprocess.CompletedProcess(command, 0, "", "")
-
+    calls, fake_run = _fake_robomimic_kubectl(create_failure=True)
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     selectors = {
         "kubeconfig": "/owner-only/kubeconfig",
@@ -275,6 +294,53 @@ def test_robomimic_observer_cleanup_covers_ambiguous_create_failure(
     deleted = [command for command in calls if "delete" in command]
     assert len(deleted) == 1
     assert "serviceaccount/" in " ".join(deleted[0])
+
+
+def test_robomimic_observer_cleanup_never_deletes_foreign_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls, fake_run = _fake_robomimic_kubectl(
+        create_failure=True, foreign_owner_after_create=True
+    )
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="response lost") as raised:
+        with module._robomimic_observer_rbac(
+            run_id="foreign-owner-contract", selectors=selectors, env={}
+        ):
+            pytest.fail("the context must not yield after create failure")
+
+    assert not any("delete" in command for command in calls)
+    assert any("owned by another invocation" in note for note in raised.value.__notes__)
+
+
+def test_robomimic_observer_cleanup_continues_after_kubectl_launch_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls, fake_run = _fake_robomimic_kubectl(delete_oserror="rolebinding/")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="simulated gate failure") as raised:
+        with module._robomimic_observer_rbac(
+            run_id="cleanup-oserror-contract", selectors=selectors, env={}
+        ):
+            raise RuntimeError("simulated gate failure")
+
+    assert any("FileNotFoundError" in note for note in raised.value.__notes__)
+    assert sum("delete" in command for command in calls) == 3
+    assert sum("-o" in command and "name" in command for command in calls) == 6
 
 
 @pytest.mark.parametrize(
