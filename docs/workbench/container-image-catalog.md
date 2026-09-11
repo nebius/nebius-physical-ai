@@ -62,6 +62,17 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
+## Restricted BYOF candidates excluded from publication
+
+RoboTwin 2.0 is intentionally absent from the public image table. Its
+`byof-robotwin.yaml` candidate compiles pinned CuRobo v0.7.8, whose NVIDIA
+license permits noncommercial research/evaluation only, into an operator-owned
+private image. Official RoboTwin assets remain an exact-revision runtime fetch
+and are not baked. No public tag, anonymous-pull result, payload scan, or public
+release status is claimed. The workflow, license boundary, and pending
+exact-digest RTX PRO 6000 acceptance gate are documented in
+[`byof-robotwin.md`](byof-robotwin.md).
+
 ## Pending NCore conversion image
 
 `npa-ncore` is an additional development validation candidate for the

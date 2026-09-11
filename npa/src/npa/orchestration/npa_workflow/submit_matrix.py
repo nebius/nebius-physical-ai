@@ -931,6 +931,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-robotwin.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
+        notes=(
+            "Private/restricted RoboTwin 2.0 BYOF build and one-RTX-PRO-6000 "
+            "native beat_block_hammer seed-search/replay collection. A pass "
+            "requires SAPIEN/Vulkan, task success, HDF5 actions, decoded MP4 "
+            "frames, exact runtime asset revision, and pod image-digest evidence."
+        ),
+    ),
+    SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
         plan_only=True,

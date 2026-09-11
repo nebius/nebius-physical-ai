@@ -99,6 +99,17 @@ def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     ]
 
 
+def test_robotwin_reservation_evidence_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    evidence_name = "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256"
+    monkeypatch.setenv(evidence_name, "a" * 64)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+    assert module.resolve_secret_envs(None, solution_name="robotwin") == [evidence_name]
+
+
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
     """Vendor answers are per-image, and a shared tuple made them global.
 

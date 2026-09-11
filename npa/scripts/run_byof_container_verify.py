@@ -66,6 +66,9 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
     "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
+    # Hash of the owner-only manager authorization record. The RoboTwin smoke
+    # records it without exposing private cluster, reservation, or registry IDs.
+    "robotwin": ("NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",),
     "ltx2.5": (
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the
