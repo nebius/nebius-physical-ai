@@ -85,6 +85,10 @@ The smoke emits exactly the capability artifact
 `$NPA_SMOKE_OUTPUT_DIR/gymnasium-robotics-smoke.json`. Its normalized content
 hash, media type, and exact byte size are embedded in the JSON; the uploader's
 summary also records the actual uploaded-file SHA-256 and byte size.
+Uploads use NPA's standard atomic `If-None-Match: *` object-create contract so
+an existing run artifact cannot be overwritten. The target S3-compatible
+service must support that contract; failure is terminal and must never be
+downgraded to a racy HEAD followed by an unconditional write.
 
 ## Run and verify
 

@@ -89,7 +89,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `registered_shadow_hand_environment` | qualification pending | Upstream `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` registration at exact source commit |
-| `mujoco_physics_steps` / `mujoco_contacts` | qualification pending | 120 upstream `env.step` calls, 2,400 MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
+| `mujoco_physics_steps` / `mujoco_contacts` | qualification pending | 120 upstream `env.step` calls, runtime-measured MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
 | `continuous_touch_sensor_response` | qualification pending | Official 92-site Shadow Hand `sensordata` vector with nonzero live readings |
 | `egl_rgb_rendering` | qualification pending | Actual 240×320 RGB frames, distinct hashes, measured rate, and loaded NVIDIA EGL library |
 | `rtx_pro_6000_blackwell_execution` | qualification pending | One strict RTX PRO 6000 Blackwell (`sm_120`) plus pushed/pod-observed immutable digest equality |
