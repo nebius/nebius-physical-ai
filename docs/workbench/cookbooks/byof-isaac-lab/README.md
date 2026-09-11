@@ -158,6 +158,8 @@ export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 
 NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN}" \
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py \
+  --project <project-alias> \
+  --context <kubernetes-context> \
   --yaml npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml \
   --image "${BYOF_IMAGE}" \
   --task Isaac-Cartpole-v0 \
@@ -220,6 +222,8 @@ export RUN_ID_B="w10-byof-image-and-cmd-$(date -u +%Y%m%dT%H%M%SZ)"
 
 NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN}" \
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py \
+  --project <project-alias> \
+  --context <kubernetes-context> \
   --yaml /tmp/isaac-lab-byof-command.yaml \
   --image "${BYOF_IMAGE}" \
   --task Isaac-Cartpole-v0 \

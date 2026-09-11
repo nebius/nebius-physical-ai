@@ -35,6 +35,10 @@ Selection lives in `npa/src/npa/workflows/byof/live.py::resolve_byof_resource_ya
 (env override → project config → profile default), and the runners
 (`npa/scripts/run_isaac_lab_rl.py`, `run_byof_datagen.py`,
 `run_byof_container_verify.py`) take `--yaml` so a customer can supply their own.
+For a live standalone Isaac Lab submission, pass `--project` and `--context`; the
+runner otherwise resolves them from the selected BYOF project and `KUBECONTEXT`.
+The exact context is forwarded to NPA's submission preflight rather than trusted
+as ambient `kubectl` state.
 
 ## Do not add a multi-stage pipeline here
 

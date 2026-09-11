@@ -15,7 +15,11 @@ from typing import Any
 
 import yaml
 
-from npa.workflows.byof.live import resolve_byof_profile_path
+from npa.workflows.byof.live import (
+    resolve_byof_kubernetes_target,
+    resolve_byof_profile_path,
+    resolve_byof_project,
+)
 from npa.orchestration.skypilot import (
     WorkflowResult,  # noqa: F401 - kept for tests and downstream wrapper imports.
     cleanup_all_for_run,
@@ -201,6 +205,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         print(json.dumps({"run_id": run_id, "rendered_yaml": str(rendered_yaml), "outputs": outputs}, indent=2))
         return 0
 
+    project, context = _execution_scope(args)
     with tempfile.TemporaryDirectory(prefix=f"npa-isaac-lab-rl-{run_id}-") as tmp:
         rendered_yaml = Path(tmp) / "isaac-lab-rl.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
@@ -220,6 +225,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             result = submit_workflow(
                 rendered_yaml,
                 run_id,
+                project=project,
+                infra=f"k8s/{context}",
                 isolated_config_dir=args.isolated_config_dir,
                 config_path=args.config_path,
                 sky_bin=sky_bin,
@@ -276,6 +283,21 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         return 1 if teardown.errors else return_code
 
 
+def _execution_scope(args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve the explicit project and Kubernetes context for live submission."""
+
+    project = args.project.strip() or resolve_byof_project()
+    target = resolve_byof_kubernetes_target(project or None)
+    context = args.context.strip() or target.context
+    if not project:
+        raise ValueError("live submission requires --project or a configured NPA project")
+    if not context:
+        raise ValueError(
+            "live submission requires --context, KUBECONTEXT, or a configured Kubernetes context"
+        )
+    return project, context
+
+
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as handle:
         docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
@@ -316,6 +338,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--wandb-mode", default="offline")
     parser.add_argument("--checkpoint-s3-uri", default="")
     parser.add_argument("--checkpoint-s3-endpoint-url", default="")
+    parser.add_argument(
+        "--project",
+        default="",
+        help="Configured NPA project alias. Defaults to the selected BYOF project.",
+    )
+    parser.add_argument(
+        "--context",
+        default="",
+        help="Exact Kubernetes context. Defaults to BYOF project configuration or KUBECONTEXT.",
+    )
     parser.add_argument("--sky-bin", default="")
     parser.add_argument(
         "--secret-env",
