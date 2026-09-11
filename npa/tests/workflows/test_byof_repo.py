@@ -1265,13 +1265,30 @@ def test_scoped_build_git_trust_propagates_and_rejects_other_repo(tmp_path) -> N
     module = _load_module()
     trusted_repo = tmp_path / "trusted"
     unrelated_repo = tmp_path / "unrelated"
+    inherited_repo = tmp_path / "inherited"
     private_home = tmp_path / "home"
+    global_config = tmp_path / "global.gitconfig"
+    system_config = tmp_path / "system.gitconfig"
     private_home.mkdir()
-    for repo in (trusted_repo, unrelated_repo):
+    for repo in (trusted_repo, unrelated_repo, inherited_repo):
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            str(global_config),
+            "--add",
+            "safe.directory",
+            str(inherited_repo),
+        ],
+        check=True,
+    )
 
     environment = {
         **os.environ,
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": str(system_config),
         "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
         "HOME": str(private_home),
         "NPA_TEST_CALLER_UID": str(os.getuid()),
@@ -1285,8 +1302,9 @@ def test_scoped_build_git_trust_propagates_and_rejects_other_repo(tmp_path) -> N
         env=environment,
         command=(
             'test "$(id -u)" = "${NPA_TEST_CALLER_UID}" && '
-            'test "$(git config --get-all safe.directory)" = '
-            '"${NPA_TEST_TRUSTED_REPO}" && git submodule update --init'
+            'git config --get-all safe.directory | '
+            'grep -Fqx -- "${NPA_TEST_TRUSTED_REPO}" && '
+            "git submodule update --init"
         ),
     )
     unrelated = _run_scoped_build(
@@ -1301,6 +1319,11 @@ def test_scoped_build_git_trust_propagates_and_rejects_other_repo(tmp_path) -> N
     assert unrelated.returncode != 0
     assert "dubious ownership" in unrelated.stderr
     assert not (private_home / ".gitconfig").exists()
+    assert not system_config.exists()
+    assert global_config.read_text().splitlines() == [
+        "[safe]",
+        f"\tdirectory = {inherited_repo}",
+    ]
 
 
 def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
