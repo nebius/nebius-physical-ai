@@ -54,6 +54,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_SPEC = REPO_ROOT / "workflows" / "testing" / "byof.yaml"
 ROBOTWIN_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
+ROBOTWIN_IMAGE_SCANNER = REPO_ROOT / "npa" / "scripts" / "scan_image_robotwin_payload.py"
 RUNNER = CliRunner()
 
 
@@ -120,6 +121,7 @@ def _robotwin_runtime_context() -> tuple[dict[str, object], str]:
         "nvidia_cuda_eula",
         "nvidia_cudnn_sla",
         "curobo_noncommercial_research_or_evaluation",
+        "robotwin2_aggregate_asset_and_output_terms",
     ):
         assert acceptance.get(key) is True, f"runtime context does not authorize {key}"
     for key in (
@@ -652,7 +654,7 @@ def test_live_robotwin_build_push_run_and_artifacts(
     parsed_output = urlparse(output_root)
     assert parsed_output.scheme == "s3" and parsed_output.netloc == bucket
     assert run_id.startswith("robotwin-"), "manager run ID must be solution-scoped"
-    cmd = [
+    base_cmd = [
         sys.executable,
         str(BYOF_RUNNER),
         "--registry",
@@ -696,7 +698,7 @@ def test_live_robotwin_build_push_run_and_artifacts(
     ]
     config_path = Path(str(runtime["skypilot_config_path"])).expanduser().resolve()
     assert config_path.is_file(), "manager SkyPilot config is not readable"
-    cmd.extend(["--config-path", str(config_path)])
+    base_cmd.extend(["--config-path", str(config_path)])
     env = dict(os.environ)
     kubeconfig = Path(str(runtime["kubeconfig"])).expanduser().resolve()
     assert kubeconfig.is_file(), "manager kubeconfig is not readable"
@@ -710,21 +712,66 @@ def test_live_robotwin_build_push_run_and_artifacts(
     if skypilot_bin:
         env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
 
-    proc = subprocess.run(
-        cmd,
+    build_proc = subprocess.run(
+        [*base_cmd, "--skip-run"],
         check=False,
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
         env=env,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
-    assert summary.get("status") == "ok", summary
-    build = summary.get("build", {})
+    assert build_proc.returncode == 0, build_proc.stdout + build_proc.stderr
+    build_summary = _parse_last_json_blob(build_proc.stdout + "\n" + build_proc.stderr)
+    assert build_summary.get("status") == "ok", build_summary
+    build = build_summary.get("build", {})
     assert build.get("ok") is True and build.get("pushed") is True
     runtime_image = str(build.get("runtime_image") or "")
     assert re.fullmatch(r".+@sha256:[0-9a-f]{64}", runtime_image)
+
+    scan_report_path = REPO_ROOT.parent / f"robotwin-image-byte-scan-{run_id}.json"
+    scan_proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROBOTWIN_IMAGE_SCANNER),
+            runtime_image,
+            "--output",
+            str(scan_report_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+    assert scan_proc.returncode == 0, scan_proc.stdout + scan_proc.stderr
+    scan_report_bytes = scan_report_path.read_bytes()
+    scan_report = json.loads(scan_report_bytes)
+    assert scan_report == {
+        "format": "npa_robotwin_image_byte_scan_v1",
+        "image": runtime_image,
+        "status": "pass",
+        "archives_scanned": scan_report["archives_scanned"],
+        "findings": [],
+    }
+    assert int(scan_report["archives_scanned"]) >= 2
+    scan_report_sha256 = hashlib.sha256(scan_report_bytes).hexdigest()
+    env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] = scan_report_sha256
+    env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] = str(
+        scan_report["archives_scanned"]
+    )
+
+    run_proc = subprocess.run(
+        [*base_cmd, "--image", runtime_image, "--skip-build"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+    assert run_proc.returncode == 0, run_proc.stdout + run_proc.stderr
+    run_summary = _parse_last_json_blob(run_proc.stdout + "\n" + run_proc.stderr)
+    assert run_summary.get("status") == "ok", run_summary
+    assert run_summary.get("build") == {"ok": True, "skipped": True}
 
     client = s3_client_for_project(project, allow_host_creds=True)
     prefix = parsed_output.path.strip("/") + f"/{run_id}/"
@@ -738,6 +785,7 @@ def test_live_robotwin_build_push_run_and_artifacts(
         "strict_rtx_pro_6000_placement",
         "sapien_vulkan_rt_renderer",
         "pinned_official_runtime_assets",
+        "built_image_asset_cache_output_absence",
         "official_embodiment_path_configuration",
         "beat_block_hammer_successful_seed_search",
         "beat_block_hammer_successful_seed_replay",
@@ -769,6 +817,12 @@ def test_live_robotwin_build_push_run_and_artifacts(
     assert smoke["strict_reservation"] == {
         "policy": "STRICT",
         "manager_runtime_context_sha256": runtime_sha256,
+    }
+    assert smoke["built_image_payload_scan"] == {
+        "format": "npa_robotwin_image_byte_scan_v1",
+        "report_sha256": scan_report_sha256,
+        "archives_scanned": scan_report["archives_scanned"],
+        "status": "pass",
     }
     assert smoke["vulkan_renderer"]["available"] is True
     assert smoke["vulkan_renderer"]["vulkaninfo_exit_status"] == 0

@@ -68,7 +68,9 @@ RoboTwin 2.0 is intentionally absent from the public image table. Its
 `byof-robotwin.yaml` candidate compiles pinned CuRobo v0.7.8, whose NVIDIA
 license permits noncommercial research/evaluation only, into an operator-owned
 private image. Official RoboTwin assets remain an exact-revision runtime fetch
-and are not baked. No public tag, anonymous-pull result, payload scan, or public
+and are not baked. The guarded live harness includes a pre-launch exact-digest
+rootfs/layer scan, but no built-image scan result exists until the manager
+authorizes that private build. No public tag, anonymous-pull result, or public
 release status is claimed. The workflow, license boundary, and pending
 exact-digest RTX PRO 6000 acceptance gate are documented in
 [`byof-robotwin.md`](byof-robotwin.md).
