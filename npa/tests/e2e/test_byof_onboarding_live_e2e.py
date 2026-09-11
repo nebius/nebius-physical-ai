@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -418,13 +419,14 @@ def _robomimic_observer_name(run_id: str) -> str:
 
 
 def _robomimic_observer_manifests(
-    *, run_id: str, namespace: str, service_account: str
+    *, run_id: str, namespace: str, service_account: str, owner_token: str
 ) -> list[dict[str, object]]:
     labels = {
         "app.kubernetes.io/managed-by": "npa-robomimic-live-gate",
     }
     annotations = {
         "npa.nebius.ai/run-id-sha256": hashlib.sha256(run_id.encode()).hexdigest(),
+        "npa.nebius.ai/owner-token": owner_token,
     }
     metadata = {
         "name": service_account,
@@ -521,11 +523,13 @@ def _robomimic_observer_rbac(
 
     namespace = selectors["namespace"]
     service_account = _robomimic_observer_name(run_id)
+    owner_token = secrets.token_hex(32)
     kube = _robomimic_kubectl(selectors)
     manifests = _robomimic_observer_manifests(
         run_id=run_id,
         namespace=namespace,
         service_account=service_account,
+        owner_token=owner_token,
     )
     created_resources: list[str] = []
     primary_error: BaseException | None = None
@@ -596,42 +600,99 @@ def _robomimic_observer_rbac(
         resources = list(reversed(created_resources))
         cleanup_errors: list[str] = []
         for resource in resources:
-            deleted = subprocess.run(
-                [
-                    *kube,
-                    "delete",
-                    "--namespace",
-                    namespace,
-                    "--ignore-not-found=true",
-                    resource,
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            try:
+                observed = subprocess.run(
+                    [
+                        *kube,
+                        "get",
+                        "--namespace",
+                        namespace,
+                        resource,
+                        "--ignore-not-found=true",
+                        "-o",
+                        "json",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+            except OSError as exc:
+                cleanup_errors.append(
+                    f"inspect {resource} ownership failed: {type(exc).__name__}"
+                )
+                continue
+            if observed.returncode != 0:
+                cleanup_errors.append(
+                    f"inspect {resource} ownership exited {observed.returncode}: "
+                    f"{observed.stderr.strip()}"
+                )
+                continue
+            if not observed.stdout.strip():
+                continue
+            try:
+                observed_payload = json.loads(observed.stdout)
+                observed_token = observed_payload["metadata"]["annotations"][
+                    "npa.nebius.ai/owner-token"
+                ]
+            except (KeyError, TypeError, json.JSONDecodeError):
+                cleanup_errors.append(
+                    f"inspect {resource} ownership returned invalid metadata"
+                )
+                continue
+            if observed_token != owner_token:
+                cleanup_errors.append(
+                    f"refused to delete {resource} owned by another invocation"
+                )
+                continue
+            try:
+                deleted = subprocess.run(
+                    [
+                        *kube,
+                        "delete",
+                        "--namespace",
+                        namespace,
+                        "--ignore-not-found=true",
+                        resource,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+            except OSError as exc:
+                cleanup_errors.append(
+                    f"delete {resource} failed: {type(exc).__name__}"
+                )
+                continue
             if deleted.returncode != 0:
                 cleanup_errors.append(
                     f"delete {resource} exited {deleted.returncode}: "
                     f"{deleted.stderr.strip()}"
                 )
         for resource in resources:
-            absent = subprocess.run(
-                [
-                    *kube,
-                    "get",
-                    "--namespace",
-                    namespace,
-                    resource,
-                    "--ignore-not-found=true",
-                    "-o",
-                    "name",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            try:
+                absent = subprocess.run(
+                    [
+                        *kube,
+                        "get",
+                        "--namespace",
+                        namespace,
+                        resource,
+                        "--ignore-not-found=true",
+                        "-o",
+                        "name",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+            except OSError as exc:
+                cleanup_errors.append(
+                    f"verify {resource} absent failed: {type(exc).__name__}"
+                )
+                continue
             if absent.returncode != 0 or absent.stdout.strip():
                 cleanup_errors.append(
                     f"verify {resource} absent failed: exit={absent.returncode}, "
@@ -642,7 +703,11 @@ def _robomimic_observer_rbac(
                 cleanup_errors
             )
             if primary_error is not None:
-                primary_error.add_note(message)
+                add_note = getattr(primary_error, "add_note", None)
+                if callable(add_note):
+                    add_note(message)
+                else:  # Python 3.10 compatibility.
+                    primary_error.args = (*primary_error.args, message)
             else:
                 raise AssertionError(message)
 
