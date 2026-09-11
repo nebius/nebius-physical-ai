@@ -12,8 +12,8 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "Native generation, complete aligned evaluation, actual promotion, the quality recording and the acceptance guard have been exercised live. The corrected CPU annotation runtime still requires completed accepted downstream validation.",
+      "status": "verified",
+      "reason": "The starter run completed all 15 stages at revision 1fb58217 on September 11, 2026: native aligned generation, complete evaluation and actual promotion, six accepted captions, two real Cosmos Curator clips, FiftyOne Brain curation, independently decoded recordings and final artifact checks. The guide retains advisory quality failures and the tiny-sample uniqueness fallback; this verifies pipeline execution, not training-data suitability.",
       "evidence": [
         "workflows/guides/paidf-cosmos3.md#validation"
       ]

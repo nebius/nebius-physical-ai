@@ -12,10 +12,9 @@ through captioning, Cosmos Curator, and FiftyOne Brain before a final report.
 If variants remain rejected after the configured refinement passes, the workflow
 preserves Rerun quality evidence and stops before curation.
 
-> **Validation scope:** Setup commands were exercised on Linux with Python 3.12
-> and an existing RTX PRO 6000 Blackwell cluster. Full live validation of the
-> structural-transfer workflow is in progress. See [validation](#validation)
-> for completed checks and remaining limits.
+> **Validation scope:** All 15 pipeline stages completed on an existing RTX PRO
+> 6000 Blackwell cluster. Setup was exercised on Linux with Python 3.12. See
+> [validation](#validation) for the tested revision, artifact checks, and limits.
 
 ## Before you start
 
@@ -613,6 +612,11 @@ extracting accepted-video frames. Keep that image selection when adapting the
 workflow; installing FFmpeg on your submitting machine does not install it in
 the worker container.
 
+Curator writes segments under `curation/cosmos_curator/` using its target and
+minimum durations. These segments can be shorter than the generated videos.
+For the generation alignment checks in R6, compare the prepared source with
+each variant's `augmented_video.mp4` under `cosmos_augmented/`.
+
 For example, adding `--var seed=29 --var augmentation_seed=17` to both commands
 changes the generation seed and fixes appearance sampling. This is a controlled
 experiment. The reports retain the actual thresholds and all individual
@@ -790,6 +794,7 @@ appears.
 | `--run-id` and `--resume-run` are mutually exclusive | Recovery command combines both options | Use only `--resume-run` for the existing run, or `prepare-run` for a fresh experiment. |
 | Workflow GPU discovery says `Kubeconfig not found` | Missing NPA-managed kubeconfig | Complete S5/S6 and verify the selected context. |
 | `UnsatisfiableAcceleratorError` reports no free GPU | Matching nodes may already be occupied | Check GPU discovery and active workloads. Wait for capacity or select a compatible available cluster; do not cancel another user's workload. Resume an unchanged run as described in R4. |
+| A CPU stage reports the resource request of an already completed GPU stage | An older runtime checked free GPU capacity across the entire workflow before each stage | Current runtime checks the resources of the stage being launched. Update the checkout and start a fresh run when changing its code; an unchanged older run can resume once its existing capacity check passes. |
 | Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../docs/run-lifecycle.md) and correct its image. Keep image preflight enabled. |
 | GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Inspect node disk pressure and available capacity, or ask the cluster administrator. Keep enough disk for image layers and runtime weights. |
 | Token Factory returns `404` / model does not exist | Hosted model availability | List models again and set `caption_model` to an available vision model. |
@@ -814,9 +819,8 @@ preflights passed against live services. S5's new-cluster command was validated
 with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
-The current structural-transfer validation has completed real input preparation,
-configuration generation, hosted source captioning, both native GPU variants,
-and Cosmos Evaluator scoring at revision `e1a6215b` on September 11, 2026.
+The full runtime completed all 15 stages at revision `1fb58217` on September 11,
+2026, using the starter input and the shipped generation and quality settings.
 Its 169-frame source
 at 50 fps and 640×480 becomes an 81-frame reference at 24 fps and 832×480.
 Duration changes from 3.38 to 3.375 seconds through frame-rate sampling;
@@ -825,12 +829,28 @@ videos fully decode with the prepared reference's dimensions, frame count,
 frame rate, and duration. Native control readback and text/video guardrails
 passed for both variants.
 
-Both variants passed evaluation with an aggregate score of `0.392244` against
+Both variants passed evaluation with an aggregate score of `0.383756` against
 `grade_threshold: 0.2`. Their attribute scores were `0.25` and `0.5` against
 `attribute_threshold: 0.25`; all eight attribute answers were complete, with
-no skipped checks or warnings. Evaluation matched the exact published video
-hashes and found zero timestamp error. The accepted downstream path is still
-being validated.
+no skipped checks. Evaluation matched the exact published video hashes and
+found zero timestamp error. Both temporal diagnostics and one appearance
+diagnostic failed in advisory mode; those results did not gate acceptance.
+
+Accepted annotation produced six nonempty captions, three per variant, bound to
+the evaluated video hashes. Real Cosmos Curator produced two clips, each 72
+frames at 24 fps and 3.0 seconds, with no reported errors or warnings. Those
+shorter segments follow `curator_clip_len_s: 3`; the generated videos retain
+their verified 81-frame timeline. FiftyOne Brain kept both samples and flagged
+both as redundant for review. Its reported uniqueness method was
+`embedding-fallback`; the report does not identify the raw condition that
+triggered that fallback.
+
+Finalization reported two annotated variants, two curated clips, and 132
+artifacts. Both Rerun recordings were independently decoded and matched to this
+run's media, captions, evaluator, and available curation reports. The guide's
+AWS download and final-report `jq` commands passed against those actual outputs.
+A completed-run resume replayed all 15 stages with the same job IDs and launched
+no new jobs. The run's isolated API and credential bindings stayed unchanged.
 
 Matched-time visual review showed recognizable pickup/removal timing, with
 gripper appearance changes, extra shadows, and strong warm coloration and
@@ -841,9 +861,10 @@ against the task's visual and motion requirements before using them as data.
 Automated checks cover media corruption and alignment failures, native control
 pixels and guardrail processing, incomplete evaluator responses, runtime
 routing, every accepted variant's captions, and final artifact validation.
-These checks do not substitute for a completed live run. Concurrent two-GPU
-variants, longer videos requiring multiple native chunks, fresh-cluster
-provisioning, and the desktop Rerun UI have not been validated by this run.
+Concurrent two-GPU variants, longer videos requiring multiple native chunks,
+fresh-cluster provisioning, a fresh macOS installation, and the desktop Rerun UI
+have not been validated by this run. Rejection-route adapter checks passed
+against retained live reports; a full rejected runtime replay was not completed.
 
 ## Inspect the outputs
 

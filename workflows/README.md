@@ -54,6 +54,9 @@ and rejects `--no-runtime`. Runtime-required workflows also reject
 `--assume-decision` for execution before staging or provisioning. Offline plans
 may use assumed decisions to inspect each route. PAIDF Cosmos 3 declares this
 mode so actual evaluator reports control refinement and downstream work.
+Runtime submission checks free GPU capacity against each stage as it launches.
+CPU stages can continue after generation finishes even when other workloads
+occupy the GPUs. GPU stages retain their gang-size and placement checks.
 
 `config.source_overlay: true` selects the automatically staged checkout's NPA
 code in pinned workbench images while keeping their installed dependencies.

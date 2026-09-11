@@ -177,9 +177,11 @@ runtime decisions and automatically enables the submitted NPA source overlay.
 See the setup guide's [validation record](../../../workflows/guides/paidf-cosmos3.md#validation)
 for the current implementation's measured checks and limitations, and its
 [full-pipeline checks](../../../workflows/guides/paidf-cosmos3.md#check-every-stage-and-full-pipeline-completion)
-to validate a new run. Full accepted execution of the structural-transfer
-workflow is still being validated. Generation alone does not establish quality,
-accepted curation, or final artifact completeness.
+to validate a new run. The recorded starter run completed all 15 stages,
+including accepted captioning, real Cosmos Curator and FiftyOne curation, and
+final recording/report verification. The guide retains the measured quality
+diagnostics, curation fallback, and limits; execution success does not certify
+training-data suitability.
 
 The publication regression can separately reuse retained real GPU output.
 Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
