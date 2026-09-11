@@ -1405,7 +1405,7 @@ def submit_cmd(
                         merged_npa_spec, context=infra_context, allowed_nodes=None,
                         sky_bin=sky_bin, config_path=config_path,
                         isolated_config_dir=isolated_config_dir,
-                    )) if infra_context and not deploy_if_absent else None,
+                    )) if infra_context and not deploy_if_absent and not (runtime and resume) else None,
                 )
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc))
@@ -1797,7 +1797,9 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
-        if not plan_only and merged_npa_spec is not None:
+        # A resumed job already owns its capacity. Reconcile it before requiring
+        # free nodes; the launch hook still checks every new or retried wave.
+        if not plan_only and merged_npa_spec is not None and not (runtime and resume):
             try:
                 _preflight_submit_gang_capacity(
                     merged_npa_spec,
@@ -1813,9 +1815,19 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
+            runtime_preflight_evidence = {
+                "exact_image_pull": "pass" if preflight_images else "unknown",
+                "credentials_access": "pass",
+                "execution_target": "pass" if execution_preflight_report else "unknown",
+                "accelerator_resolution": "pass" if resolve_accelerators else "unknown",
+                "per_node_gpu_shape": "pass" if resolve_accelerators else "unknown",
+                "gang_capacity": "unknown" if resume else "pass",
+            }
+
             def refresh_runtime_preflight(_wave_yaml: Path) -> None:
                 """Re-establish mutable launch facts before every runtime wave."""
 
+                runtime_preflight_evidence["gang_capacity"] = "unknown"
                 if execution_target is not None:
                     import yaml
                     from npa.execution_preflight import verify_execution_target, verify_worker_environment
@@ -1868,6 +1880,7 @@ def submit_cmd(
                         config_path=config_path,
                         isolated_config_dir=isolated_config_dir,
                     )
+                runtime_preflight_evidence["gang_capacity"] = "pass"
 
             _run_npa_workflow_runtime(
                 yaml_path,
@@ -1894,20 +1907,7 @@ def submit_cmd(
                 allow_terminal_plan_migration=allow_terminal_plan_migration,
                 plan_migration_reason=plan_migration_reason,
                 adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
-                preflight_evidence={
-                    "exact_image_pull": (
-                        "pass" if preflight_images else "unknown"
-                    ),
-                    "credentials_access": "pass",
-                    "execution_target": "pass" if execution_preflight_report else "unknown",
-                    "accelerator_resolution": (
-                        "pass" if resolve_accelerators else "unknown"
-                    ),
-                    "per_node_gpu_shape": (
-                        "pass" if resolve_accelerators else "unknown"
-                    ),
-                    "gang_capacity": "pass",
-                },
+                preflight_evidence=runtime_preflight_evidence,
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
                 project=project,
@@ -2607,7 +2607,8 @@ def _run_npa_workflow_runtime(
         # The preflight and every wave use the same selected principal. A new
         # submit/resume invocation resolves rotated credentials again.
         credential_resolver=lambda: dict(secret_env_values),
-        preflight_evidence=dict(preflight_evidence or {}),
+        # The launch hook updates this mapping only after its real checks pass.
+        preflight_evidence=preflight_evidence,
         pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)

@@ -780,3 +780,108 @@ def test_submit_runtime_is_subject_to_the_prerequisite_preflight(mocker) -> None
     assert result.exit_code == 1
     assert "missing prerequisites" in result.output
     runtime_driver.assert_not_called()
+
+
+@pytest.fixture()
+def runtime_capacity_preflight(fake_runtime, mocker):
+    """Reach actual CLI capacity ordering without contacting infrastructure."""
+    from npa.cli.workbench import workflow as workflow_cli
+
+    capacity = mocker.patch.object(
+        workflow_cli, "_preflight_submit_gang_capacity",
+        side_effect=RuntimeError("existing GPU job occupies available capacity"),
+    )
+    mocker.patch.object(workflow_cli, "_submit_prerequisites", return_value=[])
+    mocker.patch.object(workflow_cli, "_verify_submit_controller_owner")
+    mocker.patch.object(workflow_cli, "_adopt_npa_kubeconfig")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value=None,
+    )
+    mocker.patch.object(workflow_cli, "_resolve_submit_accelerators", return_value={})
+    mocker.patch.object(workflow_cli, "_preflight_submit_images", return_value={})
+
+    def verify_target(*args, **kwargs):
+        if kwargs["gpu_check"] is not None:
+            kwargs["gpu_check"]()
+        return None, {"scope": "pass"}
+
+    target = mocker.patch.object(
+        workflow_cli, "_execution_target_preflight", side_effect=verify_target,
+    )
+    return capacity, target
+
+
+def _capacity_submit_args(*extra):
+    return [
+        "workbench", "workflow", "submit", str(FANOUT),
+        "--infra", "k8s/unit-context", "--no-deploy-if-absent",
+        "--var", "bucket=rt-bucket", *extra,
+    ]
+
+
+@pytest.mark.parametrize("resume_args", [
+    ["--resume-run", "rt-capacity-resume"],
+    ["--run-id", "rt-capacity-resume", "--resume"],
+])
+def test_runtime_resume_defers_capacity_until_new_launch(
+    fake_runtime, runtime_capacity_preflight, tmp_path, resume_args,
+):
+    capacity, target = runtime_capacity_preflight
+    result = RUNNER.invoke(app, _capacity_submit_args("--runtime", *resume_args))
+    assert result.exit_code == 0, result.output
+    capacity.assert_not_called()
+    target.assert_called_once()
+    assert target.call_args.kwargs["gpu_check"] is None
+    options = fake_runtime["options"]
+    assert options.resume is True
+    assert options.preflight_evidence["gang_capacity"] == "unknown"
+
+    wave = tmp_path / "next-wave.yaml"
+    wave.write_text("name: next-wave\nrun: echo next\n")
+    with pytest.raises(RuntimeError, match="existing GPU job"):
+        options.pre_submit_hook(wave)
+    assert options.preflight_evidence["gang_capacity"] == "unknown"
+
+    capacity.side_effect = None
+    capacity.return_value = []
+    options.pre_submit_hook(wave)
+    assert options.preflight_evidence["gang_capacity"] == "pass"
+
+    capacity.side_effect = RuntimeError("capacity changed before retry")
+    with pytest.raises(RuntimeError, match="capacity changed before retry"):
+        options.pre_submit_hook(wave)
+    assert options.preflight_evidence["gang_capacity"] == "unknown"
+    assert capacity.call_count == 3
+
+
+@pytest.mark.parametrize("extra", [
+    ["--runtime", "--run-id", "rt-fresh-capacity"],
+    ["--run-id", "rt-fresh-capacity"],
+    ["--resume-run", "rt-one-shot-capacity"],
+])
+def test_non_adopting_submit_still_requires_free_capacity(
+    fake_runtime, runtime_capacity_preflight, extra,
+):
+    capacity, target = runtime_capacity_preflight
+    result = RUNNER.invoke(app, _capacity_submit_args(*extra))
+    assert result.exit_code == 1, result.output
+    assert "existing GPU job occupies available capacity" in result.output
+    capacity.assert_called_once()
+    target.assert_called_once()
+    assert target.call_args.kwargs["gpu_check"] is not None
+    assert fake_runtime == {}
+
+
+def test_runtime_resume_keeps_execution_scope_gate(
+    fake_runtime, runtime_capacity_preflight,
+):
+    capacity, target = runtime_capacity_preflight
+    target.side_effect = RuntimeError("execution scope mismatch")
+    result = RUNNER.invoke(app, _capacity_submit_args(
+        "--runtime", "--resume-run", "rt-scope-mismatch",
+    ))
+    assert result.exit_code == 1, result.output
+    assert "execution scope mismatch" in result.output
+    capacity.assert_not_called()
+    assert fake_runtime == {}

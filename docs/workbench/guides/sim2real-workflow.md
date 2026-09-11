@@ -537,8 +537,13 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
-`--resume-run` alone only replays already-succeeded waves from the ledger; a
-wave that reached a genuine terminal `FAILED` status is preserved as-is and
+`--runtime --resume-run` replays completed waves and reconciles existing live
+jobs for adoption. Target, credential, image, and accelerator checks still run,
+but an existing job does not need a second allocation of free GPU capacity.
+Capacity is checked before every new or retried submission and is recorded as
+unverified until that check passes.
+
+A wave that reached a genuine terminal `FAILED` status is preserved as-is and
 *not* resubmitted, even after the root cause is fixed (accepting a missing
 gated-model license, for example). Add `--retries 1` to authorize one new
 attempt at that specific wave:

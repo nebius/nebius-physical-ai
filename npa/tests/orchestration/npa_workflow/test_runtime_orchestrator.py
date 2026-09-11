@@ -1877,8 +1877,9 @@ def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(
     assert not cancels, "no fuzzy/name-only cancellation is permitted"
 
 
+@pytest.mark.parametrize("capacity_blocked", [False, True])
 def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
-    tmp_path: Path,
+    tmp_path: Path, capacity_blocked: bool,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
@@ -1907,9 +1908,21 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     )
     store.write_runtime_state(persisted)
 
-    # Second driver resumes: it must poll job 1, not submit a second copy.
+    # Second driver resumes: it must poll job 1 before checking free capacity.
+    refreshed = []
+
+    def check_capacity(path: Path) -> None:
+        tasks = [doc["name"] for doc in yaml.safe_load_all(path.read_text()) if doc][1:]
+        refreshed.append(tasks)
+        assert tasks == ["shard-c"] or tasks == ["join"]
+        if capacity_blocked:
+            raise RuntimeError("no free GPU capacity for the next wave")
+
     second_submitter = FakeSubmitter()
-    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    resume_options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=60, resume=True,
+        pre_submit_hook=check_capacity, preflight_evidence={"gang_capacity": "unknown"},
+    )
     second = _executor(
         spec,
         run_id="rt-adopt",
@@ -1921,12 +1934,18 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
         spec, run_id="rt-adopt", executor=second, options=resume_options
     )
 
-    assert second_report.status == "succeeded"
     adopted = [wave for wave in second_report.waves if wave.get("adopted")]
     assert adopted and adopted[0]["job_id"] == "1"
     assert adopted[0]["key"] == key
-    # Only the *remaining* waves were submitted; the in-flight one was adopted.
-    assert [call["tasks"] for call in second_submitter.calls] == [["shard-c"], ["join"]]
+    if capacity_blocked:
+        assert second_report.status == "failed"
+        assert "no free GPU capacity" in second_report.error
+        assert refreshed == [["shard-c"]]
+        assert second_submitter.calls == []
+    else:
+        assert second_report.status == "succeeded"
+        assert refreshed == [["shard-c"], ["join"]]
+        assert [call["tasks"] for call in second_submitter.calls] == refreshed
 
 
 def test_resume_cancels_phantom_pending_record_before_new_attempt(
