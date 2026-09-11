@@ -361,11 +361,14 @@ def _dockerfile_text() -> str:
         "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
         "    --mount=type=secret,id=npa_byof_repo_url \\\n"
         "    --mount=type=secret,id=npa_byof_repo_ref \\\n"
+        "    --mount=type=secret,id=npa_byof_source_prune_path \\\n"
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
         "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
         "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        '    source_prune_path="${BYOF_SOURCE_PRUNE_PATH}"; \\\n'
+        "    if [ -s /run/secrets/npa_byof_source_prune_path ]; then source_prune_path=\"$(cat /run/secrets/npa_byof_source_prune_path)\"; fi; \\\n"
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
         "    git_with_auth() { git \"$@\"; }; \\\n"
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
@@ -385,11 +388,11 @@ def _dockerfile_text() -> str:
         f'    observed_commit="$(git -C {BYOF_REPO_MOUNT} rev-parse HEAD)"; \\\n'
         '    git_objects_removed=false; \\\n'
         '    source_pruned=false; \\\n'
-        '    if [ -n "${BYOF_SOURCE_PRUNE_PATH}" ]; then \\\n'
-        '      case "${BYOF_SOURCE_PRUNE_PATH}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
-        f'      test -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
-        f'      rm -rf -- "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}" {BYOF_REPO_MOUNT}/.git; \\\n'
-        f'      test ! -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
+        '    if [ -n "${source_prune_path}" ]; then \\\n'
+        '      case "${source_prune_path}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
+        f'      test -e "{BYOF_REPO_MOUNT}/${{source_prune_path}}"; \\\n'
+        f'      rm -rf -- "{BYOF_REPO_MOUNT}/${{source_prune_path}}" {BYOF_REPO_MOUNT}/.git; \\\n'
+        f'      test ! -e "{BYOF_REPO_MOUNT}/${{source_prune_path}}"; \\\n'
         f'      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n'
         '      git_objects_removed=true; \\\n'
         '      source_pruned=true; \\\n'
@@ -398,13 +401,13 @@ def _dockerfile_text() -> str:
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      commit_sha=\"$(printf '%s' \"$observed_commit\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        "      prune_sha=\"$(printf '%s' \"${BYOF_SOURCE_PRUNE_PATH}\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        '      if [ -n "${BYOF_SOURCE_PRUNE_PATH}" ]; then prune_label="<private-source-prune-path>"; else prune_label=""; fi; \\\n'
+        "      prune_sha=\"$(printf '%s' \"$source_prune_path\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        '      if [ -n "$source_prune_path" ]; then prune_label="<private-source-prune-path>"; else prune_label=""; fi; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         f"      test ! -e {BYOF_REPO_MOUNT}/.git; git_objects_removed=true; \\\n"
         f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\",\"commit\":\"<private-commit>\",\"commit_sha256\":\"%s\",\"source_prune_path\":\"%s\",\"source_prune_path_sha256\":\"%s\",\"source_pruned\":%s,\"git_objects_removed\":%s}}\\n' \"$repo_sha\" \"$ref_sha\" \"$commit_sha\" \"$prune_label\" \"$prune_sha\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"source_pruned\": %s,\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"${{BYOF_SOURCE_PRUNE_PATH}}\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"source_pruned\": %s,\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"$source_prune_path\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -693,7 +696,11 @@ def main(argv: list[str] | None = None) -> int:
         "run_id": args.run_id,
         "workload": args.workload,
         "build_command": args.build_command,
-        "source_prune_path": args.source_prune_path,
+        "source_prune_path": (
+            "<private-source-prune-path>"
+            if private_source and args.source_prune_path
+            else args.source_prune_path
+        ),
         "smoke_command": args.smoke_command,
         "solution_name": args.solution_name,
         "capability_name": args.capability_name,
@@ -713,12 +720,16 @@ def main(argv: list[str] | None = None) -> int:
                     private_repository_secrets(
                         args.repo_url,
                         args.repo_ref,
+                        source_prune_path=args.source_prune_path,
                         token_env=args.repo_token_env,
                     )
                 )
                 summary["source_identity"] = {
                     "repository_sha256": source_secrets.repository_sha256,
                     "ref_sha256": source_secrets.ref_sha256,
+                    "source_prune_path_sha256": (
+                        source_secrets.source_prune_path_sha256
+                    ),
                 }
             redactions = (
                 source_secrets.redaction_values if source_secrets is not None else ()
@@ -829,6 +840,7 @@ def _run_byof(
                                     + (
                                         source_secrets.repository_sha256
                                         + source_secrets.ref_sha256
+                                        + source_secrets.source_prune_path_sha256
                                         if source_secrets
                                         else "public"
                                     )
@@ -839,8 +851,6 @@ def _run_byof(
                                 f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
                                 "--build-arg",
                                 f"BYOF_BUILD_COMMAND={args.build_command}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_PRUNE_PATH={args.source_prune_path}",
                                 "-t",
                                 image,
                                 str(context),
@@ -860,6 +870,16 @@ def _run_byof(
                                 f"id=npa_byof_repo_url,src={source_secrets.repo_url}",
                                 "--secret",
                                 f"id=npa_byof_repo_ref,src={source_secrets.repo_ref}",
+                                "--secret",
+                                (
+                                    "id=npa_byof_source_prune_path,src="
+                                    f"{source_secrets.source_prune_path}"
+                                ),
+                            ]
+                        if source_secrets is None:
+                            build_cmd[8:8] = [
+                                "--build-arg",
+                                f"BYOF_SOURCE_PRUNE_PATH={args.source_prune_path}",
                             ]
                         run_kwargs: dict[str, Any] = {
                             "env": docker_env or None,

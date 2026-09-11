@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -140,10 +141,12 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     token_path = tmp_path / "token"
     url_path = tmp_path / "url"
     ref_path = tmp_path / "ref"
+    prune_path = tmp_path / "prune-path"
     token_path.write_text(token, encoding="utf-8")
     url_path.write_text(repo_url, encoding="utf-8")
     ref_path.write_text(repo_ref, encoding="utf-8")
-    for path in (token_path, url_path, ref_path):
+    prune_path.write_text("private-assets/render-only", encoding="utf-8")
+    for path in (token_path, url_path, ref_path, prune_path):
         path.chmod(0o600)
 
     @contextmanager
@@ -152,9 +155,16 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
             token=token_path,
             repo_url=url_path,
             repo_ref=ref_path,
+            source_prune_path=prune_path,
             repository_sha256="a" * 64,
             ref_sha256="b" * 64,
-            redaction_values=(token, repo_url, repo_ref),
+            source_prune_path_sha256="c" * 64,
+            redaction_values=(
+                token,
+                repo_url,
+                repo_ref,
+                "private-assets/render-only",
+            ),
         )
 
     seen: dict[str, object] = {}
@@ -197,14 +207,16 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     command = " ".join(seen["cmd"])
     dockerfile = str(seen["dockerfile"])
     output = capsys.readouterr().out
-    for value in (token, repo_url, repo_ref):
+    for value in (token, repo_url, repo_ref, "private-assets/render-only"):
         assert value not in command
         assert value not in dockerfile
         assert value not in output
-    assert command.count("--secret") == 3
+    assert command.count("--secret") == 4
     assert "npa_byof_repo_token" in command
-    assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 in command
+    assert "npa_byof_source_prune_path" in command
+    assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 + "c" * 64 in command
     assert "type=secret,id=npa_byof_repo_token" in dockerfile
+    assert "type=secret,id=npa_byof_source_prune_path" in dockerfile
     assert "username=x-access-token" in dockerfile
     assert "password=" in dockerfile
     assert 'ARG OSS_REPO_URL=""' in dockerfile
@@ -218,15 +230,21 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert '"git_objects_removed":%s' in dockerfile
     assert "<private-source-prune-path>" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
-    assert "BYOF_SOURCE_PRUNE_PATH=private-assets/render-only" in command
-    assert seen["redactions"] == (token, repo_url, repo_ref)
+    assert "BYOF_SOURCE_PRUNE_PATH=private-assets/render-only" not in command
+    assert seen["redactions"] == (
+        token,
+        repo_url,
+        repo_ref,
+        "private-assets/render-only",
+    )
     summary = json.loads(output)
     assert summary["repo_url"] == "<private-repository>"
     assert summary["source_identity"] == {
         "repository_sha256": "a" * 64,
         "ref_sha256": "b" * 64,
+        "source_prune_path_sha256": "c" * 64,
     }
-    assert summary["source_prune_path"] == "private-assets/render-only"
+    assert summary["source_prune_path"] == "<private-source-prune-path>"
 
 
 def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
@@ -240,11 +258,14 @@ def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
     token_path = tmp_path / "token"
     url_path = tmp_path / "url"
     ref_path = tmp_path / "ref"
+    prune_path = tmp_path / "prune-path"
     for path, value in zip(
         (token_path, url_path, ref_path), private_values, strict=True
     ):
         path.write_text(value, encoding="utf-8")
         path.chmod(0o600)
+    prune_path.write_text("", encoding="utf-8")
+    prune_path.chmod(0o600)
 
     @contextmanager
     def fake_secrets(*_args, **_kwargs):
@@ -252,8 +273,10 @@ def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
             token=token_path,
             repo_url=url_path,
             repo_ref=ref_path,
+            source_prune_path=prune_path,
             repository_sha256="a" * 64,
             ref_sha256="b" * 64,
+            source_prune_path_sha256=hashlib.sha256(b"").hexdigest(),
             redaction_values=private_values,
         )
 
@@ -1190,7 +1213,7 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa_source_metadata.json" in text
     assert "BYOF_SOURCE_PRUNE_PATH" in text
     assert 'observed_commit="$(git -C /opt/byof rev-parse HEAD)"' in text
-    assert 'rm -rf -- "/opt/byof/${BYOF_SOURCE_PRUNE_PATH}" /opt/byof/.git' in text
+    assert 'rm -rf -- "/opt/byof/${source_prune_path}" /opt/byof/.git' in text
     assert "printf" in text
     assert "/opt/byof" in text
     assert "USER ubuntu" in text

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import stat
 import subprocess
 from pathlib import Path
@@ -56,19 +57,36 @@ def test_private_secret_files_are_owner_only_and_repr_is_redacted() -> None:
     token = "github-private-token-canary"
     repo_url = "https://github.com/example/private.git"
     repo_ref = "main-private-canary"
+    source_prune_path = "private-assets/render-only"
     with source_auth.private_repository_secrets(
         repo_url,
         repo_ref,
+        source_prune_path=source_prune_path,
         token_env="NPA_BYOF_GITHUB_TOKEN",
         environ={"NPA_BYOF_GITHUB_TOKEN": token},
         preflight=False,
     ) as secrets:
-        for path in (secrets.token, secrets.repo_url, secrets.repo_ref):
+        for path in (
+            secrets.token,
+            secrets.repo_url,
+            secrets.repo_ref,
+            secrets.source_prune_path,
+        ):
             assert stat.S_IMODE(path.stat().st_mode) == 0o600
         assert token not in repr(secrets)
         assert repo_url not in repr(secrets)
         assert repo_ref not in repr(secrets)
-        assert secrets.redaction_values == (token, repo_url, repo_ref)
+        assert source_prune_path not in repr(secrets)
+        assert secrets.source_prune_path.read_text() == source_prune_path
+        assert secrets.source_prune_path_sha256 == hashlib.sha256(
+            source_prune_path.encode()
+        ).hexdigest()
+        assert secrets.redaction_values == (
+            token,
+            repo_url,
+            repo_ref,
+            source_prune_path,
+        )
 
 
 def test_private_access_preflight_checks_requested_ref_without_private_argv(
