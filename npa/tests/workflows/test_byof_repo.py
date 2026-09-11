@@ -1309,13 +1309,16 @@ esac
         (bin_dir / command_name).symlink_to("/bin/true")
 
     guard_text = module._skypilot_bootstrap_guard_script()
+    skypilot_tmp = Path("/") / "tmp"
     replacements = {
         "/usr/bin/apt-get": str(real_apt),
         "/usr/bin/timeout": shutil.which("timeout") or "/usr/bin/timeout",
-        "/tmp/npa-skypilot-bootstrap-apt.state": str(state),
-        "/tmp/npa-skypilot-bootstrap-contract.failed": str(contract_failure),
-        "/tmp/apt-ssh-setup.failed": str(sky_failure),
-        "/tmp/apt_ssh_setup_complete": str(apt_complete),
+        str(skypilot_tmp / "npa-skypilot-bootstrap-apt.state"): str(state),
+        str(skypilot_tmp / "npa-skypilot-bootstrap-contract.failed"): str(
+            contract_failure
+        ),
+        str(skypilot_tmp / "apt-ssh-setup.failed"): str(sky_failure),
+        str(skypilot_tmp / "apt_ssh_setup_complete"): str(apt_complete),
     }
     for source, target in replacements.items():
         guard_text = guard_text.replace(source, target)
