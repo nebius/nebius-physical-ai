@@ -39,8 +39,7 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "robotwin_huggingface_cache",
         re.compile(
-            r"(?:^|/)(?:\.cache/huggingface|huggingface/hub)/"
-            r"datasets--TianxingChen--RoboTwin2\.0(?:/|$)",
+            r"(?:^|/)datasets--TianxingChen--RoboTwin2\.0(?:/|$)",
             re.I,
         ),
     ),

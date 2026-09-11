@@ -98,11 +98,13 @@ config:
     import json
     import os
     import re
-    import socket
+    import ssl
     import subprocess
     import sys
     import traceback
     from pathlib import Path
+    from urllib.parse import quote
+    from urllib.request import Request, urlopen
     from zipfile import ZipFile
 
     import cv2
@@ -202,6 +204,34 @@ config:
                     raise RuntimeError(f"unsafe archive member: {member.filename}")
             package.extractall(root)
 
+    def observed_pod_image_digest(expected_ref: str) -> str:
+        pod_name = os.environ.get("POD_NAME", "").strip()
+        pod_namespace = os.environ.get("POD_NAMESPACE", "").strip()
+        if not pod_name or not pod_namespace:
+            raise RuntimeError("downward-API pod identity is unavailable")
+        service_account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+        token = (service_account / "token").read_text(encoding="utf-8").strip()
+        request = Request(
+            "https://kubernetes.default.svc/api/v1/namespaces/"
+            f"{quote(pod_namespace, safe='')}/pods/{quote(pod_name, safe='')}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        context = ssl.create_default_context(cafile=str(service_account / "ca.crt"))
+        with urlopen(request, context=context, timeout=15) as response:
+            pod = json.load(response)
+        statuses = (pod.get("status") or {}).get("containerStatuses") or []
+        matches = [item for item in statuses if item.get("name") == "ray-node"]
+        if len(matches) != 1:
+            raise RuntimeError("Kubernetes did not report one ray-node image status")
+        image_id = str(matches[0].get("imageID") or "")
+        digest_match = re.search(r"sha256:[0-9a-f]{64}", image_id)
+        expected_match = re.fullmatch(r".+@(sha256:[0-9a-f]{64})", expected_ref)
+        if digest_match is None or expected_match is None:
+            raise RuntimeError("pod or requested image lacks an immutable digest")
+        if digest_match.group(0) != expected_match.group(1):
+            raise RuntimeError("pod image digest differs from the scanned image")
+        return digest_match.group(0)
+
     try:
         source_metadata = json.loads(Path("npa_source_metadata.json").read_text(encoding="utf-8"))
         if source_metadata.get("ref") != SOURCE_REVISION:
@@ -211,11 +241,12 @@ config:
         image_match = re.fullmatch(r"(.+)@(sha256:[0-9a-f]{64})", image_ref)
         if image_match is None:
             raise RuntimeError("BYOF_IMAGE is not an immutable sha256 image reference")
-        payload["pod_observed_immutable_image_ref"] = image_ref
-        payload["pod_observed_immutable_image_digest"] = image_match.group(2)
+        payload["pod_observed_immutable_image_digest"] = observed_pod_image_digest(
+            image_ref
+        )
         payload["pod_observation"] = {
-            "hostname": socket.gethostname(),
-            "image_ref_source": "SkyPilot materialized pod resource exposed as BYOF_IMAGE",
+            "source": "Kubernetes status.containerStatuses[].imageID",
+            "container": "ray-node",
         }
 
         reservation_evidence = os.environ.get(
@@ -488,6 +519,9 @@ config:
   solution_name: "robotwin"
   capability_name: "beat_block_hammer_successful_seed_replay_collection"
   smoke_artifact_name: "robotwin-smoke.json"
+  # Only this neutral environment-variable name enters the public plan. The
+  # manager-owned runtime authorization value remains outside the workflow.
+  runtime_context_env: NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT
   resource_profile_yaml: "byof-solution-smoke-robotwin-rtxpro-gpu"
   task: "beat_block_hammer"
   iterations: 1

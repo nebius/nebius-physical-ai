@@ -75,8 +75,10 @@ as local Python 3.12 evidence. The embedded image dependency lock remains an
 explicit CPython 3.10/Linux target and is not relabelled as 3.12.
 
 Planning proves the `npa.workflow/v0.0.1` schema and `workbench.byof.repo`
-mapping. It does not prove registry access, reserved capacity, Vulkan, task
-success, or artifact integrity.
+mapping. The planned argv contains only the neutral
+`NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT` variable name, never the manager context or
+its private coordinates. It does not prove registry access, reserved capacity,
+Vulkan, task success, or artifact integrity.
 
 ## Live run
 
@@ -91,9 +93,12 @@ S3 prefix. The dedicated live test requires an owner-only runtime-context JSON
 path in `NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT`; it rejects missing ownership
 provenance, incomplete runtime-use decisions, a different project/context,
 anything but one RTX PRO 6000, and any reservation policy other than `STRICT`
-before it builds or submits. Focused tests call the live entrypoint with the
-context missing and incomplete and prove this refusal happens before profile
-activation or a build subprocess. The record also supplies the exact private
+before source validation, profile activation, registry lookup, image work, or
+submission. The checked-in workflow reaches the same fail-closed gate through
+the public `workbench.byof.repo` → `npa workbench byof run` path. Focused tests
+exercise missing, malformed, wrong-solution, incomplete, and public-registry
+refusals before mocked side effects, plus a fully mocked valid path. The record
+also supplies the exact private
 registry, bucket, output root, and run ID, none of which belong in the
 repository. Its SHA-256 is passed through SkyPilot's secret environment channel
 and retained in the smoke artifact without exposing the private values. The
@@ -110,12 +115,12 @@ npa/.venv/bin/python -m pytest \
   -k robotwin_build_push_run_and_artifacts
 ```
 
-The harness builds and pushes the source image without launching a pod, resolves
-the tag to an immutable digest, runs `scan_image_robotwin_payload.py` against
-the flattened rootfs and all layers, and refuses on any official archive,
-extracted RoboTwin embodiment/object asset, Hugging Face dataset cache, or
-generated episode. It
-then invokes the BYOF runner with `--skip-build` and that exact digest. The
+The public CLI invokes the runner once. After its checked profile activation,
+the runner builds and pushes the source image, resolves the tag to an immutable
+digest, runs `scan_image_robotwin_payload.py` against the flattened rootfs and
+all layers, and refuses on any official archive, extracted RoboTwin
+embodiment/object asset, Hugging Face dataset cache, or generated episode. It
+submits only after that exact-digest scan passes. The
 dedicated resource profile captures `nvidia-smi` and `vulkaninfo`, runs the
 solution smoke, uploads every run output with create-only S3 writes, verifies
 the summary and primary artifact with `HeadObject`, then returns the upstream
@@ -136,7 +141,10 @@ passing record includes:
 - HDF5 and MP4 relative paths, sizes, SHA-256 hashes, and video dimensions;
 - successful NVIDIA Vulkan discovery plus SAPIEN device/RT-renderer evidence;
 - one observed RTX PRO 6000, `sm_120`, compute capability 12.0;
-- the pod materialized immutable image reference/digest and `exit_status: 0`.
+- the immutable digest observed independently from Kubernetes
+  `status.containerStatuses[].imageID` and `exit_status: 0`; the selected
+  service account must already be allowed to read its own Pod, and this profile
+  does not grant or alter RBAC;
 - the exact-digest byte-scan report SHA-256, archive count, format, and passing
   status.
 

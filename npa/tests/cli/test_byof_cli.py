@@ -45,6 +45,7 @@ def test_byof_run_help() -> None:
     assert "--base-profile" in result.output
     assert "--repo-auth" in result.output
     assert "--repo-token-env" in result.output
+    assert "--runtime-contex" in result.output
 
 
 def test_byof_run_dry_run_json() -> None:
@@ -118,3 +119,33 @@ def test_private_byof_sdk_plan_carries_only_token_variable_name() -> None:
     assert argv[argv.index("--repo-auth") + 1] == "github"
     assert argv[argv.index("--repo-token-env") + 1] == "NPA_BYOF_GITHUB_TOKEN"
     assert "secret-canary" not in " ".join(argv)
+
+
+def test_robotwin_dry_run_carries_only_runtime_context_variable_name(
+    monkeypatch,
+) -> None:
+    variable = "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
+    secret = "runtime-context-secret-canary"
+    monkeypatch.setenv(variable, secret)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "byof",
+            "run",
+            "--repo-url",
+            "https://github.com/RoboTwin-Platform/RoboTwin.git",
+            "--solution-name",
+            "robotwin",
+            "--runtime-context-env",
+            variable,
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    argv = json.loads(result.output)["argv"]
+    assert argv[argv.index("--runtime-context-env") + 1] == variable
+    assert secret not in " ".join(argv)
