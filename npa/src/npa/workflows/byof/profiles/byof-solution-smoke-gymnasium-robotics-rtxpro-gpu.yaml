@@ -210,7 +210,6 @@ run: |
       client_kwargs = {
           "endpoint_url": endpoint,
           "config": Config(s3={"addressing_style": "path"}),
-          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
       }
       access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
       secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
