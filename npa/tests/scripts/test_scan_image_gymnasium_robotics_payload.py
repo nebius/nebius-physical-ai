@@ -482,6 +482,9 @@ def test_secret_in_raw_layer_and_eula_in_history_fail(tmp_path: Path) -> None:
 def test_model_and_cache_paths_fail(tmp_path: Path) -> None:
     for name in (
         "opt/model.safetensors",
+        "opt/isaac/runtime",
+        "opt/omniverse/kit",
+        "opt/ngc/explicit-cache",
         "root/.cache/pip/wheel",
         "usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.1",
     ):
@@ -490,9 +493,13 @@ def test_model_and_cache_paths_fail(tmp_path: Path) -> None:
         try:
             SCAN.scan(archive)
         except ValueError as error:
-            assert "forbidden image path" in str(error)
+            assert "forbidden image path" in str(
+                error
+            ) or "forbidden vendor payload signature" in str(error)
         else:
             raise AssertionError(f"forbidden path accepted: {name}")
+    for path in ("opt/isaac/runtime", "opt/omniverse/kit", "opt/ngc/cache"):
+        assert SCAN.FORBIDDEN_PATH.search(path)
 
 
 def test_notice_files_do_not_bypass_vendor_signature_scan(tmp_path: Path) -> None:
@@ -617,6 +624,26 @@ def test_appended_tar_and_zip_streams_are_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="unaccounted zip bytes"):
         SCAN.scan(zip_archive)
+
+
+def test_gzip_requires_one_exact_member_and_compatible_archive_name(
+    tmp_path: Path,
+) -> None:
+    clean_gzip = gzip.compress(b"otherwise-clean-content")
+    cases = {
+        "concatenated.bin": clean_gzip + gzip.compress(b"second-member"),
+        "trailing.bin": clean_gzip + b"\0" * 8,
+        "mislabeled.zip": clean_gzip,
+        "mislabeled.tar": clean_gzip,
+    }
+    for name, content in cases.items():
+        archive = tmp_path / (name.replace(".", "-") + ".tar")
+        _docker_save(archive, {**REQUIRED, f"opt/extra/{name}": content})
+        with pytest.raises(
+            ValueError,
+            match="(?:ambiguous compressed stream|declared (?:ZIP|tar) does not match)",
+        ):
+            SCAN.scan(archive)
 
 
 def test_second_level_nested_archive_signatures_are_scanned(tmp_path: Path) -> None:
