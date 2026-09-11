@@ -140,7 +140,13 @@ def test_excluded_noncommercial_and_gui_gitlinks_are_never_fetched() -> None:
 
 def test_final_source_projection_preserves_the_manifest_directory_layout() -> None:
     dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
-    assert "/opt/habitat-sim/src/esp /opt/habitat-sim/src/utils" in dockerfile
+    projection_copy = dockerfile.split("cp -a /opt/habitat-sim/src/CMakeLists.txt", 1)[
+        1
+    ].split("cp -a /opt/habitat-sim/src_python", 1)[0]
+    assert "/opt/habitat-sim/src/esp" in projection_copy
+    assert "/opt/habitat-sim/src/shaders" in projection_copy
+    assert "/opt/habitat-sim/src/utils" in projection_copy
+    assert "/opt/source-projection/src/" in projection_copy
     assert "/opt/habitat-sim/src/deps /opt/source-projection/src/" in dockerfile
     assert "/opt/habitat-sim/src_python /opt/source-projection/" in dockerfile
     assert "/opt/habitat-sim/src/esp /opt/habitat-sim/src_python" not in dockerfile
@@ -155,6 +161,7 @@ def test_final_source_projection_preserves_the_manifest_directory_layout() -> No
         "src/cmake",
         "src/deps",
         "src/esp",
+        "src/shaders",
         "src/utils",
         "src_python",
     }

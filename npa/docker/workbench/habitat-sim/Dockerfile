@@ -92,7 +92,8 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
        /opt/habitat-sim/setup.py /opt/source-projection/ && \
     cp /opt/habitat-sim/data/default.physics_config.json /opt/source-projection/data/ && \
     cp -a /opt/habitat-sim/src/CMakeLists.txt /opt/habitat-sim/src/cmake \
-       /opt/habitat-sim/src/esp /opt/habitat-sim/src/utils \
+       /opt/habitat-sim/src/esp /opt/habitat-sim/src/shaders \
+       /opt/habitat-sim/src/utils \
        /opt/source-projection/src/ && \
     cp -a /opt/habitat-sim/src_python /opt/source-projection/ && \
     cp -a /opt/habitat-sim/src/deps /opt/source-projection/src/ && \
