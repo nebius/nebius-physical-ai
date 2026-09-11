@@ -20,6 +20,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- | --- |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
+| Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
@@ -37,6 +38,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
+| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **qualification pending** | Requires the task-private immutable image on one strictly reserved RTX PRO 6000 Blackwell: real 120-step MuJoCo state/contact/touch evolution, EGL RGB frames, pod-observed digest, and `gymnasium-robotics-smoke.json` |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -81,6 +83,21 @@ unique and must be tested with its own upstream-named capabilities.
 | `mjx_cartpole_step` | accepted (live) | `registry.load("CartpoleBalance")` reset/step |
 | `mjx_cheetah_run_step` | accepted (live) | Additional registered env beyond Cartpole |
 | `train_jax_ppo_cartpole_smoke` | accepted (live) | brax PPO train API reduced timesteps (jax&lt;0.8.1) |
+
+### Gymnasium-Robotics
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `registered_shadow_hand_environment` | qualification pending | Upstream `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` registration at exact source commit |
+| `mujoco_physics_steps` / `mujoco_contacts` | qualification pending | 120 upstream `env.step` calls, 2,400 MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
+| `continuous_touch_sensor_response` | qualification pending | Official 92-site Shadow Hand `sensordata` vector with nonzero live readings |
+| `egl_rgb_rendering` | qualification pending | Actual 240×320 RGB frames, distinct hashes, measured rate, and loaded NVIDIA EGL library |
+| `rtx_pro_6000_blackwell_execution` | qualification pending | One strict RTX PRO 6000 Blackwell (`sm_120`) plus pushed/pod-observed immutable digest equality |
+
+This remains a minimal BYOF candidate. It has no model, external dataset,
+gated asset, terms acceptance, RL training claim, expert score, other
+environment-family claim, or physical-robot transfer claim. See
+[`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
 
 ### RoboCasa
 

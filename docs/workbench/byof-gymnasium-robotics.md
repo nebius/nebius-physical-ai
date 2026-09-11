@@ -1,0 +1,113 @@
+# Gymnasium-Robotics BYOF candidate
+
+This integration is a minimal BYOF registry candidate for Farama Foundation
+Gymnasium-Robotics. It is not a first-class NPA tool and does not claim policy
+training, expert performance, other environment families, or physical-robot
+transfer.
+
+## Pinned inputs and licensing
+
+The official source is
+[`Farama-Foundation/Gymnasium-Robotics`](https://github.com/Farama-Foundation/Gymnasium-Robotics)
+at commit `4d1ebecbc6436806cfbc0e42ebc36f594d05844e`. The commit was
+made on September 7, 2026, and the current official release is v1.4.2 from
+January 2, 2026. The repository root is MIT licensed.
+
+The Shadow Dexterous Hand files retain
+`gymnasium_robotics/envs/assets/LICENSE.md`. That notice attributes the model to
+Shadow Robot and Vikash Kumar and includes Apache-2.0 terms. The linked Shadow
+Robot `sr_common` `kinetic-devel` source resolves to commit
+`59d6bdf35bd9cf53185a20eb63413fdfe57fe77c` and has a GPL-2.0 root
+license. The asset provenance is therefore conservatively documented as
+GPL-2.0 plus the packaged Apache-2.0 attribution rather than MIT-only. The
+private image contains the complete pinned Gymnasium-Robotics source and its
+notices; this repository does not copy the XML, meshes, or textures.
+
+The runtime pins official Google DeepMind MuJoCo 3.12.0 (Apache-2.0), release
+commit `13827e9ee56f097f57acf69ae52b078f9839682d`. Its CPython 3.12
+x86-64 wheel SHA-256 is
+`7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0`.
+The wheel embeds the Apache-2.0 file with SHA-256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`
+and its third-party notice bundle with SHA-256
+`aec5167579b94d6926340175b4f764b5159f4933657556d89bbfb8238d3b3eb8`.
+The base is the Linux amd64 Docker Official Image
+`ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61`.
+Its config is `sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c`
+and its sole layer is
+`sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58`.
+Ubuntu is a package collection under the individual package licenses; all 92
+installed package records, 89 package copyright files, and 17 common-license
+entries in those exact base bytes were inventoried before the workload build.
+A disposable install simulation for the complete builder plus solution package
+set resolved 252 packages and 213 package copyright entries, with no gated or
+interactive-license package.
+
+No model, dataset, gated asset, or terms acceptance is used. There is no
+checkpoint, external runtime asset download, or secret beyond ordinary private
+registry and output-storage credentials. The generated JSON is factual
+operator telemetry. RGB frames remain in memory and contribute only hashes;
+no upstream asset bytes are republished as an output.
+
+## Hard-gate capability
+
+[`byof-gymnasium-robotics.yaml`](../../workflows/testing/byof-gymnasium-robotics.yaml)
+runs the upstream registered
+`HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` environment with the
+official pinned Shadow Hand XML, meshes, and textures. A seeded 120-step action
+trajectory must prove all of the following:
+
+- real MuJoCo state evolution, finite rewards, physics substeps, and contacts;
+- all 92 continuous touch sensors, including nonzero live readings;
+- quantitative object-position, object-orientation, and full-state changes;
+- actual EGL RGB rendering with at least two distinct frame hashes and an
+  observed loaded NVIDIA EGL library path and SHA-256;
+- exactly one RTX PRO 6000 Blackwell GPU at compute capability 12.0; and
+- equality between the pushed immutable image digest and Kubernetes' pod
+  `imageID` observation.
+
+The smoke emits exactly the capability artifact
+`$NPA_SMOKE_OUTPUT_DIR/gymnasium-robotics-smoke.json`. Its normalized content
+hash, media type, and exact byte size are embedded in the JSON; the uploader's
+summary also records the actual uploaded-file SHA-256 and byte size.
+
+## Run and verify
+
+Cloud execution is allowed only after the manager publishes task-owned runtime
+context for the reserved RTX PRO capacity. Do not provision a cluster from this
+workflow and never route this EGL workload to B200.
+
+The live E2E also requires
+`NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT` to be the exact manager-authorized,
+task-owned S3 prefix. It fails closed before submission if that value is absent
+or is only a bucket. The workload service account must already have the narrow
+permission to read its own Pod so the smoke can verify Kubernetes' running
+`imageID`; verify that permission rather than adding cluster IAM from this
+workflow.
+
+```bash
+npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json
+npa/.venv/bin/npa workbench workflow validate-spec \
+  workflows/testing/byof-gymnasium-robotics.yaml --json
+npa/.venv/bin/npa workbench workflow plan-spec \
+  workflows/testing/byof-gymnasium-robotics.yaml \
+  --run-id gymnasium-robotics-review --json
+```
+
+For qualification, first use the BYOF runner's `--skip-run` path to build and
+push into the manager-assigned private registry. Resolve and pull that image by
+digest, then complete the SBOM, vulnerability, secret, license, payload, and
+container-contract checks. Set `NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE` to that
+reviewed immutable reference before enabling the dedicated live E2E gate; the
+test then passes `--skip-build` and cannot silently replace the scanned bytes.
+It submits through NPA/SkyPilot/Kubernetes, uploads evidence, and cancels the
+run-owned workload after terminal evidence. Exact registry, storage, cluster,
+capacity-block, pod, and run identifiers belong only in owner-only evidence.
+
+## Deferred scope
+
+RL training sweeps, expert or benchmark scores, other Gymnasium-Robotics
+environment families, behavioral claims beyond the single deterministic smoke,
+and physical-robot transfer are deliberately deferred. A local import, reset,
+container start, CUDA check, or synthetic fixture does not satisfy this
+candidate's capability gate.

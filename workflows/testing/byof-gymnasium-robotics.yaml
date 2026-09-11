@@ -1,0 +1,499 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-gymnasium-robotics
+  description: >
+    Registry-candidate BYOF workflow for Farama Foundation
+    Gymnasium-Robotics. Runs real Shadow Dexterous Hand MuJoCo physics,
+    continuous touch sensors, contacts, and EGL RGB rendering on one strictly
+    reserved RTX PRO 6000 Blackwell GPU.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/Farama-Foundation/Gymnasium-Robotics.git"
+  repo_ref: "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: ubuntu
+  base_image: "ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61"
+  build_command: >
+    apt-get update &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+    python3 python3-dev python3-pip python3-venv build-essential git ca-certificates
+    libegl1 libgl1 libgles2 libglvnd0 libglx0 &&
+    rm -rf /var/lib/apt/lists/* &&
+    python3 -m venv /opt/venv &&
+    /opt/venv/bin/python -m pip install --no-cache-dir --no-deps
+    "https://files.pythonhosted.org/packages/b7/2e/389e8aaa3ce75e21f97ac9e7c48235b6b7acbfb1f370fd3ffb334f77b905/mujoco-3.12.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl#sha256=7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0" &&
+    /opt/venv/bin/python -m pip install --no-cache-dir
+    "absl-py==2.5.0" "boto3==1.43.91" "botocore==1.43.91"
+    "cloudpickle==3.1.2" "etils[epath]==1.14.0"
+    "Farama-Notifications==0.0.6" "fsspec==2026.7.0" "glfw==2.10.2"
+    "gymnasium==1.3.0" "imageio==2.37.4" "Jinja2==3.1.6"
+    "jmespath==1.1.0" "MarkupSafe==3.0.3" "numpy==2.5.3"
+    "packaging==26.3" "pettingzoo==1.27.0" "pillow==12.3.0"
+    "PyOpenGL==3.1.10" "python-dateutil==2.9.0.post0"
+    "s3transfer==0.19.2" "setuptools==84.0.0" "six==1.17.0"
+    "typing-extensions==4.16.0" "urllib3==2.7.0" "zipp==4.1.0" &&
+    /opt/venv/bin/python -m pip install --no-cache-dir --no-build-isolation --no-deps -e . &&
+    /opt/venv/bin/python -m pip check &&
+    /opt/venv/bin/python -c
+    "import hashlib, pathlib, gymnasium_robotics, mujoco;
+    root=pathlib.Path(gymnasium_robotics.__file__).resolve().parent.parent;
+    assert gymnasium_robotics.__version__ == '1.4.2';
+    assert mujoco.__version__ == '3.12.0';
+    assert hashlib.sha256((root/'LICENSE').read_bytes()).hexdigest() == '00668424e12956742815eb1d8e15c7be543192561511df5fde119ae1188315ef';
+    assert hashlib.sha256((root/'gymnasium_robotics/envs/assets/LICENSE.md').read_bytes()).hexdigest() == '872d90e6cbbe9e4390ea4d9e2598e5f194ec2782afd5af2a4c083b35a8fd451a'"
+  workload: solution-smoke
+  smoke_command: |
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
+    export NVIDIA_DRIVER_CAPABILITIES=all
+    /opt/venv/bin/python - <<'PY'
+    from __future__ import annotations
+
+    import hashlib
+    import json
+    import math
+    import os
+    import re
+    import subprocess
+    import time
+    from pathlib import Path
+
+    import gymnasium as gym
+    import gymnasium_robotics
+    import mujoco
+    import numpy as np
+
+    SOLUTION = "gymnasium-robotics"
+    ENV_ID = "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+    SOURCE_COMMIT = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+    MUJOCO_VERSION = "3.12.0"
+    MUJOCO_RELEASE_COMMIT = "13827e9ee56f097f57acf69ae52b078f9839682d"
+    MUJOCO_WHEEL_SHA256 = "7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0"
+    RESET_SEED = 20260910
+    ACTION_SEED = 11092026
+    ROLLOUT_STEPS = 120
+    OUTPUT_NAME = "gymnasium-robotics-smoke.json"
+
+    XML_HASHES = {
+        "hand/manipulate_block_touch_sensors.xml": "c1004adf05daea7b57ee57643f8e94945393a2e12b34b18a244be3c1776776b2",
+        "hand/robot_touch_sensors_92.xml": "9b6f70c49c8bb043ce3e52d181a0797c514a3b85f44f0cf59600d9f906df9f64",
+        "hand/shared.xml": "fbc404e52def67e38222a395fcc39c051eacc503dbf8e22a22a5bcce36992524",
+        "hand/shared_asset.xml": "95a9153e6bba4c555ad7cdcea746520eab38e0d57415fa9b3bfaf987dd0418f1",
+        "hand/shared_touch_sensors_92.xml": "248bc2cb73920c88903786842aaa5476262d550bd01c2c716dd5f2ee642f3318",
+    }
+    ASSET_HASHES = {
+        "stls/hand/F1.stl": "a2d35742067f71e4888954d1aa55d043dbc6ec0c63f4cc715f339cb45fd13734",
+        "stls/hand/F2.stl": "0eeb932dcc102dd1fc6bef55fe83f6a74d97aebd32c34d6ee7020c19647306c5",
+        "stls/hand/F3.stl": "d11a521ae498e947491ba947df8f999136fdf1401d1ba86d594eec20da656ad1",
+        "stls/hand/TH1_z.stl": "83fd93c9e4c1bf240aa6def2e5fdf5b1adcf4e341c146b05313aeaa8c54fd36a",
+        "stls/hand/TH2_z.stl": "98e26cf013cd8d7f6ed890d3402ba0aceb11ec5c78779e388390ca2cddc7daf2",
+        "stls/hand/TH3_z.stl": "80aae0002a6684428278cf214a31040f7cd7aeb3e2e648bd4b68baa375c2d2ad",
+        "stls/hand/forearm_electric.stl": "01aca61837d9db13c52dd170245cacb6f1cedc8238d66fe7239602c80c7a0130",
+        "stls/hand/forearm_electric_cvx.stl": "874ae2ac813c6c9d873d04f872cb13de3cabd427cb24a8924619d0a1719d6da7",
+        "stls/hand/knuckle.stl": "a8a9c1659aa4391291531b46997ba5eeda1b36e597070ae8a3cd824159937aae",
+        "stls/hand/lfmetacarpal.stl": "b6901da4d4b93059c02b8803650ad484b3f31aebce46badfa411897d521a4877",
+        "stls/hand/palm.stl": "12593bcba03bbf278cd7d7db3ca79ba753ada3cb58ee93e725603e9b5e29fd0c",
+        "stls/hand/wrist.stl": "47d0f252ae456541993746ff76d7022135b1bf54263f8f83b19d61f6f94871c9",
+        "textures/block.png": "d39ffb85a87d00c346764191e38ecac3135f2d6f690f64a8ee5da4783ef18e76",
+        "textures/block_hidden.png": "3649cb94a9a5f74751d15c0f38291dd666b7eecc286977888b64b6c3c626c9d3",
+    }
+
+    def sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def exact_hashes(root: Path, expected: dict[str, str]) -> dict[str, str]:
+        observed = {name: sha256_file(root / name) for name in sorted(expected)}
+        if observed != dict(sorted(expected.items())):
+            raise RuntimeError(f"upstream asset hash mismatch: {observed}")
+        return observed
+
+    def quaternion_angle(q0: np.ndarray, q1: np.ndarray) -> float:
+        left = q0 / np.linalg.norm(q0)
+        right = q1 / np.linalg.norm(q1)
+        dot = float(np.clip(abs(np.dot(left, right)), 0.0, 1.0))
+        return float(2.0 * math.acos(dot))
+
+    def image_digest(value: str, field: str) -> str:
+        matches = re.findall(r"sha256:[0-9a-f]{64}", value.lower())
+        if not matches:
+            raise RuntimeError(f"{field} is not digest-pinned")
+        return matches[-1]
+
+    def gpu_inventory() -> list[dict[str, str]]:
+        query = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,compute_cap,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        rows = []
+        for line in query.stdout.splitlines():
+            if not line.strip():
+                continue
+            fields = [part.strip() for part in line.split(",")]
+            if len(fields) != 3:
+                raise RuntimeError(f"unexpected nvidia-smi row: {line!r}")
+            rows.append(
+                {
+                    "name": fields[0],
+                    "compute_capability": fields[1],
+                    "driver_version": fields[2],
+                    "architecture": "Blackwell",
+                }
+            )
+        return rows
+
+    def loaded_graphics_libraries() -> list[dict[str, str]]:
+        libraries: set[Path] = set()
+        for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines():
+            path = line.rsplit(" ", 1)[-1]
+            name = Path(path).name
+            if any(marker in name for marker in ("libEGL", "libGL", "libOpenGL")):
+                libraries.add(Path(path))
+        return [
+            {"path": str(path), "sha256": sha256_file(path)}
+            for path in sorted(libraries)
+        ]
+
+    def canonical_bytes(value: dict[str, object]) -> bytes:
+        return (
+            json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            + "\n"
+        ).encode("utf-8")
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_root = Path(gymnasium_robotics.__file__).resolve().parent.parent
+    assets_root = source_root / "gymnasium_robotics" / "envs" / "assets"
+    source_metadata = json.loads(
+        (source_root / "npa_source_metadata.json").read_text(encoding="utf-8")
+    )
+    build_metadata = json.loads(
+        (source_root / "npa_build_metadata.json").read_text(encoding="utf-8")
+    )
+    actual_source_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if actual_source_commit != SOURCE_COMMIT or source_metadata.get("ref") != SOURCE_COMMIT:
+        raise RuntimeError("the live source is not the reviewed commit")
+    if build_metadata.get("build_command_executed") is not True:
+        raise RuntimeError("BYOF build metadata does not prove dependency installation")
+    if gymnasium_robotics.__version__ != "1.4.2" or mujoco.__version__ != MUJOCO_VERSION:
+        raise RuntimeError("unexpected Gymnasium-Robotics or MuJoCo version")
+
+    observed_xml_hashes = exact_hashes(assets_root, XML_HASHES)
+    observed_asset_hashes = exact_hashes(assets_root, ASSET_HASHES)
+    license_hashes = {
+        "LICENSE": sha256_file(source_root / "LICENSE"),
+        "gymnasium_robotics/envs/assets/LICENSE.md": sha256_file(
+            assets_root / "LICENSE.md"
+        ),
+    }
+    if license_hashes != {
+        "LICENSE": "00668424e12956742815eb1d8e15c7be543192561511df5fde119ae1188315ef",
+        "gymnasium_robotics/envs/assets/LICENSE.md": "872d90e6cbbe9e4390ea4d9e2598e5f194ec2782afd5af2a4c083b35a8fd451a",
+    }:
+        raise RuntimeError("source or Shadow Hand asset notice changed")
+
+    expected_image = os.environ.get("BYOF_IMAGE", "")
+    pod_image_id = os.environ.get("NPA_BYOF_POD_IMAGE_ID", "")
+    expected_image_digest = image_digest(expected_image, "BYOF_IMAGE")
+    pod_observed_digest = image_digest(pod_image_id, "NPA_BYOF_POD_IMAGE_ID")
+    if expected_image_digest != pod_observed_digest:
+        raise RuntimeError("pod image digest differs from the pushed immutable digest")
+
+    gpus = gpu_inventory()
+    if len(gpus) != 1:
+        raise RuntimeError(f"expected exactly one GPU, observed {len(gpus)}")
+    if "RTX PRO 6000" not in gpus[0]["name"] or "Blackwell" not in gpus[0]["name"]:
+        raise RuntimeError(f"expected RTX PRO 6000 Blackwell, observed {gpus[0]['name']}")
+    if gpus[0]["compute_capability"] != "12.0":
+        raise RuntimeError(
+            f"expected Blackwell compute capability 12.0, observed {gpus[0]['compute_capability']}"
+        )
+
+    gym.register_envs(gymnasium_robotics)
+    spec = gym.spec(ENV_ID)
+    if "MujocoHandBlockTouchSensorsEnv" not in str(spec.entry_point):
+        raise RuntimeError(f"unexpected registered entry point: {spec.entry_point}")
+    env = gym.make(
+        ENV_ID,
+        render_mode="rgb_array",
+        width=320,
+        height=240,
+        max_episode_steps=ROLLOUT_STEPS + 1,
+    )
+    raw = env.unwrapped
+    observation, reset_info = env.reset(seed=RESET_SEED)
+    observed_shapes = {
+        "action": tuple(env.action_space.shape),
+        "observation": tuple(observation["observation"].shape),
+        "achieved_goal": tuple(observation["achieved_goal"].shape),
+        "desired_goal": tuple(observation["desired_goal"].shape),
+    }
+    if observed_shapes != {
+        "action": (20,),
+        "observation": (153,),
+        "achieved_goal": (7,),
+        "desired_goal": (7,),
+    }:
+        raise RuntimeError(f"unexpected registered environment shapes: {observed_shapes}")
+    initial_qpos = np.asarray(raw.data.qpos, dtype=np.float64).copy()
+    initial_goal = np.asarray(observation["achieved_goal"], dtype=np.float64).copy()
+    touch_ids = np.asarray(raw._touch_sensor_id, dtype=np.int64)
+    if touch_ids.shape != (92,):
+        raise RuntimeError(f"expected 92 continuous touch sensors, got {touch_ids.shape}")
+
+    frame_hashes: list[str] = []
+    frame_shapes: list[list[int]] = []
+    render_seconds = 0.0
+
+    def render_frame() -> None:
+        global render_seconds
+        nonlocal_render_start = time.perf_counter()
+        frame = np.asarray(env.render())
+        elapsed = time.perf_counter() - nonlocal_render_start
+        if frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8:
+            raise RuntimeError(f"invalid MuJoCo RGB frame {frame.shape} {frame.dtype}")
+        frame_hashes.append(hashlib.sha256(np.ascontiguousarray(frame).tobytes()).hexdigest())
+        frame_shapes.append([int(value) for value in frame.shape])
+        render_seconds += elapsed
+
+    render_frame()
+    rng = np.random.default_rng(ACTION_SEED)
+    action = np.zeros(env.action_space.shape, dtype=np.float64)
+    rewards: list[float] = []
+    contact_counts: list[int] = []
+    touch_nonzero_counts: list[int] = []
+    touch_maxima: list[float] = []
+    orientation_deltas: list[float] = []
+    position_deltas: list[float] = []
+    state_deltas: list[float] = []
+    step_seconds = 0.0
+    rollout_start = time.perf_counter()
+    terminated = False
+    truncated = False
+    for step_index in range(ROLLOUT_STEPS):
+        target = rng.uniform(-0.9, 0.9, size=env.action_space.shape)
+        action = np.clip(0.65 * action + 0.35 * target, -1.0, 1.0)
+        started = time.perf_counter()
+        observation, reward, terminated, truncated, _info = env.step(action)
+        step_seconds += time.perf_counter() - started
+        value = float(reward)
+        if not math.isfinite(value):
+            raise RuntimeError("MuJoCo produced a non-finite reward")
+        rewards.append(value)
+        contact_counts.append(int(raw.data.ncon))
+        touch = np.asarray(raw.data.sensordata[touch_ids], dtype=np.float64)
+        if touch.shape != (92,) or not np.isfinite(touch).all():
+            raise RuntimeError("invalid continuous touch sensor vector")
+        touch_nonzero_counts.append(int(np.count_nonzero(touch > 0.0)))
+        touch_maxima.append(float(np.max(touch)))
+        achieved = np.asarray(observation["achieved_goal"], dtype=np.float64)
+        orientation_deltas.append(quaternion_angle(initial_goal[3:7], achieved[3:7]))
+        position_deltas.append(float(np.linalg.norm(achieved[:3] - initial_goal[:3])))
+        state_deltas.append(float(np.linalg.norm(np.asarray(raw.data.qpos) - initial_qpos)))
+        if step_index % 4 == 3:
+            render_frame()
+        if terminated or truncated:
+            raise RuntimeError(
+                f"environment ended before the {ROLLOUT_STEPS}-step hard gate at {step_index + 1}"
+            )
+    rollout_seconds = time.perf_counter() - rollout_start
+    final_qpos = np.asarray(raw.data.qpos, dtype=np.float64).copy()
+    final_goal = np.asarray(observation["achieved_goal"], dtype=np.float64).copy()
+    graphics_libraries = loaded_graphics_libraries()
+    renderer_type = f"{type(raw.mujoco_renderer).__module__}.{type(raw.mujoco_renderer).__name__}"
+    mujoco_library = Path(mujoco.__file__).resolve().parent / f"libmujoco.so.{MUJOCO_VERSION}"
+    env.close()
+
+    if not any(contact_counts):
+        raise RuntimeError("real rollout produced no MuJoCo contacts")
+    if not any(touch_nonzero_counts) or max(touch_maxima) <= 0.0:
+        raise RuntimeError("real rollout produced no nonzero continuous touch reading")
+    if max(orientation_deltas) <= 1e-6 or max(state_deltas) <= 1e-6:
+        raise RuntimeError("object/physics state did not evolve quantitatively")
+    distinct_frame_hashes = sorted(set(frame_hashes))
+    if len(frame_hashes) < 2 or len(distinct_frame_hashes) < 2:
+        raise RuntimeError("EGL rendering did not produce two distinct real RGB frames")
+    if sorted({tuple(shape) for shape in frame_shapes}) != [(240, 320, 3)]:
+        raise RuntimeError(f"unexpected EGL RGB frame shapes: {frame_shapes}")
+    if not any(
+        "libEGL" in item["path"] and "nvidia" in item["path"].lower()
+        for item in graphics_libraries
+    ):
+        raise RuntimeError("no loaded NVIDIA EGL library was observed after rendering")
+
+    physics_substeps = ROLLOUT_STEPS * int(raw.n_substeps)
+    result: dict[str, object] = {
+        "solution": SOLUTION,
+        "capability": ENV_ID,
+        "capabilities_exercised": [
+            "registered_shadow_hand_environment",
+            "mujoco_physics_steps",
+            "continuous_touch_sensor_response",
+            "mujoco_contacts",
+            "egl_rgb_rendering",
+            "rtx_pro_6000_blackwell_execution",
+        ],
+        "source": {
+            "repository": "https://github.com/Farama-Foundation/Gymnasium-Robotics.git",
+            "commit": actual_source_commit,
+            "package_version": gymnasium_robotics.__version__,
+            "source_metadata": source_metadata,
+            "license_sha256": license_hashes,
+            "directly_loaded_xml_sha256": observed_xml_hashes,
+            "directly_loaded_mesh_texture_sha256": observed_asset_hashes,
+        },
+        "mujoco": {
+            "python_version": mujoco.__version__,
+            "native_version": mujoco.mj_versionString(),
+            "release_commit": MUJOCO_RELEASE_COMMIT,
+            "wheel_sha256": MUJOCO_WHEEL_SHA256,
+            "shared_library": str(mujoco_library),
+            "shared_library_sha256": sha256_file(mujoco_library),
+            "license": "Apache-2.0",
+        },
+        "environment": {
+            "id": ENV_ID,
+            "entry_point": str(spec.entry_point),
+            "reset_seed": RESET_SEED,
+            "action_seed": ACTION_SEED,
+            "action_shape": list(env.action_space.shape),
+            "observation_shape": list(observation["observation"].shape),
+            "achieved_goal_shape": list(observation["achieved_goal"].shape),
+            "desired_goal_shape": list(observation["desired_goal"].shape),
+            "reset_info_keys": sorted(str(key) for key in reset_info),
+            "synthetic_only_fixture": False,
+        },
+        "physics": {
+            "environment_steps": ROLLOUT_STEPS,
+            "substeps_per_environment_step": int(raw.n_substeps),
+            "physics_substeps": physics_substeps,
+            "simulated_seconds": float(raw.data.time),
+            "contact_count_sum": int(sum(contact_counts)),
+            "contact_count_max": int(max(contact_counts)),
+            "steps_with_contacts": int(sum(value > 0 for value in contact_counts)),
+            "finite_reward_count": len(rewards),
+            "reward_min": min(rewards),
+            "reward_max": max(rewards),
+            "terminated": terminated,
+            "truncated": truncated,
+            "step_calls_per_second": ROLLOUT_STEPS / step_seconds,
+            "physics_substeps_per_second": physics_substeps / step_seconds,
+            "rollout_wall_seconds": rollout_seconds,
+        },
+        "touch_sensors": {
+            "mode": "sensordata",
+            "shape": [int(touch_ids.size)],
+            "nonzero_reading_count": int(sum(touch_nonzero_counts)),
+            "steps_with_nonzero_readings": int(
+                sum(value > 0 for value in touch_nonzero_counts)
+            ),
+            "max_reading": max(touch_maxima),
+        },
+        "state_transition": {
+            "initial_object_pose": initial_goal.tolist(),
+            "final_object_pose": final_goal.tolist(),
+            "object_position_delta_m": float(
+                np.linalg.norm(final_goal[:3] - initial_goal[:3])
+            ),
+            "object_orientation_delta_rad": quaternion_angle(
+                initial_goal[3:7], final_goal[3:7]
+            ),
+            "max_object_position_delta_m": max(position_deltas),
+            "max_object_orientation_delta_rad": max(orientation_deltas),
+            "full_qpos_delta_l2": float(np.linalg.norm(final_qpos - initial_qpos)),
+            "max_full_qpos_delta_l2": max(state_deltas),
+        },
+        "rendering": {
+            "renderer": renderer_type,
+            "backend": os.environ.get("MUJOCO_GL", ""),
+            "pyopengl_platform": os.environ.get("PYOPENGL_PLATFORM", ""),
+            "rgb_frame_count": len(frame_hashes),
+            "rgb_frame_shapes": sorted({tuple(shape) for shape in frame_shapes}),
+            "rgb_frame_sha256": frame_hashes,
+            "distinct_rgb_frame_sha256": distinct_frame_hashes,
+            "render_calls_per_second": len(frame_hashes) / render_seconds,
+            "render_seconds": render_seconds,
+            "loaded_gl_egl_libraries": graphics_libraries,
+        },
+        "runtime": {
+            "expected_image_digest": expected_image_digest,
+            "pod_observed_image_digest": pod_observed_digest,
+            "pod_observed_image_id": pod_image_id,
+            "gpu_count": len(gpus),
+            "gpus": gpus,
+            "exit_status": 0,
+        },
+        "artifact": {
+            "filename": OUTPUT_NAME,
+            "media_type": "application/json",
+            "size_bytes": 0,
+            "sha256": "0" * 64,
+            "sha256_scope": "canonical JSON with artifact.sha256 replaced by 64 zeroes",
+        },
+    }
+    artifact = result["artifact"]
+    assert isinstance(artifact, dict)
+    for _ in range(8):
+        encoded = canonical_bytes(result)
+        size = len(encoded)
+        if artifact["size_bytes"] == size:
+            break
+        artifact["size_bytes"] = size
+    else:
+        raise RuntimeError("artifact byte size did not stabilize")
+    normalized = canonical_bytes(result)
+    artifact["sha256"] = hashlib.sha256(normalized).hexdigest()
+    final_bytes = canonical_bytes(result)
+    if len(final_bytes) != artifact["size_bytes"]:
+        raise RuntimeError("artifact size changed after normalized hash insertion")
+    (output_dir / OUTPUT_NAME).write_text(final_bytes.decode("utf-8"), encoding="utf-8")
+    print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    PY
+  solution_name: "gymnasium-robotics"
+  capability_name: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+  smoke_artifact_name: "gymnasium-robotics-smoke.json"
+  resource_profile_yaml: "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu"
+  task: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 30
+
+  output_root: s3://{{config.bucket}}/oss-solutions/gymnasium-robotics
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build and push the pinned source, then run the registered Shadow Hand
+      environment with real MuJoCo physics, continuous touch, contacts, and EGL
+      frames from the immutable private image on one RTX PRO 6000 Blackwell.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

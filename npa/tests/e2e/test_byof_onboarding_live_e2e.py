@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
+from npa.clients.project_credentials import s3_client_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -48,6 +52,9 @@ pytestmark = [
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_SPEC = REPO_ROOT / "workflows" / "testing" / "byof.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
+GYMNASIUM_ROBOTICS_SPEC = (
+    REPO_ROOT / "workflows" / "testing" / "byof-gymnasium-robotics.yaml"
+)
 RUNNER = CliRunner()
 
 
@@ -532,3 +539,260 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
+
+
+def _plan_flag(argv: list[str], flag: str) -> str:
+    index = argv.index(flag)
+    assert index + 1 < len(argv), argv
+    return argv[index + 1]
+
+
+def _immutable_image_digest(image: str) -> str:
+    normalized = image.removeprefix("docker:")
+    assert normalized.count("@") == 1
+    digest = normalized.rsplit("@", 1)[1]
+    assert digest.startswith("sha256:") and len(digest) == 71
+    assert all(character in "0123456789abcdef" for character in digest[7:])
+    return digest
+
+
+def _assert_gymnasium_identity(artifact: dict[str, object]) -> None:
+    assert artifact["solution"] == "gymnasium-robotics"
+    assert (
+        artifact["capability"]
+        == "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+    )
+    exercised = set(artifact["capabilities_exercised"])
+    assert {
+        "registered_shadow_hand_environment",
+        "mujoco_physics_steps",
+        "continuous_touch_sensor_response",
+        "mujoco_contacts",
+        "egl_rgb_rendering",
+        "rtx_pro_6000_blackwell_execution",
+    } <= exercised
+
+    source = artifact["source"]
+    assert source["commit"] == "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+    assert source["package_version"] == "1.4.2"
+    assert len(source["directly_loaded_xml_sha256"]) == 5
+    assert len(source["directly_loaded_mesh_texture_sha256"]) == 14
+    assert artifact["mujoco"]["python_version"] == "3.12.0"
+    assert artifact["mujoco"]["native_version"] == "3.12.0"
+
+
+def _assert_gymnasium_physics(artifact: dict[str, object]) -> None:
+    environment = artifact["environment"]
+    assert environment["reset_seed"] == 20260910
+    assert environment["observation_shape"] == [153]
+    assert environment["achieved_goal_shape"] == [7]
+    assert environment["desired_goal_shape"] == [7]
+    assert environment["synthetic_only_fixture"] is False
+    physics = artifact["physics"]
+    assert physics["environment_steps"] == 120
+    assert physics["physics_substeps"] == 2400
+    assert physics["finite_reward_count"] == 120
+    assert physics["contact_count_sum"] > 0
+    assert physics["steps_with_contacts"] > 0
+    assert physics["step_calls_per_second"] > 0
+    assert physics["physics_substeps_per_second"] > 0
+    touch = artifact["touch_sensors"]
+    assert touch["shape"] == [92]
+    assert touch["nonzero_reading_count"] > 0
+    assert touch["steps_with_nonzero_readings"] > 0
+    assert touch["max_reading"] > 0
+    transition = artifact["state_transition"]
+    assert transition["max_object_orientation_delta_rad"] > 0
+    assert transition["max_full_qpos_delta_l2"] > 0
+
+
+def _assert_gymnasium_rendering(artifact: dict[str, object]) -> None:
+    rendering = artifact["rendering"]
+    assert rendering["backend"] == "egl"
+    assert rendering["rgb_frame_count"] >= 2
+    assert rendering["rgb_frame_shapes"] == [[240, 320, 3]]
+    assert len(rendering["distinct_rgb_frame_sha256"]) >= 2
+    assert rendering["render_calls_per_second"] > 0
+    assert any(
+        "libEGL" in value["path"] and "nvidia" in value["path"].lower()
+        for value in rendering["loaded_gl_egl_libraries"]
+    )
+    assert all(
+        len(value["sha256"]) == 64 for value in rendering["loaded_gl_egl_libraries"]
+    )
+
+
+def _assert_gymnasium_runtime(
+    artifact: dict[str, object], *, expected_digest: str
+) -> None:
+    runtime = artifact["runtime"]
+    assert runtime["expected_image_digest"] == expected_digest
+    assert runtime["pod_observed_image_digest"] == expected_digest
+    assert runtime["gpu_count"] == 1
+    assert runtime["exit_status"] == 0
+    gpu = runtime["gpus"][0]
+    assert "RTX PRO 6000" in gpu["name"] and "Blackwell" in gpu["name"]
+    assert gpu["architecture"] == "Blackwell"
+    assert gpu["compute_capability"] == "12.0"
+
+
+def _assert_gymnasium_artifact_envelope(
+    artifact: dict[str, object], *, payload: bytes
+) -> None:
+    embedded = artifact["artifact"]
+    assert embedded["filename"] == "gymnasium-robotics-smoke.json"
+    assert embedded["media_type"] == "application/json"
+    assert embedded["size_bytes"] == len(payload)
+    expected_normalized_hash = embedded["sha256"]
+    embedded["sha256"] = "0" * 64
+    normalized = (
+        json.dumps(artifact, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        + "\n"
+    ).encode("utf-8")
+    assert hashlib.sha256(normalized).hexdigest() == expected_normalized_hash
+
+
+def _assert_gymnasium_robotics_artifact(
+    payload: bytes, *, expected_digest: str
+) -> dict[str, object]:
+    artifact = json.loads(payload)
+    _assert_gymnasium_identity(artifact)
+    _assert_gymnasium_physics(artifact)
+    _assert_gymnasium_rendering(artifact)
+    _assert_gymnasium_runtime(artifact, expected_digest=expected_digest)
+    _assert_gymnasium_artifact_envelope(artifact, payload=payload)
+    return artifact
+
+
+def _gymnasium_live_command(
+    e2e_project: str | None,
+) -> tuple[list[str], str, str]:
+    run_id = f"gymnasium-robotics-{time.time_ns()}"
+    spec = load_spec(GYMNASIUM_ROBOTICS_SPEC)
+    spec.config["bucket"] = live_bucket(e2e_project)
+    authorized_output_root = os.environ.get(
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT", ""
+    ).strip()
+    assert authorized_output_root.startswith("s3://"), (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT must be the manager-authorized "
+        "task-owned S3 prefix"
+    )
+    parsed_output_root = urlparse(authorized_output_root)
+    assert parsed_output_root.netloc and parsed_output_root.path.strip("/"), (
+        "the manager-authorized output root must include a bucket and prefix"
+    )
+    spec.config["output_root"] = authorized_output_root.rstrip("/")
+    plan = build_plan(spec, run_id=run_id)
+    assert len(plan.steps) == 1
+    argv = list(plan.steps[0].argv)
+    assert argv[:4] == ["npa", "workbench", "byof", "run"]
+    assert _plan_flag(argv, "--repo-ref") == (
+        "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+    )
+    assert _plan_flag(argv, "--yaml") == (
+        "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu"
+    )
+    cmd = [
+        sys.executable,
+        str(BYOF_RUNNER),
+        *argv[4:],
+        "--registry",
+        resolve_container_registry(e2e_project),
+        "--project",
+        e2e_project or "",
+    ]
+    preset = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
+    if preset:
+        _immutable_image_digest(preset)
+        cmd.extend(["--image", preset, "--skip-build"])
+    config_path = skypilot_config_for_project(e2e_project)
+    if config_path:
+        cmd.extend(["--config-path", config_path])
+    return cmd, _plan_flag(argv, "--output-root"), run_id
+
+
+def _gymnasium_live_env(e2e_project: str | None) -> dict[str, str]:
+    env = dict(os.environ)
+    target = resolve_byof_kubernetes_target(e2e_project)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+        env["NPA_BYOF_KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    sky_bin = resolve_skypilot_bin()
+    if sky_bin:
+        env["PATH"] = f"{Path(sky_bin).parent}:{env.get('PATH', '')}"
+    return env
+
+
+def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
+    image = str(summary["image"])
+    expected_digest = _immutable_image_digest(image)
+    build = summary["build"]
+    assert build["ok"] is True
+    if build.get("skipped"):
+        assert os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
+    else:
+        assert build["pushed"] is True
+        assert build["digest"] == expected_digest
+    return expected_digest
+
+
+def _gymnasium_remote_evidence(
+    e2e_project: str | None, *, root_uri: str
+) -> tuple[bytes, dict[str, object]]:
+    parsed = urlparse(root_uri)
+    assert parsed.scheme == "s3" and parsed.netloc
+    s3 = s3_client_for_project(
+        e2e_project,
+        allow_host_creds=True,
+        endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+    )
+    prefix = parsed.path.lstrip("/")
+    artifact = s3.get_object(
+        Bucket=parsed.netloc, Key=prefix + "gymnasium-robotics-smoke.json"
+    )["Body"].read()
+    summary = json.loads(
+        s3.get_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")[
+            "Body"
+        ].read()
+    )
+    return artifact, summary
+
+
+@pytest.mark.public_inputs
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_LIVE_GPU") != "1",
+    reason=(
+        "Set NPA_BYOF_GYMNASIUM_ROBOTICS_LIVE_GPU=1 only with manager-owned "
+        "STRICT RTX PRO 6000 capacity and child cloud authorization."
+    ),
+)
+def test_live_gymnasium_robotics_exact_digest_capability(
+    e2e_project: str | None,
+) -> None:
+    cmd, output_root, run_id = _gymnasium_live_command(e2e_project)
+    proc = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=_gymnasium_live_env(e2e_project),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    assert summary["status"] == "ok", summary
+    expected_digest = _gymnasium_expected_digest(summary)
+    artifact_bytes, remote_summary = _gymnasium_remote_evidence(
+        e2e_project,
+        root_uri=output_root.rstrip("/") + f"/{run_id}/",
+    )
+    _assert_gymnasium_robotics_artifact(artifact_bytes, expected_digest=expected_digest)
+    assert remote_summary["smoke_exit_code"] == 0
+    assert remote_summary["smoke_artifact"]["size_bytes"] == len(artifact_bytes)
+    assert (
+        remote_summary["smoke_artifact"]["sha256"]
+        == hashlib.sha256(artifact_bytes).hexdigest()
+    )
+    assert expected_digest in remote_summary["pod_observed_image_id"]

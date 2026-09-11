@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "aebc6043a2a3f0f2e642d55c0666bf86e65e34e42c473fb7714d830057b7394f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "NPA validate-spec and plan-spec both exited zero; the resolved plan contains one workbench.byof.repo state with no HF or NGC access requirement.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-gymnasium-robotics.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-review --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved argv selects the exact source/base/profile and runs the registered environment through 120 real steps with touch/contact/state/EGL/digest hard failures before emitting the one named JSON. Live execution remains a separate runtime prerequisite.",
+      "evidence": [
+        "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
+        "npa/tests/workflows/test_byof_gymnasium_robotics.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The public spec retains example-bucket, while the manager-issued owner-only child runtime context supplies a task-owned output prefix and records a successful write-read-delete storage probe.",
+      "evidence": [
+        "manager-issued child runtime context (owner-only)"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The official public repository, exact commit, directly loaded XML closure, meshes, textures, and notices were independently fetched and hash-verified before implementation.",
+      "evidence": [
+        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "No model or dataset credential is required. The manager has authorized this child to use task-owned private-registry, storage, Kubernetes, and Nebius credential paths without persisting a registry token.",
+      "evidence": [
+        "manager-issued child runtime context (owner-only)"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The exact source, MuJoCo wheel, and Ubuntu base bytes passed pre-build review, but the task-private BYOF image has not yet been built, pushed, pulled, or scanned.",
+      "evidence": [
+        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The manager-authorized child context records a deployed, healthy, STRICT-reserved single RTX PRO 6000 Blackwell target at compute capability 12.0, but the workload service account's required permission to read its own Pod imageID has not yet been proven. Workload-level proof remains pending until both that permission and the private image are qualified.",
+      "evidence": [
+        "manager-issued child runtime context (owner-only)"
+      ]
+    }
+  }
+}

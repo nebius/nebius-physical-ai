@@ -924,6 +924,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-gymnasium-robotics.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated exact-digest RTX PRO live onboarding tier",
+        notes=(
+            "Gymnasium-Robotics Shadow Hand BYOF hard gate: one strictly reserved "
+            "RTX PRO 6000 Blackwell, real MuJoCo touch/contact physics and EGL RGB; "
+            "covered by test_byof_onboarding_live_e2e.py."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-robocasa.yaml",
         "multi",
         plan_only=True,

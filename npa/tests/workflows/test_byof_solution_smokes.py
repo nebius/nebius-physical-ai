@@ -54,6 +54,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "train_jax_ppo_cartpole_smoke",  # attempted; may remain deferred
         ],
     },
+    "gymnasium-robotics": {
+        "capability_name": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1",
+        "smoke_artifact_name": "gymnasium-robotics-smoke.json",
+        "spec": "byof-gymnasium-robotics.yaml",
+        "must_exercise": [
+            "registered_shadow_hand_environment",
+            "mujoco_physics_steps",
+            "continuous_touch_sensor_response",
+            "mujoco_contacts",
+            "egl_rgb_rendering",
+            "rtx_pro_6000_blackwell_execution",
+        ],
+    },
     "robocasa": {
         "capability_name": "kitchen_task_registration",
         "smoke_artifact_name": "robocasa_kitchen_env_reset.json",
