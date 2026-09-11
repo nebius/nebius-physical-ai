@@ -59,7 +59,7 @@ containers:
       gpu: required
       timeout_seconds: 1800
       status: needs-image-update
-      artifact: /workspace/gymnasium-robotics-smoke.json
+      artifact: ${NPA_SMOKE_OUTPUT_DIR}/gymnasium-robotics-smoke.json
 
   openpi:
     image: npa-openpi

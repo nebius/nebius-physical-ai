@@ -154,8 +154,11 @@ def _nested_archive_members(path: str, content: bytes) -> int:
                 names = archive.namelist()
                 for name in names:
                     safe = _safe(name)
-                    if FORBIDDEN_PATH.search(safe) or SECRET_TEXT.search(
-                        archive.read(name)
+                    nested_content = archive.read(name)
+                    if (
+                        FORBIDDEN_PATH.search(safe)
+                        or SECRET_TEXT.search(nested_content)
+                        or VENDOR_TEXT.search(nested_content)
                     ):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
@@ -176,7 +179,12 @@ def _nested_archive_members(path: str, content: bytes) -> int:
                         )
                     if member.isfile():
                         stream = archive.extractfile(member)
-                        if stream is None or SECRET_TEXT.search(stream.read()):
+                        nested_content = stream.read() if stream is not None else b""
+                        if (
+                            stream is None
+                            or SECRET_TEXT.search(nested_content)
+                            or VENDOR_TEXT.search(nested_content)
+                        ):
                             raise ValueError(
                                 f"forbidden nested archive bytes: {path}:{safe}"
                             )

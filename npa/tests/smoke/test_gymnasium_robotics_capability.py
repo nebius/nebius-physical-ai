@@ -66,3 +66,10 @@ def test_smoke_emits_only_the_named_json() -> None:
     assert 'output = output_dir / "gymnasium-robotics-smoke.json"' in source
     assert '"media_type": "application/json"' in source
     assert '"exit_status": 0' in source
+
+
+def test_golden_eval_artifact_uses_the_smoke_output_contract() -> None:
+    manifest = (ROOT / "npa/src/npa/smoke/golden_evals.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "artifact: ${NPA_SMOKE_OUTPUT_DIR}/gymnasium-robotics-smoke.json" in manifest

@@ -302,3 +302,13 @@ def test_nested_archive_members_are_scanned(tmp_path: Path) -> None:
         assert "forbidden nested archive" in str(error)
     else:
         raise AssertionError("nested private key was accepted")
+
+
+def test_nested_archive_vendor_signatures_are_scanned(tmp_path: Path) -> None:
+    archive = tmp_path / "nested-vendor.tar"
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as nested:
+        nested.writestr("source/runtime.txt", b"registry=" + b"nvcr.io/vendor/image")
+    _docker_save(archive, {**REQUIRED, "opt/extra/source.whl": output.getvalue()})
+    with pytest.raises(ValueError, match="forbidden nested archive"):
+        SCAN.scan(archive)
