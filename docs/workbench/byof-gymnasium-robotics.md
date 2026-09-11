@@ -97,12 +97,15 @@ The live E2E also requires
 task-owned S3 prefix. It fails closed before submission if that value is absent
 or is only a bucket. It also requires the exact manager-authorized namespace
 and an owner-private local evidence directory. The owner identity must already
-be able to get Pods and exec into the exact run Pod. The live gate matches the
-full SkyPilot run annotation, immutable spec image, one-GPU request, container
-name, Pod UID, and Kubernetes `imageID`, then injects that observation as a
-mode-0600 receipt. The workload consumes the receipt without Kubernetes API
-access. Do not grant the workload service account Pod access or create a
-RoleBinding for this integration.
+be able to list Pods and exec into the exact run Pod. The list is restricted to
+the manager-authorized namespace and SkyPilot parent label, then the live gate
+matches the full run annotation, immutable spec image, one-GPU request and
+limit, container name, Pod UID, and Kubernetes `imageID`. It injects that
+observation as a mode-0600 receipt. The workload consumes the receipt without
+Kubernetes API access. Do not grant the workload service account Pod access or
+create a RoleBinding for this integration. Runner output is drained directly
+to owner-private files, and every failure issues an exact-run `sky down` before
+verifying that the matched Pod is absent.
 
 ```bash
 npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json
