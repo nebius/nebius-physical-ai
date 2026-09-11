@@ -1235,6 +1235,7 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "patch" in text
     assert "pciutils" in text
     assert "fuse3" in text
+    assert "linux-libc-dev" in text
     assert "netcat-openbsd" in text
     assert "npa-skypilot-bootstrap-guard verify" in text
     assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" in text
@@ -1247,6 +1248,28 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert (
         'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"' in text
     )
+
+
+def test_dockerfile_refreshes_linux_libc_dev_without_broad_upgrade() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    install_layer = text.split(
+        "apt-get install -y --no-install-recommends", 1
+    )[1].split("&& rm -rf /var/lib/apt/lists/*", 1)[0]
+
+    assert "linux-libc-dev" in install_layer.split()
+    assert "linux-libc-dev=" not in install_layer
+    assert "apt-get upgrade" not in text
+    assert "apt-get dist-upgrade" not in text
+
+
+def test_dockerfile_refuses_missing_security_refresh_package() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    without_linux_libc_dev = text.replace(" linux-libc-dev", "", 1)
+
+    with pytest.raises(RuntimeError, match="missing required security refresh"):
+        module._validate_byof_image_security_refresh(without_linux_libc_dev)
 
 
 def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
