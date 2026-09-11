@@ -9,9 +9,12 @@ always fatal.
 from __future__ import annotations
 
 import argparse
+import bz2
+import gzip
 import hashlib
 import io
 import json
+import lzma
 from pathlib import Path, PurePosixPath
 import re
 import stat
@@ -52,6 +55,12 @@ VENDOR_TEXT = re.compile(
     rb"(?i:(?:nvcr\.io|isaacsim|omniverse[/\\]kit|accept_eula\s*[=:]\s*(?:1|yes|true)))"
 )
 MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
+ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+COMPRESSION_SIGNATURES = {
+    "bzip2": b"BZh",
+    "gzip": b"\x1f\x8b",
+    "xz": b"\xfd7zXZ\x00",
+}
 EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO_COMMIT = "13827e9ee56f097f57acf69ae52b078f9839682d"
 EXPECTED_SHADOW_COMMIT = "59d6bdf35bd9cf53185a20eb63413fdfe57fe77c"
@@ -171,20 +180,89 @@ def _scan_policy_bytes(label: str, content: bytes) -> None:
         raise ValueError(f"forbidden vendor payload signature: {label}")
 
 
+def _looks_like_tar(content: bytes) -> bool:
+    """Recognize a valid first tar header, including pre-ustar archives."""
+
+    if len(content) < 512 or not any(content[:512]):
+        return False
+    checksum_field = content[148:156].rstrip(b"\0 ").lstrip(b" ")
+    try:
+        expected = int(checksum_field or b"0", 8)
+    except ValueError:
+        return False
+    actual = sum(content[:148]) + (8 * ord(" ")) + sum(content[156:512])
+    return expected == actual and bool(content[:100].rstrip(b"\0"))
+
+
+def _decompress(path: str, content: bytes, kind: str) -> bytes:
+    """Expand one recognized stream with a strict output-size bound."""
+
+    try:
+        if kind == "gzip":
+            with gzip.GzipFile(fileobj=io.BytesIO(content)) as stream:
+                expanded = stream.read(MAX_NESTED_ARCHIVE + 1)
+        elif kind == "bzip2":
+            decompressor = bz2.BZ2Decompressor()
+            expanded = decompressor.decompress(
+                content, max_length=MAX_NESTED_ARCHIVE + 1
+            )
+            if not decompressor.eof or decompressor.unused_data:
+                raise ValueError(f"ambiguous compressed stream: {path}")
+        else:
+            decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_AUTO)
+            expanded = decompressor.decompress(
+                content, max_length=MAX_NESTED_ARCHIVE + 1
+            )
+            if not decompressor.eof or decompressor.unused_data:
+                raise ValueError(f"ambiguous compressed stream: {path}")
+    except (EOFError, OSError, lzma.LZMAError) as error:
+        raise ValueError(f"unreadable compressed stream: {path}") from error
+    if len(expanded) > MAX_NESTED_ARCHIVE:
+        raise ValueError(f"expanded stream exceeds scan bound: {path}")
+    return expanded
+
+
 def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int:
-    """Inspect every named member of retained tar/zip Python/source archives."""
+    """Inspect retained archives by validated bytes, never only by filename."""
 
     if depth > 8:
         raise ValueError(f"nested archive depth exceeds scan bound: {path}")
-    if len(content) > MAX_NESTED_ARCHIVE:
-        raise ValueError(f"nested archive exceeds scan bound: {path}")
     _scan_policy_bytes(f"nested archive bytes: {path}", content)
     lowered = path.lower()
-    if lowered.endswith((".whl", ".zip")):
+    declared_zip = lowered.endswith((".whl", ".zip"))
+    declared_tar = lowered.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz"))
+    is_zip = zipfile.is_zipfile(io.BytesIO(content))
+    compression_kind = next(
+        (
+            kind
+            for kind, signature in COMPRESSION_SIGNATURES.items()
+            if content.startswith(signature)
+        ),
+        None,
+    )
+    is_tar = _looks_like_tar(content)
+    archive_like = (
+        is_zip
+        or compression_kind is not None
+        or is_tar
+        or declared_zip
+        or declared_tar
+        or content.startswith(ZIP_SIGNATURES)
+    )
+    if archive_like and len(content) > MAX_NESTED_ARCHIVE:
+        raise ValueError(f"nested archive exceeds scan bound: {path}")
+    if compression_kind is not None:
+        expanded = _decompress(path, content, compression_kind)
+        _scan_policy_bytes(f"expanded {compression_kind} stream: {path}", expanded)
+        return _nested_archive_members(
+            f"{path}:expanded-{compression_kind}", expanded, depth=depth + 1
+        )
+    if is_zip:
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 members = archive.infolist()
                 count = 0
+                expanded_total = 0
                 for member in members:
                     safe = _safe(member.filename)
                     count += 1
@@ -197,6 +275,11 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                     if member.file_size > MAX_NESTED_ARCHIVE:
                         raise ValueError(
                             f"nested archive member exceeds scan bound: {path}:{safe}"
+                        )
+                    expanded_total += member.file_size
+                    if expanded_total > MAX_NESTED_ARCHIVE:
+                        raise ValueError(
+                            f"nested archive expansion exceeds scan bound: {path}"
                         )
                     nested_content = archive.read(member)
                     mode = member.external_attr >> 16
@@ -228,10 +311,13 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                 return count
         except zipfile.BadZipFile as error:
             raise ValueError(f"unreadable nested zip archive: {path}") from error
-    if lowered.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz")):
+    if content.startswith(ZIP_SIGNATURES) or declared_zip:
+        raise ValueError(f"unreadable nested zip archive: {path}")
+    if is_tar:
         try:
             with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
                 count = 0
+                expanded_total = 0
                 for member in archive:
                     safe = _safe(member.name)
                     count += 1
@@ -243,6 +329,11 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                         if member.size > MAX_NESTED_ARCHIVE:
                             raise ValueError(
                                 f"nested archive member exceeds scan bound: {path}:{safe}"
+                            )
+                        expanded_total += member.size
+                        if expanded_total > MAX_NESTED_ARCHIVE:
+                            raise ValueError(
+                                f"nested archive expansion exceeds scan bound: {path}"
                             )
                         stream = archive.extractfile(member)
                         nested_content = stream.read() if stream is not None else b""
@@ -278,6 +369,8 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                 return count
         except tarfile.TarError as error:
             raise ValueError(f"unreadable nested tar archive: {path}") from error
+    if declared_tar:
+        raise ValueError(f"unreadable nested tar archive: {path}")
     return 0
 
 
@@ -405,14 +498,7 @@ def _layers(
                         raise ValueError(f"unreadable layer file: {path}")
                     content = payload.read()
                     _scan_policy_bytes(path, content)
-                    if path.lower().endswith(
-                        (".whl", ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz")
-                    ):
-                        if len(content) > MAX_NESTED_ARCHIVE:
-                            raise ValueError(
-                                f"nested archive exceeds scan bound: {path}"
-                            )
-                        nested += _nested_archive_members(path, content)
+                    nested += _nested_archive_members(path, content)
                     _remove_path(rootfs, entries, path)
                     rootfs[path] = content
                     entries[path] = {
