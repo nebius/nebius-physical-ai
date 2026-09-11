@@ -117,7 +117,11 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
     """Recognize the registered robomimic gate even if its display label changes."""
 
     repo = args.repo_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].lower()
-    return args.solution_name.strip().lower() == "robomimic" or repo == "robomimic"
+    return (
+        args.solution_name.strip().lower() == "robomimic"
+        or repo == "robomimic"
+        or _normalize_optional(args.base_image) == ROBOMIMIC_BASE_IMAGE
+    )
 
 
 def _robomimic_observer_name(run_id: str) -> str:
