@@ -15,7 +15,7 @@
   ],
   "required_final_file_sha256": {
     "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "c7785d6abddbdb784c82483bb08f88a0bb3cbc77e5299f22f64c9bccd6deb059",
-    "/usr/share/doc/npa-habitat-sim/source-manifest.json": "7e9738eb54872af44b97a5e17381beab219561104d3b4d8499bd8b395b92cc72",
+    "/usr/share/doc/npa-habitat-sim/source-manifest.json": "44918d8afc1241183e2b5d2f763dd48aec705f6da847be3f65d79c6fa9e5e743",
     "/usr/share/doc/npa-habitat-sim/licenses.json": "cc91ae7745287f08cdd655bed0dc3c94a98e3c72ff7bb2ceca75235f3dcebf63",
     "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "1b1906ea2f32ee46b6882b92f333c30747342adcf62fcfb91312be7793e96b09",
     "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": "82c97b7345a5044f4867efcabefa62f79391b675d92773816c59b29f98bb6548",

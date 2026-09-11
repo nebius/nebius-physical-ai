@@ -24,6 +24,7 @@
       "src/cmake",
       "src/deps",
       "src/esp",
+      "src/shaders",
       "src/utils",
       "src_python",
       "data/default.physics_config.json"
