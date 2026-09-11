@@ -379,6 +379,46 @@ def test_complete_runtime_inventory_hashes_are_required(tmp_path) -> None:
     } <= _codes(report)
 
 
+def test_graph_binding_requires_a_valid_exact_runtime_closure() -> None:
+    digest = "sha256:" + "1" * 64
+    closure = "2" * 64
+    result = {
+        "image_manifest_digest": "sha256:" + "3" * 64,
+        "image_config_digest": "sha256:" + "4" * 64,
+        "layers": [{"diff_id": "sha256:" + "5" * 64}],
+    }
+    receipt = {
+        "valid": True,
+        "expected_image_id": digest,
+        "image_index_digest": digest,
+        "image_manifest_digest": result["image_manifest_digest"],
+        "image_config_digest": result["image_config_digest"],
+        "layer_count": 1,
+        "verified_layer_diff_ids": [result["layers"][0]["diff_id"]],
+        "regular_files_read": 1,
+        "content_bytes_read": 1,
+        "expected_dpkg_inventory_sha256": closure,
+        "dpkg_inventory_sha256": closure,
+        "expected_native_closure_sha256": closure,
+        "native_elf_closure_sha256": closure,
+        "expected_source_revision": SOURCE_REVISION,
+    }
+    H.bind(result, receipt, digest)
+
+    for key in (
+        "valid",
+        "dpkg_inventory_sha256",
+        "native_elf_closure_sha256",
+    ):
+        invalid = copy.deepcopy(receipt)
+        invalid[key] = False if key == "valid" else "6" * 64
+        with pytest.raises(
+            ValueError,
+            match="habitat_oci_verifier_not_valid|habitat_oci_runtime_closure_binding",
+        ):
+            H.bind(result, invalid, digest)
+
+
 def test_every_installed_package_requires_copyright_bytes(tmp_path) -> None:
     entries = _required_entries()
     status = next(
@@ -442,6 +482,13 @@ def test_unresolved_or_unowned_native_elf_fails_closed(tmp_path) -> None:
     assert {"native_elf_unowned", "native_elf_dependency_unresolved"} <= _codes(
         _verify(tmp_path, [entries])
     )
+
+
+def test_native_needed_name_cannot_escape_the_library_search(tmp_path) -> None:
+    entries = _required_entries()
+    entries.append(file("usr/bin/unowned", _elf64(needed=("../missing.so",))))
+    with pytest.raises(ValueError, match="habitat_elf_needed_name"):
+        _verify(tmp_path, [entries])
 
 
 def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> None:
