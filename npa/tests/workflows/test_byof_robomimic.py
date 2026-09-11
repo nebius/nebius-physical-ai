@@ -1252,6 +1252,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
 
     assert config["repo_ref"] == SOURCE_REVISION
     assert config["base_profile"] == "prebuilt"
+    assert str(config["controller_image"]).endswith(
+        "/npa-robomimic:0.1.0-neutral-unbuilt"
+    )
     assert config["base_image"] == "tool://robomimic"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-robomimic-b200-gpu"
     assert config["capability_name"] == "lift_ph_lowdim_checkpoint_reload_action"

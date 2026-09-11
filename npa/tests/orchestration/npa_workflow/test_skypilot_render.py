@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow.detect import (
     detect_submit_format,
     is_npa_workflow_spec,
@@ -75,19 +76,26 @@ def test_non_isaac_byof_specs_render_their_declared_runtime_image(
     assert "ACCEPT_EULA" not in task["envs"]
 
 
-def test_robomimic_plan_requires_explicit_private_digest_and_stages_npa(
+def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/exact")
     spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
     plan = build_plan(spec, run_id="robomimic-private-plan")
+
     with pytest.raises(ValueError, match="no accepted release image"):
-        render_skypilot_yaml(
-            spec,
-            plan,
-            run_id="robomimic-private-plan",
-            options=SkypilotRenderOptions(materialize_registry_secrets=False),
-        )
+        container_image_for_tool("robomimic")
+
+    placeholder = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    placeholder_task = [doc for doc in yaml.safe_load_all(placeholder) if doc][-1]
+    assert placeholder_task["resources"]["image_id"].endswith(
+        "/npa-robomimic:0.1.0-neutral-unbuilt"
+    )
 
     private_image = "private.invalid/npa-robomimic@sha256:" + "a" * 64
     rendered = render_skypilot_yaml(
@@ -133,8 +141,13 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
+        image_config = (
+            "controller_image" if path.name == "byof-robomimic.yaml" else "base_image"
+        )
+        outer_image = raw["config"].get(image_config)
+        assert isinstance(outer_image, str) and outer_image, path.name
         for profile in raw["resources"].values():
-            assert profile["image"] == "{{config.base_image}}", path.name
+            assert profile["image"] == f"{{{{config.{image_config}}}}}", path.name
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:

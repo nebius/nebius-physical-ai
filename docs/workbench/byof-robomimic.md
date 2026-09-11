@@ -55,7 +55,11 @@ snapshot is a separate runtime-consumption boundary and is removed with the pod;
 it is neither baked into the image nor uploaded as output.
 
 The checked-in `npa.workflow` remains a valid plan and immutable configuration
-source for the dedicated live harness. Ordinary `workflow submit` is
+source for the dedicated live harness. Its outer task names the proposed
+`npa-robomimic:0.1.0-neutral-unbuilt` public candidate so offline rendering does
+not imply an accepted release or pullable image; the BYOF target remains
+`tool://robomimic`, whose normal resolver fails without an explicit validated
+tag. Ordinary `workflow submit` is
 intentionally refused in Phase A: it would put the generic BYOF controller in a
 workload pod without the manager-owned Kubernetes context and run-owned RBAC
 that the nested launch requires. The authorized live path is the dedicated E2E

@@ -23,6 +23,10 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
+  # This proposed public tag is deliberately absent and unaccepted in Phase A.
+  # It keeps offline workflow rendering deterministic without claiming a pullable
+  # image. Actual execution requires an exact manager-approved private digest.
+  controller_image: "ghcr.io/nebius/nebius-physical-ai/npa-robomimic:0.1.0-neutral-unbuilt"
   base_image: "tool://robomimic"
   build_command: ""
   workload: solution-smoke
@@ -43,7 +47,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
-    image: "{{config.base_image}}"
+    image: "{{config.controller_image}}"
     accelerators: B200:1
 initial: byof-run
 states:

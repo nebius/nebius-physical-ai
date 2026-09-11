@@ -21,6 +21,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "torch_or_triton_distribution",
         re.compile(
+            r"(?:^|/)(?:torch|torchvision|triton)-[^/!]+\.whl(?:$|!/)|"
+            r"(?:^|!/)(?:torch|torchvision|triton)(?:/|$)|"
+            r"(?:^|!/)(?:torch|torchvision|triton)-[^/!]+\.dist-info(?:/|$)|"
             r"(?:^|/)(?:site-packages|dist-packages)/(?:torch(?:/|vision/)|"
             r"torch(?:vision)?-[^/]*\.dist-info/|triton(?:/|-[^/]*\.dist-info/))",
             re.I,
@@ -29,6 +32,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "nvidia_python_distribution",
         re.compile(
+            r"(?:^|/)nvidia[-_][^/!]+\.whl(?:$|!/)|"
+            r"(?:^|!/)nvidia(?:/|_)|"
+            r"(?:^|!/)(?:nvidia[-_])[^/!]+\.dist-info(?:/|$)|"
             r"(?:^|/)(?:site-packages|dist-packages)/(?:nvidia(?:/|_)|"
             r"nvidia_[^/]*\.dist-info/)",
             re.I,
