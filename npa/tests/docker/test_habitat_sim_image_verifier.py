@@ -201,6 +201,21 @@ def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> N
     assert {"forbidden_path", "forbidden_payload_hash"} <= _codes(report)
 
 
+def test_empty_base_cache_directories_are_allowed_but_cache_bytes_are_not(
+    tmp_path,
+) -> None:
+    directories = [
+        file("var/cache/apt", kind=tarfile.DIRTYPE),
+        file("var/lib/apt/lists", kind=tarfile.DIRTYPE),
+    ]
+    assert _verify(tmp_path, [[*directories, *_required_entries()]])["valid"] is True
+
+    cached = file("var/lib/apt/lists/archive.example_Packages", b"package metadata")
+    assert "forbidden_path" in _codes(
+        _verify(tmp_path, [[*directories, cached, *_required_entries()]])
+    )
+
+
 def test_final_runtime_refuses_builder_package_and_root_user(tmp_path) -> None:
     entries = _required_entries()
     status = next(

@@ -170,6 +170,7 @@ def _extract_member(
 
 def _extract_assets(archive_path: Path, root: Path) -> dict[str, dict[str, object]]:
     published: list[Path] = []
+    complete = False
     try:
         with zipfile.ZipFile(archive_path) as bundle:
             bad_member = bundle.testzip()
@@ -182,11 +183,12 @@ def _extract_assets(archive_path: Path, root: Path) -> dict[str, dict[str, objec
                 destination, record = _extract_member(bundle, root, output_name, spec)
                 published.append(destination)
                 records[output_name] = record
+            complete = True
             return records
     except zipfile.BadZipFile as error:
         raise SmokeFailure("official archive is not a valid ZIP") from error
     finally:
-        if "records" not in locals():
+        if not complete:
             for destination in published:
                 destination.unlink(missing_ok=True)
 
