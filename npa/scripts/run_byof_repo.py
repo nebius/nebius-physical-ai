@@ -100,7 +100,7 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
 
 
 def _require_robomimic_manager_context(
-    args: argparse.Namespace, *, registry: str
+    args: argparse.Namespace, *, registry: str, image: str
 ) -> None:
     """Refuse the governed robomimic build before pulling any runtime bytes.
 
@@ -145,8 +145,25 @@ def _require_robomimic_manager_context(
         raise ValueError("robomimic registry does not match the manager-issued registry")
     if is_public_registry(selected_registry):
         raise ValueError("robomimic requires an operator-private registry")
+    effective_registry = _registry_path(image).rstrip("/")
+    if effective_registry != selected_registry:
+        raise ValueError(
+            "robomimic image does not target the manager-issued private registry"
+        )
+    if is_public_registry(effective_registry):
+        raise ValueError("robomimic image must not target a public registry")
     if selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower() != "private":
         raise ValueError("manager-published robomimic registry visibility must be private")
+    output_bucket = _bare_s3_bucket(args.output_root)
+    manager_bucket = _bare_s3_bucket(selectors["NPA_E2E_S3_BUCKET"])
+    expected_output_root = f"s3://{manager_bucket}/oss-solutions/robomimic"
+    if (
+        output_bucket != manager_bucket
+        or args.output_root.strip().rstrip("/") != expected_output_root
+    ):
+        raise ValueError(
+            "robomimic --output-root must be the manager-issued bucket and solution prefix"
+        )
     kubeconfig = Path(selectors["NPA_BYOF_KUBECONFIG"])
     if not kubeconfig.is_file():
         raise ValueError("manager-issued robomimic kubeconfig is not a readable file")
@@ -683,8 +700,9 @@ def main(argv: list[str] | None = None) -> int:
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
+    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     try:
-        _require_robomimic_manager_context(args, registry=registry)
+        _require_robomimic_manager_context(args, registry=registry, image=image)
     except ValueError as exc:
         print(
             json.dumps(
@@ -701,7 +719,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 64
-    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     base_candidates = _base_image_candidates(
         profile=base_profile,
         image=image,

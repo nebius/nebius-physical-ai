@@ -1004,7 +1004,14 @@ def is_public_registry(registry: str) -> bool:
     candidate = registry.strip().rstrip("/")
     if not candidate:
         return False
-    host = candidate.split("/", 1)[0].lower()
+    host, separator, path = candidate.partition("/")
+    lowered_host = host.lower()
+    for standard_port in (":443", ":80"):
+        if lowered_host.endswith(standard_port):
+            host = host[: -len(standard_port)]
+            break
+    candidate = f"{host}{separator}{path}"
+    host = host.lower()
     if host in PUBLIC_REGISTRY_HOSTS:
         return True
     if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():

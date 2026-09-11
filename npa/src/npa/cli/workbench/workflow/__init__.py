@@ -877,7 +877,8 @@ def submit_cmd(
             .lower()
         )
         is_robomimic_gate = (
-            str(merged_npa_spec.config.get("solution_name") or "").strip().lower()
+            merged_npa_spec.name == "byof-robomimic"
+            or str(merged_npa_spec.config.get("solution_name") or "").strip().lower()
             == "robomimic"
             or config_repo == "robomimic"
         )

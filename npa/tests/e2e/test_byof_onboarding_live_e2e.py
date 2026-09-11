@@ -528,19 +528,47 @@ def _robomimic_observer_rbac(
         service_account=service_account,
     )
     created_resources: list[str] = []
+    primary_error: BaseException | None = None
     try:
         for manifest in manifests:
-            subprocess.run(
-                [*kube, "create", "--namespace", namespace, "-f", "-"],
-                input=yaml.safe_dump(manifest, sort_keys=False),
-                check=True,
+            resource = f"{str(manifest['kind']).lower()}/{service_account}"
+            prior = subprocess.run(
+                [
+                    *kube,
+                    "get",
+                    "--namespace",
+                    namespace,
+                    resource,
+                    "--ignore-not-found=true",
+                    "-o",
+                    "name",
+                ],
+                check=False,
                 capture_output=True,
                 text=True,
                 env=env,
             )
-            created_resources.append(
-                f"{str(manifest['kind']).lower()}/{service_account}"
+            assert prior.returncode == 0 and not prior.stdout.strip(), (
+                resource,
+                prior.stdout,
+                prior.stderr,
             )
+            # Track after proving no prior object exists but before create, so a
+            # server-side create followed by a lost response is still cleaned.
+            created_resources.append(resource)
+            created = subprocess.run(
+                [*kube, "create", "--namespace", namespace, "-f", "-"],
+                input=yaml.safe_dump(manifest, sort_keys=False),
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if created.returncode != 0:
+                raise RuntimeError(
+                    f"failed to create run-scoped robomimic {resource}: "
+                    f"{created.stderr.strip()}"
+                )
         permissions = {
             ("get", "pods"): True,
             ("list", "pods"): False,
@@ -561,36 +589,62 @@ def _robomimic_observer_rbac(
                 is expected
             )
         yield service_account
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         resources = list(reversed(created_resources))
-        if resources:
-            subprocess.run(
+        cleanup_errors: list[str] = []
+        for resource in resources:
+            deleted = subprocess.run(
                 [
                     *kube,
                     "delete",
                     "--namespace",
                     namespace,
                     "--ignore-not-found=true",
-                    *resources,
+                    resource,
                 ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-        for resource in resources:
-            absent = subprocess.run(
-                [*kube, "get", "--namespace", namespace, resource, "-o", "name"],
                 check=False,
                 capture_output=True,
                 text=True,
                 env=env,
             )
-            assert absent.returncode != 0 and not absent.stdout.strip(), (
-                resource,
-                absent.stdout,
-                absent.stderr,
+            if deleted.returncode != 0:
+                cleanup_errors.append(
+                    f"delete {resource} exited {deleted.returncode}: "
+                    f"{deleted.stderr.strip()}"
+                )
+        for resource in resources:
+            absent = subprocess.run(
+                [
+                    *kube,
+                    "get",
+                    "--namespace",
+                    namespace,
+                    resource,
+                    "--ignore-not-found=true",
+                    "-o",
+                    "name",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
             )
+            if absent.returncode != 0 or absent.stdout.strip():
+                cleanup_errors.append(
+                    f"verify {resource} absent failed: exit={absent.returncode}, "
+                    f"stdout={absent.stdout.strip()!r}, stderr={absent.stderr.strip()!r}"
+                )
+        if cleanup_errors:
+            message = "robomimic observer RBAC cleanup failed: " + "; ".join(
+                cleanup_errors
+            )
+            if primary_error is not None:
+                primary_error.add_note(message)
+            else:
+                raise AssertionError(message)
 
 
 def _robomimic_target_env(
