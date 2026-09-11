@@ -34,7 +34,8 @@ FORBIDDEN_PATH = re.compile(
     r"(^|/)(\.git|\.cache|pip-cache|apt/lists|apt/archives|\.aws|\.docker|\.ssh)(/|$)|"
     r"(^|/)(workspace/byof-runs|root/\.cache)(/|$)|"
     r"(^|/)(usr/local/cuda|opt/nvidia)(/|$)|"
-    r"(^|/)(libnvidia[^/]*|libcuda[^/]*)$|"
+    r"(^|/)[^/]*nvidia[^/]*$|"
+    r"(^|/)(libcuda[^/]*|libnvcuvid[^/]*|libnvoptix[^/]*)$|"
     r"\.(pt|pth|ckpt|safetensors|onnx|engine)$",
     re.IGNORECASE,
 )
@@ -229,10 +230,7 @@ def _layers(
                     content = payload.read()
                     if SECRET_TEXT.search(content):
                         raise ValueError(f"forbidden secret signature: {path}")
-                    is_notice = path.startswith(
-                        "usr/share/doc/npa-gymnasium-robotics/"
-                    )
-                    if not is_notice and VENDOR_TEXT.search(content):
+                    if VENDOR_TEXT.search(content):
                         raise ValueError(
                             f"forbidden vendor payload signature: {path}"
                         )
