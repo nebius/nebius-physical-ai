@@ -283,9 +283,14 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE" in source
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR" in source
     assert "owner-side-kubernetes-status" in source
-    assert '("get", "pods"), ("create", "pods/exec")' in source
+    assert '("list", "pods"), ("create", "pods/exec")' in source
     assert 'get("skypilot-cluster-name")' in source
     assert '"parent=skypilot"' in source
     assert "expected_digest in image_id" in source
     assert "assert gpu_requests == gpu_limits == 1" in source
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned" in source
+    assert "stdout=stdout_stream" in source
+    assert "stderr=stderr_stream" in source
+    assert "_cleanup_gymnasium_run(" in source
+    assert 'command.extend(["--yes", run_id])' in source
+    assert "exact-run cleanup also failed" in source

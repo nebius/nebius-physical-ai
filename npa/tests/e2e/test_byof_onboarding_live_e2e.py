@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TextIO
 from urllib.parse import urlparse
 
 import pytest
@@ -758,10 +759,28 @@ def _gymnasium_kubectl(
     )
 
 
+def _gymnasium_evidence_dir(env: dict[str, str]) -> Path:
+    configured = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR", "").strip()
+    assert configured, (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR must be an owner-private path"
+    )
+    evidence_dir = Path(configured).resolve()
+    evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    assert evidence_dir.stat().st_mode & 0o077 == 0, (
+        "owner-side evidence directory must not be group/world accessible"
+    )
+    return evidence_dir
+
+
+def _new_gymnasium_private_file(path: Path) -> TextIO:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    return os.fdopen(descriptor, "w", encoding="utf-8")
+
+
 def _require_gymnasium_owner_receipt_access(
     env: dict[str, str], *, namespace: str
 ) -> None:
-    for verb, resource in (("get", "pods"), ("create", "pods/exec")):
+    for verb, resource in (("list", "pods"), ("create", "pods/exec")):
         result = _gymnasium_kubectl(
             env, namespace, "auth", "can-i", verb, resource
         )
@@ -770,6 +789,37 @@ def _require_gymnasium_owner_receipt_access(
             f"{verb} {resource} in the manager-authorized namespace; do not "
             "grant the workload service account Pod access"
         )
+
+
+def _exact_gymnasium_run_pods(
+    env: dict[str, str], *, namespace: str, run_id: str
+) -> list[dict[str, object]]:
+    result = _gymnasium_kubectl(
+        env,
+        namespace,
+        "get",
+        "pods",
+        "--selector",
+        "parent=skypilot",
+        "--output",
+        "json",
+    )
+    assert result.returncode == 0, (
+        "owner-side Pod lookup failed; no workload RBAC change is permitted"
+    )
+    items = json.loads(result.stdout).get("items", [])
+    pods = [
+        item
+        for item in items
+        if item.get("metadata", {}).get("labels", {}).get("parent") == "skypilot"
+        and item.get("metadata", {})
+        .get("annotations", {})
+        .get("skypilot-cluster-name")
+        == run_id
+        and not item.get("metadata", {}).get("deletionTimestamp")
+    ]
+    assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
+    return pods
 
 
 def _gymnasium_pod_image_receipt(
@@ -783,30 +833,9 @@ def _gymnasium_pod_image_receipt(
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
     while proc.poll() is None:
-        result = _gymnasium_kubectl(
-            env,
-            namespace,
-            "get",
-            "pods",
-            "--selector",
-            "parent=skypilot",
-            "--output",
-            "json",
+        pods = _exact_gymnasium_run_pods(
+            env, namespace=namespace, run_id=run_id
         )
-        assert result.returncode == 0, (
-            "owner-side Pod lookup failed; no workload RBAC change is permitted"
-        )
-        items = json.loads(result.stdout).get("items", [])
-        pods = [
-            item
-            for item in items
-            if item.get("metadata", {})
-            .get("annotations", {})
-            .get("skypilot-cluster-name")
-            == run_id
-            and not item.get("metadata", {}).get("deletionTimestamp")
-        ]
-        assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
         if not pods:
             time.sleep(2)
             continue
@@ -879,18 +908,7 @@ def _gymnasium_pod_image_receipt(
         }
         assert receipt["pod_name"] and receipt["pod_uid"]
         assert receipt["pod_namespace"] == namespace
-        evidence_dir = Path(
-            env["NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR"]
-        ).resolve()
-        evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        assert evidence_dir.stat().st_mode & 0o077 == 0, (
-            "owner-side receipt directory must not be group/world accessible"
-        )
-        receipt_path = evidence_dir / f"{run_id}-pod-image-receipt.json"
-        assert not receipt_path.exists(), "refusing to overwrite a Pod image receipt"
         encoded = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-        receipt_path.write_text(encoded, encoding="utf-8")
-        receipt_path.chmod(0o600)
         in_pod_path = f"/workspace/byof-runs/{run_id}/npa_pod_image_receipt.json"
         writer = (
             "import os,pathlib,sys;"
@@ -916,8 +934,54 @@ def _gymnasium_pod_image_receipt(
         assert injected.returncode == 0, (
             "owner-side receipt injection into the exact run Pod failed"
         )
+        receipt_path = _gymnasium_evidence_dir(env) / (
+            f"{run_id}-pod-image-receipt.json"
+        )
+        with _new_gymnasium_private_file(receipt_path) as stream:
+            stream.write(encoded)
         return receipt
     raise AssertionError("BYOF runner exited before an exact Pod image receipt was written")
+
+
+def _cleanup_gymnasium_run(
+    env: dict[str, str],
+    *,
+    namespace: str,
+    run_id: str,
+    config_path: str | None,
+    issue_down: bool,
+) -> None:
+    evidence_dir = _gymnasium_evidence_dir(env)
+    if issue_down:
+        sky_bin = resolve_skypilot_bin()
+        assert sky_bin, "SkyPilot executable is required for exact-run cleanup"
+        command = [sky_bin, "down"]
+        if config_path:
+            command.extend(["--config", config_path])
+        command.extend(["--yes", run_id])
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        for suffix, content in (
+            ("stdout", result.stdout),
+            ("stderr", result.stderr),
+        ):
+            path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
+            with _new_gymnasium_private_file(path) as stream:
+                stream.write(content)
+        if result.returncode != 0:
+            remaining = _exact_gymnasium_run_pods(
+                env, namespace=namespace, run_id=run_id
+            )
+            assert not remaining, "exact-run SkyPilot cleanup failed and its Pod remains"
+            return
+    while _exact_gymnasium_run_pods(env, namespace=namespace, run_id=run_id):
+        time.sleep(2)
 
 
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
@@ -975,34 +1039,64 @@ def test_live_gymnasium_robotics_exact_digest_capability(
         "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE must be the manager-authorized "
         "task namespace"
     )
-    assert os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR", "").strip(), (
-        "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR must be an owner-private path"
-    )
+    evidence_dir = _gymnasium_evidence_dir(env)
     _require_gymnasium_owner_receipt_access(env, namespace=namespace)
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=str(REPO_ROOT),
-        env=env,
-        start_new_session=True,
-    )
-    try:
-        receipt = _gymnasium_pod_image_receipt(
-            proc,
+    config_path = skypilot_config_for_project(e2e_project)
+    stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
+    stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
+    with (
+        _new_gymnasium_private_file(stdout_path) as stdout_stream,
+        _new_gymnasium_private_file(stderr_path) as stderr_stream,
+    ):
+        proc = subprocess.Popen(
+            cmd,
+            stdout=stdout_stream,
+            stderr=stderr_stream,
+            text=True,
+            cwd=str(REPO_ROOT),
             env=env,
-            namespace=namespace,
-            run_id=run_id,
-            image=os.environ["NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE"],
+            start_new_session=True,
         )
-        stdout, stderr = proc.communicate()
-    except BaseException:
-        if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.communicate()
-        raise
-    assert proc.returncode == 0, stdout + stderr
+        try:
+            receipt = _gymnasium_pod_image_receipt(
+                proc,
+                env=env,
+                namespace=namespace,
+                run_id=run_id,
+                image=os.environ["NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE"],
+            )
+            returncode = proc.wait()
+            if returncode != 0:
+                stdout_stream.flush()
+                stderr_stream.flush()
+                raise AssertionError(
+                    stdout_path.read_text(encoding="utf-8")
+                    + stderr_path.read_text(encoding="utf-8")
+                )
+        except BaseException as primary_error:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait()
+            try:
+                _cleanup_gymnasium_run(
+                    env,
+                    namespace=namespace,
+                    run_id=run_id,
+                    config_path=config_path,
+                    issue_down=True,
+                )
+            except BaseException as cleanup_error:
+                primary_error.add_note(f"exact-run cleanup also failed: {cleanup_error}")
+            raise
+    stdout = stdout_path.read_text(encoding="utf-8")
+    stderr = stderr_path.read_text(encoding="utf-8")
+    _cleanup_gymnasium_run(
+        env,
+        namespace=namespace,
+        run_id=run_id,
+        config_path=config_path,
+        issue_down=False,
+    )
     summary = _parse_last_json_blob(stdout + "\n" + stderr)
     assert summary["status"] == "ok", summary
     expected_digest = _gymnasium_expected_digest(summary)
