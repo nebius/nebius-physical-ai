@@ -1,0 +1,5 @@
+# INCOMPLETE — IMAGE BUILD REFUSED
+#
+# Phase A has not resolved an official Ubuntu 22.04 linux/amd64 base digest,
+# immutable snapshot timestamp, or exact apt package/version/source closure.
+# build.sh must refuse before invoking Docker until this lock is complete.

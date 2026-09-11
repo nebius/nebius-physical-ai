@@ -22,7 +22,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
-| RoboTwin 2.0 (**private, restricted**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
+| RoboTwin 2.0 (**public-bootstrap candidate; unbuilt/quarantined**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | deferred `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -46,7 +46,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
-| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **qualification pending** | Awaiting the guarded private-image run on one STRICT-reservation-backed RTX PRO 6000; schema/plan checks are tracked in `byof-robotwin.readiness.json` and are not execution evidence. |
+| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **bootstrap unbuilt; qualification pending** | Phase A proves only local refusal/packaging contracts. Runtime/legal decisions, exact bytes, anonymous pull, and one STRICT-reservation-backed RTX PRO 6000 run remain pending; schema/plan checks are not execution evidence. |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
@@ -155,14 +155,17 @@ pending until that normal-submit path produces genuine private live evidence.
 | `robotwin_native_hdf5_collection` | qualification pending hard gate | non-empty native HDF5 with RoboTwin provenance, action/state/vision groups, positive action count, size, and SHA-256 |
 | `robotwin_rendered_mp4` | qualification pending hard gate | fully decoded MP4 with positive dimensions and exactly `action_count + 1` frames, size, and SHA-256 |
 
-The image compiles pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
-limits use to noncommercial research/evaluation, so the candidate is restricted
-to the operator's private run registry and is ineligible for public GHCR or the
-public image table. The Hugging Face asset repository card says MIT, while the
+The planned public image contains none of these bytes; a future authorized
+runtime would compile pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
+limits use to noncommercial research/evaluation, so use and service claims stay
+human-gated even though a zero-vendor-payload bootstrap may be eligible for
+public redistribution after exact-byte review. The candidate remains unbuilt,
+publication-quarantined, and absent from the public image table. The Hugging Face
+asset repository card says MIT, while the
 aggregate object archive includes mixed documented source families; future
 tasks must review the terms of their selected objects. Registry credentials,
 runtime fetch, and the byte-absence scan do not grant permission; the
-manager-owned runtime decision remains a pre-build gate. See
+manager-owned decisions remain pre-fetch/pre-run gates. See
 [`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
 artifact contract.
 

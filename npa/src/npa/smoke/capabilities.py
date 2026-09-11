@@ -27,6 +27,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "robotwin": [
+        "genuine missing-manager-authorization refusal executes on CPU",
+        "refusal creates no source, runtime cache, asset, or output path",
+        "zero-payload packaging check only; no SAPIEN or GPU capability claimed",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
