@@ -40,6 +40,7 @@ ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
+LIBERO_SOLUTION_NAME = "libero"
 
 # SkyPilot 0.12.2 checks these package capabilities synchronously while starting a
 # Kubernetes worker.  Ubuntu's ``fuse3`` package provides the logical ``fuse``
@@ -503,12 +504,21 @@ def _validate_byof_image_security_refresh(dockerfile: str) -> None:
         )
 
 
+def _immutable_image_digest(image: str) -> str:
+    """Return the immutable digest from an exact image reference, if present."""
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", image.strip())
+    return match.group(1) if match else ""
+
+
 def _dockerfile_text() -> str:
     bootstrap_guard = _skypilot_bootstrap_guard_script()
     dockerfile = (
         "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
         "FROM ${BYOF_BASE_IMAGE}\n"
+        "ARG BYOF_BASE_IMAGE\n"
+        'ARG BYOF_BASE_IMAGE_DIGEST=""\n'
         'ARG OSS_REPO_URL=""\n'
         'ARG OSS_REPO_REF=""\n'
         "ARG BYOF_SOURCE_VISIBILITY=public\n"
@@ -601,10 +611,13 @@ def _dockerfile_text() -> str:
         'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
         "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
         '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
-        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'
-        f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
+        '  && if [ -n "${BYOF_BASE_IMAGE_DIGEST}" ] && [ "${BYOF_BASE_IMAGE#*@}" = "${BYOF_BASE_IMAGE_DIGEST}" ]; then base_image_digest_pinned=true; else base_image_digest_pinned=false; fi \\\n'
+        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s","base_image_reference":"%s","base_image_digest":"%s","base_image_digest_pinned":%s}}\\n\' \\\n'
+        f'    "$build_command_executed" "$build_command_sha256" "$BYOF_BASE_IMAGE" "$BYOF_BASE_IMAGE_DIGEST" "$base_image_digest_pinned" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f"RUN chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${BYOF_SOURCE_LABEL_REPO}" npa.byof.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'org.opencontainers.image.base.name="${BYOF_BASE_IMAGE}" '
+        'org.opencontainers.image.base.digest="${BYOF_BASE_IMAGE_DIGEST}" '
         'npa.packaging.tier="interactive" '
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" '
         'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"\n'
@@ -1022,6 +1035,8 @@ def _run_byof(
                                 "--build-arg",
                                 f"BYOF_BASE_IMAGE={base_image}",
                                 "--build-arg",
+                                f"BYOF_BASE_IMAGE_DIGEST={_immutable_image_digest(base_image)}",
+                                "--build-arg",
                                 f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
                                 "--build-arg",
                                 (
@@ -1163,6 +1178,8 @@ def _run_byof(
                     cmd.extend(["--capability-name", args.capability_name])
                 if args.smoke_artifact_name:
                     cmd.extend(["--smoke-artifact-name", args.smoke_artifact_name])
+                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+                    cmd.append("--no-direct-launch")
             else:
                 cmd = [
                     sys.executable,

@@ -554,6 +554,7 @@ def test_libero_b200_qualification_report() -> None:
     assert report["capability"] == "libero_spatial_bc_rnn_train_reload_heldout"
     assert set(report["capabilities_exercised"]) == {
         "libero_official_demo_sha256",
+        "libero_upstream_bert_task_conditioning",
         "libero_trajectory_disjoint_heldout_split",
         "libero_spatial_bc_rnn_train_reload_heldout",
     }
@@ -588,6 +589,33 @@ def test_libero_b200_qualification_report() -> None:
     )
     assert assets["source_license"] == "MIT"
 
+    language_model = report["task_language_model"]
+    assert language_model["repository"] == "google-bert/bert-base-cased"
+    assert language_model["revision"] == (
+        "cd5ef92a9fb2f889e972770a36d4ed042daf221e"
+    )
+    assert language_model["license"] == "Apache-2.0"
+    assert language_model["delivery"] == "runtime_fetch"
+    assert language_model["source_path"] == "libero/lifelong/utils.py"
+    assert language_model["source_sha256"] == (
+        "d1df48c6984a2938d60eebf70ba1c61cd2ea512e859fa0ed11abfc550beee3f1c"
+    )
+    assert language_model["embedding_method"] == "upstream_LIBERO_bert_pooler_output"
+    assert language_model["embedding_shape"] == [768]
+    assert language_model["embedding_dtype"] == "float32"
+    assert language_model["embedding_finite"] is True
+    assert language_model["downloaded_this_run"] is True
+    assert language_model["cache_uploaded"] is False
+    assert language_model["files"]["pytorch_model.bin"] == {
+        "expected_size_bytes": 435779157,
+        "expected_sha256": (
+            "d6992b8cd27d7a132eafce6a8210272329a371b1c762d453588795dd3835593e"
+        ),
+        "observed_sha256": (
+            "d6992b8cd27d7a132eafce6a8210272329a371b1c762d453588795dd3835593e"
+        ),
+    }
+
     split = report["split"]
     assert split["strategy"] == "deterministic_trajectory_disjoint_sha256_rank"
     assert split["seed"] == 20260910
@@ -613,6 +641,7 @@ def test_libero_b200_qualification_report() -> None:
     assert math.isfinite(float(training["final_loss"]))
     assert math.isfinite(float(training["parameter_max_abs_delta"]))
     assert float(training["parameter_max_abs_delta"]) > 0
+    assert training["task_embedding"] == "upstream_LIBERO_bert_pooler_output"
 
     heldout = report["heldout_metrics"]
     assert heldout["partition"] == "heldout_trajectories_only"
@@ -643,6 +672,20 @@ def test_libero_b200_qualification_report() -> None:
     assert runtime["observation_method"] == (
         "kubernetes_status_containerStatuses_imageID"
     )
+    assert runtime["actual_service_account"] == "npa-byof-libero-payload"
+    assert runtime["controller_service_account_separated"] is True
+    for key in (
+        "pod_name_sha256",
+        "pod_uid_sha256",
+        "namespace_sha256",
+        "node_name_sha256",
+        "cluster_identity_sha256",
+        "service_account_uid_sha256",
+        "role_uid_sha256",
+        "role_binding_uid_sha256",
+        "rbac_spec_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", runtime[key])
 
     build = report["build"]
     assert build["dataset_baked"] is False
@@ -654,6 +697,14 @@ def test_libero_b200_qualification_report() -> None:
     assert build["source_metadata"]["git_objects_removed"] is True
     assert build["base_image_digest"] == (
         "sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+    )
+    assert build["base_image_reference"] == (
+        "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
+        + build["base_image_digest"]
+    )
+    assert build["base_image_digest_pinned"] is True
+    assert build["base_image_provenance"] == (
+        "generated_build_metadata_and_oci_config_labels"
     )
     assert report["boundaries"]["cache_uploaded"] is False
     assert report["boundaries"]["rendering_invoked"] is False

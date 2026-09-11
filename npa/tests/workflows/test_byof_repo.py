@@ -668,6 +668,7 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert "--solution-name" in cmd and "demo-solution" in cmd
     assert "--capability-name" in cmd and "demo-capability" in cmd
     assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    assert "--no-direct-launch" not in cmd
     env = seen.get("env")
     assert isinstance(env, dict)
     assert env["KUBECONFIG"] == "/tmp/kubeconfig"
@@ -676,6 +677,60 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["NPA_BYOF_K8S_NAMESPACE"] == "workbench"
     assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert env["AWS_ACCESS_KEY_ID"] == "key"
+
+
+def test_main_forces_libero_solution_smoke_through_managed_scheduler(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/example/project",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {
+                "kubeconfig": str(Path("/") / "tmp" / "kubeconfig"),
+                "context": "execution-context",
+                "namespace": "workbench",
+            },
+        )(),
+    )
+    monkeypatch.setattr(module, "storage_env_for_project", lambda *_a, **_k: {})
+
+    def fake_run(cmd, **_kwargs):
+        if str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            seen["cmd"] = list(cmd)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"submitted"}\n', stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "libero-managed-route",
+            "--skip-build",
+            "--base-profile",
+            "ubuntu",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "libero",
+        ]
+    )
+
+    assert rc == 0
+    cmd = seen["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd.count("--no-direct-launch") == 1
 
 
 def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
@@ -1172,6 +1227,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_BASE_IMAGE_DIGEST=" for part in build_args)
     assert any(
         part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
     )
@@ -1212,6 +1268,11 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa.byof.build.v1" in text
     assert "build_command_executed" in text
     assert "build_command_sha256" in text
+    assert "base_image_reference" in text
+    assert "base_image_digest" in text
+    assert "base_image_digest_pinned" in text
+    assert 'org.opencontainers.image.base.name="${BYOF_BASE_IMAGE}"' in text
+    assert 'org.opencontainers.image.base.digest="${BYOF_BASE_IMAGE_DIGEST}"' in text
     assert "sha256sum" in text
     assert "npa_build_metadata.json" in text
     assert "npa_source_metadata.json" in text
@@ -1247,6 +1308,21 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     assert (
         'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"' in text
+    )
+
+
+def test_immutable_image_digest_accepts_only_exact_digest_suffix() -> None:
+    module = _load_module()
+    digest = "sha256:" + "a" * 64
+
+    assert (
+        module._immutable_image_digest(f"registry.example/team/image@{digest}")
+        == digest
+    )
+    assert module._immutable_image_digest("registry.example/team/image:latest") == ""
+    assert (
+        module._immutable_image_digest(f"registry.example/team/image@{digest}:tag")
+        == ""
     )
 
 

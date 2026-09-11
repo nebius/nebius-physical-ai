@@ -75,12 +75,17 @@ and verifies its 508,779,600 bytes against SHA-256
 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`.
 The upstream LIBERO publisher declares its datasets CC BY 4.0; the mirror card's
 conflicting Apache-2.0 tag is not used to broaden rights.
+Task conditioning runtime-fetches the independently pinned Apache-2.0
+`google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e`
+files and runs the pinned upstream LIBERO `AutoTokenizer`/`AutoModel`
+`pooler_output` path. Neither those model bytes nor the demonstration is baked.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `libero_official_demo_sha256` | qualification pending | Exact official HDF5 mirror revision, byte size, SHA-256, 50 trajectories, 5,068 samples, task language, BDDL, and initial-state hashes |
+| `libero_upstream_bert_task_conditioning` | qualification pending | Exact Apache-2.0 BERT revision and file hashes, pinned LIBERO embedding-source hash, and finite 768-dimensional upstream `pooler_output` |
 | `libero_trajectory_disjoint_heldout_split` | qualification pending | Deterministic 40-train / 10-held-out trajectory split; no trajectory may appear in both partitions |
-| `libero_spatial_bc_rnn_train_reload_heldout` | hard gate, qualification pending | Upstream `Sequential.observe` + `BCRNNPolicy` + AdamW for eight nonzero optimizer steps, strict upstream checkpoint reload, held-out NLL, and finite reloaded 7-DoF action predictions on exactly one B200 (`sm_100`) |
+| `libero_spatial_bc_rnn_train_reload_heldout` | hard gate, qualification pending | Upstream BERT task conditioning plus `Sequential.observe` + `BCRNNPolicy` + AdamW for eight nonzero optimizer steps, strict upstream checkpoint reload, held-out NLL, and finite reloaded 7-DoF action predictions on exactly one B200 (`sm_100`) |
 
 The private build retains the hash-bound BDDL and initial states but deletes the
 unused render-asset tree. The official demonstration is fetched into a
