@@ -302,6 +302,14 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **Habitat-Sim** is an operator-private BYOF registry candidate, not an NPA
+  public-image entry. Its workflow builds pinned MIT source at run time into the
+  authorized private registry and downloads only the exact Skokloster Castle
+  test scene and navmesh after launch. No public tag, anonymous pull, or accepted
+  release digest is claimed. It remains outside `packaging-contract.yaml` and
+  `CONTAINER_IMAGE_NAMES`; adding it to this public table would incorrectly
+  promote a BYOF validation image. See
+  [`byof-habitat-sim.md`](byof-habitat-sim.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

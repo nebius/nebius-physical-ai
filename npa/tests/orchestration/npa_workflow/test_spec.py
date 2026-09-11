@@ -108,6 +108,7 @@ states:
     argv = plan.steps[0].argv
     assert argv[argv.index("--repo-auth") + 1] == "none"
     assert argv[argv.index("--repo-token-env") + 1] == ""
+    assert argv[argv.index("--apt-snapshot") + 1] == ""
 
 
 def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:

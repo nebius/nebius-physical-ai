@@ -194,6 +194,51 @@ Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
 
+### Habitat-Sim (`byof-habitat-sim.yaml`)
+
+Pinned: `facebookresearch/habitat-sim`
+`57ee4941dc4765240f0f91f70b2c97a919bf9038` (MIT). Upstream explicitly warns
+that beyond v0.3.4, Meta internal teams do not officially maintain releases or
+provide active development.
+
+Pin the linux/amd64 Ubuntu 22.04 base by digest and initialize only the source
+gitlinks required by the headless RGB-D, pathfinding, Bullet, and EGL build.
+Set `config.apt_snapshot` so the generic BYOF bootstrap is pinned before its
+first package fetch. Install the complete Python closure from exact compatible
+wheel hashes with dependency resolution and build isolation disabled, and
+retain the lock plus sorted Python/Debian inventories in the private image.
+Do not use recursive initialization: the unused `rlr-audio-propagation`
+submodule is CC BY-NC 4.0 and audio is outside this candidate; GUI and docs
+submodules are unnecessary as well.
+
+Pending hard-gate capabilities (all must pass in one live pod):
+
+- `skokloster_castle_rgb_depth_bullet_traversal`: actual upstream greedy-follower
+  agent actions, saved RGB/depth observations, and nonzero displacement
+- `headless_nvidia_egl_rgb_depth_render`: live NVIDIA GL strings and NVIDIA EGL
+  libraries loaded by the renderer process
+- `bullet_physics_world_step`: Bullet-enabled backend with advancing world time
+- `greedy_geodesic_agent_traversal`: a real pathfinder/navmesh traversal rather
+  than direct state teleportation
+
+Use only `skokloster-castle.glb` and `skokloster-castle.navmesh` from
+`ai-habitat/habitat_test_scenes@910c783fb954da8497ea5f811b843a76590ddddc`.
+Verify their exact hashes before simulator creation. The pinned source README
+attributes the asset under CC BY 4.0, while the aggregate collection card
+currently says CC BY-NC 4.0; record both and do not broaden the data fetch.
+
+Use `byof-solution-smoke-habitat-sim-rtxpro-gpu.yaml` on exactly one
+RTX PRO 6000 Blackwell (`sm_120`). The owner-only runtime evidence must prove
+that cluster's Capacity Block is bound `STRICT`; the resource profile alone is
+not that proof. The live gate requires an owner-only, run-bound manager receipt,
+verifies a hashed provider reservation readback, rejects the public registry
+default, and compares Kubernetes `containerStatuses[].imageID` with the pushed
+digest before exact-run teardown. It also downloads and re-hashes every declared
+RGB/depth and inventory object. This renderer must never use B200. Keep the BYOF
+image private.
+Defer proprietary/gated datasets, semantic annotations, and distributed
+Habitat-Lab training.
+
 ### ManiSkill (`byof-maniskill.yaml`)
 
 Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`

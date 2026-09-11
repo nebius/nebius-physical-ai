@@ -22,6 +22,7 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `byof-solution-smoke-ltx2-rtxpro-gpu.yaml` | LTX-2.5 candidate shape with CPU offload; not hardware validated | One RTX PRO, 192 GiB host memory |
 | `byof-solution-smoke-rtxpro-2gpu.yaml` | Capability smoke requiring two GPUs in one pod | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:2` |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
+| `byof-solution-smoke-habitat-sim-rtxpro-gpu.yaml` | Habitat-Sim RGB/depth traversal with NVIDIA EGL and Bullet | exactly one RTX PRO 6000 Blackwell; requires separately proven `STRICT` capacity binding |
 | `byof-solution-smoke-openpi-b200-gpu.yaml` | OpenPI pi0.5 Polaris immutable-image builder regression: direct + same-pod served inference, runtime-only checkpoint; the digest then feeds `openpi-pi05-four-mode.yaml` | `B200:1` (`sm_100`) |
 | `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |

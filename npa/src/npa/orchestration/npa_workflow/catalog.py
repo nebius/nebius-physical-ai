@@ -81,6 +81,8 @@ _BYOF_REPO_ARGV = [
     "{{config.base_profile}}",
     "--base-image",
     "{{config.base_image}}",
+    "--apt-snapshot",
+    "{{config.apt_snapshot}}",
     "--build-command",
     "{{config.build_command}}",
     "--workload",
@@ -116,6 +118,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "apt_snapshot": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
