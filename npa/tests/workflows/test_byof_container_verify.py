@@ -171,6 +171,26 @@ def test_libero_profile_refuses_missing_or_mistyped_solution_name(monkeypatch) -
             module._submit_and_wait(args)
 
 
+@pytest.mark.parametrize("run_id", ["short", "libero.bad", "../libero-escape"])
+def test_libero_profile_refuses_unsafe_run_id_before_render_output(
+    monkeypatch, run_id
+) -> None:
+    module = _load_module()
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(LIBERO_YAML_PATH),
+            "--run-id",
+            run_id,
+            "--solution-name",
+            "libero",
+            "--render-only",
+        ]
+    )
+    with pytest.raises(ValueError, match="SkyPilot run_id"):
+        module._submit_and_wait(args)
+
+
 def test_libero_payload_account_triggers_contract_independent_of_filename() -> None:
     module = _load_module()
     args = SimpleNamespace(solution_name="", yaml_path=Path("generic.yaml"))
@@ -903,6 +923,86 @@ def test_managed_cleanup_preserves_clusters_on_ambiguous_controller_status(
     assert calls == ["cancel"]
 
 
+def test_managed_cleanup_cancels_after_status_exception_then_proves_drain(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    statuses = iter(
+        [subprocess.TimeoutExpired(["sky", "jobs", "queue"], 1), "CANCELLED"]
+    )
+
+    def status(*_args, **_kwargs):
+        value = next(statuses)
+        if isinstance(value, Exception):
+            raise value
+        return SimpleNamespace(status=value)
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        lambda **_k: calls.append("verify") or module.CleanupResult(),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is True
+    assert calls == ["cancel", "down", "verify"]
+
+
+def test_managed_cleanup_preserves_clusters_after_persistent_status_exception(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("status unavailable")),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert "could not be verified" in result.errors[0]
+    assert calls == ["cancel"]
+
+
 @pytest.mark.parametrize(
     ("stdout", "expected_error"),
     [
@@ -961,6 +1061,7 @@ def test_post_teardown_inventory_proves_exact_run_absence(
     )
 
     assert result.ok is True
+    assert result.verified is True
     assert result.remote_absence_verified is True
     assert observed["cmd"] == [
         "sky",

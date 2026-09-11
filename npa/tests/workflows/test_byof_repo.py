@@ -733,6 +733,45 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     assert cmd.count("--no-direct-launch") == 1
 
 
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--solution-name", "LIBERO"], "exact --solution-name libero"),
+        (["--solution-name", "libero", "--run-id", "short"], "SkyPilot run_id"),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "../libero-escape",
+            ],
+            "SkyPilot run_id",
+        ),
+        (
+            [
+                "--yaml",
+                "byof-solution-smoke-libero-b200-gpu",
+                "--run-id",
+                "generic-safe-run-id",
+            ],
+            "exact --solution-name libero",
+        ),
+    ],
+)
+def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
+    monkeypatch, extra, message
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        module.main(["--skip-build", "--skip-run", *extra])
+
+
 def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
     module = _load_module()
     published: dict[str, object] = {}
