@@ -126,7 +126,8 @@ and an owner-private local evidence directory. The owner identity must already
 be able to list Pods and exec into the exact run Pod. The list is restricted to
 the manager-authorized namespace and SkyPilot parent label, then the live gate
 matches the full run annotation, immutable spec image, one-GPU request and
-limit, container name, Pod UID, and Kubernetes `imageID`. It injects that
+limit, assigned `spec.nodeName`, container name, Pod UID, and Kubernetes
+`imageID`. It injects that
 observation as a mode-0600 receipt. The workload consumes the receipt without
 Kubernetes API access. Do not grant the workload service account Pod access or
 create a RoleBinding for this integration. The pre-submit `auth can-i` check is
