@@ -247,7 +247,6 @@ SUPPORTED_TOOL_VERSIONS = {
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260904",
     "robocasa": "0.1.0",
-    "robomimic": "0.1.0-neutral-unbuilt",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -803,7 +802,6 @@ def container_image_for_tool(
     if (
         tool in {"ncore", "robomimic"}
         and tool in PUBLICATION_QUARANTINE_TOOLS
-        and is_public_registry(resolved_registry)
         and not tag
     ):
         raise ValueError(
