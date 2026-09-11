@@ -53,6 +53,10 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
             "opt/robomimic/robomimic/models/pretrained.pth",
             "checkpoint_or_weight",
         ),
+        (
+            "opt/robomimic/robomimic/models/checkpoints/pretrained.bin",
+            "checkpoint_or_weight",
+        ),
         ("root/.docker/config.json", "credential_file"),
     ],
 )
