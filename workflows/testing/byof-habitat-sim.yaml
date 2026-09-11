@@ -92,6 +92,7 @@ config:
     import subprocess
     import time
     import urllib.request
+    import zipfile
     from pathlib import Path
 
     import numpy as np
@@ -102,11 +103,36 @@ config:
 
 
     SOURCE_REVISION = "57ee4941dc4765240f0f91f70b2c97a919bf9038"
-    DATASET_REVISION = "910c783fb954da8497ea5f811b843a76590ddddc"
+    ARCHIVE_URL = "http://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip"
+    ARCHIVE_SHA256 = "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06"
+    ARCHIVE_BYTES = 94590970
     SCENE_NAME = "skokloster-castle.glb"
     NAVMESH_NAME = "skokloster-castle.navmesh"
     SCENE_SHA256 = "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56"
     NAVMESH_SHA256 = "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
+    ASSET_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/legalcode.en"
+    ORIGINAL_ASSET_URL = (
+        "https://sketchfab.com/3d-models/"
+        "the-kings-hall-d18155613363445b9b68c0c67196d98d"
+    )
+    MEMBER_SPECS = {
+        SCENE_NAME: {
+            "archive_member": (
+                "data/scene_datasets/habitat-test-scenes/skokloster-castle.glb"
+            ),
+            "bytes": 38295764,
+            "crc32": "7a0ced74",
+            "sha256": SCENE_SHA256,
+        },
+        NAVMESH_NAME: {
+            "archive_member": (
+                "data/scene_datasets/habitat-test-scenes/skokloster-castle.navmesh"
+            ),
+            "bytes": 28192,
+            "crc32": "a694cab0",
+            "sha256": NAVMESH_SHA256,
+        },
+    }
     PYTHON_LOCK_SHA256 = "14408a8959a829803f45d8978ff3d02c9debd9ed1d2f166687924fd61a052225"
     EXPECTED_RGB_SHAPE = [240, 320, 4]
     EXPECTED_DEPTH_SHAPE = [240, 320]
@@ -126,29 +152,125 @@ config:
         return digest.hexdigest()
 
 
-    def fetch_exact(name, expected_sha256):
-        root = Path("/tmp/npa-habitat-test-scenes")
-        root.mkdir(parents=True, exist_ok=True)
-        destination = root / name
-        url = (
-            "https://huggingface.co/datasets/ai-habitat/"
-            f"habitat_test_scenes/resolve/{DATASET_REVISION}/{name}?download=true"
+    def download_exact_archive(destination, opener=urllib.request.urlopen):
+        request = urllib.request.Request(
+            ARCHIVE_URL, headers={"User-Agent": "npa-habitat-sim-smoke/1"}
         )
-        request = urllib.request.Request(url, headers={"User-Agent": "npa-habitat-sim-smoke/1"})
-        temporary = destination.with_suffix(destination.suffix + ".part")
         digest = hashlib.sha256()
         size = 0
-        with urllib.request.urlopen(request) as response, temporary.open("wb") as stream:
-            for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                digest.update(chunk)
-                stream.write(chunk)
-                size += len(chunk)
-        actual = digest.hexdigest()
-        if actual != expected_sha256:
+        try:
+            with (
+                opener(request, timeout=120) as response,
+                destination.open("wb") as stream,
+            ):
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    stream.write(chunk)
+                    size += len(chunk)
+            os.chmod(destination, 0o600)
+            actual = digest.hexdigest()
+            if size != ARCHIVE_BYTES or actual != ARCHIVE_SHA256:
+                raise RuntimeError(
+                    f"official archive identity mismatch: bytes={size}, sha256={actual}"
+                )
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        return {"url": ARCHIVE_URL, "bytes": size, "sha256": actual}
+
+
+    def extract_exact_member(bundle, root, output_name, spec):
+        matches = [
+            item
+            for item in bundle.infolist()
+            if item.filename == spec["archive_member"]
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"official archive member count for {output_name}: {len(matches)}"
+            )
+        member = matches[0]
+        if (
+            member.file_size != spec["bytes"]
+            or f"{member.CRC:08x}" != spec["crc32"]
+        ):
+            raise RuntimeError(f"official archive metadata mismatch for {output_name}")
+        destination = root / output_name
+        temporary = destination.with_suffix(destination.suffix + ".part")
+        digest = hashlib.sha256()
+        try:
+            with bundle.open(member) as source, temporary.open("wb") as stream:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    stream.write(chunk)
+            actual = digest.hexdigest()
+            if actual != spec["sha256"]:
+                raise RuntimeError(
+                    f"official archive member hash mismatch for {output_name}: {actual}"
+                )
+            os.chmod(temporary, 0o600)
+            temporary.replace(destination)
+        except Exception:
             temporary.unlink(missing_ok=True)
-            raise RuntimeError(f"immutable asset hash mismatch for {name}: {actual}")
-        temporary.replace(destination)
-        return destination, url, size
+            raise
+        return destination, {
+            "name": member.filename,
+            "bytes": member.file_size,
+            "compressed_bytes": member.compress_size,
+            "crc32": f"{member.CRC:08x}",
+            "sha256": actual,
+        }
+
+
+    def extract_exact_assets(archive_path, root):
+        published = []
+        try:
+            with zipfile.ZipFile(archive_path) as bundle:
+                bad_member = bundle.testzip()
+                if bad_member is not None:
+                    raise RuntimeError(
+                        f"official archive ZIP integrity failure: {bad_member}"
+                    )
+                records = {}
+                for output_name, spec in MEMBER_SPECS.items():
+                    destination, record = extract_exact_member(
+                        bundle, root, output_name, spec
+                    )
+                    published.append(destination)
+                    records[output_name] = record
+        except zipfile.BadZipFile as error:
+            for destination in published:
+                destination.unlink(missing_ok=True)
+            raise RuntimeError("official archive is not a valid ZIP") from error
+        except Exception:
+            for destination in published:
+                destination.unlink(missing_ok=True)
+            raise
+        return records
+
+
+    def fetch_scene_assets(opener=urllib.request.urlopen, root=None):
+        root = (
+            Path("/tmp/npa-habitat-test-scenes") if root is None else Path(root)
+        )
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(root, 0o700)
+        archive_path = root / "habitat-test-scenes.zip.part"
+        archive_path.unlink(missing_ok=True)
+        try:
+            archive = download_exact_archive(archive_path, opener=opener)
+            records = extract_exact_assets(archive_path, root)
+        finally:
+            archive_path.unlink(missing_ok=True)
+        archive.update(
+            {
+                "url_is_mutable": True,
+                "zip_integrity": "pass",
+                "ephemeral_copy_removed": not archive_path.exists(),
+                "unrelated_members_extracted": False,
+            }
+        )
+        return root / SCENE_NAME, root / NAVMESH_NAME, archive, records
 
 
     def query_gpu():
@@ -271,8 +393,9 @@ config:
             "sha256": sha256_file(path),
         }
 
-    scene_path, scene_url, scene_bytes = fetch_exact(SCENE_NAME, SCENE_SHA256)
-    navmesh_path, navmesh_url, navmesh_bytes = fetch_exact(NAVMESH_NAME, NAVMESH_SHA256)
+    scene_path, navmesh_path, archive_provenance, asset_records = fetch_scene_assets()
+    scene_record = asset_records[SCENE_NAME]
+    navmesh_record = asset_records[NAVMESH_NAME]
     if scene_path.with_suffix(".navmesh") != navmesh_path:
         raise RuntimeError("scene and navmesh do not share the basename required for auto-loading")
 
@@ -450,18 +573,32 @@ config:
         "scene_sha256": SCENE_SHA256,
         "scene_license": "CC BY 4.0",
         "scene": {
-            "dataset": "ai-habitat/habitat_test_scenes",
-            "dataset_revision": DATASET_REVISION,
+            "source": "official Meta Habitat test-scene archive",
+            "archive": archive_provenance,
             "id": "habitat_test_scenes/skokloster-castle.glb",
             "sha256": SCENE_SHA256,
-            "bytes": scene_bytes,
+            "bytes": scene_record["bytes"],
+            "archive_member": scene_record,
             "license": "CC BY 4.0",
-            "collection_metadata_license": "CC BY-NC 4.0",
+            "license_url": ASSET_LICENSE_URL,
             "attribution": "The King's Hall, Skokloster Castle; scan by Erik Lernestål",
-            "canonical_url": scene_url,
+            "original_asset": {
+                "name": "The King's Hall",
+                "creator": "Skokloster Castle",
+                "scan_credit": "Erik Lernestål",
+                "url": ORIGINAL_ASSET_URL,
+            },
+            "modification_notice": (
+                "Official Habitat-ready processed GLB and navmesh derived from the "
+                "original scan; NPA copies the selected members byte-for-byte."
+            ),
+            "immutability_boundary": (
+                "The source URL is mutable; the complete archive and both selected "
+                "members must match their pinned SHA-256 values."
+            ),
             "navmesh_sha256": NAVMESH_SHA256,
-            "navmesh_bytes": navmesh_bytes,
-            "navmesh_canonical_url": navmesh_url,
+            "navmesh_bytes": navmesh_record["bytes"],
+            "navmesh_archive_member": navmesh_record,
         },
         "rendered_rgb_frame_count": frame_count,
         "rendered_depth_frame_count": frame_count,

@@ -40,27 +40,39 @@ does not imply a newer officially maintained Meta release.
 
 ## Scene and license boundary
 
-The hard gate fetches exactly two files from the official
-[`ai-habitat/habitat_test_scenes`](https://huggingface.co/datasets/ai-habitat/habitat_test_scenes)
-repository at immutable revision
-`910c783fb954da8497ea5f811b843a76590ddddc`:
+The hard gate fetches the official Meta-hosted
+[`habitat-test-scenes.zip`](http://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip)
+archive referenced by the pinned upstream
+[`examples/settings.py`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/examples/settings.py).
+That URL is mutable, so it is not treated as the asset identity. The workflow
+requires the complete 94,590,970-byte archive to match SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+passes a complete ZIP integrity check, and then requires these exact members:
 
-| File | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `skokloster-castle.glb` | 38,295,764 | `b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56` |
-| `skokloster-castle.navmesh` | 28,192 | `1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d` |
+| Archive member | Bytes | CRC32 | SHA-256 |
+| --- | ---: | --- | --- |
+| `data/scene_datasets/habitat-test-scenes/skokloster-castle.glb` | 38,295,764 | `7a0ced74` | `b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56` |
+| `data/scene_datasets/habitat-test-scenes/skokloster-castle.navmesh` | 28,192 | `a694cab0` | `1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d` |
 
-The pinned Habitat-Sim README identifies this demo as *The King's Hall* by
-Skokloster Castle and links the original asset under **CC BY 4.0**; it credits
-the scan to Erik Lernestål. The aggregate Hugging Face collection card currently
-labels the collection **CC BY-NC 4.0**. The proof records both statements rather
-than silently weakening either one. Operators should preserve the attribution
-and apply the stricter collection-level restriction where it governs their use.
+The pinned Habitat-Sim
+[`README`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/README.md)
+identifies this demo as [*The King's Hall* by Skokloster
+Castle](https://sketchfab.com/3d-models/the-kings-hall-d18155613363445b9b68c0c67196d98d),
+links it under the [Creative Commons Attribution 4.0
+license](https://creativecommons.org/licenses/by/4.0/legalcode.en) (**CC BY 4.0**),
+and credits the
+scan to Erik Lernestål. Outputs preserve the creator and scan attribution,
+license and original-asset links, and a modification notice stating that the
+official Habitat-ready GLB/navmesh were derived from the original scan and are
+copied byte-for-byte by NPA. There is no separate EULA, click-through, credential,
+or local acceptance proxy for these public CC BY bytes.
 
-The workflow deliberately does not call Habitat's broad
-`datasets_download --uids habitat_test_scenes` helper, because that would fetch
-additional scenes. It downloads only the two canonical, revision-pinned files
-above at run time and rejects either file unless its SHA-256 matches.
+The archive is a runtime-fetched data artifact, never an image layer. It is
+downloaded to an ephemeral mode-0600 file, verified as a whole, opened without
+path-based extraction, and deleted after the two selected members pass exact
+name, size, CRC32, and SHA-256 checks. No unrelated archive member is extracted
+or retained. The selected GLB and navmesh form an ephemeral worker cache and are
+not permission to persist or redistribute any other scene bytes.
 
 No Matterport3D, HM3D, Replica, Gibson, or other separately licensed scene data
 is used. There is no EULA click-through or gated repository needed for the
@@ -72,8 +84,9 @@ The exact required artifact is
 `$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`. A passing record contains:
 
 - the requested and pod-observed source commit;
-- scene ID, immutable dataset revision, file hashes, sizes, licenses, and
-  attribution;
+- scene ID, mutable archive URL role, immutable archive/member hashes, exact
+  member names/sizes/CRC32 values, license, attribution, original identity, and
+  modification provenance;
 - every saved RGB PNG, depth NumPy array, and depth preview PNG with shapes and
   paths, byte sizes, and SHA-256 hashes, plus aggregate hashes and finite depth
   statistics; live acceptance downloads and re-hashes every declared object;
@@ -93,11 +106,12 @@ The exact required artifact is
   preserves that observation with the proof and STRICT-provider-receipt hashes
   in the private `habitat-sim-live-validation.json` acceptance record.
 
-The smoke fails before success output if the GPU count or model is wrong, if a
-B200 or non-Blackwell device is selected, if NVIDIA EGL is not actually loaded,
-if the image is not digest-pinned, if RGB/depth output is absent or static, if
-depth has no finite samples, if Bullet time does not advance, or if the agent
-moves no meaningful distance.
+The smoke fails before success output if archive access fails, the mutable
+archive differs from its pinned size or hash, ZIP integrity or selected-member
+identity fails, the GPU count or model is wrong, a B200 or non-Blackwell device
+is selected, NVIDIA EGL is not actually loaded, the image is not digest-pinned,
+RGB/depth output is absent or static, depth has no finite samples, Bullet time
+does not advance, or the agent moves no meaningful distance.
 
 The companion profile requests exactly
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. Habitat-Sim is a renderer and must

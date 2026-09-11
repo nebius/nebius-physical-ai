@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "f95debe64187452612a81ec7ba093089c711b857d5c0ad6bb818dd459c7d5efc",
+  "workflow_sha256": "3f48e2c0a5ca5f2dbea9e33c9784a6a14657334b6e78bd9ce5147846ad696155",
   "planning": {
     "validation": {
       "status": "verified",
@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Inspection of the resolved one-step plan and focused contract tests confirm that the operations, inputs, target profile, and declared outputs match the requested pinned Habitat-Sim traversal. This planning claim does not assert that the target-pod traversal has executed.",
+      "reason": "Inspection of the resolved one-step plan and focused contract tests confirm that the operations, official Meta archive/member inputs, target profile, and declared outputs match the requested pinned Habitat-Sim traversal. This planning claim does not assert that the target-pod traversal has executed.",
       "evidence": [
         "npa workbench workflow plan-spec workflows/testing/byof-habitat-sim.yaml --run-id habitat-sim-plan --json",
         "npa/tests/workflows/test_byof_habitat_sim.py",
@@ -31,7 +31,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Both exact Skokloster files were independently fetched and hashed before implementation, but target-pod egress and readback remain unverified until the live run.",
+      "reason": "A bounded non-cloud owner-only check fetched the official Meta archive referenced by the pinned source tree, verified archive SHA-256 and ZIP integrity, and proved both exact member hashes match the workflow contract. Target-pod acquisition and readback remain unverified until the live run.",
       "evidence": [
         "docs/workbench/byof-habitat-sim.md#scene-and-license-boundary"
       ]

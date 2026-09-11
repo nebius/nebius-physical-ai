@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
+import zipfile
+import zlib
 
+import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -30,7 +34,8 @@ GUIDE_PATH = ROOT / "docs" / "workbench" / "byof-habitat-sim.md"
 LIVE_TEST_PATH = ROOT / "npa" / "tests" / "e2e" / "test_byof_onboarding_live_e2e.py"
 
 SOURCE_REVISION = "57ee4941dc4765240f0f91f70b2c97a919bf9038"
-DATASET_REVISION = "910c783fb954da8497ea5f811b843a76590ddddc"
+ARCHIVE_URL = "http://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip"
+ARCHIVE_SHA256 = "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06"
 SCENE_SHA256 = "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56"
 NAVMESH_SHA256 = "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
 CAPABILITY = "skokloster_castle_rgb_depth_bullet_traversal"
@@ -54,6 +59,82 @@ def _smoke_python() -> str:
     marker = "python3 - <<'PY'\n"
     assert marker in smoke
     return smoke.split(marker, 1)[1].rsplit("\nPY", 1)[0]
+
+
+def _asset_fetch_namespace() -> dict[str, object]:
+    tree = ast.parse(_smoke_python())
+    imports = {"hashlib", "os", "urllib.request", "zipfile"}
+    constants = {
+        "ARCHIVE_URL",
+        "ARCHIVE_SHA256",
+        "ARCHIVE_BYTES",
+        "SCENE_NAME",
+        "NAVMESH_NAME",
+        "SCENE_SHA256",
+        "NAVMESH_SHA256",
+        "MEMBER_SPECS",
+    }
+    functions = {
+        "download_exact_archive",
+        "extract_exact_member",
+        "extract_exact_assets",
+        "fetch_scene_assets",
+    }
+    selected = []
+    for node in tree.body:
+        if isinstance(node, ast.Import) and node.names[0].name in imports:
+            selected.append(node)
+        elif isinstance(node, ast.ImportFrom) and node.module == "pathlib":
+            selected.append(node)
+        elif (
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in constants
+        ):
+            selected.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in functions:
+            selected.append(node)
+    namespace: dict[str, object] = {}
+    exec(
+        compile(ast.Module(selected, type_ignores=[]), "<habitat-assets>", "exec"),
+        namespace,
+    )
+    return namespace
+
+
+def _test_archive(scene: bytes = b"scene", navmesh: bytes = b"navmesh") -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(
+            "data/scene_datasets/habitat-test-scenes/skokloster-castle.glb", scene
+        )
+        bundle.writestr(
+            "data/scene_datasets/habitat-test-scenes/skokloster-castle.navmesh",
+            navmesh,
+        )
+        bundle.writestr("unrelated-scene.glb", b"must-not-extract")
+    return payload.getvalue()
+
+
+def _configure_test_archive(namespace: dict[str, object], payload: bytes) -> None:
+    scene = b"scene"
+    navmesh = b"navmesh"
+    namespace["ARCHIVE_BYTES"] = len(payload)
+    namespace["ARCHIVE_SHA256"] = hashlib.sha256(payload).hexdigest()
+    namespace["MEMBER_SPECS"] = {
+        "skokloster-castle.glb": {
+            "archive_member": "data/scene_datasets/habitat-test-scenes/skokloster-castle.glb",
+            "bytes": len(scene),
+            "crc32": f"{zlib.crc32(scene):08x}",
+            "sha256": hashlib.sha256(scene).hexdigest(),
+        },
+        "skokloster-castle.navmesh": {
+            "archive_member": "data/scene_datasets/habitat-test-scenes/skokloster-castle.navmesh",
+            "bytes": len(navmesh),
+            "crc32": f"{zlib.crc32(navmesh):08x}",
+            "sha256": hashlib.sha256(navmesh).hexdigest(),
+        },
+    }
 
 
 def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
@@ -101,13 +182,17 @@ def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
     assert "habitat_test_scenes" not in build
     assert "skokloster-castle" not in build
 
-    assert DATASET_REVISION in smoke
+    assert ARCHIVE_URL in smoke
+    assert ARCHIVE_SHA256 in smoke
     assert SCENE_SHA256 in smoke
     assert NAVMESH_SHA256 in smoke
     assert "skokloster-castle.glb" in smoke
     assert "skokloster-castle.navmesh" in smoke
     assert '"scene_license": "CC BY 4.0"' in smoke
-    assert '"collection_metadata_license": "CC BY-NC 4.0"' in smoke
+    assert "huggingface.co" not in smoke
+    assert "ai-habitat/habitat_test_scenes" not in smoke
+    assert '"url_is_mutable": True' in smoke
+    assert '"unrelated_members_extracted": False' in smoke
     assert "datasets_download" not in smoke
     for forbidden in (
         "matterport",
@@ -117,6 +202,87 @@ def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
         "mp3d",
     ):
         assert forbidden not in smoke.lower()
+
+
+def test_habitat_sim_official_archive_fetch_extracts_only_exact_members(
+    tmp_path,
+) -> None:
+    namespace = _asset_fetch_namespace()
+    payload = _test_archive()
+    _configure_test_archive(namespace, payload)
+    calls = []
+
+    def opener(request, timeout):
+        calls.append((request.full_url, timeout))
+        return io.BytesIO(payload)
+
+    scene, navmesh, archive, records = namespace["fetch_scene_assets"](
+        opener=opener, root=tmp_path
+    )
+    assert calls == [(ARCHIVE_URL, 120)]
+    assert scene.read_bytes() == b"scene" and navmesh.read_bytes() == b"navmesh"
+    assert scene.stat().st_mode & 0o777 == 0o600
+    assert navmesh.stat().st_mode & 0o777 == 0o600
+    assert archive["ephemeral_copy_removed"] is True
+    assert archive["unrelated_members_extracted"] is False
+    assert (
+        records["skokloster-castle.glb"]["sha256"]
+        == hashlib.sha256(b"scene").hexdigest()
+    )
+    assert not (tmp_path / "unrelated-scene.glb").exists()
+
+
+def test_habitat_sim_official_archive_missing_access_fails_without_files(
+    tmp_path,
+) -> None:
+    namespace = _asset_fetch_namespace()
+
+    def refuse(_request, timeout):
+        assert timeout == 120
+        raise OSError("official archive unavailable")
+
+    with pytest.raises(OSError, match="official archive unavailable"):
+        namespace["fetch_scene_assets"](opener=refuse, root=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_habitat_sim_official_archive_hash_mismatch_fails_closed(tmp_path) -> None:
+    namespace = _asset_fetch_namespace()
+    payload = _test_archive()
+
+    with pytest.raises(RuntimeError, match="official archive identity mismatch"):
+        namespace["fetch_scene_assets"](
+            opener=lambda _request, timeout: io.BytesIO(payload), root=tmp_path
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_habitat_sim_corrupt_official_archive_fails_zip_integrity(tmp_path) -> None:
+    namespace = _asset_fetch_namespace()
+    payload = b"not-a-zip"
+    namespace["ARCHIVE_BYTES"] = len(payload)
+    namespace["ARCHIVE_SHA256"] = hashlib.sha256(payload).hexdigest()
+
+    with pytest.raises(RuntimeError, match="official archive is not a valid ZIP"):
+        namespace["fetch_scene_assets"](
+            opener=lambda _request, timeout: io.BytesIO(payload), root=tmp_path
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_habitat_sim_official_archive_member_hash_mismatch_fails_closed(
+    tmp_path,
+) -> None:
+    namespace = _asset_fetch_namespace()
+    payload = _test_archive()
+    _configure_test_archive(namespace, payload)
+    namespace["MEMBER_SPECS"]["skokloster-castle.glb"]["sha256"] = "0" * 64
+
+    with pytest.raises(RuntimeError, match="official archive member hash mismatch"):
+        namespace["fetch_scene_assets"](
+            opener=lambda _request, timeout: io.BytesIO(payload), root=tmp_path
+        )
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_habitat_sim_smoke_is_real_rgb_depth_bullet_traversal() -> None:
@@ -196,6 +362,10 @@ def test_habitat_sim_proof_declares_every_required_field() -> None:
         '"scene_id"',
         '"scene_sha256"',
         '"scene_license"',
+        '"license_url": ASSET_LICENSE_URL',
+        '"original_asset"',
+        '"modification_notice"',
+        '"immutability_boundary"',
         '"rendered_rgb_frame_count"',
         '"rendered_depth_frame_count"',
         '"shape"',
@@ -278,10 +448,12 @@ def test_habitat_sim_guide_records_upstream_warning_and_deferrals() -> None:
     assert "Beyond v0.3.4" in guide
     assert "do not officially maintain releases" in normalized
     assert SOURCE_REVISION in guide
-    assert DATASET_REVISION in guide
+    assert ARCHIVE_SHA256 in guide
     assert SCENE_SHA256 in guide
     assert "CC BY 4.0" in guide
-    assert "CC BY-NC 4.0" in guide
+    assert "Hugging Face collection" not in guide
+    assert "mutable" in guide
+    assert "modification" in guide
     assert "35 exact wheels" in normalized
     assert "proprietary or gated datasets" in guide
     assert "semantic annotations" in guide
