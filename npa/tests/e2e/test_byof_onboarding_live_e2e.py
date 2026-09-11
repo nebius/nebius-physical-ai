@@ -339,6 +339,35 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     return selectors
 
 
+@pytest.mark.parametrize(
+    "missing_selector",
+    ("project", "registry", "kubeconfig", "context", "namespace", "bucket"),
+)
+def test_robomimic_gate_refuses_missing_manager_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    missing_selector: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    selectors = {
+        "project": ("NPA_E2E_PROJECT", "manager-project"),
+        "registry": ("NPA_BYOF_ROBOMIMIC_REGISTRY", "private.invalid/robomimic"),
+        "kubeconfig": ("NPA_BYOF_KUBECONFIG", str(kubeconfig)),
+        "context": ("NPA_BYOF_K8S_CONTEXT", "manager-context"),
+        "namespace": ("NPA_BYOF_K8S_NAMESPACE", "robomimic-validation"),
+        "bucket": ("NPA_E2E_S3_BUCKET", "manager-bucket"),
+    }
+    for name, (variable, value) in selectors.items():
+        if name == missing_selector:
+            monkeypatch.delenv(variable, raising=False)
+        else:
+            monkeypatch.setenv(variable, value)
+
+    with pytest.raises(AssertionError):
+        _robomimic_live_selectors("manager-project")
+
+
 def _robomimic_runner_command(
     config: dict[str, object],
     registry: str,

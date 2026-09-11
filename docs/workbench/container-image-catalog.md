@@ -307,8 +307,11 @@ historical evidence.
   on a digest-pinned PyTorch CUDA 12.8 base. The official Lift PH low-dimensional
   dataset is hash-verified and fetched only at runtime. It remains outside the
   supported public release plan until an exact built-image payload/security
-  scan and live one-B200 train/validation/checkpoint-reload gate are accepted;
-  private build eligibility alone does not add a public-image row.
+  scan proves that no dataset, pretrained weight, checkpoint, cache, credential,
+  or run output was baked, and the live one-B200 train/validation/checkpoint-
+  reload gate is accepted. CUDA/cuDNN bytes are expected in the separately
+  classified operator-private runtime; private-registry access and build
+  eligibility do not grant runtime-use permission or add a public-image row.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,

@@ -21,10 +21,10 @@
   "prerequisites": {
     "output_storage": {
       "status": "blocked",
-      "reason": "The checked-in bucket is a placeholder. The manager runtime plan is prepared but undeployed and child cloud authorization is false, so no run-owned S3 prefix may be selected or preflighted yet.",
+      "reason": "The checked-in bucket is a placeholder. The manager runtime is deployed and verified globally, but robomimic child cloud authorization is false and no child runtime context is published, so no run-owned S3 prefix may be selected or preflighted yet.",
       "evidence": [
         "config.bucket=example-bucket",
-        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
       ]
     },
     "worker_input": {
@@ -37,31 +37,32 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may only be selected after the prepared manager runtime plan is deployed and this child is explicitly authorized. An authorized operator must review the NVIDIA CUDA Toolkit EULA and cuDNN Software License Agreement before the private build and run; neither agreement exposes a vendor entitlement probe or documented environment acceptance mechanism.",
+      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may be selected only after this child is explicitly authorized and receives a manager-published runtime context. An authorized operator must make the applicable NVIDIA CUDA Toolkit and cuDNN runtime-use decision before the private build and run; neither agreement exposes a vendor entitlement probe or documented environment acceptance mechanism.",
       "evidence": [
         "Public source and dataset require no token",
-        "NPA does not use a local consent proxy because a boolean cannot prove the operator's legal decision",
-        "docs/workbench/byof-robomimic.md: exact NVIDIA terms links, private-build boundary, and temporary Pod-read RBAC preflight",
-        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+        "The live harness refuses missing manager-issued project, registry, kubeconfig, context, namespace, or bucket selectors before it invokes the BYOF runner",
+        "NPA does not use a local consent proxy because a boolean, credential, runtime fetch, or private registry cannot prove the operator's legal decision",
+        "docs/workbench/byof-robomimic.md: six separate boundaries, official NVIDIA terms links, private-build decision, and temporary Pod-read RBAC preflight",
+        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The base image tag resolved to an immutable OCI digest and the headless CPython 3.11 x86-64 closure is pinned to 48 exact wheel hashes, but the private derivative has not been built, pushed, resolved by digest, or scanned.",
+      "reason": "The base image tag resolved to an immutable OCI digest and the headless CPython 3.11 x86-64 image closure is pinned to 48 exact wheel hashes. The unauthorized context correctly prevents building it, so the private derivative has not been pushed, resolved by digest, or scanned and no built-image byte-absence claim is made.",
       "evidence": [
         "pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime -> sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2",
         "dependency lock sha256:910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71; artifact_count=48",
         "declared build command sha256:40934ad75e79127e2b494adf73c59e0cd2164dda71dac2a142891cdda7a43bf6",
-        "docs/workbench/byof-robomimic.md"
+        "docs/workbench/byof-robomimic.md: post-authorization exact-digest scan must cover all layers and history and prove no dataset, pretrained weight, checkpoint, cache, credential, or run output is baked"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Exactly one STRICT-bound B200 and a temporary service account with get-only Pod access are required. Capacity is preflighted, but the manager plan is undeployed and this child has no authorized project, cluster, namespace, or network binding.",
+      "reason": "Exactly one STRICT-bound B200 and a temporary service account with get-only Pod access are required. The global manager runtime is deployed and verified, but this child has no authorization or published project, cluster, namespace, registry, output, or network binding.",
       "evidence": [
         "byof-solution-smoke-robomimic-b200-gpu resources.accelerators=B200:1",
         "profile serviceAccountName=npa-robomimic-observer; smoke requires STRICT-capacity attestation and status.containerStatuses[].imageID",
-        "child state.md: prepared-not-deployed; child_cloud_authorization=false"
+        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
       ]
     }
   }

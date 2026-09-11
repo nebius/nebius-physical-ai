@@ -12,13 +12,16 @@ The executable workflow is
 Its separate readiness record reports what has actually been checked; schema
 validation and planning do not imply that a B200 result exists.
 
-## Immutable inputs and licensing
+## Immutable inputs, outputs, and licensing
 
-| Input | Immutable identity | Packaging boundary |
+| Boundary | Immutable identity | Delivery and permission boundary |
 | --- | --- | --- |
 | Source | `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05` | MIT source is cloned into the private BYOF image. The exact commit's `LICENSE` was checked before build preparation and has SHA-256 `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. |
-| Dataset | `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, `v1.5/lift/ph/low_dim_v15.hdf5` | The dataset card declares MIT. Bytes are fetched only by the running operator workload and must match SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes before HDF5 is opened. Dataset bytes are never baked into the image. |
-| Base runtime | `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2` | Operator-private derivative only. PyTorch is BSD-3-Clause; CUDA/cuDNN components remain governed by their upstream NVIDIA terms. This candidate is not selected for public NPA publication. |
+| Baked runtime | `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2` | Operator-private derivative only. PyTorch is BSD-3-Clause. CUDA/cuDNN bytes are expected in this base and remain governed by their upstream NVIDIA terms; a private registry is only a delivery destination and supplies no permission to build, use, or redistribute them. This candidate is not selected for public NPA publication. |
+| Weights | None supplied | No pretrained weights are downloaded or baked. The trained BC checkpoint is a run output, not an input weight. |
+| Data and assets | `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, `v1.5/lift/ph/low_dim_v15.hdf5` | The dataset card declares MIT. Bytes are fetched only by the authorized running workload and must match SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes before HDF5 is opened. Dataset bytes and simulator assets are never baked into the image. |
+| Runtime cache | Run-local only | Builds use `--no-cache-dir`. The HDF5, training logs, and checkpoint live under the ephemeral run directory before selected outputs are uploaded. No credential, shared cache, downloaded dataset, or generated checkpoint may survive in image layers. |
+| Outputs | Run-scoped checkpoint, config, logs, BYOF summary, provenance, and `robomimic-smoke.json` | These are generated from the authorized run and uploaded only to its manager-issued private S3 prefix. Their production or storage does not derive permission from a runtime fetch, credential, registry, or input license; the operator remains responsible for applicable use and output restrictions. |
 
 The low-dimensional dependency closure is resolved for CPython 3.11 on Linux
 x86-64, pinned to 48 exact package versions, and bound to one reviewed wheel
@@ -35,6 +38,25 @@ BYOF build metadata to the exact declared build-command SHA-256. A release
 decision still requires scanning the built image bytes and reviewing the
 installed inventory.
 
+### Runtime delivery decision
+
+A neutral Python bootstrap plus an immutable runtime fetch was reassessed.
+PyTorch publishes a 2.7.1 CUDA 12.8 wheel channel, so that delivery is
+technically possible. It would still download CUDA/cuDNN-governed bytes and
+would not establish authority to use them. NVIDIA's current CUDA and cuDNN
+agreements require an authorized user and acceptance before download, install,
+or use; neither documents a machine-readable entitlement check that NPA can
+enforce. Moving those bytes from build time to Pod startup therefore changes
+delivery, not permission, and adds a large first-start dependency without
+removing the pending operator decision.
+
+The candidate consequently retains the smaller digest-pinned,
+operator-private build path. That path may execute only after the operator has
+made the applicable runtime-use decision and the manager has published this
+child's exact private registry and Kubernetes context. A credential or private
+registry is not evidence of that decision. No workflow flag or locally invented
+consent variable substitutes for it.
+
 The public Lift dataset needs no model entitlement or Hugging Face token. The
 CUDA/cuDNN-derived base remains subject to the current
 [NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html) and
@@ -46,6 +68,23 @@ must review and accept those terms under its own authority before the private
 build or run; registry credentials and a local boolean cannot prove that legal
 decision. This candidate is build-your-own and operator-private, and NPA does
 not publish its CUDA/cuDNN-derived image.
+
+The source and dataset are public and anonymously readable, so there is no
+source, dataset, or model-entitlement credential refusal to fabricate. The live
+gate instead fails before invoking the BYOF runner unless every manager-issued
+selector is present: project, private registry, kubeconfig file, Kubernetes
+context, non-default namespace, and output bucket. In the current child state,
+authorization is false and no robomimic context is published, so no build,
+runtime download, RBAC mutation, or GPU submission is permitted.
+
+After authorization, qualification must scan the exact pushed image digest,
+including every layer and image history entry. It must prove the absence of the
+Lift HDF5 payload, pretrained weights, generated checkpoints, run outputs,
+runtime caches, and credentials, and it must inventory installed licenses.
+CUDA/cuDNN runtime bytes are expected in this private image and are assessed at
+their separate baked-runtime boundary. No image has been built in the current
+unauthorized context, so this document does not claim that byte-absence gate
+has passed.
 
 ## Hard gate
 
@@ -77,6 +116,11 @@ the BYOF summary, logs, config, checkpoint, and provenance metadata to the fresh
 run prefix. A zero-step configuration, import-only check, overlapping split,
 mutable image, wrong GPU, bad hash, missing artifact, or failed upload is a hard
 failure.
+
+Focused local workflow and contract evidence was produced with the repository
+`npa/.venv` interpreter reporting CPython 3.12.14. Draft-PR CI also selects
+Python 3.12. Evidence from unrelated solution runs is not relabeled as this
+environment.
 
 ## Operator sequence
 
