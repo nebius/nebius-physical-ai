@@ -104,7 +104,10 @@ normal cleanup cancel and drain that exact scheduler ID before any run-cluster
 teardown; cancellation or drain ambiguity preserves the clusters. The generic
 direct-launch default is not an accepted LIBERO path, and selecting the LIBERO
 profile or payload account without `--solution-name libero` refuses before any
-launch preparation. The owner-only SkyPilot
+launch preparation. LIBERO also requires an existing owner-private isolated
+SkyPilot state directory. The runner resolves that directory once, then uses
+the same absolute path for provider checking, submission, polling,
+cancellation, cluster teardown, and isolated API shutdown. The owner-only SkyPilot
 config must contain exactly one nonempty `kubernetes.allowed_nodes.names` entry;
 an absent, differently shaped, or multi-node allowlist refuses before submit.
 Concrete node identity stays in owner-only runtime state and only its SHA-256 is

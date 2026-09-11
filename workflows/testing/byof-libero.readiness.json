@@ -5,7 +5,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026. The LIBERO runner additionally requires the explicit LIBERO identity, forces same-isolated-state managed scheduler-ID polling, treats verified scheduler absence as a terminal failure, and cancels and drains the exact scheduler ID before cluster teardown; it also refuses an absent or ambiguous owner-only allowed-node binding. Neither validation command launched infrastructure.",
+      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026. The LIBERO runner additionally requires the explicit LIBERO identity and an owner-private isolated SkyPilot state directory resolved once for provider check, submit, poll, cancel, teardown, and API stop; it treats verified scheduler absence as a terminal failure and cancels and drains the exact scheduler ID before cluster teardown. It also refuses an absent or ambiguous owner-only allowed-node binding. Neither validation command launched infrastructure.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id <owner-run-id> --json",
