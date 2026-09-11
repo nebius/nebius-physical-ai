@@ -950,6 +950,12 @@ def _gymnasium_pod_image_receipt(
 ) -> dict[str, object]:
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
+    expected_node_name = env.get(
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME", ""
+    ).strip()
+    assert expected_node_name, (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME must identify the assigned node"
+    )
     deadline = time.monotonic() + GYMNASIUM_RECEIPT_TIMEOUT_SECONDS
     while proc.poll() is None:
         if time.monotonic() >= deadline:
@@ -960,8 +966,17 @@ def _gymnasium_pod_image_receipt(
             continue
         pod = pods[0]
         metadata = pod.get("metadata", {})
-        assert pod.get("status", {}).get("phase") in {"Pending", "Running"}
-        containers = pod.get("spec", {}).get("containers", [])
+        phase = pod.get("status", {}).get("phase")
+        assert phase in {"Pending", "Running"}
+        spec = pod.get("spec", {})
+        observed_node_name = str(spec.get("nodeName", "")).strip()
+        if not observed_node_name and phase == "Pending":
+            time.sleep(2)
+            continue
+        assert observed_node_name == expected_node_name, (
+            "the exact run Pod must execute on the manager-assigned node"
+        )
+        containers = spec.get("containers", [])
 
         def gpu_quantity(container: dict[str, object], kind: str) -> int:
             return int(
@@ -1018,6 +1033,7 @@ def _gymnasium_pod_image_receipt(
             "pod_name": str(metadata.get("name", "")),
             "pod_namespace": str(metadata.get("namespace", "")),
             "pod_uid": str(metadata.get("uid", "")),
+            "node_name": observed_node_name,
             "container_name": str(container.get("name", "")),
             "spec_image": str(container.get("image", "")).removeprefix("docker:"),
             "image_id": image_id,
@@ -1296,14 +1312,14 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                     f"exact-run cleanup also failed: {cleanup_error}"
                 )
             raise
-    stdout = stdout_path.read_text(encoding="utf-8")
-    stderr = stderr_path.read_text(encoding="utf-8")
     _cleanup_gymnasium_run_after_success(
         env,
         namespace=namespace,
         run_id=run_id,
         config_path=config_path,
     )
+    stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
     credential_markers = live_credential_markers()
     assert_no_credential_leakage(
         stdout + "\n" + stderr, extra_forbidden=credential_markers
