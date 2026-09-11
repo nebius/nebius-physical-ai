@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
@@ -17,6 +18,9 @@ DIGEST = "sha256:" + "1" * 64
 IMAGE = f"registry.example/operator-private/gymnasium-robotics@{DIGEST}"
 RUN_ID = "gymnasium-robotics-unit-receipt"
 NAMESPACE = "operator-private"
+NODE_NAME = "reserved-rtx-node"
+NODE_UID = "reserved-rtx-node-uid"
+PROVIDER_GROUP = "reserved-provider-group"
 
 
 class _RunningProcess:
@@ -151,6 +155,149 @@ def test_owner_permission_preflight_matches_list_and_exec(
     ]
 
 
+def test_scheduling_contract_requires_one_exact_named_ready_rtx_node(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(
+        "kubernetes:\n  allowed_nodes:\n    names:\n      - reserved-rtx-node\n",
+        encoding="utf-8",
+    )
+    env = {
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME": NODE_NAME,
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_UID": NODE_UID,
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_PROVIDER_NODE_GROUP_ID": PROVIDER_GROUP,
+    }
+    node = {
+        "metadata": {
+            "name": NODE_NAME,
+            "uid": NODE_UID,
+            "labels": {
+                "provider.example/node-group-id": PROVIDER_GROUP,
+                "nvidia.com/gpu.product": (
+                    "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+                ),
+            },
+        },
+        "status": {
+            "allocatable": {"nvidia.com/gpu": "1"},
+            "conditions": [{"type": "Ready", "status": "True"}],
+        },
+    }
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert stdin is None
+        assert namespace == NAMESPACE
+        assert args == ("get", "node", NODE_NAME, "--output", "json")
+        return subprocess.CompletedProcess(args, 0, json.dumps(node), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    live._require_gymnasium_scheduling_contract(
+        env, namespace=NAMESPACE, config_path=str(config)
+    )
+
+
+def test_scheduling_contract_rejects_legacy_allowed_nodes_list(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(
+        "kubernetes:\n  allowed_nodes:\n    - reserved-rtx-node\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError, match="supported names mapping"):
+        live._require_gymnasium_scheduling_contract(
+            {}, namespace=NAMESPACE, config_path=str(config)
+        )
+
+
+def test_owner_receipt_scopes_gpu_request_to_matching_task_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["spec"]["containers"][0]["resources"] = {
+        "requests": {"nvidia.com/gpu": "0"},
+        "limits": {"nvidia.com/gpu": "0"},
+    }
+    pod["spec"]["containers"].append(
+        {
+            "name": "sidecar",
+            "image": "registry.example/operator-private/sidecar:latest",
+            "resources": {
+                "requests": {"nvidia.com/gpu": "1"},
+                "limits": {"nvidia.com/gpu": "1"},
+            },
+        }
+    )
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        assert args[:2] == ("get", "pods")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    with pytest.raises(AssertionError, match="request and limit one GPU"):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+
+
+def test_owner_receipt_poll_has_an_overall_deadline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    monkeypatch.setattr(live, "GYMNASIUM_RECEIPT_TIMEOUT_SECONDS", 0)
+    with pytest.raises(AssertionError, match="timed out waiting"):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+
+
+def test_kubectl_calls_have_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(live.subprocess, "run", fake_run)
+    live._gymnasium_kubectl(
+        {
+            "NPA_BYOF_KUBECONFIG": "/operator/kubeconfig",
+            "NPA_BYOF_K8S_CONTEXT": "child-context",
+        },
+        NAMESPACE,
+        "get",
+        "pods",
+    )
+    assert observed["timeout"] == live.GYMNASIUM_KUBECTL_TIMEOUT_SECONDS
+
+
 def test_cleanup_selection_keeps_exact_terminating_pod(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -170,9 +317,7 @@ def test_cleanup_selection_keeps_exact_terminating_pod(
         )
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
-    assert not live._exact_gymnasium_run_pods(
-        {}, namespace=NAMESPACE, run_id=RUN_ID
-    )
+    assert not live._exact_gymnasium_run_pods({}, namespace=NAMESPACE, run_id=RUN_ID)
     assert live._exact_gymnasium_run_pods(
         {}, namespace=NAMESPACE, run_id=RUN_ID, include_terminating=True
     ) == [terminating]
@@ -186,13 +331,19 @@ def test_failed_sky_down_is_not_accepted_while_exact_pod_remains(
     env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    observed: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         commands.append(command)
+        observed.update(kwargs)
         return subprocess.CompletedProcess(command, 1, "", "cleanup failed")
 
     monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
     monkeypatch.setattr(live.subprocess, "run", fake_run)
     monkeypatch.setattr(live, "_exact_gymnasium_run_pods", lambda *args, **kwargs: [{}])
+    monkeypatch.setattr(live, "GYMNASIUM_CLEANUP_TIMEOUT_SECONDS", 0)
 
     with pytest.raises(AssertionError, match="Pod remains"):
         live._cleanup_gymnasium_run(
@@ -212,4 +363,65 @@ def test_failed_sky_down_is_not_accepted_while_exact_pod_remains(
             RUN_ID,
         ]
     ]
+    assert observed["timeout"] == live.GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS
     assert all(path.stat().st_mode & 0o077 == 0 for path in evidence.iterdir())
+
+
+def test_failed_sky_down_polls_until_terminating_pod_is_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    observed_pods = iter([[{}], []])
+
+    monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
+    monkeypatch.setattr(
+        live.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 1, "", "cleanup raced deletion"
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_exact_gymnasium_run_pods",
+        lambda *args, **kwargs: next(observed_pods),
+    )
+    monkeypatch.setattr(live.time, "sleep", lambda _seconds: None)
+
+    live._cleanup_gymnasium_run(
+        env,
+        namespace=NAMESPACE,
+        run_id=RUN_ID,
+        config_path=None,
+        issue_down=True,
+    )
+
+
+def test_runner_termination_escalates_to_sigkill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[signal.Signals] = []
+
+    class StuckProcess:
+        pid = 123
+
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, *, timeout: int) -> int:
+            assert timeout == live.GYMNASIUM_RUNNER_TERM_GRACE_SECONDS
+            self.waits += 1
+            if self.waits == 1:
+                raise subprocess.TimeoutExpired("runner", timeout)
+            return -int(signal.SIGKILL)
+
+    monkeypatch.setattr(live.os, "killpg", lambda _pid, sent: signals.append(sent))
+    process = StuckProcess()
+    live._terminate_gymnasium_runner(process)
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert process.waits == 2

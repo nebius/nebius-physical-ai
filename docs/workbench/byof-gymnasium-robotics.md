@@ -92,6 +92,28 @@ Cloud execution is allowed only after the manager publishes task-owned runtime
 context for the reserved RTX PRO capacity. Do not provision a cluster from this
 workflow and never route this EGL workload to B200.
 
+Before submission, preserve the manager-published kubeconfig and derive a
+mode-0600 child-local copy whose selected child-specific context is explicitly
+bound to the assigned namespace. The task-private SkyPilot config must use the
+supported exact-name placement contract with one entry and no IP or label
+fallback:
+
+```yaml
+kubernetes:
+  allowed_nodes:
+    names:
+      - <manager-assigned-rtx-node>
+```
+
+The live gate requires the manager-issued node name, node UID, and provider
+node-group identifier at runtime, then verifies that the sole allowed node has
+the exact UID, is Ready, exposes one allocatable GPU, carries exactly one label
+whose value is that provider group, and advertises the RTX PRO 6000 Blackwell
+product. Owner-only preflight must additionally prove that this live provider
+node group has fixed/ready/target count one and a `STRICT` reservation policy
+containing exactly the one manager-assigned active reservation. These values
+and receipts must never enter the repository or PR text.
+
 The live E2E also requires
 `NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT` to be the exact manager-authorized,
 task-owned S3 prefix. It fails closed before submission if that value is absent
@@ -103,9 +125,12 @@ matches the full run annotation, immutable spec image, one-GPU request and
 limit, container name, Pod UID, and Kubernetes `imageID`. It injects that
 observation as a mode-0600 receipt. The workload consumes the receipt without
 Kubernetes API access. Do not grant the workload service account Pod access or
-create a RoleBinding for this integration. Runner output is drained directly
-to owner-private files, and every failure issues an exact-run `sky down` before
-verifying that the matched Pod is absent.
+create a RoleBinding for this integration. If the private registry later needs
+a run-scoped pull secret, create it only after these checks and ledger its exact
+Kubernetes UID, ownership, and cleanup contract before launch. Runner output is
+drained directly to owner-private files. Receipt polling, Kubernetes commands,
+runner termination, `sky down`, and deletion-to-absence checks are bounded;
+every failure attempts exact-run cleanup before returning.
 
 ```bash
 npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json

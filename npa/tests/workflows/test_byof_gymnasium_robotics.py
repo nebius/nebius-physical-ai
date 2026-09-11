@@ -204,11 +204,14 @@ def test_gymnasium_robotics_profile_is_one_strict_rtxpro_shape() -> None:
     assert envs["MUJOCO_GL"] == "egl"
     assert envs["PYOPENGL_PLATFORM"] == "egl"
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
+    assert envs["NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS"] == "900"
     assert "NVIDIA_VISIBLE_DEVICES" not in envs
     run = str(task["run"])
     assert "npa_pod_image_receipt.json" in run
     assert "owner-side-kubernetes-status" in run
     assert "NPA_BYOF_POD_IMAGE_ID" in run
+    assert "RECEIPT_DEADLINE" in run
+    assert "timed out waiting for the owner-side Pod image receipt" in run
     assert "serviceaccount" not in run
     assert "urllib.request" not in run
     assert "timeout=" not in run
@@ -268,6 +271,10 @@ def test_gymnasium_robotics_documentation_records_license_and_scope() -> None:
         "| Cache |",
         "| Outputs |",
         "Private delivery does not change",
+        "allowed_nodes",
+        "mode-0600 child-local copy",
+        "ledger its exact",
+        "Kubernetes UID",
         "RL training",
     ):
         assert required in text
@@ -279,9 +286,15 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT" in source
     assert 'run_id = f"gymnasium-robotics-{time.time_ns()}"' in source
     assert 'spec.config["output_root"] = authorized_output_root.rstrip("/")' in source
-    assert "the manager-authorized output root must include a bucket and prefix" in source
+    assert (
+        "the manager-authorized output root must include a bucket and prefix" in source
+    )
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE" in source
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_UID" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_PROVIDER_NODE_GROUP_ID" in source
+    assert "_require_gymnasium_scheduling_contract(" in source
     assert "owner-side-kubernetes-status" in source
     assert '("list", "pods"), ("create", "pods/exec")' in source
     assert 'get("skypilot-cluster-name")' in source
@@ -295,3 +308,8 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert 'command.extend(["--yes", run_id])' in source
     assert "exact-run cleanup also failed" in source
     assert "include_terminating=True" in source
+    assert "GYMNASIUM_KUBECTL_TIMEOUT_SECONDS" in source
+    assert "GYMNASIUM_RECEIPT_TIMEOUT_SECONDS" in source
+    assert "GYMNASIUM_CLEANUP_TIMEOUT_SECONDS" in source
+    assert "GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS" in source
+    assert "GYMNASIUM_RUNNER_TERM_GRACE_SECONDS" in source
