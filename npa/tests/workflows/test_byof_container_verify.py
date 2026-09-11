@@ -223,6 +223,20 @@ def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None
         module._libero_isolated_state_root(None)
 
 
+def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
+    module = _load_module()
+    args = SimpleNamespace(
+        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False, cleanup=False,
+    )
+    documents = [{"execution": "serial"}, {"name": "task"}]
+
+    with pytest.raises(ValueError, match="requires verified managed cleanup"):
+        module._bind_libero_runtime_contract(
+            args, documents, global_config={}, infra="k8s/context"
+        )
+
+
 def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
     monkeypatch, tmp_path
 ) -> None:
@@ -814,10 +828,18 @@ def test_managed_cleanup_cancels_and_drains_exact_job_before_down(
     )
     monkeypatch.setattr(module, "workflow_status", status)
     monkeypatch.setattr(module, "cancel_workflow_job", cancel)
+
+    def verified_absence(**_kwargs):
+        calls.append("verify-absent")
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
     monkeypatch.setattr(
         module,
         "_verify_managed_clusters_absent",
-        lambda **_k: calls.append("verify-absent") or module.CleanupResult(),
+        verified_absence,
     )
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
@@ -831,6 +853,8 @@ def test_managed_cleanup_cancels_and_drains_exact_job_before_down(
     )
 
     assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
     assert calls[-2:] == ["down", "verify-absent"]
     cancel_call = next(call for call in calls if call[0] == "cancel")[1]
     assert cancel_call == {
@@ -1004,11 +1028,62 @@ def test_managed_cleanup_preserves_clusters_after_persistent_status_exception(
 
 
 @pytest.mark.parametrize(
+    "status_failure",
+    [None, SimpleNamespace(), TypeError("malformed status")],
+)
+def test_managed_cleanup_cancels_on_malformed_or_unlisted_status_failure(
+    monkeypatch, status_failure
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+
+    def status(*_args, **_kwargs):
+        if isinstance(status_failure, Exception):
+            raise status_failure
+        return status_failure
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert "could not be verified" in result.errors[0]
+    assert calls == ["cancel"]
+
+
+@pytest.mark.parametrize(
     ("stdout", "expected_error"),
     [
         ("not-json", "was not exact JSON"),
         ('{"unexpected": []}', "invalid schema"),
+        ('{"clusters": [], "error": "denied"}', "invalid schema"),
         ('[{"status": "UP"}]', "invalid row"),
+        ('[{"name": " human-run-name-worker "}]', "invalid row"),
+        (
+            '[{"name": "unrelated", "cluster": "human-run-name-worker"}]',
+            "ambiguous name row",
+        ),
+        (
+            '[{"name": "unrelated", "error": "permission denied"}]',
+            "contradictory error metadata",
+        ),
         ('[{"name": "human-run-name-worker"}]', "still contains"),
     ],
 )
@@ -1205,7 +1280,43 @@ def test_submit_returns_failure_when_exact_cleanup_is_not_verified(
     assert summary["cleanup"] == {
         "errors": ["cluster absence was not verified"],
         "ok": False,
+        "remote_absence_verified": False,
         "resources_removed": [],
+        "verified": False,
+    }
+
+
+def test_submit_requires_and_emits_verified_remote_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (SimpleNamespace(status="SUCCEEDED"), {"terminal": True}),
+    )
+    cleanup = module.CleanupResult()
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
+    monkeypatch.setattr(
+        module, "_cancel_then_teardown_managed_job", lambda *_a, **_k: cleanup
+    )
+
+    assert module._submit_and_wait(args) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["cleanup"] == {
+        "errors": [],
+        "ok": True,
+        "remote_absence_verified": True,
+        "resources_removed": [],
+        "verified": True,
     }
 
 
