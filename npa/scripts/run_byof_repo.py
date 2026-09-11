@@ -325,6 +325,7 @@ def _dockerfile_text() -> str:
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
         "      git ca-certificates python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
+        "  && rm -f /etc/ssh/ssh_host_* \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
         "RUN install -d -m 0755 /run/sshd \\\n"
