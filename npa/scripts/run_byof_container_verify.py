@@ -767,17 +767,21 @@ def _cancel_exact_managed_job(
     """Cancel one exact managed job in its submitted scheduler state."""
 
     cleanup = CleanupResult()
-    cancel = cancel_workflow_job(
-        sky_bin=sky_bin,
-        job_id=scheduler_job_id,
-        run_id=teardown_guard.run_id,
-        isolated_config_dir=isolated_config_dir,
-        config_path=config_path,
-        timeout=max(int(teardown_guard.timeout), 1),
-        poll_seconds=max(float(poll_interval), 0.1),
-        also_down_cluster=False,
-    )
     cleanup.commands.append([sky_bin, "jobs", "cancel", "--yes", scheduler_job_id])
+    try:
+        cancel = cancel_workflow_job(
+            sky_bin=sky_bin,
+            job_id=scheduler_job_id,
+            run_id=teardown_guard.run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            timeout=max(int(teardown_guard.timeout), 1),
+            poll_seconds=max(float(poll_interval), 0.1),
+            also_down_cluster=False,
+        )
+    except Exception:  # noqa: BLE001 - preserve resources on cancellation ambiguity
+        cleanup.errors.append("exact managed-job cancellation raised unexpectedly")
+        return cleanup
     if cancel["cancel_returncode"] != 0:
         cleanup.errors.append("exact managed-job cancellation failed")
     else:
@@ -842,7 +846,11 @@ def _cancel_then_teardown_managed_job(
             "preserving its clusters"
         )
         return cleanup
-    cleanup.extend(teardown_guard.teardown())
+    try:
+        cleanup.extend(teardown_guard.teardown())
+    except Exception:  # noqa: BLE001 - never claim teardown or absence on ambiguity
+        cleanup.errors.append("run-cluster teardown raised unexpectedly")
+        return cleanup
     if cleanup.ok:
         absence = _verify_managed_clusters_absent(
             run_id=teardown_guard.run_id,
@@ -886,7 +894,12 @@ def _strict_cluster_names(output: str) -> list[str]:
         if len(name_fields) > 1:
             raise ValueError("inventory contained an ambiguous name row")
         name = cluster[name_fields[0]]
-        if not isinstance(name, str) or not name or name != name.strip():
+        if (
+            not isinstance(name, str)
+            or not name
+            or name != name.strip()
+            or not re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        ):
             raise ValueError("inventory contained an invalid row")
         names.append(name)
     return names
@@ -905,16 +918,20 @@ def _verify_managed_clusters_absent(
     cmd = [sky_bin, "status", "--refresh", "--output", "json"]
     if config_path is not None:
         cmd[2:2] = ["--config", str(config_path)]
-    result = subprocess.run(
-        cmd,
-        env=sky_environment(isolated_config_dir),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-    )
     cleanup = CleanupResult(commands=[cmd])
+    try:
+        result = subprocess.run(
+            cmd,
+            env=sky_environment(isolated_config_dir),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 - absence must remain unverified
+        cleanup.errors.append("post-teardown SkyPilot cluster inventory raised")
+        return cleanup
     if result.returncode != 0:
         cleanup.errors.append("post-teardown SkyPilot cluster inventory command failed")
         return cleanup
