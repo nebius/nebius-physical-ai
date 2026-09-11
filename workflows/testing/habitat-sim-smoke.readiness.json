@@ -28,7 +28,7 @@
       "status": "blocked",
       "reason": "The genuine official Meta archive is runtime-only and was not fetched in Phase A. A future run must verify the pinned archive and exact GLB/navmesh hashes before Habitat opens the scene.",
       "evidence": [
-        "docs/workbench/byof-habitat-sim.md#data-and-output-boundaries"
+        "docs/workbench/byof-habitat-sim.md#scene-and-attribution-boundary"
       ]
     },
     "credentials": {
@@ -47,7 +47,7 @@
       "status": "blocked",
       "reason": "No dedicated-image capability run exists. Qualification requires the exact digest on exactly one STRICT RTX PRO 6000 Blackwell and explicitly refuses B200.",
       "evidence": [
-        "docs/workbench/byof-habitat-sim.md#live-qualification-contract"
+        "docs/workbench/byof-habitat-sim.md#workflow-and-hard-gate"
       ]
     }
   }

@@ -64,6 +64,17 @@ def test_runtime_asset_is_not_misclassified_as_baked() -> None:
     assert "credentials" in text and "generated outputs" in text
 
 
+def test_runtime_lock_contains_matplotlibs_pinned_packaging_dependency() -> None:
+    build = _wheel_lock("requirements-build.lock")
+    runtime = _wheel_lock("requirements-runtime.lock")
+    assert runtime["packaging==26.3"] == build["packaging==26.3"]
+    licenses = json.loads((PACKAGE / "licenses.json").read_text())
+    packaging = next(
+        row for row in licenses["python_wheels"] if row["name"] == "packaging"
+    )
+    assert packaging["role"] == "build-and-runtime"
+
+
 def test_pillow_runtime_wheel_is_fixed_and_carries_exact_bundled_notices() -> None:
     licenses = json.loads((PACKAGE / "licenses.json").read_text())
     pillow = next(row for row in licenses["python_wheels"] if row["name"] == "pillow")

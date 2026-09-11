@@ -123,6 +123,10 @@ def _scan_layers(
         re.compile(pattern, re.IGNORECASE)
         for pattern in contract["forbidden_path_patterns"]
     ]
+    forbidden_nondirectory = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in contract["forbidden_nondirectory_path_patterns"]
+    ]
     forbidden_hashes = set(contract["forbidden_content_sha256"])
     final_paths: dict[str, str] = {}
     tracked_files: dict[str, bytes] = {}
@@ -140,7 +144,12 @@ def _scan_layers(
                 seen.add(path)
                 if _apply_whiteout(final_paths, path, member):
                     continue
-                if any(pattern.search(path) for pattern in forbidden):
+                kind = _member_kind(member)
+                forbidden_path = any(pattern.search(path) for pattern in forbidden)
+                forbidden_nondirectory_path = kind != "directory" and any(
+                    pattern.search(path) for pattern in forbidden_nondirectory
+                )
+                if forbidden_path or forbidden_nondirectory_path:
                     findings.append(
                         {
                             "code": "forbidden_path",
@@ -148,7 +157,6 @@ def _scan_layers(
                             "entry": entry_index,
                         }
                     )
-                kind = _member_kind(member)
                 if kind == "unsupported":
                     findings.append(
                         {
