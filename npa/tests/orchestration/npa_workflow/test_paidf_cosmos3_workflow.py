@@ -148,8 +148,8 @@ def test_configuration_surface_and_privacy_defaults() -> None:
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
     assert float(config["source_motion_weight"]) == 0.0
-    assert float(config["grade_threshold"]) == 0.3
-    assert float(config["attribute_threshold"]) == 0.5
+    assert float(config["grade_threshold"]) == 0.2
+    assert float(config["attribute_threshold"]) == 0.25
     assert config["augmentation_seed"] == "30"
     assert (
         doc["states"]["generate-configs"]["run"]["argv"][-1]

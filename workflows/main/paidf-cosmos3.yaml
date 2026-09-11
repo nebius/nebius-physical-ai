@@ -52,8 +52,8 @@ config:
   source_motion_weight: "0.0"
   # Exploratory acceptance: retain measured failures in reports. Production
   # datasets should set thresholds for their own task and visual review policy.
-  grade_threshold: "0.3"
-  attribute_threshold: "0.5"
+  grade_threshold: "0.2"
+  attribute_threshold: "0.25"
   alignment_mode: required
   # Cosmos Evaluator defaults to the ranking observation policy. Workflows that
   # perform a separate final selection override this per state with `holdout`.

@@ -9,7 +9,8 @@ The workflow selects a robot video, captions it with a hosted vision-language
 model through Token Factory, generates appearance variants with Cosmos3-Nano
 on your GPU, and evaluates them with Cosmos Evaluator. Accepted variants pass
 through captioning, Cosmos Curator, and FiftyOne Brain before a final report.
-Rejected variants produce Rerun quality evidence and stop before curation.
+If variants remain rejected after the configured refinement passes, the workflow
+preserves Rerun quality evidence and stops before curation.
 
 > **Validation scope:** Setup commands were exercised on Linux with Python 3.12
 > and an existing RTX PRO 6000 Blackwell cluster. Full live validation of the
@@ -52,9 +53,25 @@ On macOS with Homebrew:
 brew install python@3.12 git kubectl awscli ffmpeg socat netcat jq
 ```
 
-On Ubuntu, install the equivalent packages and Python 3.12 using the
-[platform installation guide](../../docs/install.md). Use Python 3.12 for both the
-NPA environment and isolated SkyPilot environment in this guide. The supported
+On Ubuntu 24.04, install the base packages, including its
+[Python 3.12 package](https://packages.ubuntu.com/noble/python3.12) and venv module:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3.12 python3.12-venv git curl ffmpeg socat netcat-openbsd jq
+python3.12 --version
+```
+
+Also install `kubectl` using the
+[Kubernetes Linux instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)
+and `aws` using the
+[AWS CLI installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+For a Linux distribution without Python 3.12 packages, use
+[uv's Python installation instructions](https://docs.astral.sh/uv/guides/install-python/#installing-a-specific-version)
+to install version `3.12`, and verify that `python3.12 --version` succeeds.
+
+Use Python 3.12 for both the NPA environment and isolated SkyPilot environment
+in this guide. The supported
 SkyPilot runtime requires Python 3.9–3.12; a newer interpreter can fail at submit.
 For the new-cluster path in S5, also install Terraform 1.x using the
 [platform tool instructions](../../docs/install.md#5-optional-operator-tools)
@@ -334,7 +351,14 @@ section. See [SkyPilot setup](../../docs/orchestration/skypilot-setup.md).
 
 NPA submission resolves project storage from its credential store. The `aws`
 commands in this guide use a profile named `nebius`. If you use those commands,
-merge the selected project's access and secret keys from S2 into your local
+create the profile directory first:
+
+```bash
+mkdir -p ~/.aws
+chmod 700 ~/.aws
+```
+
+Merge the selected project's access and secret keys from S2 into your local
 `~/.aws/credentials`:
 
 ```ini
@@ -394,7 +418,6 @@ export BUCKET='<your-configured-bucket-name>'
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 export KUBECONFIG="$HOME/.npa/clusters/$KUBE_CONTEXT/kubeconfig"
 export NPA_WORKFLOW_GPU_ACCELERATOR='<discovered-gpu-name>:1'
-export NPA_SRC_OVERLAY=1
 SPEC=workflows/main/paidf-cosmos3.yaml
 
 npa workbench token-factory models
@@ -422,12 +445,14 @@ npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" --assume-decision promote_checkpoint \
   --var bucket="$BUCKET" --var caption_model="$CAPTION_MODEL" --json
-npa workbench workflow preflight-images "$SPEC" --project "$PROJECT_ALIAS"
+npa workbench workflow preflight-images "$SPEC" \
+  --assume-decision promote_checkpoint --project "$PROJECT_ALIAS"
 ```
 
-Stop and resolve any failed check. The assumed decision lets you inspect a
-plan; the runtime submit below follows actual evaluator decisions. Leave image
-preflight enabled so incompatible images fail before a stage starts.
+Stop and resolve any failed check. The assumed decision previews the accepted
+path and checks its downstream images; the runtime submit below follows actual
+evaluator decisions. Leave image preflight enabled so incompatible images fail
+before a stage starts.
 
 ### R3. Submit
 
@@ -454,9 +479,11 @@ The starter exercises the workflow; it is not a known passing quality fixture.
 Its generated variants can be rejected with the default settings.
 
 On a cold worker, image pulls, source setup, and model downloads happen before
-sampling. Downloading weights can dominate setup time. Each refinement launches
-a new managed job and may repeat worker setup; inspect the stage logs to
-distinguish setup progress from inference progress.
+the payload. Runtime stages launch managed jobs and can repeat worker setup,
+so even short CPU stages may take several minutes of wall time. Model downloads
+can dominate GPU startup. Inspect stage logs to distinguish setup from payload
+progress, and keep the submit command running so its driver can launch later
+stages. R4 describes recovery if that driver is interrupted.
 
 `--runtime` lets the orchestrator read evaluator decisions and execute real
 refinement loops. This workflow declares `metadata.executionMode: runtime`, so
@@ -545,14 +572,16 @@ Use a fresh run ID after changing inputs or settings.
 | `augmentation_seed` | `30` | Fixed appearance profiles across fresh run IDs; change it for new appearance experiments. An empty value restores run-ID sampling. |
 | `refinement_iterations` | `2` | Maximum total generation/evaluation passes, including the initial pass. |
 | `retry_seed_stride`, `retry_guidance_delta`, `retry_steps_delta` | `1000`, `-0.5`, `4` | Changes per retry. The second pass starts at seed `1017`, guidance `4.5`, and `28` steps. |
-| `grade_threshold` | `0.3` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
-| `attribute_threshold` | `0.5` | Minimum fraction of requested appearance attributes correctly recognized per variant. Every question must have a valid answer. |
+| `grade_threshold` | `0.2` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
+| `attribute_threshold` | `0.25` | Minimum fraction of requested appearance attributes correctly recognized per variant: at least 1 of the default 4 attributes. Every question must have a valid answer. |
 | `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
 | `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |
 | `appearance_fidelity_mode`, `appearance_fidelity_threshold` | `advisory`, `0.8` | Protected-appearance diagnostic. Related `appearance_*` keys configure regions and tolerances. |
 | `source_motion_weight` | `0.0` | Must remain zero: publish model output after guardrail processing; blending does not align motion. |
+| `curator_clip_len_s`, `curator_min_clip_len_s` | `3`, `1` | Curator's target and minimum clip durations in seconds. Use a source at least one second long for the full pipeline with these defaults. |
+| `curator_motion_filter` | `score-only` | Retain Curator motion measurements without discarding clips based on that diagnostic. |
 
 For example, adding `--var seed=29 --var augmentation_seed=17` to both commands
 changes the generation seed and fixes appearance sampling. This is a controlled
@@ -562,7 +591,7 @@ Reducing a quality threshold changes the acceptance criteria; it does not repair
 the generated video. Model guardrails, complete evaluator responses, media
 integrity and timeline alignment remain required.
 
-The shipped `0.3`/`0.5` criteria are for exploratory pipeline runs. To require
+The shipped `0.2`/`0.25` criteria are for exploratory pipeline runs. To require
 the earlier stricter criteria, add `--var grade_threshold=0.75
 --var attribute_threshold=1.0` to both plan and submit. Choose production
 criteria using representative videos and human review of the resulting data.
@@ -716,6 +745,7 @@ appears.
 | `Runtime-required workflows reject --assume-decision for execution` | Execution is using a planned decision | Use the full R3 runtime command; assumed decisions belong only in offline plans. |
 | Workflow YAML does not exist | Path copied from a previous repository layout | Run from the repository root and use `workflows/main/paidf-cosmos3.yaml`. |
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
+| `ERROR:root:'NoneType' object has no attribute 'strip'` during an otherwise successful launch | A kubeconfig credential plugin returned a valid token with `expirationTimestamp: null` | This was nonfatal in live validation: the Kubernetes client logged an expiry parsing error after loading the token. Check the actual command exit and stage status; rerun credential preflight for authentication failures. |
 | `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
 | `The active Nebius CLI profile cannot authenticate non-interactively` | CLI compatibility as well as authentication | Check the version first; install the compatible CLI from P2 before replacing the profile. |
 | `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../docs/credentials.yaml.example). Do not assign ambiguous keys to the new project. |
@@ -743,6 +773,10 @@ For pod-level and artifact triage, see
 
 ## Validation
 
+P1's Ubuntu 24.04 package commands passed in a fresh disposable container:
+Python 3.12.3, virtualenv creation, pip, and all listed base tools were verified.
+The separate `kubectl` and AWS installers linked from P1 were outside that check.
+
 The portable bootstrap in S6 was exercised with Python 3.12.14 on Linux: a
 fresh SkyPilot 0.12.2 installation and a second invocation that reused it both
 succeeded. Credential, model-access, storage, image, source-staging, and input
@@ -751,18 +785,22 @@ with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
 The current structural-transfer validation has completed real input preparation,
-configuration generation, and hosted source captioning. Its 169-frame source
+configuration generation, hosted source captioning, and both native GPU variants.
+Its 169-frame source
 at 50 fps and 640×480 becomes an 81-frame reference at 24 fps and 832×480.
 Duration changes from 3.38 to 3.375 seconds through frame-rate sampling;
-letterboxing preserves aspect ratio and does not stretch time. Native GPU
-generation and the accepted downstream path are still being validated.
+letterboxing preserves aspect ratio and does not stretch time. Both generated
+videos fully decode with the prepared reference's dimensions, frame count,
+frame rate, and duration. Native control readback and text/video guardrails
+passed for both variants. Evaluation and the accepted downstream path are
+still being validated.
 
 Automated checks cover media corruption and alignment failures, native control
 pixels and guardrail processing, incomplete evaluator responses, runtime
 routing, every accepted variant's captions, and final artifact validation.
 These checks do not substitute for a completed live run. Concurrent two-GPU
-variants, fresh-cluster provisioning, and the desktop Rerun UI have not been
-validated by this run.
+variants, longer videos requiring multiple native chunks, fresh-cluster
+provisioning, and the desktop Rerun UI have not been validated by this run.
 
 ## Inspect the outputs
 
@@ -811,10 +849,10 @@ accepted.
 
 ### Open the recording
 
-After `visualize-quality-evidence` succeeds, list the run artifacts and locate
-`reports/quality-evidence.rrd`. Accepted runs additionally publish
-`reports/sim2real.rrd` after curation, including augmented captions and both
-curation reports. The two paths preserve the earlier quality evidence:
+After successful finalization, open `reports/sim2real.rrd` for the complete
+accepted run, including augmented captions and both curation reports.
+`reports/quality-evidence.rrd` is the earlier recording produced before curation;
+it is also available after a quality rejection. List the run artifacts:
 
 ```bash
 npa workbench workflow artifacts "$RUN_ID" --project "$PROJECT_ALIAS"
@@ -825,14 +863,18 @@ For the default prefix used in this guide, verify and download the known output
 directly with the AWS profile from S7:
 
 ```bash
-export RRD_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/reports/quality-evidence.rrd"
-aws s3 ls "$RRD_URI" --profile nebius
-aws s3 cp "$RRD_URI" ./quality-evidence.rrd --profile nebius
-rerun quality-evidence.rrd
+(
+  set -e
+  umask 077
+  RRD_FILE=sim2real.rrd
+  # For a rejected run or earlier quality review: RRD_FILE=quality-evidence.rrd
+  RRD_DIR="$(mktemp -d "./paidf-recording-${RUN_ID}.XXXXXX")"
+  RRD_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/reports/$RRD_FILE"
+  aws s3 ls "$RRD_URI" --profile nebius
+  aws s3 cp "$RRD_URI" "$RRD_DIR/$RRD_FILE" --profile nebius
+  rerun "$RRD_DIR/$RRD_FILE"
+)
 ```
-
-For an accepted completed run, use `reports/sim2real.rrd` in the same commands
-to open the final recording.
 
 If you changed the workflow prefix, use its declared output URI instead. Run
 the final `rerun` command in a desktop session. From a headless host, transfer

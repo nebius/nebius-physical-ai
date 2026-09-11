@@ -83,7 +83,7 @@ every effective prompt, and saves the video guardrail's postprocessed output.
 `alignment_mode: required` independently verifies complete decoding, frame
 counts, timestamps and the generated/source hashes before quality scoring.
 The workflow's exploratory `grade_threshold` and `attribute_threshold`
-default to `0.3` and `0.5`; reports retain individual failed attribute checks. For
+default to `0.2` and `0.25`; reports retain individual failed attribute checks. For
 stricter acceptance, explicitly set `0.75` and `1.0` respectively. These quality
 settings do not weaken complete decoding, alignment or model guardrails.
 These controls apply to this workflow's prepare/generate-variants commands;
