@@ -49,6 +49,21 @@ registry and output-storage credentials. The generated JSON is factual
 operator telemetry. RGB frames remain in memory and contribute only hashes;
 no upstream asset bytes are republished as an output.
 
+| Artifact class | Delivery and decision |
+| --- | --- |
+| Source | Exact official commit, retained with its MIT root license inside the operator-private BYOF image. It is not copied into the NPA repository or promoted publicly. |
+| Baked runtime | Exact Ubuntu amd64 base plus the pinned MuJoCo wheel and version-pinned apt/Python closure. Notices are retained; the resulting image is authorized only for operator-private validation. |
+| Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
+| Data/assets | No external dataset. The directly loaded Shadow Hand XML, STL, and PNG files are part of the pinned upstream source, hash-verified, retained with `assets/LICENSE.md`, and used only in the private image. |
+| Cache | No model/data cache or credential is baked. Package-manager download caches are disabled or removed during the build. |
+| Outputs | Operator-generated factual JSON telemetry and execution logs. RGB frames are transient; only hashes and measurements are durable. No upstream asset byte is republished. |
+
+Runtime fetch is unnecessary for this capability because there is no separately
+gated model, dataset, SDK, or asset payload. Private delivery does not change
+the applicable licenses or grant broader usage/output permission. The built
+bytes must still be scanned to prove the absence of secrets, weights, external
+datasets, and persistent caches before the exact digest can run.
+
 ## Hard-gate capability
 
 [`byof-gymnasium-robotics.yaml`](../../workflows/testing/byof-gymnasium-robotics.yaml)
@@ -80,10 +95,14 @@ workflow and never route this EGL workload to B200.
 The live E2E also requires
 `NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT` to be the exact manager-authorized,
 task-owned S3 prefix. It fails closed before submission if that value is absent
-or is only a bucket. The workload service account must already have the narrow
-permission to read its own Pod so the smoke can verify Kubernetes' running
-`imageID`; verify that permission rather than adding cluster IAM from this
-workflow.
+or is only a bucket. It also requires the exact manager-authorized namespace
+and an owner-private local evidence directory. The owner identity must already
+be able to get Pods and exec into the exact run Pod. The live gate matches the
+full SkyPilot run annotation, immutable spec image, one-GPU request, container
+name, Pod UID, and Kubernetes `imageID`, then injects that observation as a
+mode-0600 receipt. The workload consumes the receipt without Kubernetes API
+access. Do not grant the workload service account Pod access or create a
+RoleBinding for this integration.
 
 ```bash
 npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json
@@ -99,10 +118,11 @@ push into the manager-assigned private registry. Resolve and pull that image by
 digest, then complete the SBOM, vulnerability, secret, license, payload, and
 container-contract checks. Set `NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE` to that
 reviewed immutable reference before enabling the dedicated live E2E gate; the
-test then passes `--skip-build` and cannot silently replace the scanned bytes.
-It submits through NPA/SkyPilot/Kubernetes, uploads evidence, and cancels the
-run-owned workload after terminal evidence. Exact registry, storage, cluster,
-capacity-block, pod, and run identifiers belong only in owner-only evidence.
+test requires it, passes `--skip-build`, and cannot silently replace the scanned
+bytes. It submits through NPA/SkyPilot/Kubernetes, uploads evidence, and cancels
+the run-owned workload after terminal evidence. Exact registry, storage,
+cluster, capacity-block, pod, and run identifiers belong only in owner-only
+evidence.
 
 ## Deferred scope
 
