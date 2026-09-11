@@ -83,11 +83,20 @@ def _download(
                 raise SmokeFailure(
                     "official archive redirected away from the pinned HTTPS URL"
                 )
-            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            headers = getattr(response, "headers", {})
+            content_length = headers.get("Content-Length")
+            if content_length is not None and int(content_length) > ARCHIVE_BYTES:
+                raise SmokeFailure(
+                    "official archive exceeds its pinned Content-Length boundary"
+                )
+            while chunk := response.read(min(1024 * 1024, ARCHIVE_BYTES - size + 1)):
+                if size + len(chunk) > ARCHIVE_BYTES:
+                    raise SmokeFailure(
+                        "official archive exceeded its pinned byte boundary"
+                    )
                 digest.update(chunk)
                 stream.write(chunk)
                 size += len(chunk)
-            headers = getattr(response, "headers", {})
             response_metadata = {
                 "status": getattr(response, "status", None),
                 "content_length": headers.get("Content-Length"),
@@ -664,6 +673,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _remove_runtime_cache(cache: Path) -> None:
+    """Remove the run-owned scene cache and verify the postcondition."""
+
+    if not cache.exists():
+        return
+    shutil.rmtree(cache)
+    if cache.exists():
+        raise SmokeFailure("run-owned scene cache cleanup did not complete")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     output_dir = args.output_dir.resolve()
@@ -697,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     finally:
-        shutil.rmtree(cache, ignore_errors=True)
+        _remove_runtime_cache(cache)
 
 
 if __name__ == "__main__":

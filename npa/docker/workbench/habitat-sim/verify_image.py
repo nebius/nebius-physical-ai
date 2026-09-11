@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--oci-archive", type=Path, required=True)
     parser.add_argument("--expected-image-id", required=True)
+    parser.add_argument("--expected-source-revision", required=True)
     parser.add_argument("--json", type=Path, required=True)
     args = parser.parse_args(argv)
     contract = json.loads(Path(__file__).with_name("runtime-payload.json").read_text())
@@ -32,7 +33,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             archive_hash = P.binding(archive)["sha256"]
             report = H.verify(
-                fd, info.st_size, args.expected_image_id, contract, archive_hash
+                fd,
+                info.st_size,
+                args.expected_image_id,
+                contract,
+                archive_hash,
+                args.expected_source_revision,
             )
         finally:
             os.close(fd)
