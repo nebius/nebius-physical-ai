@@ -25,6 +25,7 @@ ENV_ID = "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
 RESET_SEED = 20260910
 ACTION_SEED = 11092026
 ROLLOUT_STEPS = 120
+MIN_TRANSITION_DELTA = 1e-6
 EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO_COMMIT = "13827e9ee56f097f57acf69ae52b078f9839682d"
 EXPECTED_MUJOCO_WHEEL = (
@@ -137,6 +138,24 @@ def _render(env: gym.Env, hashes: list[str], shapes: list[list[int]]) -> float:
     return elapsed
 
 
+def _require_state_transition(
+    position_changes: list[float],
+    orientation_changes: list[float],
+    state_changes: list[float],
+) -> None:
+    if (
+        not position_changes
+        or max(position_changes) <= MIN_TRANSITION_DELTA
+        or not orientation_changes
+        or max(orientation_changes) <= MIN_TRANSITION_DELTA
+        or not state_changes
+        or max(state_changes) <= MIN_TRANSITION_DELTA
+    ):
+        raise RuntimeError(
+            "rollout did not evolve object position, orientation, and simulator state"
+        )
+
+
 def _rollout(env: gym.Env, observation: dict[str, np.ndarray]) -> dict[str, Any]:
     raw = env.unwrapped
     initial_qpos = np.asarray(raw.data.qpos, dtype=np.float64).copy()
@@ -153,6 +172,7 @@ def _rollout(env: gym.Env, observation: dict[str, np.ndarray]) -> dict[str, Any]
     contacts: list[int] = []
     touches: list[int] = []
     touch_maxima: list[float] = []
+    positions: list[float] = []
     orientations: list[float] = []
     state_changes: list[float] = []
     step_seconds = 0.0
@@ -174,6 +194,7 @@ def _rollout(env: gym.Env, observation: dict[str, np.ndarray]) -> dict[str, Any]
         touches.append(int(np.count_nonzero(sensor > 0)))
         touch_maxima.append(float(sensor.max()))
         achieved = np.asarray(observation["achieved_goal"], dtype=np.float64)
+        positions.append(float(np.linalg.norm(initial_goal[:3] - achieved[:3])))
         orientations.append(_quaternion_angle(initial_goal[3:], achieved[3:]))
         state_changes.append(
             float(np.linalg.norm(np.asarray(raw.data.qpos) - initial_qpos))
@@ -182,10 +203,7 @@ def _rollout(env: gym.Env, observation: dict[str, np.ndarray]) -> dict[str, Any]
             render_seconds += _render(env, frames, shapes)
     if not any(contacts) or not any(touches) or max(touch_maxima) <= 0:
         raise RuntimeError("rollout did not produce contact and touch response")
-    if max(orientations) <= 1e-6 or max(state_changes) <= 1e-6:
-        raise RuntimeError(
-            "rollout did not evolve object orientation and simulator state"
-        )
+    _require_state_transition(positions, orientations, state_changes)
     if len(set(frames)) < 2:
         raise RuntimeError("EGL output did not contain two distinct RGB frames")
     return {
@@ -193,6 +211,7 @@ def _rollout(env: gym.Env, observation: dict[str, np.ndarray]) -> dict[str, Any]
         "frame_hashes": frames,
         "frame_shapes": shapes,
         "orientation_changes": orientations,
+        "position_changes": positions,
         "render_seconds": render_seconds,
         "rewards": rewards,
         "state_changes": state_changes,
@@ -350,6 +369,7 @@ def main() -> None:
                 np.linalg.norm(rollout["final_qpos"] - rollout["initial_qpos"])
             ),
             "max_object_orientation_delta_rad": max(rollout["orientation_changes"]),
+            "max_object_position_delta_m": max(rollout["position_changes"]),
             "max_full_qpos_delta_l2": max(rollout["state_changes"]),
         },
         "rendering": {

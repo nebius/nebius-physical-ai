@@ -4,6 +4,8 @@ import ast
 import hashlib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "npa/docker/workbench/gymnasium-robotics/capability_smoke.py"
 
@@ -23,11 +25,34 @@ def _constant(name: str) -> object:
     return _constant_from(SMOKE, name)
 
 
+def _transition_guard():
+    tree = ast.parse(SMOKE.read_text(encoding="utf-8"))
+    body = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "MIN_TRANSITION_DELTA"
+                for target in node.targets
+            )
+        )
+        or (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "_require_state_transition"
+        )
+    ]
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(SMOKE), "exec"), namespace)
+    return namespace["_require_state_transition"]
+
+
 def test_fixed_capability_identity_and_trajectory() -> None:
     assert (
         _constant("ENV_ID") == "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
     )
     assert _constant("ROLLOUT_STEPS") == 120
+    assert _constant("MIN_TRANSITION_DELTA") == 1e-6
     assert _constant("RESET_SEED") == 20260910
     assert _constant("ACTION_SEED") == 11092026
 
@@ -49,6 +74,7 @@ def test_smoke_requires_physics_touch_orientation_and_real_egl() -> None:
         'sum(value > 0 for value in rollout["contacts"])',
         '"steps_with_nonzero_readings": sum(',
         'max(rollout["orientation_changes"])',
+        'max(rollout["position_changes"])',
         '"initial_object_pose": rollout["initial_goal"].tolist()',
         '"final_object_pose": rollout["final_goal"].tolist()',
         "len(set(frames)) < 2",
@@ -58,6 +84,25 @@ def test_smoke_requires_physics_touch_orientation_and_real_egl() -> None:
         '"pod_observed_image_digest": observed',
     ):
         assert token in source
+
+
+def test_smoke_accepts_position_orientation_and_state_evolution() -> None:
+    _transition_guard()([0.0, 0.01], [0.0, 0.02], [0.0, 0.03])
+
+
+@pytest.mark.parametrize(
+    ("positions", "orientations", "states"),
+    [
+        ([0.0, 1e-6], [0.0, 0.02], [0.0, 0.03]),
+        ([0.0, 0.01], [0.0, 1e-6], [0.0, 0.03]),
+        ([0.0, 0.01], [0.0, 0.02], [0.0, 1e-6]),
+    ],
+)
+def test_smoke_rejects_a_missing_transition_dimension(
+    positions: list[float], orientations: list[float], states: list[float]
+) -> None:
+    with pytest.raises(RuntimeError, match="object position, orientation"):
+        _transition_guard()(positions, orientations, states)
 
 
 def test_smoke_emits_only_the_named_json() -> None:
