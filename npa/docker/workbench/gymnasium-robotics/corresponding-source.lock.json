@@ -10,6 +10,7 @@
       "license": "MIT",
       "repository": "https://github.com/Farama-Foundation/Gymnasium-Robotics",
       "source_commit": "4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
+      "required_artifact_roles": ["source_archive"],
       "artifacts": null
     },
     {
@@ -19,6 +20,11 @@
       "preferred_form_archive_sha256": null,
       "source_commit": "59d6bdf35bd9cf53185a20eb63413fdfe57fe77c",
       "transformation_manifest_sha256": null,
+      "required_artifact_roles": [
+        "build_instructions",
+        "preferred_form_archive",
+        "transformation_manifest"
+      ],
       "artifacts": null
     },
     {
@@ -26,6 +32,11 @@
       "binary_manifest_sha256": null,
       "build_materials_sha256": null,
       "source_manifest_sha256": null,
+      "required_artifact_roles": [
+        "binary_manifest",
+        "build_materials",
+        "source_manifest"
+      ],
       "artifacts": null
     }
   ]
