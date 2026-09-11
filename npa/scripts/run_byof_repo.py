@@ -316,13 +316,33 @@ def _registry_path(image_ref: str) -> str:
     return without_digest[:last_slash]
 
 
-def _dockerfile_text() -> str:
+def _dockerfile_text(*, apt_snapshot_enabled: bool = False) -> str:
+    ca_bootstrap_stage = ""
+    apt_run = "RUN set -eu; \\\n"
+    ca_bootstrap_commands = ""
+    if apt_snapshot_enabled:
+        ca_bootstrap_stage = (
+            "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap\n"
+            f"ADD --checksum=sha256:{BYOF_CA_BOOTSTRAP_SHA256} "
+            f"{BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb\n"
+        )
+        apt_run = (
+            "RUN --mount=type=bind,from=npa-ca-bootstrap,"
+            "source=/npa-ca-certificates.deb,"
+            "target=/tmp/npa-ca-certificates.deb,readonly \\\n"
+            "  set -eu; \\\n"
+        )
+        ca_bootstrap_commands = (
+            "    dpkg-deb -x /tmp/npa-ca-certificates.deb /; \\\n"
+            "    find /usr/share/ca-certificates -type f -name '*.crt' "
+            "-exec cat '{}' + \\\n"
+            "      > /etc/ssl/certs/ca-certificates.crt; \\\n"
+            "    test -s /etc/ssl/certs/ca-certificates.crt; \\\n"
+        )
     return (
         "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
-        "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap\n"
-        f"ADD --checksum=sha256:{BYOF_CA_BOOTSTRAP_SHA256} "
-        f"{BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb\n"
+        f"{ca_bootstrap_stage}"
         "FROM ${BYOF_BASE_IMAGE}\n"
         'ARG OSS_REPO_URL=""\n'
         'ARG OSS_REPO_REF=""\n'
@@ -333,20 +353,14 @@ def _dockerfile_text() -> str:
         "ARG BYOF_BUILD_COMMAND\n"
         'ARG BYOF_APT_SNAPSHOT=""\n'
         "USER root\n"
-        "RUN --mount=type=bind,from=npa-ca-bootstrap,"
-        "source=/npa-ca-certificates.deb,"
-        "target=/tmp/npa-ca-certificates.deb,readonly \\\n"
-        "  set -eu; \\\n"
+        f"{apt_run}"
         '  if [ -n "${BYOF_APT_SNAPSHOT}" ]; then \\\n'
         '    case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64;; esac; \\\n'
         '    suite="$(. /etc/os-release; printf \'%s\' "${VERSION_CODENAME:-}")"; \\\n'
         '    case "${suite}" in jammy|noble) ;; *) exit 65;; esac; \\\n'
         "    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \\\n"
         "    test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg; \\\n"
-        "    dpkg-deb -x /tmp/npa-ca-certificates.deb /; \\\n"
-        "    find /usr/share/ca-certificates -type f -name '*.crt' -exec cat '{}' + \\\n"
-        "      > /etc/ssl/certs/ca-certificates.crt; \\\n"
-        "    test -s /etc/ssl/certs/ca-certificates.crt; \\\n"
+        f"{ca_bootstrap_commands}"
         "    printf '%s\\n' \\\n"
         "      'Types: deb' \\\n"
         '      "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
@@ -804,7 +818,10 @@ def _run_byof(
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(
-                    _dockerfile_text(), encoding="utf-8"
+                    _dockerfile_text(
+                        apt_snapshot_enabled=bool(args.apt_snapshot)
+                    ),
+                    encoding="utf-8",
                 )
                 last_build_error: Exception | None = None
                 for idx, candidate_base in enumerate(base_candidates):
