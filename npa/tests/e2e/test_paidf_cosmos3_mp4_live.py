@@ -9,6 +9,8 @@ from datetime import datetime
 import hashlib
 import json
 import os
+from pathlib import Path
+import tempfile
 from urllib.parse import urlparse
 
 import pytest
@@ -42,6 +44,8 @@ def test_completed_fresh_local_mp4_pipeline() -> None:
     runtime = read("npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
     assert all(wave["status"] == "succeeded" for wave in runtime["waves"])
+    assert all(wave["replayed"] is False for wave in runtime["waves"])
+    assert all(wave["adopted"] is False for wave in runtime["waves"])
     provenance = read("input/provenance.json")
     assert provenance["source_kind"] == "video_uri"
     assert provenance["run_id"] == run_id
@@ -51,6 +55,7 @@ def test_completed_fresh_local_mp4_pipeline() -> None:
         spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=parsed.netloc,
         run_id=run_id, e2e_project=project,
     )
+    _assert_recording_identity(client, parsed.netloc, prefix, run_id)
 
 
 def _assert_public_mp4_input(client, bucket, run_id, read) -> None:
@@ -86,3 +91,15 @@ def _assert_fresh_objects(client, bucket, run_id) -> None:
                 assert item["LastModified"] >= fresh_after, "Object predates this submission"
                 count += 1
         assert count > 0, f"Missing {root} artifacts"
+
+
+def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
+    from rerun.recording import load_recording
+
+    with tempfile.TemporaryDirectory(prefix="paidf-mp4-recordings-") as temporary:
+        for name in ("quality-evidence.rrd", "sim2real.rrd"):
+            path = Path(temporary) / name
+            client.download_file(bucket, prefix + "reports/" + name, str(path))
+            recording = load_recording(path)
+            assert recording.recording_id() == run_id
+            assert recording.application_id() == "neural-reconstruction"
