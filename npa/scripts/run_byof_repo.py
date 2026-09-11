@@ -8,23 +8,30 @@ import hashlib
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
 import tempfile
 from contextlib import ExitStack
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
-    is_public_registry,
     wan_accepted_image_manifest,
+)
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    BUILD_COMMAND_SHA256 as ROBOTWIN_BUILD_COMMAND_SHA256,
+    CONTEXT_ENV_NAMES as ROBOTWIN_CONTEXT_ENV_NAMES,
+    INVOCATION as ROBOTWIN_INVOCATION,
+    PUBLIC_CONTEXT_ENV as ROBOTWIN_RUNTIME_CONTEXT_ENV,
+    REQUIRED_DECISIONS as ROBOTWIN_REQUIRED_DECISIONS,
+    SMOKE_COMMAND_SHA256 as ROBOTWIN_SMOKE_COMMAND_SHA256,
+    RobotwinAuthorization as _RuntimeAuthorization,
+    load_runtime_authorization,
+    validate_invocation,
 )
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
@@ -39,6 +46,15 @@ from npa.workflows.byof.source_auth import (
     private_repository_secrets,
     validate_repository_url,
 )
+
+__all__ = [
+    "ROBOTWIN_BUILD_COMMAND_SHA256",
+    "ROBOTWIN_INVOCATION",
+    "ROBOTWIN_REQUIRED_DECISIONS",
+    "ROBOTWIN_RUNTIME_CONTEXT_ENV",
+    "ROBOTWIN_SMOKE_COMMAND_SHA256",
+    "main",
+]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -77,50 +93,6 @@ WAN_POSTPROCESS_CONTRACTS = {
         "wan2_2_ti2v_5b_multigpu.json",
     ),
 }
-ROBOTWIN_RUNTIME_CONTEXT_ENV = "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
-ROBOTWIN_REQUIRED_DECISIONS = (
-    "nvidia_cuda_eula",
-    "nvidia_cudnn_sla",
-    "curobo_noncommercial_research_or_evaluation",
-    "robotwin2_aggregate_asset_and_output_terms",
-)
-ROBOTWIN_INVOCATION = {
-    "repo_url": "https://github.com/RoboTwin-Platform/RoboTwin.git",
-    "repo_ref": "96c1feab536306b50c26af200044fcdf126e8904",
-    "base_profile": "ubuntu",
-    "base_image": (
-        "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
-        "sha256:61f6c08f2b59036cb935e56d1e31a6b64e3ae2c7ddb86d33fa0b044c7917b719"
-    ),
-    "workload": "solution-smoke",
-    "capability_name": "beat_block_hammer_successful_seed_replay_collection",
-    "smoke_artifact_name": "robotwin-smoke.json",
-    "yaml": "byof-solution-smoke-robotwin-rtxpro-gpu",
-    "task": "beat_block_hammer",
-}
-ROBOTWIN_BUILD_COMMAND_SHA256 = (
-    "87cb636a259cbec5d59283e9e03cc076b139182fb01f9b4504c81040ae384931"
-)
-ROBOTWIN_SMOKE_COMMAND_SHA256 = (
-    "bc26a3019d36863326cf4e55bd3536c303355c7b661ede5bc20ed9a4607deb2d"
-)
-
-
-@dataclass(frozen=True)
-class _RuntimeAuthorization:
-    project: str
-    profile: str
-    kubeconfig: str
-    kubernetes_context: str
-    skypilot_config_path: str
-    registry: str
-    bucket: str
-    output_root: str
-    run_id: str
-    context_sha256: str
-    redactions: tuple[str, ...]
-
-
 def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
     result = value
     for secret in sorted((item for item in redactions if item), key=len, reverse=True):
@@ -140,136 +112,6 @@ def _redact_payload(value: Any, redactions: tuple[str, ...]) -> Any:
     return value
 
 
-def _runtime_context_bytes(reference: str) -> bytes:
-    secret = os.environ.get(reference, "").strip()
-    if not secret:
-        raise ValueError(f"{reference} is required and must not be empty")
-    if secret.startswith("{"):
-        raise ValueError("runtime authorization must name an owner-only file")
-    path = Path(secret).expanduser()
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("runtime authorization must be a regular file")
-        if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
-            raise ValueError("runtime authorization file must be owner-only")
-        if metadata.st_size > 64 * 1024:
-            raise ValueError("runtime authorization file is unexpectedly large")
-        with os.fdopen(descriptor, "rb") as stream:
-            descriptor = None
-            raw = stream.read(64 * 1024 + 1)
-    except OSError as exc:
-        raise ValueError("runtime authorization file is not readable") from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    if len(raw) > 64 * 1024:
-        raise ValueError("runtime authorization file is unexpectedly large")
-    return raw
-
-
-def _context_text(payload: dict[str, Any], field: str) -> str:
-    value = payload.get(field)
-    if not isinstance(value, str):
-        raise ValueError(f"runtime authorization {field} must be a string")
-    value = value.strip()
-    if not value:
-        raise ValueError(f"runtime authorization lacks {field}")
-    return value
-
-
-def _validate_runtime_config_path(payload: dict[str, Any], field: str) -> str:
-    """Validate an owner-only local config before any external command runs."""
-
-    value = _context_text(payload, field)
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        raise ValueError(f"runtime authorization {field} must be an absolute path")
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError(f"runtime authorization {field} must be a regular file")
-        if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
-            raise ValueError(f"runtime authorization {field} must be owner-only")
-        os.read(descriptor, 1)
-    except OSError as exc:
-        raise ValueError(f"runtime authorization {field} is not readable") from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    return value
-
-
-def _validate_robotwin_context(
-    payload: dict[str, Any], raw: bytes
-) -> _RuntimeAuthorization:
-    if payload.get("solution") != "robotwin":
-        raise ValueError("runtime authorization has the wrong solution")
-    _context_text(payload, "ownership_provenance")
-    reservation = payload.get("reservation")
-    if not isinstance(reservation, dict):
-        raise ValueError("runtime authorization lacks reservation evidence")
-    if reservation.get("policy") != "STRICT":
-        raise ValueError("RoboTwin reservation policy must be STRICT")
-    if reservation.get("accelerator") != "RTXPRO-6000-BLACKWELL-SERVER-EDITION":
-        raise ValueError("RoboTwin requires the RTX PRO 6000 Blackwell target")
-    if type(reservation.get("count")) is not int or reservation.get("count") != 1:
-        raise ValueError("RoboTwin requires exactly one reserved GPU")
-    decisions = payload.get("license_acceptance")
-    if not isinstance(decisions, dict):
-        raise ValueError("runtime authorization lacks operator use decisions")
-    for decision in ROBOTWIN_REQUIRED_DECISIONS:
-        if decisions.get(decision) is not True:
-            raise ValueError(f"runtime authorization does not permit {decision}")
-    return _robotwin_authorization(payload, raw)
-
-
-def _robotwin_authorization(
-    payload: dict[str, Any], raw: bytes
-) -> _RuntimeAuthorization:
-    values = {
-        field: _context_text(payload, field)
-        for field in (
-            "project",
-            "nebius_profile",
-            "kubernetes_context",
-            "registry",
-            "bucket",
-            "output_root",
-            "run_id",
-        )
-    }
-    if is_public_registry(values["registry"]):
-        raise ValueError("RoboTwin requires an operator-private registry")
-    values["kubeconfig"] = _validate_runtime_config_path(payload, "kubeconfig")
-    values["skypilot_config_path"] = _validate_runtime_config_path(
-        payload, "skypilot_config_path"
-    )
-    parsed_output = urlparse(values["output_root"])
-    if parsed_output.scheme != "s3" or parsed_output.netloc != values["bucket"]:
-        raise ValueError("RoboTwin output storage does not match its authorized bucket")
-    if not values["run_id"].startswith("robotwin-"):
-        raise ValueError("RoboTwin requires a solution-scoped run ID")
-    redactions = tuple(dict.fromkeys((*values.values(), raw.decode(errors="replace"))))
-    return _RuntimeAuthorization(
-        project=values["project"],
-        profile=values["nebius_profile"],
-        kubeconfig=values["kubeconfig"],
-        kubernetes_context=values["kubernetes_context"],
-        skypilot_config_path=values["skypilot_config_path"],
-        registry=values["registry"],
-        bucket=values["bucket"],
-        output_root=values["output_root"],
-        run_id=values["run_id"],
-        context_sha256=hashlib.sha256(raw).hexdigest(),
-        redactions=redactions,
-    )
-
-
 def _load_runtime_authorization(
     args: argparse.Namespace,
 ) -> _RuntimeAuthorization | None:
@@ -283,14 +125,7 @@ def _load_runtime_authorization(
         raise ValueError(
             f"RoboTwin requires --runtime-context-env {ROBOTWIN_RUNTIME_CONTEXT_ENV}"
         )
-    raw = _runtime_context_bytes(reference)
-    try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("runtime authorization is not valid JSON") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("runtime authorization must be a JSON object")
-    return _validate_robotwin_context(payload, raw)
+    return load_runtime_authorization()
 
 
 def _apply_runtime_authorization(
@@ -304,47 +139,7 @@ def _apply_runtime_authorization(
 
 
 def _validate_robotwin_invocation(args: argparse.Namespace) -> None:
-    for field, expected in ROBOTWIN_INVOCATION.items():
-        if getattr(args, field) != expected:
-            raise ValueError(f"RoboTwin invocation has unexpected {field}")
-    command_hashes = {
-        "build_command": ROBOTWIN_BUILD_COMMAND_SHA256,
-        "smoke_command": ROBOTWIN_SMOKE_COMMAND_SHA256,
-    }
-    for field, expected in command_hashes.items():
-        observed = hashlib.sha256(getattr(args, field).encode()).hexdigest()
-        if observed != expected:
-            raise ValueError(f"RoboTwin invocation has unexpected {field}")
-    if (
-        args.repo_auth != "none"
-        or args.iterations != 1
-        or args.num_envs != 1
-        or args.num_demos != 1
-        or args.wait_timeout != -1
-        or args.poll_interval != 60
-        or not args.cleanup
-    ):
-        raise ValueError("RoboTwin invocation does not match the accepted smoke contract")
-    if any(
-        getattr(args, field).strip()
-        for field in ("project", "registry", "image", "config_path")
-    ) or args.output_root.strip() not in {
-        "",
-        "s3://example-bucket/oss-solutions/robotwin",
-    }:
-        raise ValueError(
-            "RoboTwin private runtime coordinates must come from authorization"
-        )
-    if args.skip_build or args.skip_push or args.skip_run:
-        raise ValueError("RoboTwin requires the complete build, scan, and live smoke path")
-
-
-def _activate_runtime_profile(authorization: _RuntimeAuthorization) -> None:
-    _run(
-        ["nebius", "profile", "activate", authorization.profile],
-        capture=True,
-        redactions=authorization.redactions,
-    )
+    validate_invocation(args)
 
 
 def _utc_stamp() -> str:
@@ -451,9 +246,12 @@ def _run(
     # Avoid stale operator tokens overriding profile-based auth on shared VMs.
     runtime_env.pop("NEBIUS_IAM_TOKEN", None)
     runtime_env.pop("NEBIUS_IAM_TOKEN_FILE", None)
-    runtime_env.pop(ROBOTWIN_RUNTIME_CONTEXT_ENV, None)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     if env is not None:
         runtime_env.update(env)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     kwargs: dict[str, Any] = {"text": True, "check": False}
     if stdin is not None:
         kwargs["input"] = stdin
@@ -797,6 +595,7 @@ def _authorized_live_env(
             "KUBECONTEXT": authorization.kubernetes_context,
             "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
             "NPA_NEBIUS_PROFILE": authorization.profile,
+            "NEBIUS_PROFILE": authorization.profile,
             "NPA_BYOF_PROJECT": authorization.project,
             "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": authorization.context_sha256,
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": str(scan_evidence["report_sha256"]),
@@ -1047,8 +846,6 @@ def main(argv: list[str] | None = None) -> int:
                 "base_image_candidates": base_candidates,
             }
         )
-        if authorization is not None:
-            _activate_runtime_profile(authorization)
         with ExitStack() as secret_stack:
             source_secrets: RepositorySecretFiles | None = None
             if private_source:

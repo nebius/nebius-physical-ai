@@ -112,6 +112,16 @@ ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
 into the image: the live harness scans the exact private image digest's rootfs
 and every layer before it may submit the GPU run.
 
+The registry candidate now uses normal `npa workflow submit` with a CPU-only
+outer launcher. Before any credential, image, storage, scheduler, network, or
+GPU action, the client validates the exact immutable public workflow plus one
+owner-only manager context, converts its validated bytes to an internal value
+secret, and binds the public summary declaration to the manager-derived output
+in owner-only state. The worker revalidates owner-only temporary files and
+delegates the sole accelerator request to the fixed one-RTX inner profile.
+Plans and rendered YAML retain sanitized placeholders; qualification remains
+pending until that normal-submit path produces genuine private live evidence.
+
 | Capability | Status | Upstream basis / required evidence |
 | --- | --- | --- |
 | `sapien_vulkan_rt_renderer` | qualification pending | `SapienRenderer`, `rt` camera shader, successful `vulkaninfo`, and SAPIEN device summary from one RTX PRO 6000 (`sm_120`) |

@@ -177,6 +177,24 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
         assert gate not in MANUAL_GATES
 
 
+def test_robotwin_hard_gate_reaches_the_workload_only_through_normal_submit() -> None:
+    path = E2E / "test_byof_onboarding_live_e2e.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_live_robotwin_build_push_run_and_artifacts"
+    )
+    body = ast.get_source_segment(source, function)
+    assert body is not None
+    for required in ('"workflow"', '"submit"', '"--secret-env"'):
+        assert required in body
+    for forbidden in ('"byof",\n        "run"', 'str(BYOF_RUNNER)'):
+        assert forbidden not in body
+
+
 def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:
     runner = RUNNER_FILES[0].read_text(encoding="utf-8")
     for gate in ("NPA_FLEET_STORAGE_VERIFY", "NPA_FLEET_STORAGE_VERIFY_SPEC",
