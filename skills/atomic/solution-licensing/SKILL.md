@@ -35,6 +35,12 @@ third-party EULA, also load
 `skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
 does not itself establish operator consent or upstream asset access.
 
+When the classification says an artifact may be used but not baked or
+redistributed, load `skills/workflows/runtime-fetch-onboard/SKILL.md`. It turns
+that decision into a bootstrap-container, runtime-delivery, cache, and validation
+contract so a restricted weight or SDK does not unnecessarily block the rest of
+the onboarding.
+
 ## The Six Artifact Boundaries
 
 Classify each boundary separately. A permissive answer at one boundary says

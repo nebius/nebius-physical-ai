@@ -67,6 +67,7 @@ change hits most.
 | `test_audit_container_docs_skill` | The public container catalog disagrees with the publish inventory. Update `docs/workbench/container-image-catalog.md`. |
 | `test_solution_licensing_skill` | The licensing skill no longer covers an artifact boundary. Update the skill, not the test. |
 | `test_third_party_eula_preflight_skill` | The EULA preflight skill is not discoverable from the operational skills that need it. Add the link. |
+| `test_runtime_fetch_onboard_skill` | Runtime-fetch onboarding lost a legal boundary, safe delivery shape, byte/secret exclusion, real-workload proof, or discovery link. Restore the contract in `skills/workflows/runtime-fetch-onboard/SKILL.md` and its copyable reference; do not treat runtime fetch as permission. |
 | `test_nebius_cli_compatibility` | The `nebius-cli` version drifted between packaging, `images.py`, and docs. Bump all of them together. |
 | `test_paidf_image_tags_match_code` | The PAIDF guide builds tags that differ from what submit pulls. Regenerate the guide's build commands from `npa/src/npa/deploy/images.py`. |
 | `test_public_runtime_registry_defaults` | A supported workload inherited a generic build/private registry, emitted an unqualified first-party image, or attached credentials to the official public release. Keep repository-owned defaults on `ghcr.io/nebius/nebius-physical-ai`; require an explicit scoped override for custom bytes. |

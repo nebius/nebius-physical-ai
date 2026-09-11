@@ -970,6 +970,15 @@ skills:
     smoke:
       - type: file_exists
         path: skills/workflows/oss-solution-registry-onboard/SKILL.md
+  - name: runtime-fetch-onboard
+    category: workflows
+    when_to_use: "Keep a solution containerizable when legal, license, or gated-access restrictions prevent baking source, SDKs, model weights, datasets, or assets: ship a clean bootstrap image and fetch exact artifacts at runtime under operator authorization."
+    path: skills/workflows/runtime-fetch-onboard/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/runtime-fetch-onboard/references/onboarding-contract.md
+      - type: file_exists
+        path: npa/tests/guardrails/test_runtime_fetch_onboard_skill.py
   - name: onboard-world-model
     category: workflows
     when_to_use: "Onboard and containerize a world model (learned action-conditioned simulator — Dreamer/Genie/Cosmos-style latent video prediction) as a multi-GPU BYOF registry candidate: containerize the repo, stage a real dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability smokes, and validate on real GPUs. Open Dreamer is the reference example."
