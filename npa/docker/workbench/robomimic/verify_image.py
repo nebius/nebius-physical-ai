@@ -21,8 +21,8 @@ SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 SOURCE_LICENSE_SHA256 = (
     "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556"
 )
-BAKED_LOCK_SHA256 = "910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71"
-BAKED_ARTIFACT_COUNT = 48
+BAKED_LOCK_SHA256 = "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
+BAKED_ARTIFACT_COUNT = 34
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 
@@ -59,15 +59,36 @@ def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
     raw = lock_path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != BAKED_LOCK_SHA256:
         raise VerificationError("baked dependency lock hash mismatch")
-    lines = raw.decode("utf-8").splitlines()
-    if len(lines) != BAKED_ARTIFACT_COUNT:
+    records: list[str] = []
+    pending: list[str] = []
+    for line in raw.decode("utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            raise VerificationError("empty baked dependency lock line")
+        if not pending and line[0].isspace():
+            raise VerificationError("orphaned baked dependency hash continuation")
+        continued = stripped.endswith("\\")
+        pending.append(stripped[:-1].rstrip() if continued else stripped)
+        if not continued:
+            records.append(" ".join(pending))
+            pending = []
+    if pending:
+        raise VerificationError("unterminated baked dependency lock record")
+    if len(records) != BAKED_ARTIFACT_COUNT:
         raise VerificationError("baked dependency lock count mismatch")
     packages: dict[str, str] = {}
-    pattern = re.compile(r"^([A-Za-z0-9_.-]+)==([^ ]+) --hash=sha256:([0-9a-f]{64})$")
-    for line in lines:
-        match = pattern.fullmatch(line)
+    pattern = re.compile(
+        r"^([A-Za-z0-9_.-]+)==([^ ]+)((?: --hash=sha256:[0-9a-f]{64})+)$"
+    )
+    for record in records:
+        match = pattern.fullmatch(record)
         if match is None:
-            raise VerificationError(f"malformed baked dependency lock line: {line!r}")
+            raise VerificationError(
+                f"malformed baked dependency lock record: {record!r}"
+            )
+        hashes = re.findall(r"--hash=sha256:([0-9a-f]{64})", match.group(3))
+        if len(hashes) != len(set(hashes)):
+            raise VerificationError("duplicate baked dependency artifact hash")
         name = _canonical_name(match.group(1))
         if name in packages:
             raise VerificationError(f"duplicate baked dependency: {name}")
