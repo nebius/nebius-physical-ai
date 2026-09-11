@@ -93,6 +93,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--runtime-context-env",
+    "{{config.runtime_context_env}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -116,6 +118,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "runtime_context_env": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
@@ -1142,6 +1145,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ),
         argv_template=_BYOF_REPO_ARGV,
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
+        omit_flags_when_empty=("--runtime-context-env",),
     ),
     "workbench.openpi.prepare_data": ToolEntry(
         name="workbench.openpi.prepare_data",
@@ -1449,6 +1453,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
+        omit_flags_when_empty=("--runtime-context-env",),
     ),
     "workbench.rl.policy_train": ToolEntry(
         name="workbench.rl.policy_train",

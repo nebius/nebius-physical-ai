@@ -95,6 +95,7 @@ def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
         tmp_path / "rootfs.tar",
         {
             "root/.cache/huggingface/hub/datasets--TianxingChen--RoboTwin2.0/ref": b"x",
+            "opt/custom-cache/datasets--TianxingChen--RoboTwin2.0/snapshots/ref": b"x",
             "workspace/byof-runs/run/robotwin-native/episode_0/episode_0000000.hdf5": b"x",
         },
     )

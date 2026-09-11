@@ -148,6 +148,17 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
 SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
 YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
 
+For a checked-in solution whose runtime or output terms require manager
+authorization before packaging, set `config.runtime_context_env` only to its
+documented environment-variable name and pass the value through the workflow's
+secret environment channel. The public CLI equivalent is
+`--runtime-context-env <variable-name>`. Never put the context JSON, decisions,
+credentials, private registry/storage identities, or local context path in a
+workflow or command line. The generic runner remains unchanged when the option
+is absent. A solution that selects it must validate the complete owner-only
+context before source access, registry resolution, image work, or workload
+submission; a credential or private registry alone is not authorization.
+
 Workloads:
 
 | Workload | Base profile | SkyPilot YAML (rtxpro) |
