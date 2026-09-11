@@ -1106,6 +1106,8 @@ def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
     )
     executable.chmod(0o700)
     monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
+    # SDK tests cover compatibility; isolate this later log-subprocess failure.
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: str(executable),
     )
