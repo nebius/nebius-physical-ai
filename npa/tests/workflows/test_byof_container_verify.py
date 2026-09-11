@@ -909,6 +909,65 @@ def test_managed_cleanup_preserves_clusters_when_exact_cancel_fails(
     assert down == []
 
 
+def test_managed_cleanup_preserves_clusters_when_exact_cancel_raises(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    down = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="RUNNING"),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: (_ for _ in ()).throw(TypeError("cancel unavailable")),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: down.append(True) or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73", teardown_guard=guard, sky_bin="sky",
+        isolated_config_dir=None, config_path=None, poll_interval=1,
+    )
+
+    assert result.errors == ["exact managed-job cancellation raised unexpectedly"]
+    assert down == []
+
+
+def test_managed_cleanup_reports_teardown_exception_without_absence_claim(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="CANCELLED"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        lambda **_k: pytest.fail("absence cannot be checked after teardown failure"),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: (_ for _ in ()).throw(OSError("teardown failed")),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73", teardown_guard=guard, sky_bin="sky",
+        isolated_config_dir=None, config_path=None, poll_interval=1,
+    )
+
+    assert result.errors == ["run-cluster teardown raised unexpectedly"]
+    assert result.remote_absence_verified is False
+
+
 def test_managed_cleanup_preserves_clusters_on_ambiguous_controller_status(
     monkeypatch,
 ) -> None:
@@ -1076,6 +1135,7 @@ def test_managed_cleanup_cancels_on_malformed_or_unlisted_status_failure(
         ('{"clusters": [], "error": "denied"}', "invalid schema"),
         ('[{"status": "UP"}]', "invalid row"),
         ('[{"name": " human-run-name-worker "}]', "invalid row"),
+        ('[{"name": "human-run-name-worker\\u0000"}]', "invalid row"),
         (
             '[{"name": "unrelated", "cluster": "human-run-name-worker"}]',
             "ambiguous name row",
@@ -1148,6 +1208,27 @@ def test_post_teardown_inventory_proves_exact_run_absence(
         "json",
     ]
     assert observed["kwargs"]["env"]["HOME"] == str(isolated / "home")
+
+
+def test_post_teardown_inventory_exception_keeps_absence_unverified(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["sky", "status"], 1)
+        ),
+    )
+
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name", sky_bin="sky", isolated_config_dir=None,
+        config_path=None, timeout=1,
+    )
+
+    assert result.errors == ["post-teardown SkyPilot cluster inventory raised"]
+    assert result.remote_absence_verified is False
 
 
 def test_managed_cleanup_preserves_resources_without_scheduler_id() -> None:
@@ -1318,6 +1399,35 @@ def test_submit_requires_and_emits_verified_remote_cleanup(
         "resources_removed": [],
         "verified": True,
     }
+
+
+def test_submit_rejects_error_free_but_unverified_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (SimpleNamespace(status="SUCCEEDED"), {"terminal": True}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cancel_then_teardown_managed_job",
+        lambda *_a, **_k: module.CleanupResult(),
+    )
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["cleanup"]["ok"] is False
+    assert summary["cleanup"]["verified"] is False
+    assert summary["cleanup"]["remote_absence_verified"] is False
 
 
 def test_render_workflow_normalizes_docker_image_for_summary(monkeypatch) -> None:
