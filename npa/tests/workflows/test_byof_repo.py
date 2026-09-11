@@ -208,6 +208,10 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
+    assert module.BYOF_CA_BOOTSTRAP_URL not in dockerfile
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 not in dockerfile
+    assert "npa-ca-bootstrap" not in dockerfile
+    assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in dockerfile
     assert seen["redactions"] == (token, repo_url, repo_ref)
     summary = json.loads(output)
     assert summary["repo_url"] == "<private-repository>"
@@ -1095,6 +1099,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 ) -> None:
     module = _load_module()
     build_args: list[str] = []
+    dockerfiles: list[str] = []
 
     monkeypatch.setattr(
         module,
@@ -1105,6 +1110,9 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
+            dockerfiles.append(
+                (Path(cmd[-1]) / "Dockerfile").read_text(encoding="utf-8")
+            )
         if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
             return subprocess.CompletedProcess(
                 cmd,
@@ -1136,6 +1144,10 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
     assert any(part == "BYOF_APT_SNAPSHOT=20260801T053000Z" for part in build_args)
+    assert len(dockerfiles) == 1
+    assert module.BYOF_CA_BOOTSTRAP_URL in dockerfiles[0]
+    assert "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap" in dockerfiles[0]
+    assert "target=/tmp/npa-ca-certificates.deb,readonly" in dockerfiles[0]
     assert any(
         part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
     )
@@ -1217,7 +1229,7 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
 
 def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
     module = _load_module()
-    text = module._dockerfile_text()
+    text = module._dockerfile_text(apt_snapshot_enabled=True)
     pinned_add = (
         f"ADD --checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256} "
         f"{module.BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb"
@@ -1254,7 +1266,7 @@ def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> N
 
 def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
     module = _load_module()
-    text = module._dockerfile_text()
+    text = module._dockerfile_text(apt_snapshot_enabled=True)
     snapshot_path = "snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"
 
     assert text.count(snapshot_path) == 2
@@ -1271,7 +1283,7 @@ def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
 
 def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
     module = _load_module()
-    text = module._dockerfile_text()
+    text = module._dockerfile_text(apt_snapshot_enabled=True)
     snapshot_source = text[
         text.index("'Types: deb'") : text.index(
             "> /etc/apt/sources.list.d/npa-snapshot.sources"
@@ -1290,7 +1302,7 @@ def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
 
 def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> None:
     module = _load_module()
-    text = module._dockerfile_text()
+    text = module._dockerfile_text(apt_snapshot_enabled=True)
     https_verification = (
         'grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/'
         '${BYOF_APT_SNAPSHOT}/"'
@@ -1307,7 +1319,7 @@ def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> Non
 
 def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
     module = _load_module()
-    text = module._dockerfile_text()
+    text = module._dockerfile_text(apt_snapshot_enabled=True)
     add = text.index("ADD --checksum=sha256:")
     final_stage = text.index("FROM ${BYOF_BASE_IMAGE}", add)
     mount = text.index("RUN --mount=type=bind,from=npa-ca-bootstrap", final_stage)
@@ -1318,6 +1330,20 @@ def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
     assert "COPY --from=npa-ca-bootstrap" not in text
     assert "ADD --checksum=sha256:" not in text[final_stage:]
     assert "test -s /etc/ssl/certs/ca-certificates.crt" in text
+
+
+def test_dockerfile_without_snapshot_omits_ca_bootstrap_dependency() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot_enabled=False)
+
+    assert module.BYOF_CA_BOOTSTRAP_URL not in text
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 not in text
+    assert "npa-ca-bootstrap" not in text
+    assert "ADD --checksum=sha256:" not in text
+    assert "source=/npa-ca-certificates.deb" not in text
+    assert "target=/tmp/npa-ca-certificates.deb" not in text
+    assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in text
+    assert "find /usr/share/ca-certificates" not in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:
