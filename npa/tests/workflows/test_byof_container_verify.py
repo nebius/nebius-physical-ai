@@ -189,6 +189,20 @@ def test_libero_payload_account_triggers_contract_independent_of_filename() -> N
     assert module._is_libero_invocation(args, documents) is True
 
 
+def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None:
+    module = _load_module()
+    state = tmp_path / "isolated-state"
+    state.mkdir()
+    state.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-private"):
+        module._libero_isolated_state_root(state)
+
+    state.chmod(0o700)
+    assert module._libero_isolated_state_root(state) == state.resolve()
+    with pytest.raises(ValueError, match="requires an isolated"):
+        module._libero_isolated_state_root(None)
+
+
 def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
     monkeypatch, tmp_path
 ) -> None:
@@ -874,23 +888,50 @@ def test_submit_waits_on_scheduler_id_not_human_run_name(
 ) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
-    observed: dict[str, str] = {}
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    isolated.chmod(0o700)
+    args.isolated_config_dir = str(isolated)
+    observed: dict[str, object] = {"resolve_calls": 0}
 
-    def submit(_path, run_id, **_kwargs):
+    def resolve_isolated(value):
+        observed["resolve_calls"] = int(observed["resolve_calls"]) + 1
+        assert value == str(isolated)
+        return isolated.resolve()
+
+    def guard_factory(**kwargs):
+        observed["guard_isolated"] = kwargs["isolated_config_dir"]
+        return SimpleNamespace(
+            run_id="human-run-name",
+            timeout=10,
+            isolated_config_dir=kwargs["isolated_config_dir"],
+            mark_launched=lambda **_k: None,
+            teardown=lambda: module.CleanupResult(),
+        )
+
+    def submit(_path, run_id, **kwargs):
         observed["submitted_run_id"] = run_id
+        observed["submitted_isolated"] = kwargs["isolated_config_dir"]
         return SimpleNamespace(job_id="73", log_paths={})
 
-    def wait(scheduler_job_id, **_kwargs):
+    def wait(scheduler_job_id, **kwargs):
         observed["waited_job_id"] = scheduler_job_id
+        observed["waited_isolated"] = kwargs["isolated_config_dir"]
         return SimpleNamespace(status="SUCCEEDED"), {"terminal": True}
 
+    monkeypatch.setattr(module, "resolve_isolated_config_dir", resolve_isolated)
+    monkeypatch.setattr(module, "SignalTeardown", guard_factory)
     monkeypatch.setattr(module, "submit_workflow", submit)
     monkeypatch.setattr(module, "_wait_for_terminal", wait)
 
     assert module._submit_and_wait(args) == 0
     assert observed == {
         "submitted_run_id": "human-run-name",
+        "submitted_isolated": isolated.resolve(),
         "waited_job_id": "73",
+        "waited_isolated": isolated.resolve(),
+        "guard_isolated": isolated.resolve(),
+        "resolve_calls": 1,
     }
 
 
@@ -1019,6 +1060,7 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
     module = _load_module()
     seen: list[list[str]] = []
+    environments: list[Path | None] = []
 
     def fake_run(cmd, **kwargs):
         del kwargs
@@ -1028,10 +1070,17 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
         )
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        module,
+        "sky_environment",
+        lambda isolated: environments.append(isolated) or {},
+    )
+    isolated = Path("/owner/isolated-sky-state")
     module._ensure_infra_enabled(
         sky_bin="/opt/sky",
         infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
+        isolated_config_dir=isolated,
     )
 
     assert seen == [
@@ -1046,6 +1095,7 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
             "/tmp/skypilot.yaml",
         ],
     ]
+    assert environments == [isolated, isolated]
 
 
 def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
@@ -1295,6 +1345,11 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     monkeypatch.setenv("KUBECONFIG", original)
     monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "1")
     monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    monkeypatch.setattr(
+        module, "resolve_isolated_config_dir", lambda _value: isolated
+    )
     monkeypatch.setattr(module, "_default_run_id", lambda: "byof-restore")
     monkeypatch.setattr(
         module,
@@ -1329,13 +1384,20 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
-    monkeypatch.setattr(module, "sky_environment", lambda *_a, **_k: os.environ.copy())
+    environment_roots: list[Path | None] = []
+    monkeypatch.setattr(
+        module,
+        "sky_environment",
+        lambda root: environment_roots.append(root) or os.environ.copy(),
+    )
 
     args = module._parse_args(
         [
             "--yaml",
             str(YAML_PATH),
             "--direct-launch",
+            "--isolated-config-dir",
+            str(isolated),
             "--output-root",
             "s3://bucket/prefix",
         ]
@@ -1343,3 +1405,4 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     assert module._submit_and_wait(args) == 0
     assert os.environ.get("KUBECONFIG") == original
     assert ["/opt/sky", "api", "stop"] in seen_cmds
+    assert environment_roots == [isolated]

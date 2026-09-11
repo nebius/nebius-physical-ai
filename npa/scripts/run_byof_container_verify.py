@@ -33,6 +33,7 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
     SkyPilotVersionError,
+    resolve_isolated_config_dir,
     resolve_sky_bin,
 )
 from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
@@ -245,6 +246,17 @@ def _libero_payload_kubeconfig() -> Path:
         os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG", "").strip(),
         label="payload kubeconfig",
     )
+
+
+def _libero_isolated_state_root(path: Path | None) -> Path:
+    if path is None:
+        raise ValueError("LIBERO requires an isolated SkyPilot state root")
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError("LIBERO isolated SkyPilot state must be a directory")
+    metadata = path.stat()
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise ValueError("LIBERO isolated SkyPilot state must be owner-private")
+    return path.resolve()
 
 
 def _libero_global_config_path(args: argparse.Namespace) -> str:
@@ -858,6 +870,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
         )
+        isolated_config_dir = resolve_isolated_config_dir(
+            args.isolated_config_dir or None
+        )
+        if is_libero:
+            isolated_config_dir = _libero_isolated_state_root(isolated_config_dir)
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
@@ -881,7 +898,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             )
             _write_yaml_documents(rendered_yaml, docs)
             preflight_output_storage(output_root=output_root, run_id=run_id)
-            _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
+            _ensure_infra_enabled(
+                sky_bin=sky_bin,
+                infra=infra,
+                config_path=config_path,
+                isolated_config_dir=isolated_config_dir,
+            )
             if args.direct_launch:
                 return _direct_launch(
                     rendered_yaml=rendered_yaml,
@@ -890,6 +912,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     sky_bin=sky_bin,
                     infra=infra,
                     config_path=config_path,
+                    isolated_config_dir=isolated_config_dir,
                     cleanup=args.cleanup,
                     secret_envs=resolve_secret_envs(
                         args.secret_env, solution_name=args.solution_name
@@ -897,9 +920,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
-                isolated_config_dir=(
-                    Path(args.isolated_config_dir) if args.isolated_config_dir else None
-                ),
+                isolated_config_dir=isolated_config_dir,
                 sky_bin=sky_bin,
                 poll_interval=max(float(args.poll_interval), 0.0),
             )
@@ -932,7 +953,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,
-                    isolated_config_dir=args.isolated_config_dir,
+                    isolated_config_dir=isolated_config_dir,
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=infra,
@@ -999,7 +1020,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
                 subprocess.run(
                     [sky_bin, "api", "stop"],
-                    env=sky_environment(None),
+                    env=sky_environment(isolated_config_dir),
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -1015,6 +1036,7 @@ def _direct_launch(
     sky_bin: str,
     infra: str,
     config_path: str = "",
+    isolated_config_dir: Path | None = None,
     cleanup: bool = True,
     secret_envs: list[str] | None = None,
 ) -> int:
@@ -1035,7 +1057,7 @@ def _direct_launch(
         cmd.extend(["--infra", infra])
     if config_path:
         cmd.extend(["--config", config_path])
-    launch_env = sky_environment(None)
+    launch_env = sky_environment(isolated_config_dir)
     for secret_name in secret_envs or ():
         if launch_env.get(secret_name):
             cmd.extend(["--secret", secret_name])
@@ -1227,7 +1249,13 @@ def _contains_error_payload(value: Any) -> bool:
     )
 
 
-def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:
+def _ensure_infra_enabled(
+    *,
+    sky_bin: str,
+    infra: str,
+    config_path: str = "",
+    isolated_config_dir: Path | None = None,
+) -> None:
     if os.environ.get("NPA_BYOF_SKIP_SKY_CHECK") == "1":
         return
     normalized = infra.strip().lower()
@@ -1236,7 +1264,7 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
         subprocess.run(
             [sky_bin, "api", "stop"],
-            env=sky_environment(None),
+            env=sky_environment(isolated_config_dir),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1247,7 +1275,7 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
         cmd.extend(["--config", config_path])
     result = subprocess.run(
         cmd,
-        env=sky_environment(None),
+        env=sky_environment(isolated_config_dir),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
