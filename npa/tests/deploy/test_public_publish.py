@@ -658,6 +658,9 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
 
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
+    assert is_public_registry("docker.io:443/example")
+    assert is_public_registry("quay.io:443/example")
+    assert is_public_registry("public.ecr.aws:80/example")
     assert not is_public_registry("GHCR.IO/Operator/Private-Package")
     assert not is_public_registry("registry.example/e00example")
     assert not is_public_registry("")

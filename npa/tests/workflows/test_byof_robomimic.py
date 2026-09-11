@@ -181,7 +181,7 @@ def test_robomimic_observer_cleanup_runs_after_gate_failure(
                 command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
             )
         if "get" in command:
-            return subprocess.CompletedProcess(command, 1, "", "NotFound")
+            return subprocess.CompletedProcess(command, 0, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -199,7 +199,82 @@ def test_robomimic_observer_cleanup_runs_after_gate_failure(
 
     assert any("create" in command for command in calls)
     assert any("delete" in command for command in calls)
-    assert sum("-o" in command and "name" in command for command in calls) == 3
+    assert sum("-o" in command and "name" in command for command in calls) == 6
+
+
+def test_robomimic_observer_cleanup_checks_every_resource_after_delete_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls: list[list[str]] = []
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "auth" in command:
+            verb = command[command.index("can-i") + 1]
+            resource = command[command.index("can-i") + 2]
+            allowed = (verb, resource) == ("get", "pods")
+            return subprocess.CompletedProcess(
+                command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
+            )
+        if "delete" in command and "rolebinding/" in " ".join(command):
+            return subprocess.CompletedProcess(command, 1, "", "simulated delete error")
+        if "get" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="simulated gate failure") as raised:
+        with module._robomimic_observer_rbac(
+            run_id="cleanup-error-contract", selectors=selectors, env={}
+        ):
+            raise RuntimeError("simulated gate failure")
+
+    assert any("cleanup failed" in note for note in raised.value.__notes__)
+    assert sum("delete" in command for command in calls) == 3
+    assert sum("-o" in command and "name" in command for command in calls) == 6
+
+
+def test_robomimic_observer_cleanup_covers_ambiguous_create_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls: list[list[str]] = []
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "get" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "create" in command:
+            return subprocess.CompletedProcess(command, 1, "", "response lost")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        with module._robomimic_observer_rbac(
+            run_id="ambiguous-create-contract", selectors=selectors, env={}
+        ):
+            pytest.fail("the context must not yield after create failure")
+
+    deleted = [command for command in calls if "delete" in command]
+    assert len(deleted) == 1
+    assert "serviceaccount/" in " ".join(deleted[0])
 
 
 @pytest.mark.parametrize(
@@ -273,8 +348,125 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
     assert payload["run_started"] is False
 
 
+@pytest.mark.parametrize(
+    ("registry", "manager_registry", "visibility", "image", "output_root", "expected_error"),
+    (
+        (
+            "private.invalid/robomimic",
+            "private.invalid/robomimic",
+            "private",
+            "quay.io/example/robomimic:latest",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            "image does not target the manager-issued private registry",
+        ),
+        (
+            "quay.io:443/example",
+            "quay.io:443/example",
+            "private",
+            "",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            "requires an operator-private registry",
+        ),
+        (
+            "private.invalid/robomimic",
+            "private.invalid/robomimic",
+            "private",
+            "",
+            "s3://other-bucket/oss-solutions/robomimic",
+            "manager-issued bucket and solution prefix",
+        ),
+        (
+            "private.invalid/actual",
+            "private.invalid/manager",
+            "private",
+            "",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            "registry does not match the manager-issued registry",
+        ),
+        (
+            "private.invalid/robomimic",
+            "private.invalid/robomimic",
+            "public",
+            "",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            "registry visibility must be private",
+        ),
+    ),
+)
+def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
+    tmp_path: Path,
+    registry: str,
+    manager_registry: str,
+    visibility: str,
+    image: str,
+    output_root: str,
+    expected_error: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": manager_registry,
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": visibility,
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+    }
+    command = [
+        sys.executable,
+        str(ROOT / "npa" / "scripts" / "run_byof_repo.py"),
+        "--repo-url",
+        "https://github.com/ARISE-Initiative/robomimic.git",
+        "--repo-ref",
+        SOURCE_REVISION,
+        "--solution-name",
+        "robomimic",
+        "--project",
+        "manager-project",
+        "--registry",
+        registry,
+        "--output-root",
+        output_root,
+        "--skip-build",
+        "--skip-push",
+        "--skip-run",
+    ]
+    if image:
+        command.extend(["--image", image])
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 64
+    assert payload["status"] == "refused"
+    assert expected_error in payload["error"]
+    assert payload["build_started"] is False
+    assert payload["push_started"] is False
+    assert payload["run_started"] is False
+
+
 def test_robomimic_workflow_direct_submit_refuses_before_preflight() -> None:
-    for extra_args in ([], ["--var", "execution_policy=direct"]):
+    for extra_args in (
+        [],
+        ["--var", "execution_policy=direct"],
+        [
+            "--var",
+            "execution_policy=direct",
+            "--var",
+            "solution_name=renamed",
+            "--var",
+            "repo_url=https://github.com/example/unrelated.git",
+        ],
+    ):
         result = CliRunner().invoke(
             app,
             ["workbench", "workflow", "submit", str(WORKFLOW), *extra_args],
