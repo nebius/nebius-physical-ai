@@ -286,7 +286,7 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert '("list", "pods"), ("create", "pods/exec")' in source
     assert 'get("skypilot-cluster-name")' in source
     assert '"parent=skypilot"' in source
-    assert "expected_digest in image_id" in source
+    assert "observed_digests == {expected_digest}" in source
     assert "assert gpu_requests == gpu_limits == 1" in source
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned" in source
     assert "stdout=stdout_stream" in source
@@ -294,3 +294,4 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert "_cleanup_gymnasium_run(" in source
     assert 'command.extend(["--yes", run_id])' in source
     assert "exact-run cleanup also failed" in source
+    assert "include_terminating=True" in source

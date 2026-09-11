@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -792,7 +793,11 @@ def _require_gymnasium_owner_receipt_access(
 
 
 def _exact_gymnasium_run_pods(
-    env: dict[str, str], *, namespace: str, run_id: str
+    env: dict[str, str],
+    *,
+    namespace: str,
+    run_id: str,
+    include_terminating: bool = False,
 ) -> list[dict[str, object]]:
     result = _gymnasium_kubectl(
         env,
@@ -816,7 +821,10 @@ def _exact_gymnasium_run_pods(
         .get("annotations", {})
         .get("skypilot-cluster-name")
         == run_id
-        and not item.get("metadata", {}).get("deletionTimestamp")
+        and (
+            include_terminating
+            or not item.get("metadata", {}).get("deletionTimestamp")
+        )
     ]
     assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
     return pods
@@ -889,7 +897,8 @@ def _gymnasium_pod_image_receipt(
             time.sleep(2)
             continue
         image_id = str(status.get("imageID", ""))
-        assert expected_digest in image_id, (
+        observed_digests = set(re.findall(r"sha256:[0-9a-f]{64}", image_id.lower()))
+        assert observed_digests == {expected_digest}, (
             "Kubernetes imageID differs from the scanned immutable image"
         )
         receipt: dict[str, object] = {
@@ -903,7 +912,7 @@ def _gymnasium_pod_image_receipt(
             "spec_image": str(container.get("image", "")).removeprefix("docker:"),
             "image_id": image_id,
             "expected_digest": expected_digest,
-            "observed_digest": expected_digest,
+            "observed_digest": observed_digests.pop(),
             "observed_unix": round(time.time(), 3),
         }
         assert receipt["pod_name"] and receipt["pod_uid"]
@@ -976,11 +985,19 @@ def _cleanup_gymnasium_run(
                 stream.write(content)
         if result.returncode != 0:
             remaining = _exact_gymnasium_run_pods(
-                env, namespace=namespace, run_id=run_id
+                env,
+                namespace=namespace,
+                run_id=run_id,
+                include_terminating=True,
             )
             assert not remaining, "exact-run SkyPilot cleanup failed and its Pod remains"
             return
-    while _exact_gymnasium_run_pods(env, namespace=namespace, run_id=run_id):
+    while _exact_gymnasium_run_pods(
+        env,
+        namespace=namespace,
+        run_id=run_id,
+        include_terminating=True,
+    ):
         time.sleep(2)
 
 
@@ -1070,8 +1087,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 stdout_stream.flush()
                 stderr_stream.flush()
                 raise AssertionError(
-                    stdout_path.read_text(encoding="utf-8")
-                    + stderr_path.read_text(encoding="utf-8")
+                    f"BYOF runner exited {returncode}; inspect owner-private logs"
                 )
         except BaseException as primary_error:
             if proc.poll() is None:

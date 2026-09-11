@@ -151,6 +151,33 @@ def test_owner_permission_preflight_matches_list_and_exec(
     ]
 
 
+def test_cleanup_selection_keeps_exact_terminating_pod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminating = _pod(image_id=f"containerd://{DIGEST}")
+    terminating["metadata"]["deletionTimestamp"] = "2026-09-11T00:01:00Z"
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        assert args[:2] == ("get", "pods")
+        return subprocess.CompletedProcess(
+            args, 0, json.dumps({"items": [terminating]}), ""
+        )
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    assert not live._exact_gymnasium_run_pods(
+        {}, namespace=NAMESPACE, run_id=RUN_ID
+    )
+    assert live._exact_gymnasium_run_pods(
+        {}, namespace=NAMESPACE, run_id=RUN_ID, include_terminating=True
+    ) == [terminating]
+
+
 def test_failed_sky_down_is_not_accepted_while_exact_pod_remains(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
