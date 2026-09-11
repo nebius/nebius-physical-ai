@@ -217,6 +217,31 @@ Required smoke capabilities:
 - `mjx_cheetah_run_step`
 - `train_jax_ppo_cartpole_smoke` (live-accepted; brax PPO train API, jax&lt;0.8.1)
 
+### Gymnasium-Robotics (`byof-gymnasium-robotics.yaml`)
+
+Pinned: `Farama-Foundation/Gymnasium-Robotics`
+`4d1ebecbc6436806cfbc0e42ebc36f594d05844e` · MuJoCo `3.12.0` · base
+`ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61`
+
+The single hard gate is the upstream registered
+`HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` environment. One
+strictly reserved RTX PRO 6000 Blackwell must exercise all of:
+
+- `registered_shadow_hand_environment`
+- `mujoco_physics_steps`
+- `continuous_touch_sensor_response`
+- `mujoco_contacts`
+- `egl_rgb_rendering`
+- `rtx_pro_6000_blackwell_execution`
+
+The smoke must write exactly `gymnasium-robotics-smoke.json`, prove real
+MuJoCo steps, contacts or touch response, state/orientation change, distinct
+RGB frame hashes, NVIDIA EGL, and equality between the immutable image digest
+and the pod-observed digest. This is a private-registry BYOF candidate, not a
+public Workbench image or first-class tool. It uses no model, external dataset,
+gated asset, or terms acceptance. RL sweeps, expert scores, other environment
+families, and physical-robot transfer remain deferred. Never route it to B200.
+
 ### RoboCasa (`byof-robocasa.yaml`)
 
 Pinned: `robocasa/robocasa` `v1.0`
