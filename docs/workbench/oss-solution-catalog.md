@@ -83,16 +83,17 @@ live capability.
 | `bullet_physics_world_step` | pending live qualification | Bullet-enabled build and advancing world time through `Simulator.step(dt=1/60)` |
 | `greedy_geodesic_agent_traversal` | pending live qualification | Navmesh path, upstream follower action sequence, and nonzero start-to-end displacement |
 
-The hard gate fetches only `skokloster-castle.glb` and its `.navmesh` from
-`ai-habitat/habitat_test_scenes@910c783fb954da8497ea5f811b843a76590ddddc`.
-The private build uses an immutable Ubuntu package snapshot and a 35-wheel,
-hash-locked Python closure, and preserves package inventories with the result.
-Habitat's pinned README identifies the demo as CC BY 4.0; the aggregate
-collection card currently labels the collection CC BY-NC 4.0, so both are
-recorded and the stricter collection restriction is not hidden. Matterport3D,
-HM3D, Replica, other proprietary or gated datasets, semantic annotations, and
-distributed Habitat-Lab training are deferred. The renderer targets exactly one
-RTX PRO 6000 Blackwell and never B200. See
+The hard gate fetches the official Meta test-scene archive referenced by the
+pinned Habitat-Sim tree, verifies its 94,590,970-byte SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+extracts only the exact hash-pinned `skokloster-castle.glb` and `.navmesh`, and
+deletes the archive. The private build uses an immutable Ubuntu package snapshot
+and a 35-wheel, hash-locked Python closure, and preserves package inventories
+with the result. Habitat's pinned README and the original asset identify the
+demo as CC BY 4.0; the proof carries attribution, license/original links, and
+modification provenance. Matterport3D, HM3D, Replica, other proprietary or gated
+datasets, semantic annotations, and distributed Habitat-Lab training are
+deferred. The renderer targets exactly one RTX PRO 6000 Blackwell and never B200. See
 [`byof-habitat-sim.md`](byof-habitat-sim.md).
 
 ### ManiSkill

@@ -221,11 +221,16 @@ Pending hard-gate capabilities (all must pass in one live pod):
 - `greedy_geodesic_agent_traversal`: a real pathfinder/navmesh traversal rather
   than direct state teleportation
 
-Use only `skokloster-castle.glb` and `skokloster-castle.navmesh` from
-`ai-habitat/habitat_test_scenes@910c783fb954da8497ea5f811b843a76590ddddc`.
-Verify their exact hashes before simulator creation. The pinned source README
-attributes the asset under CC BY 4.0, while the aggregate collection card
-currently says CC BY-NC 4.0; record both and do not broaden the data fetch.
+Fetch only the official Meta `habitat-test-scenes.zip` archive referenced by the
+pinned Habitat-Sim `examples/settings.py`. Treat its URL as mutable: require the
+94,590,970-byte archive SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+then extract only `skokloster-castle.glb` and `skokloster-castle.navmesh` after
+their exact member names, sizes, CRC32 values, and SHA-256 hashes pass. Delete
+the archive before simulator creation and never bake or extract another member.
+The pinned source README and original asset record identify The King's Hall
+under CC BY 4.0. Preserve creator/scan attribution, license and original-asset
+links, and the Habitat-ready modification provenance in the proof.
 
 Use `byof-solution-smoke-habitat-sim-rtxpro-gpu.yaml` on exactly one
 RTX PRO 6000 Blackwell (`sm_120`). The owner-only runtime evidence must prove
