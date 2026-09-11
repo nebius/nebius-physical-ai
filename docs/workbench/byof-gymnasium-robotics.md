@@ -129,7 +129,10 @@ matches the full run annotation, immutable spec image, one-GPU request and
 limit, container name, Pod UID, and Kubernetes `imageID`. It injects that
 observation as a mode-0600 receipt. The workload consumes the receipt without
 Kubernetes API access. Do not grant the workload service account Pod access or
-create a RoleBinding for this integration. If the private registry later needs
+create a RoleBinding for this integration. The pre-submit `auth can-i` check is
+necessarily namespace-wide; exact-Pod scope is established only after Pod
+creation by matching its run annotation, UID, container, and image digest. If
+the private registry later needs
 a run-scoped pull secret, create it only after these checks and ledger its exact
 Kubernetes UID, ownership, and cleanup contract before launch. Runner output is
 drained directly to owner-private files. Receipt polling, Kubernetes commands,
