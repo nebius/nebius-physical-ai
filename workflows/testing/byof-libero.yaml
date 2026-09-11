@@ -19,7 +19,7 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    python3 python3-dev python3-pip python3-venv git ca-certificates
+    python3 python3-dev python3-pip python3-venv git ca-certificates cmake make g++
     libgl1 libglib2.0-0 &&
     rm -rf /var/lib/apt/lists/* &&
     python3 -m venv /opt/venv &&
@@ -87,7 +87,7 @@ config:
     BDDL_SHA256 = "9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b"
     INIT_RELATIVE = f"libero/libero/init_files/{SUITE}/{TASK}.init"
     INIT_SHA256 = "c3a6a01fdc53ae1914fe24c8935088d723baee8f6ee3cd5f8d68e86aea3e2f1c"
-    BUILD_COMMAND_SHA256 = "b26108d20e6f91ea2627339895dc453f1e4eecab9bfc7524c43c920bff94b32f"
+    BUILD_COMMAND_SHA256 = "e77d6ecf52b3b37edd33269a9c22e31350a60575cb0dad5c38daf82e95049a87"
     CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
     CAPABILITIES = {
         "libero_official_demo_sha256",

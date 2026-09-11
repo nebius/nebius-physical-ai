@@ -36,6 +36,8 @@ def _load_module():
 
 
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
+    from npa.execution_preflight import skypilot_output_destinations
+
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
@@ -60,6 +62,12 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
     assert envs["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
+    assert json.loads(envs["NPA_EXECUTION_OUTPUTS"]) == [
+        {"uri": "s3://bucket/prefix/byof-demo/", "kind": "directory"}
+    ]
+    assert skypilot_output_destinations(docs) == {
+        "s3://bucket/prefix/byof-demo/": "directory"
+    }
     assert envs["NPA_S3_BUCKET"] == "bucket"
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert "AWS_ACCESS_KEY_ID" not in envs

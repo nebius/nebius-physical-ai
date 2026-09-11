@@ -568,8 +568,26 @@ def preflight_skypilot_submission(
             )
         global_kube = (global_config or {}).get("kubernetes") or {}
         allowed = global_kube.get("allowed_nodes") or ()
+        if isinstance(allowed, Mapping):
+            unsupported = {
+                key
+                for key in ("label_selector", "ips")
+                if allowed.get(key)
+            }
+            if unsupported:
+                raise ExecutionPreflightError(
+                    "gpu",
+                    "allowed_nodes label and IP filters cannot be verified against "
+                    "the GPU inventory; use exact node names",
+                    status="unknown",
+                )
+            allowed = allowed.get("names") or ()
         if not isinstance(allowed, (tuple, list)):
             raise ExecutionPreflightError("gpu", "global allowed_nodes shape is unknown", status="unknown")
+        if any(not isinstance(name, str) or not name.strip() for name in allowed):
+            raise ExecutionPreflightError(
+                "gpu", "global allowed_nodes names must be non-empty strings", status="unknown"
+            )
         for document in kubernetes_documents:
             resources = document.get("resources") or {}
             if not isinstance(resources, Mapping):

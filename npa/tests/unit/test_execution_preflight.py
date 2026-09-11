@@ -486,6 +486,59 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
             assert provider.s3.calls
 
 
+def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
+    provider, configured, monkeypatch
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    inventory = KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("NVIDIA-B200",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("NVIDIA-B200",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": "B200:1", "cpus": 8, "memory": 32}
+    )
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config={"kubernetes": {"allowed_nodes": {"names": ["unit-node"]}}},
+    )
+
+    assert report["checks"]["gpu"] == "pass"
+    assert provider.s3.calls
+
+
 def test_raw_production_environment_supplies_exact_principal(provider, configured):
     from npa.execution_preflight import preflight_skypilot_submission
 
