@@ -15,7 +15,7 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Boundary | Phase A contract | Status and gate |
 | --- | --- | --- |
 | Source | Bake only `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`. Its MIT `LICENSE` SHA-256 is `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. | Intended and statically checked; source bytes were not fetched or built in Phase A. A future build must record the observed commit and tree hash. |
-| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 48 hash-locked non-CUDA Python distributions. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
+| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 34 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
 | Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
 | Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the manager-approved `inventory.json` SHA-256 plus the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the consumed bytes. |
@@ -33,8 +33,10 @@ The Dockerfile intends to use the exact parent index digest
 An authorized build must re-resolve its Linux/amd64 child and record the result;
 historical resolution metadata is not byte-portable evidence.
 
-`baked-requirements.lock` contains 48 exact wheel hashes and intentionally omits
-torch, torchvision, Triton, and every `nvidia-*` distribution. The Dockerfile
+`baked-requirements.lock` contains 34 exact version pins with approved artifact
+hashes and intentionally omits optional rendering, video, TensorBoard, and
+language-model packages as well as torch, torchvision, Triton, and every
+`nvidia-*` distribution. The Dockerfile
 installs the wheels with `--only-binary=:all: --no-deps --require-hashes`,
 retains the immutable source without `.git`, removes SSH host keys, runs as
 `ubuntu`, starts no SSH daemon by default, and leaves the runtime/input/output

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -8,6 +9,12 @@ import re
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE_ROOT = ROOT / "npa" / "docker" / "workbench" / "robomimic"
 DOCKERFILE = IMAGE_ROOT / "Dockerfile"
+VERIFY_SPEC = importlib.util.spec_from_file_location(
+    "verify_robomimic_image_contract", IMAGE_ROOT / "verify_image.py"
+)
+assert VERIFY_SPEC and VERIFY_SPEC.loader
+VERIFIER = importlib.util.module_from_spec(VERIFY_SPEC)
+VERIFY_SPEC.loader.exec_module(VERIFIER)
 
 
 def test_neutral_image_is_pinned_non_root_and_contains_no_cuda_install() -> None:
@@ -31,7 +38,50 @@ def test_neutral_image_is_pinned_non_root_and_contains_no_cuda_install() -> None
 
 def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
     baked = (IMAGE_ROOT / "baked-requirements.lock").read_bytes()
-    assert len(baked.splitlines()) == 48
+    baked_names = {
+        line.split(b"==", 1)[0].decode("ascii")
+        for line in baked.splitlines()
+        if re.match(rb"^[A-Za-z0-9_.-]+==", line)
+    }
+    assert baked_names == {
+        "anyio",
+        "boto3",
+        "botocore",
+        "certifi",
+        "charset-normalizer",
+        "diffusers",
+        "filelock",
+        "fsspec",
+        "h11",
+        "h5py",
+        "hf-xet",
+        "httpcore",
+        "httpx",
+        "huggingface-hub",
+        "idna",
+        "imageio",
+        "importlib-metadata",
+        "jmespath",
+        "numpy",
+        "packaging",
+        "pillow",
+        "psutil",
+        "python-dateutil",
+        "pyyaml",
+        "regex",
+        "requests",
+        "s3transfer",
+        "safetensors",
+        "six",
+        "termcolor",
+        "tqdm",
+        "typing-extensions",
+        "urllib3",
+        "zipp",
+    }
+    assert set(
+        VERIFIER._locked_baked_packages(IMAGE_ROOT / "baked-requirements.lock")
+    ) == (baked_names)
     lowered = baked.lower()
     for forbidden in (b"torch==", b"torchvision==", b"triton==", b"nvidia-"):
         assert forbidden not in lowered
