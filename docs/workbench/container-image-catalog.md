@@ -132,6 +132,17 @@ motion. The publication and state-execution facts remain valid; this run does
 not qualify RTX visual behavior. Isaac Sim/Lab and Lightwheel assets remain
 operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
+## Restricted BYOF candidates excluded from publication
+
+RoboTwin 2.0 is intentionally absent from the public image table. Its
+`byof-robotwin.yaml` candidate compiles pinned CuRobo v0.7.8, whose NVIDIA
+license permits noncommercial research/evaluation only, into an operator-owned
+private image. Official RoboTwin assets remain an exact-revision runtime fetch
+and are not baked. No public tag, anonymous-pull result, payload scan, or public
+release status is claimed. The workflow, license boundary, and pending
+exact-digest RTX PRO 6000 acceptance gate are documented in
+[`byof-robotwin.md`](byof-robotwin.md).
+
 ## Pending NCore conversion image
 
 `npa-ncore` is an additional development validation candidate for the

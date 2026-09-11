@@ -1,0 +1,53 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "6e4ed7740151c32a105a260c525a6d227ae51f0b978fd4acdaf98e88c3faafa7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The checked-in workflow passes schema validation and renders one workbench.byof.repo step with the dedicated RTX PRO 6000 profile.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-robotwin.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-robotwin.yaml --run-id robotwin-local-plan --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused contract tests verify the pinned task/config, exact 148-distribution build lock, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
+      "evidence": [
+        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_robotwin.py npa/tests/workflows/test_byof_solution_smokes.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in spec uses example-bucket; a live run must use a unique prefix in manager-authorized writable storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The public RoboTwin source and asset revisions resolve, but the two runtime archives have not yet been downloaded and hash-checked by the workload.",
+      "evidence": [
+        "https://github.com/RoboTwin-Platform/RoboTwin/commit/96c1feab536306b50c26af200044fcdf126e8904",
+        "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "A future live run needs an owner-only manager context with private-registry, S3, Kubernetes, SkyPilot, ownership, STRICT reservation, and authorized NVIDIA/CuRobo license decisions. The upstream source and asset dataset are public and ungated.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The image has not been built or pushed. Its exact Python closure is pinned and license-audited, but the image must remain private because baked CuRobo v0.7.8 is licensed only for noncommercial research/evaluation use and CUDA/cuDNN require operator acceptance.",
+      "evidence": [
+        "https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No manager runtime-context file is available yet. Execution requires exactly one STRICT-reservation-backed RTX PRO 6000 Blackwell with healthy NVIDIA Vulkan mounts; B200 is not a valid target.",
+      "evidence": []
+    }
+  }
+}
