@@ -18,6 +18,7 @@ import lzma
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import struct
 import sys
 import tarfile
 from typing import Any
@@ -60,6 +61,38 @@ COMPRESSION_SIGNATURES = {
     "bzip2": b"BZh",
     "gzip": b"\x1f\x8b",
     "xz": b"\xfd7zXZ\x00",
+}
+DECLARED_COMPRESSION_SUFFIXES = (
+    (".tar.bz2", "bzip2"),
+    (".tar.gz", "gzip"),
+    (".tar.xz", "xz"),
+    (".tbz2", "bzip2"),
+    (".tgz", "gzip"),
+    (".txz", "xz"),
+    (".bz2", "bzip2"),
+    (".gz", "gzip"),
+    (".xz", "xz"),
+)
+COMPRESSED_TAR_SUFFIXES = (
+    ".tar.bz2",
+    ".tar.gz",
+    ".tar.xz",
+    ".tbz2",
+    ".tgz",
+    ".txz",
+)
+DELIVERY_DIGEST_ROLES = {
+    "farama-gymnasium-robotics": {"archive_sha256": "source_archive"},
+    "shadow-hand-xml-mesh-texture-assets": {
+        "build_instructions_sha256": "build_instructions",
+        "preferred_form_archive_sha256": "preferred_form_archive",
+        "transformation_manifest_sha256": "transformation_manifest",
+    },
+    "ubuntu-runtime-closure": {
+        "binary_manifest_sha256": "binary_manifest",
+        "build_materials_sha256": "build_materials",
+        "source_manifest_sha256": "source_manifest",
+    },
 }
 EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO_COMMIT = "13827e9ee56f097f57acf69ae52b078f9839682d"
@@ -194,6 +227,123 @@ def _looks_like_tar(content: bytes) -> bool:
     return expected == actual and bool(content[:100].rstrip(b"\0"))
 
 
+def _validated_tar_members(path: str, content: bytes) -> list[tarfile.TarInfo]:
+    """Parse exactly one uncompressed tar stream with only zero end padding."""
+
+    if len(content) < 1024 or len(content) % 512:
+        raise ValueError(f"unaccounted tar bytes: {path}")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+            members = archive.getmembers()
+    except tarfile.TarError as error:
+        raise ValueError(f"unreadable nested tar archive: {path}") from error
+    cursor = 0
+    for member in members:
+        if member.offset != cursor:
+            raise ValueError(f"unaccounted tar bytes: {path}")
+        cursor = ((member.offset_data + member.size + 511) // 512) * 512
+    tail = content[cursor:]
+    if len(tail) < 1024 or any(tail):
+        raise ValueError(f"unaccounted tar bytes: {path}")
+    return members
+
+
+def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
+    """Parse one prefix/suffix-free non-ZIP64 stream with no local-data gaps."""
+
+    eocd_offset = content.rfind(b"PK\x05\x06", max(0, len(content) - 65_557))
+    if eocd_offset < 0 or eocd_offset + 22 > len(content):
+        raise ValueError(f"unaccounted zip bytes: {path}")
+    (
+        signature,
+        disk,
+        central_disk,
+        disk_entries,
+        total_entries,
+        central_size,
+        central_offset,
+        comment_size,
+    ) = struct.unpack_from("<4s4H2LH", content, eocd_offset)
+    if signature != b"PK\x05\x06" or eocd_offset + 22 + comment_size != len(content):
+        raise ValueError(f"unaccounted zip bytes: {path}")
+    if (
+        disk != 0
+        or central_disk != 0
+        or disk_entries != total_entries
+        or 0xFFFF in (disk_entries, total_entries)
+        or 0xFFFFFFFF in (central_size, central_offset)
+        or central_offset + central_size != eocd_offset
+    ):
+        raise ValueError(f"unsupported or prefixed zip archive: {path}")
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            infos = archive.infolist()
+    except (RuntimeError, zipfile.BadZipFile) as error:
+        raise ValueError(f"unreadable nested zip archive: {path}") from error
+    if len(infos) != total_entries:
+        raise ValueError(f"zip entry count changed: {path}")
+    ordered = sorted(infos, key=lambda item: item.header_offset)
+    cursor = 0
+    for index, info in enumerate(ordered):
+        if info.header_offset != cursor or cursor + 30 > central_offset:
+            raise ValueError(f"unaccounted zip bytes: {path}")
+        (
+            local_signature,
+            _version,
+            local_flags,
+            local_compression,
+            _mtime,
+            _mdate,
+            local_crc,
+            local_compressed_size,
+            local_size,
+            filename_size,
+            extra_size,
+        ) = struct.unpack_from("<4s5H3L2H", content, cursor)
+        if (
+            local_signature != b"PK\x03\x04"
+            or local_flags != info.flag_bits
+            or local_compression != info.compress_type
+            or local_flags & 1
+        ):
+            raise ValueError(f"unsupported zip local header: {path}")
+        data_start = cursor + 30 + filename_size + extra_size
+        data_end = data_start + info.compress_size
+        next_offset = (
+            ordered[index + 1].header_offset
+            if index + 1 < len(ordered)
+            else central_offset
+        )
+        descriptor = content[data_end:next_offset]
+        if local_flags & 0x08:
+            if len(descriptor) not in (12, 16) or (
+                len(descriptor) == 16 and not descriptor.startswith(b"PK\x07\x08")
+            ):
+                raise ValueError(f"unsupported zip data descriptor: {path}")
+        elif descriptor or (
+            local_crc != info.CRC
+            or local_compressed_size != info.compress_size
+            or local_size != info.file_size
+        ):
+            raise ValueError(f"unaccounted zip bytes: {path}")
+        cursor = next_offset
+    if cursor != central_offset:
+        raise ValueError(f"unaccounted zip bytes: {path}")
+    return infos
+
+
+def _declared_compression(path: str) -> str | None:
+    lowered = path.lower()
+    return next(
+        (
+            kind
+            for suffix, kind in DECLARED_COMPRESSION_SUFFIXES
+            if lowered.endswith(suffix)
+        ),
+        None,
+    )
+
+
 def _decompress(path: str, content: bytes, kind: str) -> bytes:
     """Expand one recognized stream with a strict output-size bound."""
 
@@ -230,8 +380,10 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
     _scan_policy_bytes(f"nested archive bytes: {path}", content)
     lowered = path.lower()
     declared_zip = lowered.endswith((".whl", ".zip"))
-    declared_tar = lowered.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz"))
-    is_zip = zipfile.is_zipfile(io.BytesIO(content))
+    declared_tar = lowered.endswith((".tar", *COMPRESSED_TAR_SUFFIXES))
+    declared_compression = _declared_compression(path)
+    is_tar = _looks_like_tar(content)
+    is_zip = not is_tar and zipfile.is_zipfile(io.BytesIO(content))
     compression_kind = next(
         (
             kind
@@ -240,7 +392,8 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
         ),
         None,
     )
-    is_tar = _looks_like_tar(content)
+    if declared_compression is not None and compression_kind != declared_compression:
+        raise ValueError(f"declared compression does not match bytes: {path}")
     archive_like = (
         is_zip
         or compression_kind is not None
@@ -254,16 +407,18 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
     if compression_kind is not None:
         expanded = _decompress(path, content, compression_kind)
         _scan_policy_bytes(f"expanded {compression_kind} stream: {path}", expanded)
+        if lowered.endswith(COMPRESSED_TAR_SUFFIXES) and not _looks_like_tar(expanded):
+            raise ValueError(f"compressed tar payload is not a tar archive: {path}")
         return _nested_archive_members(
             f"{path}:expanded-{compression_kind}", expanded, depth=depth + 1
         )
     if is_zip:
+        infos = _validated_zip_infos(path, content)
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                members = archive.infolist()
                 count = 0
                 expanded_total = 0
-                for member in members:
+                for member in infos:
                     safe = _safe(member.filename)
                     count += 1
                     if FORBIDDEN_PATH.search(safe):
@@ -314,6 +469,7 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
     if content.startswith(ZIP_SIGNATURES) or declared_zip:
         raise ValueError(f"unreadable nested zip archive: {path}")
     if is_tar:
+        _validated_tar_members(path, content)
         try:
             with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
                 count = 0
@@ -465,8 +621,9 @@ def _layers(
     for layer_name in names:
         raw = _raw_member(archive, layer_name)
         _scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)
+        _validated_tar_members(f"raw layer: {layer_name}", raw)
         diff_ids.append("sha256:" + hashlib.sha256(raw).hexdigest())
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:*") as layer:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as layer:
             for item in layer:
                 path = _safe(item.name)
                 total += 1
@@ -768,12 +925,41 @@ def _complete_locks(
             raise ValueError(
                 f"Ubuntu corresponding-source closure is incomplete: {field}"
             )
+    artifact_paths: set[str] = set()
     for delivery in deliveries:
+        component = delivery["binary_component"]
+        digest_roles = DELIVERY_DIGEST_ROLES[component]
+        expected_roles = set(digest_roles.values())
+        if set(delivery.get("required_artifact_roles") or []) != expected_roles:
+            raise ValueError(
+                f"corresponding-source required roles changed: {component}"
+            )
         artifacts = delivery.get("artifacts")
         if not artifacts:
             raise ValueError("corresponding-source delivery has no exact artifacts")
+        roles = [artifact.get("role") for artifact in artifacts]
+        if len(roles) != len(set(roles)) or set(roles) != expected_roles:
+            raise ValueError(
+                f"corresponding-source artifact roles changed: {component}"
+            )
+        artifacts_by_role = {artifact["role"]: artifact for artifact in artifacts}
+        for digest_field, role in digest_roles.items():
+            digest = delivery.get(digest_field)
+            if (
+                not re.fullmatch(r"[0-9a-f]{64}", str(digest or ""))
+                or artifacts_by_role[role].get("sha256") != digest
+            ):
+                raise ValueError(
+                    f"corresponding-source role digest changed: {component}:{role}"
+                )
         for artifact in artifacts:
-            content = rootfs.get(annex + str(artifact.get("path") or ""))
+            artifact_path = _safe(str(artifact.get("path") or ""))
+            if artifact_path in artifact_paths:
+                raise ValueError(
+                    f"corresponding-source artifact path is reused: {artifact_path}"
+                )
+            artifact_paths.add(artifact_path)
+            content = rootfs.get(annex + artifact_path)
             if content is None or hashlib.sha256(content).hexdigest() != artifact.get(
                 "sha256"
             ):
@@ -798,8 +984,10 @@ def _complete_locks(
 def scan(path: Path) -> dict[str, Any]:
     with path.open("rb") as stream:
         archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-    _scan_policy_bytes("complete Docker-save archive", path.read_bytes())
-    with tarfile.open(path, mode="r:*") as archive:
+    archive_bytes = path.read_bytes()
+    _scan_policy_bytes("complete Docker-save archive", archive_bytes)
+    _validated_tar_members("Docker-save archive", archive_bytes)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
         outer_members = archive.getmembers()
         outer_by_name = {_safe(member.name): member for member in outer_members}
         if len(outer_by_name) != len(outer_members):

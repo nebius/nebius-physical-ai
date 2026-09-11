@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bz2
+import copy
 import gzip
 import importlib.util
 import hashlib
@@ -73,7 +74,7 @@ def _tar_bytes(
     return output.getvalue() + suffix
 
 
-def _regular_record(raw: bytes) -> dict[str, object]:
+def _regular_record(raw: bytes, path: str = "") -> dict[str, object]:
     return {
         "kind": "regular",
         "mode": 0o644,
@@ -82,7 +83,7 @@ def _regular_record(raw: bytes) -> dict[str, object]:
         "mtime": 0,
         "uname": "",
         "gname": "",
-        "pax_headers": {},
+        "pax_headers": {"path": path} if len(path.encode()) > 100 else {},
         "sha256": hashlib.sha256(raw).hexdigest(),
     }
 
@@ -114,7 +115,7 @@ SOURCE_LOCK = {
 SOURCE_LOCK["components"]["shadow_sr_common"].update(
     {
         "preferred_form_sha256": ANNEX_SHA256,
-        "transformation_manifest_sha256": "b" * 64,
+        "transformation_manifest_sha256": ANNEX_SHA256,
     }
 )
 APT_LOCK = {
@@ -128,9 +129,9 @@ CORRESPONDING_LOCK = {
     "deliveries": [
         {
             "binary_component": component,
+            **{field: ANNEX_SHA256 for field in SCAN.DELIVERY_DIGEST_ROLES[component]},
             **(
                 {
-                    "archive_sha256": ANNEX_SHA256,
                     "license": "MIT",
                     "repository": SCAN.EXPECTED_SOURCE_FIELDS[
                         "farama_gymnasium_robotics"
@@ -139,24 +140,22 @@ CORRESPONDING_LOCK = {
                 }
                 if component == "farama-gymnasium-robotics"
                 else {
-                    "build_instructions_sha256": "b" * 64,
                     "license": "GPL-2.0-only AND Apache-2.0",
-                    "preferred_form_archive_sha256": ANNEX_SHA256,
                     "source_commit": SCAN.EXPECTED_SHADOW_COMMIT,
-                    "transformation_manifest_sha256": "b" * 64,
                 }
                 if component == "shadow-hand-xml-mesh-texture-assets"
-                else {
-                    "binary_manifest_sha256": "b" * 64,
-                    "build_materials_sha256": "b" * 64,
-                    "source_manifest_sha256": "b" * 64,
-                }
+                else {}
+            ),
+            "required_artifact_roles": sorted(
+                SCAN.DELIVERY_DIGEST_ROLES[component].values()
             ),
             "artifacts": [
                 {
-                    "path": f"{component}/source.bin",
+                    "role": role,
+                    "path": f"{component}/{role}.bin",
                     "sha256": ANNEX_SHA256,
                 }
+                for role in sorted(SCAN.DELIVERY_DIGEST_ROLES[component].values())
             ],
         }
         for component in (
@@ -194,12 +193,9 @@ COMMON_FILES = {
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": b"notices\n",
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": b"public\n",
     **{
-        f"usr/share/source/npa-gymnasium-robotics/{component}/source.bin": ANNEX
-        for component in (
-            "farama-gymnasium-robotics",
-            "shadow-hand-xml-mesh-texture-assets",
-            "ubuntu-runtime-closure",
-        )
+        f"usr/share/source/npa-gymnasium-robotics/{artifact['path']}": ANNEX
+        for delivery in CORRESPONDING_LOCK["deliveries"]
+        for artifact in delivery["artifacts"]
     },
     ASSET_PREFIX + "LICENSE.md": NOTICE,
     **{ASSET_PREFIX + name: raw for name, raw in {**XML, **MATERIAL}.items()},
@@ -209,7 +205,7 @@ ROOTFS_MANIFEST = {
     "entries": {
         **{
             path: {
-                **_regular_record(raw),
+                **_regular_record(raw, path),
                 "class": "npa-runtime",
                 "source": "synthetic-test-fixture",
             }
@@ -413,6 +409,56 @@ def test_incomplete_corresponding_source_fails(
         raise AssertionError("incomplete corresponding source was accepted")
 
 
+def _scan_with_corresponding_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    lock: dict[str, object],
+) -> None:
+    raw = json.dumps(lock).encode()
+    files = {
+        **REQUIRED,
+        "opt/npa/gymnasium-robotics/corresponding-source.lock.json": raw,
+    }
+    expected = dict(SCAN.EXPECTED_COMPLETE_LOCK_SHA256)
+    expected["corresponding-source.lock.json"] = hashlib.sha256(raw).hexdigest()
+    monkeypatch.setattr(SCAN, "EXPECTED_COMPLETE_LOCK_SHA256", expected)
+    archive = tmp_path / f"corresponding-{name}.tar"
+    _docker_save(archive, files)
+    SCAN.scan(archive)
+
+
+def test_corresponding_source_artifact_roles_are_exact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mutations: dict[str, dict[str, object]] = {}
+
+    missing = copy.deepcopy(CORRESPONDING_LOCK)
+    missing["deliveries"][1]["artifacts"].pop()
+    mutations["missing"] = missing
+
+    duplicate = copy.deepcopy(CORRESPONDING_LOCK)
+    duplicate_artifact = dict(duplicate["deliveries"][1]["artifacts"][0])
+    duplicate_artifact["path"] = "shadow-hand-xml-mesh-texture-assets/duplicate.bin"
+    duplicate["deliveries"][1]["artifacts"].append(duplicate_artifact)
+    mutations["duplicate"] = duplicate
+
+    substituted = copy.deepcopy(CORRESPONDING_LOCK)
+    substituted["deliveries"][2]["artifacts"][0]["role"] = "unexpected_role"
+    mutations["substituted"] = substituted
+
+    mismatched = copy.deepcopy(CORRESPONDING_LOCK)
+    mismatched["deliveries"][2]["binary_manifest_sha256"] = "c" * 64
+    mutations["mismatched"] = mismatched
+
+    for name, lock in mutations.items():
+        with pytest.raises(
+            ValueError,
+            match="corresponding-source (?:artifact roles|role digest) changed",
+        ):
+            _scan_with_corresponding_lock(tmp_path, monkeypatch, name, lock)
+
+
 def test_secret_in_raw_layer_and_eula_in_history_fail(tmp_path: Path) -> None:
     secret = tmp_path / "secret.tar"
     private_key_marker = b"BEGIN " + b"OPENSSH PRIVATE" + b" KEY"
@@ -525,6 +571,52 @@ def test_misnamed_compressed_streams_are_expanded(
     _docker_save(archive, {**REQUIRED, "opt/extra/innocent.bin": compressed})
     with pytest.raises(ValueError, match="forbidden vendor payload signature"):
         SCAN.scan(archive)
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    (
+        ("payload.tar.gz", gzip.compress(b"not-a-tar")),
+        ("payload.tar.bz2", bz2.compress(b"not-a-tar")),
+        ("payload.tar.xz", lzma.compress(b"not-a-tar")),
+        ("payload.gz", b"not-gzip"),
+        ("payload.bz2", b"not-bzip2"),
+        ("payload.xz", b"not-xz"),
+    ),
+)
+def test_declared_archive_and_compression_types_must_match_bytes(
+    tmp_path: Path, name: str, content: bytes
+) -> None:
+    archive = tmp_path / (name.replace(".", "-") + ".tar")
+    _docker_save(archive, {**REQUIRED, f"opt/extra/{name}": content})
+    with pytest.raises(
+        ValueError,
+        match="(?:declared compression does not match|compressed tar payload is not)",
+    ):
+        SCAN.scan(archive)
+
+
+def test_appended_tar_and_zip_streams_are_rejected(tmp_path: Path) -> None:
+    first_tar = _tar_bytes({"source/clean.txt": b"clean"})
+    second_tar = _tar_bytes({"usr/local/cuda/libcuda.so": b"otherwise-clean-binary"})
+    tar_archive = tmp_path / "concatenated-tar.tar"
+    _docker_save(
+        tar_archive,
+        {**REQUIRED, "opt/extra/concatenated.bin": first_tar + second_tar},
+    )
+    with pytest.raises(ValueError, match="unaccounted tar bytes"):
+        SCAN.scan(tar_archive)
+
+    zip_output = io.BytesIO()
+    with zipfile.ZipFile(zip_output, mode="w") as nested:
+        nested.writestr("source/clean.txt", b"clean")
+    zip_archive = tmp_path / "zip-with-suffix.tar"
+    _docker_save(
+        zip_archive,
+        {**REQUIRED, "opt/extra/concatenated.bin": zip_output.getvalue() + second_tar},
+    )
+    with pytest.raises(ValueError, match="unaccounted zip bytes"):
+        SCAN.scan(zip_archive)
 
 
 def test_second_level_nested_archive_signatures_are_scanned(tmp_path: Path) -> None:
@@ -675,3 +767,15 @@ def test_raw_layer_trailing_bytes_are_scanned(tmp_path: Path) -> None:
     _docker_save(archive, REQUIRED, app_suffix=marker)
     with pytest.raises(ValueError, match="forbidden secret signature"):
         SCAN.scan(archive)
+
+    benign_layer = tmp_path / "raw-trailing-benign.tar"
+    _docker_save(benign_layer, REQUIRED, app_suffix=b"benign trailing bytes")
+    with pytest.raises(ValueError, match="unaccounted tar bytes"):
+        SCAN.scan(benign_layer)
+
+    outer = tmp_path / "outer-trailing-benign.tar"
+    _docker_save(outer, REQUIRED)
+    with outer.open("ab") as stream:
+        stream.write(b"benign trailing bytes")
+    with pytest.raises(ValueError, match="unaccounted tar bytes"):
+        SCAN.scan(outer)
