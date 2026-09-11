@@ -634,32 +634,35 @@ def _layers(
         _scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)
         _validated_tar_members(f"raw layer: {layer_name}", raw)
         diff_ids.append("sha256:" + hashlib.sha256(raw).hexdigest())
+        current_rootfs: dict[str, bytes] = {}
+        current_entries: dict[str, dict[str, Any]] = {}
+        current_order: list[str] = []
+        member_paths: set[str] = set()
+        opaque_parents: set[str] = set()
+        deleted_targets: set[str] = set()
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as layer:
             for item in layer:
                 path = _safe(item.name)
+                if path in member_paths:
+                    raise ValueError(f"duplicate normalized layer path: {path}")
+                member_paths.add(path)
                 total += 1
                 leaf = PurePosixPath(path).name
                 if leaf == ".wh..wh..opq":
                     whiteouts.append(_whiteout_metadata(layer, item, path, layer_name))
                     parent = str(PurePosixPath(path).parent)
-                    if parent == ".":
-                        rootfs.clear()
-                        entries.clear()
-                    else:
-                        for key in tuple(entries):
-                            if key.startswith(parent + "/"):
-                                entries.pop(key, None)
-                                rootfs.pop(key, None)
+                    opaque_parents.add(parent)
                     continue
                 if leaf.startswith(".wh."):
                     whiteouts.append(_whiteout_metadata(layer, item, path, layer_name))
                     target = str(
                         PurePosixPath(path).with_name(leaf.removeprefix(".wh."))
                     )
-                    _remove_path(rootfs, entries, target)
+                    deleted_targets.add(target)
                     continue
                 if FORBIDDEN_PATH.search(path):
                     raise ValueError(f"forbidden image path: {path}")
+                current_order.append(path)
                 if item.isfile():
                     payload = layer.extractfile(item)
                     if payload is None:
@@ -667,15 +670,15 @@ def _layers(
                     content = payload.read()
                     _scan_policy_bytes(path, content)
                     nested += _nested_archive_members(path, content)
-                    _remove_path(rootfs, entries, path)
-                    rootfs[path] = content
-                    entries[path] = {
+                    _remove_path(current_rootfs, current_entries, path)
+                    current_rootfs[path] = content
+                    current_entries[path] = {
                         **_entry_metadata(item, "regular"),
                         "sha256": hashlib.sha256(content).hexdigest(),
                     }
                 elif item.isdir():
-                    rootfs.pop(path, None)
-                    entries[path] = _entry_metadata(item, "directory")
+                    current_rootfs.pop(path, None)
+                    current_entries[path] = _entry_metadata(item, "directory")
                 elif item.issym() or item.islnk():
                     target = item.linkname
                     target_bytes = target.encode("utf-8", errors="surrogateescape")
@@ -689,16 +692,38 @@ def _layers(
                         raise ValueError(
                             f"forbidden image link target: {path} -> {target}"
                         )
-                    _remove_path(rootfs, entries, path)
-                    rootfs.pop(path, None)
+                    _remove_path(current_rootfs, current_entries, path)
+                    current_rootfs.pop(path, None)
                     kind = "symlink" if item.issym() else "hardlink"
-                    entries[path] = {
+                    current_entries[path] = {
                         **_entry_metadata(item, kind),
                         "link_target": target,
                         "resolved_link_target": resolved,
                     }
                 else:
                     raise ValueError(f"unsupported image member type: {path}")
+        for parent in opaque_parents:
+            if parent == ".":
+                rootfs.clear()
+                entries.clear()
+            else:
+                for key in tuple(entries):
+                    if key.startswith(parent + "/"):
+                        entries.pop(key, None)
+                        rootfs.pop(key, None)
+        for target in deleted_targets:
+            _remove_path(rootfs, entries, target)
+        for path in current_order:
+            record = current_entries.get(path)
+            if record is None:
+                continue
+            if record["kind"] == "directory":
+                rootfs.pop(path, None)
+            else:
+                _remove_path(rootfs, entries, path)
+            entries[path] = record
+            if record["kind"] == "regular":
+                rootfs[path] = current_rootfs[path]
     for path, record in entries.items():
         if record["kind"] == "hardlink":
             target = record["resolved_link_target"]
@@ -937,6 +962,7 @@ def _complete_locks(
                 f"Ubuntu corresponding-source closure is incomplete: {field}"
             )
     artifact_paths: set[str] = set()
+    artifact_digests: set[str] = set()
     for delivery in deliveries:
         component = delivery["binary_component"]
         digest_roles = DELIVERY_DIGEST_ROLES[component]
@@ -970,6 +996,12 @@ def _complete_locks(
                     f"corresponding-source artifact path is reused: {artifact_path}"
                 )
             artifact_paths.add(artifact_path)
+            artifact_digest = str(artifact.get("sha256") or "")
+            if artifact_digest in artifact_digests:
+                raise ValueError(
+                    f"corresponding-source artifact digest is reused: {artifact_digest}"
+                )
+            artifact_digests.add(artifact_digest)
             content = rootfs.get(annex + artifact_path)
             if content is None or hashlib.sha256(content).hexdigest() != artifact.get(
                 "sha256"
