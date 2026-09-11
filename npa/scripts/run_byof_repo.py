@@ -100,7 +100,7 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
 
 
 def _require_robomimic_manager_context(
-    args: argparse.Namespace, *, registry: str, image: str
+    args: argparse.Namespace, *, registry: str, image: str, base_profile: str
 ) -> None:
     """Refuse the governed robomimic build before pulling any runtime bytes.
 
@@ -140,6 +140,10 @@ def _require_robomimic_manager_context(
         )
     if args.project.strip() != selectors["NPA_E2E_PROJECT"]:
         raise ValueError("robomimic --project does not match the manager-issued project")
+    if base_profile != "ubuntu":
+        raise ValueError(
+            "robomimic requires its immutable ubuntu build profile; prebuilt mode is forbidden"
+        )
     selected_registry = registry.rstrip("/")
     if selected_registry != selectors["NPA_BYOF_ROBOMIMIC_REGISTRY"].rstrip("/"):
         raise ValueError("robomimic registry does not match the manager-issued registry")
@@ -702,7 +706,9 @@ def main(argv: list[str] | None = None) -> int:
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     try:
-        _require_robomimic_manager_context(args, registry=registry, image=image)
+        _require_robomimic_manager_context(
+            args, registry=registry, image=image, base_profile=base_profile
+        )
     except ValueError as exc:
         print(
             json.dumps(
