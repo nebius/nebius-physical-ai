@@ -95,6 +95,9 @@ overriding mutable config values cannot bypass the plan-only boundary.
 The local `run-spec --execute` surface enforces the same boundary, and the
 robomimic runner forbids `prebuilt` mode so profile resolution cannot replace
 the checked image after target validation.
+Run-scoped observer objects carry a per-invocation ownership token; cleanup
+verifies that token before deleting each object and checks every object for
+absence even when another cleanup operation fails.
 
 After authorization, qualification must scan the exact pushed image digest,
 including every layer and image history entry. It must prove the absence of the
