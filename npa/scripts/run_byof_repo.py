@@ -129,6 +129,10 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
     if args.solution_name != LIBERO_SOLUTION_NAME:
         raise ValueError("LIBERO requires the exact --solution-name libero identity")
     cluster_name_patterns_for_run(args.run_id)
+    if args.workload != "solution-smoke":
+        raise ValueError("LIBERO requires the solution-smoke workload")
+    if profile != LIBERO_PROFILE_NAME:
+        raise ValueError("LIBERO requires its exact B200 solution-smoke profile")
 
 
 def _image_repository_name(image_ref: str) -> str:

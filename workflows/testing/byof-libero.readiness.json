@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "8bfe69cbc73300821eec819ae1b1bc58db7e6ce9c91a086ba4d155e367afc32a",
+  "workflow_sha256": "1451e7b1f0dbef84ad0dab7252087c917081f91553313abf17a4b6222e356142",
   "resource_profile_sha256": "61b9380b03c2896cf3bcd6814c5427ca70522ad2650a1fae26ea13fda3402dbb",
   "planning": {
     "validation": {
@@ -14,7 +14,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused static tests verify that the rendered BYOF operation is designed to pin one official LIBERO-Spatial demonstration, prune unused third-party render assets and Git objects in the source clone layer, runtime-fetch and hash-verify upstream-equivalent BERT task conditioning, invoke upstream Sequential.observe with BCRNNPolicy for nonzero steps, reload a checkpoint, evaluate trajectory-disjoint held-out data, bind actual payload Pod/RBAC/allowed-node evidence, require one B200, and never invoke rendering. Execution remains a separate live gate.",
+      "reason": "Focused static tests verify that the rendered BYOF operation is designed to pin one official LIBERO-Spatial demonstration, remove unused third-party render assets and Git objects in the source clone layer, require final-filesystem absence plus an independent pre-live OCI layer-byte scan, runtime-fetch and hash-verify upstream-equivalent BERT task conditioning, invoke upstream Sequential.observe with BCRNNPolicy for nonzero steps, reload a checkpoint, evaluate trajectory-disjoint held-out data, bind actual payload Pod/RBAC/allowed-node evidence, require one B200, and never invoke rendering. Static structure is not byte-scan or execution evidence; both remain separate gates.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (8 passed)",
         "docs/workbench/byof-libero.md#acceptance-artifact"

@@ -14,7 +14,7 @@ It remains a private BYOF candidate; there is no public `npa-libero` image.
 
 | Input | Immutable identity | Terms and packaging boundary |
 |---|---|---|
-| LIBERO source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` | MIT. The private image retains the source, BDDL, and initial-state files but prunes `libero/libero/assets` and removes the Git object database in the source clone layer because this qualification does not render. |
+| LIBERO source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` | MIT. The generator is configured to retain the source, BDDL, and initial-state files while pruning `libero/libero/assets` and the Git object database in the same clone layer because this qualification does not render. Final-filesystem checks and a pre-live independent OCI layer-byte scan must both pass before this becomes image evidence. |
 | CUDA base | `nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85` | NVIDIA Deep Learning Container License; pulling and using the image is NVIDIA's documented acceptance mechanism. Used only as the base of the operator-controlled private image. |
 | SkyPilot bootstrap packages | Ubuntu packages resolved during the operator-private build and bound by the resulting image digest | Distribution packages are baked runtime, not runtime-fetched task data. The build verifies every required package capability before recording its bootstrap attestation; the resulting image remains private and receives a fresh byte/license scan. |
 | Demonstration | `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, `libero_spatial/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate_demo.hdf5` | LIBERO's pinned README declares datasets CC BY 4.0. Runtime fetch only; never baked into the image. Expected size `508779600`, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`. |
@@ -25,9 +25,12 @@ It remains a private BYOF candidate; there is no public `npa-libero` image.
 The task definition names Google Scanned Objects (two bowls, a ramekin, and a
 plate) and a HOPE cookies distractor. Their upstream publishers state CC BY
 4.0 and CC BY-NC-SA 4.0 terms respectively. Those meshes and textures are not
-needed for the stored-observation BC qualification and are excluded, together
-with Git objects that could retain their bytes, in the same source clone layer;
-rendered evaluation remains deferred. The BDDL and
+needed for the stored-observation BC qualification. The generated build removes
+them, together with Git objects that could retain their bytes, in the same source
+clone layer. The workload verifies final-filesystem absence, while the required
+independent pre-live OCI scan proves that no earlier layer retained those bytes;
+until both pass, exclusion is only a packaging design. Rendered evaluation remains
+deferred. The BDDL and
 initial-state files that bind the exact task remain in the pinned MIT checkout
 and are hash-verified at runtime.
 
@@ -174,9 +177,10 @@ Success requires `$NPA_SMOKE_OUTPUT_DIR/libero-smoke.json` with all of the
 following evidence:
 
 - solution-specific capabilities, the observed source checkout and build-command
-  SHA-256, build-observed immutable base provenance, a same-layer
-  source-prune/Git-object-removal receipt, exact data/task identities, and the
-  observed dataset SHA-256;
+  SHA-256, build-observed immutable base provenance, a generated same-layer
+  source-prune/Git-object-removal receipt, final-filesystem absence checks, exact
+  data/task identities, and the observed dataset SHA-256. Acceptance remains
+  conditional on the separately receipted independent pre-live OCI layer scan;
 - the pinned upstream LIBERO BERT-conditioning source, exact Apache-2.0
   tokenizer/model file identities, a finite 768-dimensional `pooler_output`,
   and proof that this runtime cache was not uploaded;

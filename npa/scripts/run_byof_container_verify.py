@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,11 @@ from npa.clients.project_credentials import (
     s3_client_for_project,
     storage_env_for_project,
 )
-from npa.orchestration.skypilot import submit_workflow, workflow_status
+from npa.orchestration.skypilot import (
+    SkyPilotSubmitError,
+    submit_workflow,
+    workflow_status,
+)
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
@@ -211,9 +216,10 @@ def _libero_allowed_node(global_config: dict[str, Any]) -> str:
         or len(names) != 1
         or not isinstance(names[0], str)
         or not names[0].strip()
+        or names[0] != names[0].strip()
     ):
-        raise ValueError("LIBERO requires exactly one non-empty allowed node name")
-    return names[0].strip()
+        raise ValueError("LIBERO requires exactly one exact non-empty allowed node name")
+    return names[0]
 
 
 def _kubectl_json(
@@ -242,9 +248,50 @@ def _mode_private_regular_file(value: str, *, label: str) -> Path:
     if not value:
         raise ValueError(f"LIBERO requires an owner-supplied {label}")
     path = Path(value).expanduser()
-    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
-        raise ValueError(f"LIBERO {label} must be a mode-private regular file")
+    try:
+        metadata = path.lstat()
+    except OSError:
+        metadata = None
+    if (
+        metadata is None
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError(
+            f"LIBERO {label} must be an owner-private regular file"
+        )
     return path.resolve()
+
+
+def _stop_sky_api(
+    *,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | str | None,
+) -> None:
+    """Stop the selected Sky API or fail without claiming successful cleanup."""
+
+    environment = sky_environment(isolated_config_dir)
+    if config_path:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
+    try:
+        result = subprocess.run(
+            [sky_bin, "api", "stop"],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - shutdown ambiguity is fatal
+        raise SkyPilotConfigError(
+            "SkyPilot API shutdown raised; isolated API absence is unverified"
+        ) from exc
+    if result.returncode != 0:
+        raise SkyPilotConfigError(
+            "SkyPilot API shutdown failed; isolated API absence is unverified"
+        )
 
 
 def _libero_payload_kubeconfig() -> Path:
@@ -397,6 +444,8 @@ def _bind_libero_runtime_contract(
         raise ValueError("LIBERO requires managed scheduler submission")
     if not getattr(args, "cleanup", True):
         raise ValueError("LIBERO requires verified managed cleanup")
+    if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
+        raise ValueError("LIBERO requires verified isolated Sky API shutdown")
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
         raise ValueError("LIBERO requires one explicit Kubernetes context")
     allowed_node = _libero_allowed_node(global_config)
@@ -755,6 +804,17 @@ def _wait_for_terminal(
     return final, diagnostics
 
 
+def _exact_scheduler_job_id(value: Any) -> str:
+    """Return one positive numeric scheduler ID without normalizing text."""
+
+    candidate = str(value or "")
+    if candidate != candidate.strip() or not re.fullmatch(r"[1-9][0-9]*", candidate):
+        raise ValueError(
+            "workflow submission returned no exact numeric scheduler job ID"
+        )
+    return candidate
+
+
 def _cancel_exact_managed_job(
     scheduler_job_id: str,
     *,
@@ -886,7 +946,7 @@ def _strict_cluster_names(output: str) -> list[str]:
     for cluster in clusters:
         if not isinstance(cluster, dict):
             raise ValueError("inventory contained an invalid row")
-        if any(cluster.get(key) for key in ("error", "errors", "exception")):
+        if any(key in cluster for key in ("error", "errors", "exception")):
             raise ValueError("inventory contained contradictory error metadata")
         name_fields = [key for key in ("name", "cluster") if key in cluster]
         if not name_fields:
@@ -1007,6 +1067,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         )
         if is_libero:
             isolated_config_dir = _libero_isolated_state_root(isolated_config_dir)
+        api_stop_attempted = False
+        preserve_api = False
+        api_config_path: Path | None = None
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
@@ -1016,6 +1079,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 if is_libero
                 else args.config_path or _write_default_k8s_config(tmp_path, infra)
             )
+            api_config_path = Path(config_path) if config_path else None
             global_config: dict[str, Any] = {}
             if config_path:
                 loaded_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
@@ -1108,16 +1172,13 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     ),
                     timeout=args.submit_timeout,
                 )
-                scheduler_job_id = str(result.job_id or "").strip()
-                if not scheduler_job_id:
-                    raise RuntimeError(
-                        "workflow submission returned no scheduler job ID"
-                    )
+                scheduler_job_id = _exact_scheduler_job_id(result.job_id)
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
                     else submit_config_path
                 )
+                api_config_path = submitted_config_path
                 teardown_guard.mark_launched(config_path=submitted_config_path)
                 summary = {
                     "run_id": run_id,
@@ -1142,6 +1203,44 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     and final.status == "FAILED_PRECHECKS"
                 ):
                     return_code = 0
+            except SkyPilotSubmitError as exc:
+                transaction = exc.transaction
+                if transaction is not None and transaction.job_id:
+                    try:
+                        scheduler_job_id = _exact_scheduler_job_id(
+                            transaction.job_id
+                        )
+                    except ValueError:
+                        scheduler_job_id = ""
+                if exc.config_path is not None:
+                    submitted_config_path = Path(exc.config_path)
+                    api_config_path = submitted_config_path
+                teardown_guard.mark_launched(config_path=submitted_config_path)
+                summary = {
+                    "run_id": run_id,
+                    "submit": {
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "scheduler_job_id_recovered": bool(scheduler_job_id),
+                    },
+                    "outputs": outputs,
+                }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
+                return_code = 2
+            except Exception as exc:  # noqa: BLE001 - cleanup must still be reported
+                summary = {
+                    "run_id": run_id,
+                    "submit": {
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "scheduler_job_id_recovered": bool(scheduler_job_id),
+                    },
+                    "outputs": outputs,
+                }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
+                return_code = 2
             finally:
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
@@ -1163,6 +1262,37 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 }
                 if not cleanup_verified:
                     return_code = 1
+                    if is_libero:
+                        preserve_api = True
+            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
+                if preserve_api:
+                    if summary is not None:
+                        summary["api_stop"] = {
+                            "ok": False,
+                            "preserved_for_cleanup_recovery": True,
+                        }
+                else:
+                    api_stop_attempted = True
+                    try:
+                        _stop_sky_api(
+                            sky_bin=sky_bin,
+                            isolated_config_dir=isolated_config_dir,
+                            config_path=api_config_path,
+                        )
+                    except SkyPilotConfigError:
+                        if summary is None:
+                            raise
+                        summary["api_stop"] = {
+                            "ok": False,
+                            "preserved_for_cleanup_recovery": False,
+                        }
+                        return_code = 1
+                    else:
+                        if summary is not None:
+                            summary["api_stop"] = {
+                                "ok": True,
+                                "preserved_for_cleanup_recovery": False,
+                            }
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:
@@ -1172,14 +1302,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ.pop("KUBECONFIG", None)
             else:
                 os.environ["KUBECONFIG"] = previous_kubeconfig
-            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
-                subprocess.run(
-                    [sky_bin, "api", "stop"],
-                    env=sky_environment(isolated_config_dir),
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
+            if (
+                os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
+                and not api_stop_attempted
+                and not preserve_api
+            ):
+                _stop_sky_api(
+                    sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=api_config_path,
                 )
 
 
@@ -1417,13 +1548,10 @@ def _ensure_infra_enabled(
     if not (normalized.startswith("kubernetes") or normalized.startswith("k8s")):
         return
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
-        subprocess.run(
-            [sky_bin, "api", "stop"],
-            env=sky_environment(isolated_config_dir),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+        _stop_sky_api(
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
         )
     cmd = [sky_bin, "check", "kubernetes", "-o", "json"]
     if config_path:

@@ -19,6 +19,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+LIBERO_YAML_PATH = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-solution-smoke-libero-b200-gpu.yaml"
+)
 
 
 def _load_module():
@@ -724,6 +734,8 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             "solution-smoke",
             "--solution-name",
             "libero",
+            "--yaml",
+            str(LIBERO_YAML_PATH),
         ]
     )
 
@@ -755,6 +767,32 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
                 "generic-safe-run-id",
             ],
             "exact --solution-name libero",
+        ),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "libero-wrong-workload",
+                "--workload",
+                "datagen",
+                "--yaml",
+                str(LIBERO_YAML_PATH),
+            ],
+            "solution-smoke workload",
+        ),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "libero-wrong-profile",
+                "--workload",
+                "solution-smoke",
+                "--yaml",
+                "generic.yaml",
+            ],
+            "exact B200 solution-smoke profile",
         ),
     ],
 )
