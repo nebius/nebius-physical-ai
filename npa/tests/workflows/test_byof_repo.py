@@ -1125,6 +1125,8 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
             "main",
             "--base-profile",
             "ubuntu",
+            "--apt-snapshot",
+            "20260801T053000Z",
             "--build-command",
             "python3 -m pip install -e .",
             "--skip-run",
@@ -1133,12 +1135,14 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_APT_SNAPSHOT=20260801T053000Z" for part in build_args)
     assert any(
         part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
     )
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
+    assert output["apt_snapshot"] == "20260801T053000Z"
     assert output["build_command"] == "python3 -m pip install -e ."
     assert output["build"] == {
         "digest": "sha256:" + "b" * 64,
@@ -1149,6 +1153,18 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
         ),
     }
     assert output["image"] == output["build"]["runtime_image"]
+
+
+def test_main_rejects_malformed_apt_snapshot_before_build(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("build ran with malformed apt snapshot"),
+    )
+
+    with pytest.raises(ValueError, match="YYYYMMDDTHHMMSSZ"):
+        module.main(["--apt-snapshot", "latest", "--skip-run"])
 
 
 def test_resolve_pushed_image_digest_fails_closed_without_digest(monkeypatch) -> None:
@@ -1169,6 +1185,10 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
+    assert "BYOF_APT_SNAPSHOT" in text
+    assert "snapshot.ubuntu.com/ubuntu/" in text
+    assert 'case "${suite}" in jammy|noble)' in text
+    assert '"Suites: ${suite} ${suite}-updates ${suite}-security"' in text
     assert "BYOF_BUILD_COMMAND" in text
     assert "npa.byof.build.v1" in text
     assert "build_command_executed" in text

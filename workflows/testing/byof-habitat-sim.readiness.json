@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f95debe64187452612a81ec7ba093089c711b857d5c0ad6bb818dd459c7d5efc",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation, plan-spec, and submit --plan-only all exited 0 on September 11, 2026. These checks did not build an image, download the scene in a worker, or launch GPU work.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-habitat-sim.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-habitat-sim.yaml --run-id habitat-sim-plan --json",
+        "npa workbench workflow submit workflows/testing/byof-habitat-sim.yaml --run-id habitat-sim-plan --plan-only"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Inspection of the resolved one-step plan and focused contract tests confirm that the operations, inputs, target profile, and declared outputs match the requested pinned Habitat-Sim traversal. This planning claim does not assert that the target-pod traversal has executed.",
+      "evidence": [
+        "npa workbench workflow plan-spec workflows/testing/byof-habitat-sim.yaml --run-id habitat-sim-plan --json",
+        "npa/tests/workflows/test_byof_habitat_sim.py",
+        "docs/workbench/byof-habitat-sim.md#hard-gate-contract"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "The manager has not yet published the run-owned writable bucket and unique Habitat-Sim prefix to this child. The checked-in bucket is intentionally a placeholder.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#live-qualification"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Both exact Skokloster files were independently fetched and hashed before implementation, but target-pod egress and readback remain unverified until the live run.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#scene-and-license-boundary"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Source and scene bytes are public and ungated, but the private registry and S3 credentials must come from the unpublished owner-only manager runtime context.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#live-qualification"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The BYOF recipe is pinned and validated structurally, but no private image has been built, scanned, pushed, resolved, or pulled by digest for this candidate.",
+      "evidence": [
+        "workflows/testing/byof-habitat-sim.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The owner-only task-owned Kubernetes context and exact STRICT reservation binding for one RTX PRO 6000 Blackwell have not yet been published to this child. No ambient or shared target may be used.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#live-qualification"
+      ]
+    }
+  }
+}

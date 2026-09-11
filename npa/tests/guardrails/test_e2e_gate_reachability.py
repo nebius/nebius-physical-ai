@@ -79,6 +79,12 @@ MANUAL_GATES = {
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
+    "NPA_BYOF_HABITAT_SIM_LIVE": (
+        "Habitat-Sim rendering requires the operator-selected private registry, storage, and RTX runtime"
+    ),
+    "NPA_BYOF_HABITAT_SIM_RUNTIME_RECEIPT": (
+        "an owner-only manager receipt must bind the exact run to private storage, registry, and provider-read-back STRICT RTX capacity"
+    ),
     # Not merely operator-selected: an automated runner *must not* reach this
     # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
     # repository, which Lightricks grants only after a human accepts its terms

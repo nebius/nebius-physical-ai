@@ -321,8 +321,24 @@ def _dockerfile_text() -> str:
         "ARG BYOF_SOURCE_LABEL_REPO\n"
         "ARG BYOF_SOURCE_LABEL_REF\n"
         "ARG BYOF_BUILD_COMMAND\n"
+        'ARG BYOF_APT_SNAPSHOT=""\n'
         "USER root\n"
-        "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+        "RUN set -eu; \\\n"
+        '  if [ -n "${BYOF_APT_SNAPSHOT}" ]; then \\\n'
+        '    case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64;; esac; \\\n'
+        '    suite="$(. /etc/os-release; printf \'%s\' "${VERSION_CODENAME:-}")"; \\\n'
+        '    case "${suite}" in jammy|noble) ;; *) exit 65;; esac; \\\n'
+        "    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \\\n"
+        "    printf '%s\\n' \\\n"
+        "      'Types: deb' \\\n"
+        '      "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
+        '      "Suites: ${suite} ${suite}-updates ${suite}-security" \\\n'
+        "      'Components: main universe restricted multiverse' \\\n"
+        "      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \\\n"
+        "      > /etc/apt/sources.list.d/npa-snapshot.sources; \\\n"
+        "    printf '%s\\n' 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99snapshot; \\\n"
+        "  fi; \\\n"
+        "  apt-get update && apt-get install -y --no-install-recommends \\\n"
         "      git ca-certificates python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
@@ -504,6 +520,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_BASE_IMAGE", ""),
         help="Explicit base image (overrides --base-profile), e.g. ubuntu:24.04.",
     )
+    parser.add_argument(
+        "--apt-snapshot",
+        default=os.environ.get("NPA_BYOF_APT_SNAPSHOT", ""),
+        help=(
+            "Optional Ubuntu snapshot timestamp (YYYYMMDDTHHMMSSZ) applied before "
+            "the BYOF bootstrap installs packages."
+        ),
+    )
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument(
         "--workload",
@@ -613,6 +637,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
+    args.apt_snapshot = args.apt_snapshot.strip()
+    if args.apt_snapshot and not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", args.apt_snapshot):
+        raise ValueError("--apt-snapshot must use YYYYMMDDTHHMMSSZ")
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     base_candidates = _base_image_candidates(
@@ -643,6 +670,7 @@ def main(argv: list[str] | None = None) -> int:
         "base_registry": base_registry,
         "image": image,
         "base_image": base_image,
+        "apt_snapshot": args.apt_snapshot,
         "base_image_candidates": base_candidates,
         "run_id": args.run_id,
         "workload": args.workload,
@@ -770,6 +798,8 @@ def _run_byof(
                                 "linux/amd64",
                                 "--build-arg",
                                 f"BYOF_BASE_IMAGE={base_image}",
+                                "--build-arg",
+                                f"BYOF_APT_SNAPSHOT={args.apt_snapshot}",
                                 "--build-arg",
                                 f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
                                 "--build-arg",
