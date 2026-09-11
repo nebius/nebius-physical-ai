@@ -88,16 +88,24 @@ resolved immutable digest. The workload itself queries its Kubernetes Pod and
 requires the matching `status.containerStatuses[].imageID`; merely echoing the
 requested image is not accepted as runtime evidence.
 
-That Pod query requires `get` access to its own Pod. Separately, SkyPilot
-0.12.2's default Kubernetes bootstrap creates a namespace-wide wildcard Role
-for `skypilot-service-account` so its controller can create and manage workload
-resources. This candidate does not silently accept or provision that Role.
-Before launch, the run manager must review the pinned SkyPilot RBAC behavior,
-approve the exact namespace-scoped service-account contract (or supply a
-reviewed custom account with the permissions SkyPilot needs), and record the
-decision in owner-only evidence. A private kubeconfig or registry credential is
-not that approval. Until this dependent runtime-use decision is complete, keep
-the live B200 claim deferred and do not submit the workflow.
+That Pod query requires `get` access to its own Pod. The payload therefore uses
+the deterministic `npa-byof-libero-payload` service account declared in the
+LIBERO profile. Before launch, the run manager must create that account in the
+isolated namespace and bind it to a Role with exactly `apiGroups: [""]`,
+`resources: ["pods"]`, and `verbs: ["get"]`. No repository command creates
+these objects. The owner-only manifest and post-create receipt must bind the
+ServiceAccount, Role, and RoleBinding UIDs to the assigned namespace and cleanup
+contract.
+
+Keep this payload identity separate from the manager SkyPilot global config:
+SkyPilot 0.12.2's controller continues to use its engine-required
+`skypilot-service-account`. The preflight refuses a missing, `default`, or
+SkyPilot engine account for the LIBERO payload, and also refuses a global config
+that does not explicitly select the engine account for the controller. A
+private kubeconfig, pull secret, or registry credential is not permission to
+broaden the payload Role. Until the manager has created and receipted the exact
+three-object payload RBAC contract, keep the live B200 claim deferred and do
+not submit the workflow.
 
 ## Acceptance artifact
 

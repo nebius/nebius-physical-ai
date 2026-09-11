@@ -1,6 +1,7 @@
 {
   "schema_version": "workflow-readiness/v1",
   "workflow_sha256": "7496422b21e5d7da3cbb90bb34aadfa01c697a4adb4e37bb6581a371c5972034",
+  "resource_profile_sha256": "b471ff81d00ba9bfd8839cd128836ba7962738f9690bb239a13d5101b7e85117",
   "planning": {
     "validation": {
       "status": "verified",
@@ -38,11 +39,11 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source and dataset require no acceptance token. Launch remains blocked pending manager approval of the Kubernetes service-account permissions required by SkyPilot 0.12.2; its default bootstrap would create a namespace-wide wildcard Role and has not been allowed to do so.",
+      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source and dataset require no acceptance token. Launch remains blocked until the manager creates and receipts the isolated namespace's deterministic LIBERO payload ServiceAccount, pods/get-only Role, and exact RoleBinding. The payload preflight refuses SkyPilot's default/engine account while the manager global controller config remains explicitly on the engine-required account.",
       "evidence": [
         "owner-only runtime-context validation",
         "owner-only pull-secret receipt",
-        "owner-only SkyPilot RBAC prelaunch receipt",
+        "owner-only payload-RBAC manifest and receipt schema",
         "docs/workbench/byof-libero.md#before-spending-gpu-time"
       ]
     },
@@ -57,10 +58,10 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager review of the namespace-binding and SkyPilot RBAC prelaunch receipts. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
+      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager creation and revalidation of the payload-only RBAC contract. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
       "evidence": [
         "owner-only namespace-binding prelaunch receipt",
-        "owner-only SkyPilot RBAC prelaunch receipt",
+        "owner-only payload-RBAC manifest and receipt schema",
         "docs/workbench/byof-libero.md#acceptance-artifact"
       ]
     }

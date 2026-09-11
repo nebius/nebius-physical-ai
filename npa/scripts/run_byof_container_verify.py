@@ -17,6 +17,10 @@ from urllib.parse import urlparse
 
 import yaml
 
+from npa.execution_preflight import (
+    SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    verify_solution_payload_service_accounts,
+)
 from npa.workflows.byof.live import resolve_byof_profile_path
 from npa.clients.project_credentials import (
     s3_client_for_project,
@@ -148,6 +152,26 @@ TERMINAL_STATUSES = {
 }
 
 
+def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
+    """Move the NPA resource-profile Kubernetes contract to SkyPilot config."""
+
+    resources = document.get("resources") or {}
+    if not isinstance(resources, dict):
+        raise ValueError("BYOF task resources must be a mapping")
+    kubernetes = resources.pop("kubernetes", None)
+    if kubernetes in (None, {}):
+        return
+    if not isinstance(kubernetes, dict):
+        raise ValueError("BYOF task resources.kubernetes must be a mapping")
+    config = document.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("BYOF task config must be a mapping")
+    existing = config.get("kubernetes")
+    if existing not in (None, {}, kubernetes):
+        raise ValueError("BYOF task Kubernetes resource and config contracts disagree")
+    config["kubernetes"] = kubernetes
+
+
 def render_workflow(
     yaml_path: Path,
     *,
@@ -220,6 +244,7 @@ def render_workflow(
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
                 resources["image_id"] = f"docker:{image_ref}"
+        _materialize_task_kubernetes_config(doc)
     return docs
 
 
@@ -473,8 +498,6 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         )
         return 0
 
-    preflight_output_storage(output_root=output_root, run_id=run_id)
-
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
@@ -487,6 +510,16 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             _write_yaml_documents(rendered_yaml, docs)
             infra = args.infra or _default_infra()
             config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
+            global_config: dict[str, Any] = {}
+            if config_path:
+                loaded_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+                if loaded_config is not None and not isinstance(loaded_config, dict):
+                    raise ValueError("SkyPilot global config must be a mapping")
+                global_config = loaded_config or {}
+            verify_solution_payload_service_accounts(
+                docs, global_config=global_config
+            )
+            preflight_output_storage(output_root=output_root, run_id=run_id)
             _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
             if args.direct_launch:
                 return _direct_launch(
@@ -689,6 +722,7 @@ def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
                 "imagePullSecrets": [
                     {"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS
                 ],
+                "serviceAccountName": SKYPILOT_ENGINE_SERVICE_ACCOUNT,
             }
         }
     }

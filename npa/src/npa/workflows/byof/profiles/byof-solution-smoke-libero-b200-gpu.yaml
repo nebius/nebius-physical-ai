@@ -11,6 +11,10 @@ resources:
   memory: 96+
   disk_size: 100
   image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+  kubernetes:
+    pod_config:
+      spec:
+        serviceAccountName: npa-byof-libero-payload
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
