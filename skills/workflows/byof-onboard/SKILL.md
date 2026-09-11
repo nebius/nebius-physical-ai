@@ -85,6 +85,12 @@ Isaac run, set both `base_profile=isaac-lab` and `base_image=tool://isaac-lab`;
 generic non-Isaac runs default to `ubuntu:22.04` and do not receive Isaac EULA
 environment variables.
 
+For a reproducible Ubuntu BYOF bootstrap, pass an immutable base digest plus
+`--apt-snapshot YYYYMMDDTHHMMSSZ`. The runner switches the bootstrap and later
+package installs to that Ubuntu snapshot before its first `apt-get update`.
+This does not lock Python dependencies: the solution build command must still
+install a complete hash-locked wheel closure and retain its package inventory.
+
 ## Operator Entrypoint
 
 Preferred CLI (Tier 0 of `docs/architecture/oss-onboarding-ladder.md`):
