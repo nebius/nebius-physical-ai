@@ -12,6 +12,8 @@ import subprocess
 import boto3
 import pytest
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/habitat-sim-smoke.yaml"
@@ -19,13 +21,66 @@ SOURCE_REVISION = "57ee4941dc4765240f0f91f70b2c97a919bf9038"
 SCENE_SHA256 = "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56"
 NAVMESH_SHA256 = "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
 DIGEST = re.compile(r".+@sha256:[0-9a-f]{64}$")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _private_json(path_value: object) -> tuple[dict[str, object], Path]:
+    supplied = Path(str(path_value))
+    path = supplied.resolve(strict=True)
+    assert supplied.is_absolute() and supplied == path
+    assert path.is_file() and path.stat().st_mode & 0o077 == 0
+    assert path.parent.stat().st_mode & 0o077 == 0
+    return json.loads(path.read_text(encoding="utf-8")), path
+
+
+def _assert_private_image(receipt: dict[str, object]) -> None:
+    registry = str(receipt["registry"]).rstrip("/")
+    image = str(receipt["image"])
+    public = DEFAULT_PUBLIC_CONTAINER_REGISTRY.rstrip("/")
+    assert registry and registry != public
+    assert image.startswith(registry + "/")
+    assert not image.startswith(public + "/")
+
+
+def _assert_provider_binding(receipt: dict[str, object]) -> None:
+    reservation = receipt["reservation"]
+    provider, path = _private_json(reservation["provider_receipt_path"])
+    provider_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert SHA256.fullmatch(str(reservation["provider_receipt_sha256"]))
+    assert provider_hash == reservation["provider_receipt_sha256"]
+    assert provider["schema_version"] == "npa.nebius.strict-capacity-binding.v1"
+    target = receipt["target"]
+    for key in ("accelerator", "gpu_count"):
+        assert provider[key] == reservation[key] == target[key]
+    for key in ("capacity_block_group_id", "state", "verified_at"):
+        assert provider[key] == reservation[key]
+    for key in ("kubernetes_context", "project", "project_id"):
+        assert provider[key] == receipt[key]
+    expected_policy = {
+        "policy": "STRICT",
+        "reservation_ids": [reservation["capacity_block_group_id"]],
+    }
+    assert provider["node_group_reservation_policy"] == expected_policy
+    readback = provider["provider_readback_sha256"]
+    assert readback == reservation["provider_readback_sha256"]
+    assert set(readback) == {"capacity", "cluster", "node-group"}
+    assert all(SHA256.fullmatch(str(value)) for value in readback.values())
+
+
+def _assert_pod_completion(pod: dict[str, object], image: str) -> str:
+    digest = image.rsplit("@", 1)[1]
+    statuses = pod["status"].get("containerStatuses", [])
+    assert pod["status"].get("phase") == "Succeeded"
+    assert len(statuses) == 1
+    image_id = str(statuses[0].get("imageID", ""))
+    assert re.fullmatch(r"(?:docker-pullable://)?.+@" + re.escape(digest), image_id)
+    terminated = statuses[0].get("state", {}).get("terminated")
+    assert terminated and terminated.get("exitCode") == 0
+    return image_id
 
 
 def _private_receipt() -> dict[str, object]:
-    path = Path(os.environ["NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT"]).resolve()
-    assert path.is_file() and path.stat().st_mode & 0o077 == 0
-    assert path.parent.stat().st_mode & 0o077 == 0
-    receipt = json.loads(path.read_text(encoding="utf-8"))
+    receipt, _ = _private_json(os.environ["NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT"])
     assert receipt["schema_version"] == "npa.habitat-sim.image-live.v1"
     assert (
         receipt["head"]
@@ -43,6 +98,8 @@ def _private_receipt() -> dict[str, object]:
         "accelerator": "RTX PRO 6000 Blackwell",
         "gpu_count": 1,
     }
+    _assert_private_image(receipt)
+    _assert_provider_binding(receipt)
     return receipt
 
 
@@ -127,10 +184,8 @@ def test_exact_habitat_sim_image_rgb_depth_bullet_egl_traversal() -> None:
 
     receipt = _private_receipt()
     pod = _pod(receipt)
-    digest = str(receipt["image"]).rsplit("@", 1)[1]
-    statuses = pod["status"].get("containerStatuses", [])
-    assert len(statuses) == 1 and digest in statuses[0]["imageID"]
+    image_id = _assert_pod_completion(pod, str(receipt["image"]))
     proof, payload = _proof(receipt)
-    assert payload and proof["pod_observed_image_digest"] in statuses[0]["imageID"]
+    assert payload and proof["pod_observed_image_digest"] in image_id
     _assert_proof(proof, receipt)
     _assert_observation_readback(proof, receipt)

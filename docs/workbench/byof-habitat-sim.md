@@ -78,9 +78,13 @@ attested, single-linux/amd64 OCI graph. It verifies graph/config/layer identitie
 reads every regular byte in every ordered layer, checks whiteouts, enforces final
 `USER ubuntu`, labels, entrypoint, required payloads, and refuses known scene,
 source-archive, cache, credential, CUDA/NVIDIA, FFmpeg, and gated-data paths or
-hashes. The independent complete-byte scanner, Trivy, SBOM, provenance, license,
-secret, vulnerability, native-library, and exact payload checks remain mandatory
-on actual candidate bytes.
+hashes. It also hashes the embedded runtime locks, notices, and smoke module;
+reconciles installed apt and Python distributions to those locks; checks every
+projected source byte against its immutable inventory; binds native venv ELF
+files to wheel `RECORD` hashes; and requires the OCI revision label to equal the
+reviewed full Git SHA. The independent complete-byte scanner, Trivy, SBOM,
+provenance, license, secret, vulnerability, native-library, and exact payload
+checks remain mandatory on actual candidate bytes.
 
 A later trusted public workflow must rebuild an exact reviewed full Git SHA. It
 must not transport privately built OCI bytes. The trusted rebuild is a new digest:
@@ -123,8 +127,11 @@ The dedicated selector is intentionally inert unless all three owner-controlled
 gates are present: `NPA_INTEGRATION_E2E=1`,
 `NPA_HABITAT_SIM_IMAGE_LIVE=1`, and a mode-restricted
 `NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT`. The receipt binds the exact Git/workflow
-bytes, image digest, pod UID, storage proof hash, and STRICT one-RTX target. A live
-transaction and cleanup require separate manager authorization.
+bytes, private image digest, pod UID, storage proof hash, and the hash of a
+separate owner-only provider readback proving the STRICT one-RTX reservation.
+The selector also requires a succeeded pod, an exact observed digest, and a
+terminated zero exit. A live transaction and cleanup require separate manager
+authorization.
 
 ## Deferred
 

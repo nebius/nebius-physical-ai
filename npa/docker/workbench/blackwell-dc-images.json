@@ -61,6 +61,18 @@
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
     },
     {
+      "name": "npa-habitat-sim",
+      "dockerfile": "habitat-sim/Dockerfile",
+      "build_script": "habitat-sim/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the genuine official Skokloster RGB/depth, Bullet, EGL, and agent-traversal gate on exactly one RTX PRO 6000 Blackwell; verify the exact image digest, artifact hashes, and exit zero.",
+      "blocked_reason": "Habitat-Sim is a renderer and the datacenter B200/B300 target has no RT cores; its hard gate is deliberately STRICT-bound to one RTX PRO 6000 Blackwell.",
+      "upstream_tracking": "https://github.com/facebookresearch/habitat-sim/tree/57ee4941dc4765240f0f91f70b2c97a919bf9038",
+      "notes": "The candidate is unbuilt and publication-quarantined. The MIT simulator source is baked; the attributed CC BY 4.0 Skokloster demo scene is fetched and hash-verified only at runtime. No B200/B300 capability or image result is claimed."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

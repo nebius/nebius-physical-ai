@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -20,6 +21,12 @@ from npa.workflows import habitat_sim_smoke as H
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/habitat-sim-smoke.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
+LIVE_SPEC = importlib.util.spec_from_file_location(
+    "habitat_live_selector", ROOT / "npa/tests/e2e/test_habitat_sim_image_live_e2e.py"
+)
+assert LIVE_SPEC is not None and LIVE_SPEC.loader is not None
+LIVE = importlib.util.module_from_spec(LIVE_SPEC)
+LIVE_SPEC.loader.exec_module(LIVE)
 
 
 class Response(io.BytesIO):
@@ -141,6 +148,132 @@ def test_missing_or_corrupt_archive_never_leaves_partial_payload(
         with pytest.raises(H.SmokeFailure, match="not a valid ZIP"):
             H.fetch_scene_assets(root, opener=lambda *_a, **_k: Response(payload))
     assert not list(root.iterdir())
+
+
+def test_archive_download_stops_before_exceeding_the_pinned_size(
+    tmp_path, monkeypatch
+) -> None:
+    payload = b"one byte too many"
+    monkeypatch.setattr(H, "ARCHIVE_BYTES", len(payload) - 1)
+    destination = tmp_path / "oversized.zip.part"
+
+    with pytest.raises(H.SmokeFailure, match="exceeded its pinned byte boundary"):
+        H._download(destination, opener=lambda *_a, **_k: Response(payload))
+
+    assert not destination.exists()
+
+
+def test_runtime_cache_cleanup_is_verified(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "run-owned-cache"
+    cache.mkdir()
+    (cache / "scene").write_bytes(b"exact")
+    monkeypatch.setattr(H.shutil, "rmtree", lambda _path: None)
+
+    with pytest.raises(H.SmokeFailure, match="cleanup did not complete"):
+        H._remove_runtime_cache(cache)
+
+    assert cache.exists()
+
+
+def _live_receipt(tmp_path: Path) -> dict[str, object]:
+    owner = tmp_path / "owner-only"
+    owner.mkdir(mode=0o700)
+    readback = {
+        key: marker * 64
+        for key, marker in zip(
+            ("capacity", "cluster", "node-group"), ("a", "b", "c"), strict=True
+        )
+    }
+    provider = {
+        "schema_version": "npa.nebius.strict-capacity-binding.v1",
+        "accelerator": "RTX PRO 6000 Blackwell",
+        "capacity_block_group_id": "reservation-fixture",
+        "gpu_count": 1,
+        "kubernetes_context": "context-fixture",
+        "node_group_reservation_policy": {
+            "policy": "STRICT",
+            "reservation_ids": ["reservation-fixture"],
+        },
+        "project": "project-fixture",
+        "project_id": "project-id-fixture",
+        "provider_readback_sha256": readback,
+        "state": "READY",
+        "verified_at": "2026-09-11T00:00:00Z",
+    }
+    provider_path = owner / "strict-provider.json"
+    provider_path.write_text(json.dumps(provider), encoding="utf-8")
+    provider_path.chmod(0o600)
+    return {
+        "registry": "private.invalid/task-owned",
+        "image": "private.invalid/task-owned/npa-habitat-sim@sha256:" + "a" * 64,
+        "kubernetes_context": provider["kubernetes_context"],
+        "project": provider["project"],
+        "project_id": provider["project_id"],
+        "target": {
+            "policy": "STRICT",
+            "accelerator": provider["accelerator"],
+            "gpu_count": 1,
+        },
+        "reservation": {
+            "accelerator": provider["accelerator"],
+            "capacity_block_group_id": provider["capacity_block_group_id"],
+            "gpu_count": 1,
+            "provider_readback_sha256": readback,
+            "provider_receipt_path": str(provider_path),
+            "provider_receipt_sha256": hashlib.sha256(
+                provider_path.read_bytes()
+            ).hexdigest(),
+            "state": provider["state"],
+            "verified_at": provider["verified_at"],
+        },
+    }
+
+
+def test_live_receipt_binds_private_image_and_strict_provider_readback(
+    tmp_path,
+) -> None:
+    receipt = _live_receipt(tmp_path)
+    LIVE._assert_private_image(receipt)
+    LIVE._assert_provider_binding(receipt)
+
+    provider_path = Path(receipt["reservation"]["provider_receipt_path"])
+    provider_bytes = provider_path.read_bytes()
+    provider_path.write_bytes(provider_bytes + b" ")
+    with pytest.raises(AssertionError):
+        LIVE._assert_provider_binding(receipt)
+    provider_path.write_bytes(provider_bytes)
+
+    receipt["image"] = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-habitat-sim@sha256:" + "a" * 64
+    )
+    receipt["registry"] = "ghcr.io/nebius/nebius-physical-ai"
+    with pytest.raises(AssertionError):
+        LIVE._assert_private_image(receipt)
+
+
+def test_live_selector_requires_exact_digest_and_terminated_zero_exit() -> None:
+    image = "private.invalid/task/npa-habitat-sim@sha256:" + "a" * 64
+    pod = {
+        "status": {
+            "phase": "Succeeded",
+            "containerStatuses": [
+                {
+                    "imageID": "docker-pullable://" + image,
+                    "state": {"terminated": {"exitCode": 0}},
+                }
+            ],
+        }
+    }
+    assert LIVE._assert_pod_completion(pod, image).endswith("@sha256:" + "a" * 64)
+    pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] = 1
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, image)
+    pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] = 0
+    pod["status"]["containerStatuses"][0]["imageID"] = (
+        "docker-pullable://private.invalid/task/npa-habitat-sim@sha256:" + "b" * 64
+    )
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, image)
 
 
 def test_member_hash_duplicate_encryption_and_link_refuse(
