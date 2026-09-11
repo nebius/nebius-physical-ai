@@ -86,6 +86,13 @@ registry property; it is not CUDA/cuDNN consent or permission. In the current
 child state, authorization is false and no robomimic context is published, so
 no build, runtime download, RBAC mutation, or GPU submission is permitted.
 
+The runner also binds the effective `--image` repository to that exact private
+registry and binds `--output-root` to
+`s3://<manager-bucket>/oss-solutions/robomimic`. Known public-registry hosts are
+rejected even when written with a standard port. The ordinary workflow-submit
+path identifies this checked-in candidate by its immutable workflow name, so
+overriding mutable config values cannot bypass the plan-only boundary.
+
 After authorization, qualification must scan the exact pushed image digest,
 including every layer and image history entry. It must prove the absence of the
 Lift HDF5 payload, pretrained weights, generated checkpoints, run outputs,
