@@ -910,16 +910,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
-        "byof-habitat-sim.yaml",
+        "habitat-sim-smoke.yaml",
         "multi",
         plan_only=True,
         plan_only_justification=(
-            "delegated Habitat-Sim BYOF execution is covered by its dedicated "
-            "STRICT RTX PRO 6000 live onboarding tier"
+            "the dedicated Habitat-Sim image remains unbuilt and publication-"
+            "quarantined until its exact-digest STRICT RTX qualification"
         ),
         notes=(
-            "Pinned Skokloster Castle RGB/depth agent traversal with Bullet and "
-            "headless NVIDIA EGL; never schedule this renderer on B200."
+            "One-state pinned Skokloster Castle RGB/depth traversal with Bullet "
+            "and headless NVIDIA EGL; never schedule this renderer on B200."
         ),
     ),
     SubmitLiveCase(

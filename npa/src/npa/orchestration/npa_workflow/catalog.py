@@ -139,7 +139,23 @@ _CONTENT_AGENTS_PIPELINE = [
     "npa.workflows.content_agents",
 ]
 
+_HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.habitat_sim.smoke": ToolEntry(
+        name="workflow.habitat_sim.smoke",
+        description=(
+            "Render the pinned official Skokloster scene with RGB, depth, Bullet, "
+            "and real navigation on one RTX PRO 6000 Blackwell."
+        ),
+        argv_template=[
+            *_HABITAT_SIM_SMOKE,
+            "--output-dir",
+            "{{config.output_dir}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+        ],
+    ),
     "workbench.curobo.prepare": ToolEntry(
         name="workbench.curobo.prepare",
         description="cuRobo V2 prepare with verified artifact handoffs.",

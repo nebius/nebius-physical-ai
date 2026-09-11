@@ -1,0 +1,55 @@
+{
+  "schema_version": "npa.habitat-sim.runtime-payload.v1",
+  "required_final_paths": [
+    "/opt/venv",
+    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py",
+    "/var/lib/dpkg/status",
+    "/usr/src/habitat-sim/LICENSE",
+    "/usr/src/habitat-sim/data/default.physics_config.json",
+    "/usr/share/doc/npa-habitat-sim/source-manifest.json",
+    "/usr/share/doc/npa-habitat-sim/licenses.json",
+    "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md"
+  ],
+  "required_labels": {
+    "npa.tool": "habitat-sim",
+    "npa.version": "0.3.3-public-unbuilt",
+    "org.opencontainers.image.licenses": "MIT",
+    "org.nebius.npa.upstream-revision": "57ee4941dc4765240f0f91f70b2c97a919bf9038",
+    "org.nebius.npa.publication-status": "quarantined-unbuilt"
+  },
+  "forbidden_path_patterns": [
+    "(^|/)\\.git(/|$)",
+    "(^|/)(hm3d|matterport|replica|gibson)(/|$)",
+    "(^|/)scene_datasets(/|$)",
+    "(^|/)habitat-test-scenes\\.zip$",
+    "(^|/)ca-certificates[^/]*\\.deb$",
+    "(^|/)(wheelhouse|apt/lists|apt/archives)(/|$)",
+    "(^|/)(weights?|checkpoints?|outputs?|cache)(/|$)",
+    "(^|/)ffmpeg-[^/]+$",
+    "(^|/)libnvidia[^/]*",
+    "(^|/)usr/local/cuda(/|$)",
+    "(^|/)root/\\.docker(/|$)",
+    "(^|/)ssh_host_.*_key$"
+  ],
+  "forbidden_content_sha256": [
+    "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06",
+    "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56",
+    "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
+  ],
+  "forbidden_packages": [
+    "build-essential",
+    "cmake",
+    "git",
+    "libegl1-mesa-dev",
+    "libgl1-mesa-dev",
+    "libglvnd-dev",
+    "libglm-dev",
+    "libjpeg-dev",
+    "mesa-utils",
+    "ninja",
+    "pkg-config",
+    "python3-dev",
+    "python3-pip",
+    "scikit-build-core"
+  ]
+}

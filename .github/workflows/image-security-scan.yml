@@ -222,6 +222,9 @@ jobs:
           - name: python-3-11-slim-trixie
             image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
             purge_linux_libc_dev: false
+          - name: ubuntu-22-04-habitat-sim
+            image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+            purge_linux_libc_dev: false
     steps:
       - name: Resolve scan target
         id: scan-target

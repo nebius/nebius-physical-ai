@@ -36,6 +36,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 #: against a Typer signature. Pinned so the set can shrink but not silently grow.
 NON_CLI_ARGV = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.dataset.report_rejection",
         "workbench.dataset.write_quality_decision",
         "workbench.lancedb.backfill_cpu_bundle",
@@ -85,6 +86,7 @@ NON_CLI_ARGV = frozenset(
 #: remains genuinely exempt is inline `python -c` source.
 AUDITED_ELSEWHERE = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.lancedb.backfill_cpu_bundle",
         "workbench.lancedb.create_failure_views",
         "workbench.sim2real_envgen.split",

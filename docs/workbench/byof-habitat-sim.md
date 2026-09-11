@@ -1,244 +1,136 @@
-# Habitat-Sim BYOF registry candidate
+# Habitat-Sim quarantined public-image candidate
 
-This candidate packages pinned Habitat-Sim source into an operator-private BYOF
-image and exercises the simulator through NPA, SkyPilot, and Kubernetes. Its
-admission gate is a non-interactive embodied-agent traversal of the official
-Skokloster Castle test scene with RGB and depth sensors, headless NVIDIA EGL,
-and Bullet physics. An import, image build, scene download, or GPU visibility
-check by itself does not pass.
+Habitat-Sim has a dedicated image and a one-state `npa.workflow/v0.0.1` smoke
+spec. The candidate is **public-eligible but unbuilt and publication-quarantined**.
+No image digest, registry publication, anonymous pull, or live capability result
+exists yet. An import, build, scene download, plan, or GPU visibility check cannot
+satisfy its hard gate.
 
-Status: **implementation complete; live acceptance pending**. Schema validation
-and planning are recorded separately from execution readiness in
-[`byof-habitat-sim.readiness.json`](../../workflows/testing/byof-habitat-sim.readiness.json).
-Do not describe this candidate as accepted until the exact private image digest
-passes the live gate on the run-owned STRICT target.
+## Source and maintenance boundary
 
-## Pinned upstream and maintenance warning
+- Simulator: [`facebookresearch/habitat-sim`](https://github.com/facebookresearch/habitat-sim)
+  at immutable revision `57ee4941dc4765240f0f91f70b2c97a919bf9038`.
+- Source license: MIT, from the pinned upstream
+  [`LICENSE`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/LICENSE).
+- Image base: `ubuntu:22.04` at manifest digest
+  `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
+- Ubuntu snapshot: `20260903T121500Z`, with a checksum-pinned CA-only bootstrap,
+  HTTPS package transport, Ubuntu archive `Signed-By`, and exact Perl-family
+  compatibility refusal.
 
-- Source: [`facebookresearch/habitat-sim`](https://github.com/facebookresearch/habitat-sim)
-  at `57ee4941dc4765240f0f91f70b2c97a919bf9038`.
-- Source license: MIT, as recorded in the pinned upstream `LICENSE` and project
-  metadata.
-- Packaging: the linux/amd64 Ubuntu 22.04 base is pinned to immutable manifest
-  digest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
-  Both the generic BYOF bootstrap and the solution packages resolve through the
-  Ubuntu snapshot `20260903T121500Z`, selected just after the immutable base's
-  creation so its signed Perl-family candidates match the base exactly. The
-  generic builder refuses a snapshot whose `perl`/`perl-base` candidates do not
-  match its installed `perl-base`; it does not force a solution-specific
-  downgrade. The Python 3.10 closure contains 35 exact
-  wheels with reviewed SHA-256 hashes and installs with `--require-hashes`,
-  `--only-binary=:all:`, and `--no-deps`; the source build also disables build
-  isolation and dependency resolution, including the S3 upload client. The
-  image retains the lock plus sorted Python and Debian package inventories for
-  digest-bound review.
-  The build fetches only the gitlink-pinned OSS submodules needed for RGB-D,
-  pathfinding, Bullet, and EGL. It deliberately excludes the unused GUI,
-  documentation, and non-commercial audio-propagation submodules. It does not
-  bake scenes, semantic data, weights, credentials, or caches.
+The build obtains only official GitHub codeload archives bound by size and SHA-256.
+It materializes an allowlisted projection, excludes unused audio and GUI gitlinks,
+and emits a path/size/SHA-256 inventory for every resulting build-source file. The
+wheel build enables Bullet and disables CUDA, GUI, audio, tests, and the Basis
+compressor. Python wheels are platform-specific and hash locked; the final stage
+does not contain build tools, wheel archives, source archives, package caches,
+the CA bootstrap archive, CUDA, or NVIDIA vendor libraries.
 
-Upstream's pinned README warns: **Beyond v0.3.4, Meta internal teams do not
-officially maintain releases or provide active development.** This integration
-therefore pins a full commit, exercises the actual supported interfaces, and
-does not imply a newer officially maintained Meta release.
+Upstream warns that **beyond v0.3.4, Meta internal teams do not officially maintain
+releases or provide active development**. This candidate pins the upstream commit
+and makes no newer-maintenance claim.
 
-## Scene and license boundary
+## Six independent licensing boundaries
 
-The hard gate fetches the official Meta-hosted
-[`habitat-test-scenes.zip`](http://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip)
-archive referenced by the pinned upstream
+| Boundary | Treatment |
+| --- | --- |
+| Source | The exact MIT Habitat-Sim projection and the exact permissively licensed build dependencies are baked with their notices and source inventory. |
+| Baked runtime | The digest-pinned Ubuntu base, signed immutable-snapshot packages, exact wheels, native closure, smoke module, and notices are eligible for redistribution; the unbuilt image still requires complete byte verification. |
+| Weights | None. Any model, checkpoint, or weight path is forbidden. |
+| Data/assets | The image contains no scene. The smoke runtime-fetches only the official Meta archive and verifies the entire archive plus the exact Skokloster GLB/navmesh members. |
+| Runtime cache | Unique, mode-restricted, bounded, and ephemeral. Partial/archive bytes are removed on every outcome, and unrelated archive members are never extracted. |
+| Outputs | Operator-owned RGB/depth and JSON artifacts preserve title, creator, scan credit, CC BY link, original asset URL, modification notice, source/image identity, and archive/member hashes. They are never image inputs or public CI artifacts. |
+
+Runtime fetch changes delivery only. It does not create permission, terms
+acceptance, or a commercial-use conclusion. Credentials do not authorize content.
+The aggregate Hugging Face collection is not a source and grants no permission.
+There is no separate EULA or acceptance switch for this selected source/asset path.
+
+## Scene and attribution boundary
+
+The runtime locator is the official Meta HTTPS endpoint
+[`habitat-test-scenes.zip`](https://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip)
+referenced by pinned upstream
 [`examples/settings.py`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/examples/settings.py).
-That URL is mutable, so it is not treated as the asset identity. The workflow
-requires the complete 94,590,970-byte archive to match SHA-256
-`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
-passes a complete ZIP integrity check, and then requires these exact members:
+The URL is mutable and is not the asset identity. The smoke requires:
 
-| Archive member | Bytes | CRC32 | SHA-256 |
+| Item | Bytes | CRC32 | SHA-256 |
 | --- | ---: | --- | --- |
+| complete archive | 94,590,970 | — | `1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06` |
 | `data/scene_datasets/habitat-test-scenes/skokloster-castle.glb` | 38,295,764 | `7a0ced74` | `b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56` |
 | `data/scene_datasets/habitat-test-scenes/skokloster-castle.navmesh` | 28,192 | `a694cab0` | `1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d` |
 
-The pinned Habitat-Sim
-[`README`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/README.md)
-identifies this demo as [*The King's Hall* by Skokloster
-Castle](https://sketchfab.com/3d-models/the-kings-hall-d18155613363445b9b68c0c67196d98d),
-links it under the [Creative Commons Attribution 4.0
-license](https://creativecommons.org/licenses/by/4.0/legalcode.en) (**CC BY 4.0**),
-and credits the
-scan to Erik Lernestål. Outputs preserve the creator and scan attribution,
-license and original-asset links, and a modification notice stating that the
-official Habitat-ready GLB/navmesh were derived from the original scan and are
-copied byte-for-byte by NPA. There is no separate EULA, click-through, credential,
-or local acceptance proxy for these public CC BY bytes.
+The pinned upstream README identifies the scene as [*The King's Hall* by
+Skokloster Castle](https://sketchfab.com/3d-models/the-kings-hall-d18155613363445b9b68c0c67196d98d),
+scanned by Erik Lernestål, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.en).
+NPA extracts the two processed members byte-for-byte and labels rendered
+observations as derived output. No Matterport3D, HM3D, Replica, Gibson, semantic,
+or other scene data is permitted.
 
-The archive is a runtime-fetched data artifact, never an image layer. It is
-downloaded to an ephemeral mode-0600 file, verified as a whole, opened without
-path-based extraction, and deleted after the two selected members pass exact
-name, size, CRC32, and SHA-256 checks. No unrelated archive member is extracted
-or retained. The selected GLB and navmesh form an ephemeral worker cache and are
-not permission to persist or redistribute any other scene bytes.
+## Image and publication quarantine
 
-No Matterport3D, HM3D, Replica, Gibson, or other separately licensed scene data
-is used. There is no EULA click-through or gated repository needed for the
-selected source and two public scene files.
+The packaging contract classifies the planned bytes as `redistribution: public`,
+while `UNVALIDATED_PUBLICATION_TOOLS` prevents publication. The candidate has no
+public-image-table row and no supported-release manifest entry.
 
-## Hard-gate contract
+`npa/docker/workbench/habitat-sim/verify_image.py` accepts only a closed,
+attested, single-linux/amd64 OCI graph. It verifies graph/config/layer identities,
+reads every regular byte in every ordered layer, checks whiteouts, enforces final
+`USER ubuntu`, labels, entrypoint, required payloads, and refuses known scene,
+source-archive, cache, credential, CUDA/NVIDIA, FFmpeg, and gated-data paths or
+hashes. The independent complete-byte scanner, Trivy, SBOM, provenance, license,
+secret, vulnerability, native-library, and exact payload checks remain mandatory
+on actual candidate bytes.
 
-The exact required artifact is
-`$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`. A passing record contains:
+A later trusted public workflow must rebuild an exact reviewed full Git SHA. It
+must not transport privately built OCI bytes. The trusted rebuild is a new digest:
+all byte scans and the real exact-public-digest RTX run must be repeated before an
+anonymous pull or catalog claim is accepted. Private and public digest equality is
+never inferred from equivalent source.
 
-- the requested and pod-observed source commit;
-- scene ID, mutable archive URL role, immutable archive/member hashes, exact
-  member names/sizes/CRC32 values, license, attribution, original identity, and
-  modification provenance;
-- every saved RGB PNG, depth NumPy array, and depth preview PNG with shapes and
-  paths, byte sizes, and SHA-256 hashes, plus aggregate hashes and finite depth
-  statistics; live acceptance downloads and re-hashes every declared object;
-- the pathfinder-selected start, goal, end, action trace, geodesic distance,
-  collision count, and nonzero displacement;
-- Bullet build/enable evidence, physics world-time advancement, and the count
-  of `Simulator.step(dt=1/60)` physics steps;
-- measured rendered frames per second;
-- a live NVIDIA OpenGL vendor/renderer/version query and the EGL/NVIDIA EGL
-  libraries loaded into the renderer process;
-- exactly one pod-visible RTX PRO 6000 Blackwell, its `12.0` compute capability,
-  and architecture classification;
-- the `repository@sha256:…` reference injected into the pod by the BYOF runner,
-  its digest, retained dependency inventories, and `exit_status: 0`. Before
-  teardown, the live test independently reads Kubernetes
-  `containerStatuses[].imageID` and requires the pushed digest there too. It
-  preserves that observation with the proof and STRICT-provider-receipt hashes
-  in the private `habitat-sim-live-validation.json` acceptance record.
+## Workflow and hard gate
 
-The smoke fails before success output if archive access fails, the mutable
-archive differs from its pinned size or hash, ZIP integrity or selected-member
-identity fails, the GPU count or model is wrong, a B200 or non-Blackwell device
-is selected, NVIDIA EGL is not actually loaded, the image is not digest-pinned,
-RGB/depth output is absent or static, depth has no finite samples, Bullet time
-does not advance, or the agent moves no meaningful distance.
-
-The companion profile requests exactly
-`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. Habitat-Sim is a renderer and must
-run on the manager-provided, reservation-backed RTX PRO target—**never B200**.
-The profile selects the pod shape; the owner-only cluster provenance must
-separately prove the backing Capacity Block policy is `STRICT` before launch.
-
-## Validate and plan
-
-From the repository root, after installing the development environment:
+Validate and plan without building or submitting:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  workflows/testing/byof-habitat-sim.yaml --json
+  workflows/testing/habitat-sim-smoke.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec \
-  workflows/testing/byof-habitat-sim.yaml \
-  --run-id habitat-sim-plan --json
+  workflows/testing/habitat-sim-smoke.yaml --run-id habitat-sim-plan --json
 npa/.venv/bin/npa workbench workflow submit \
-  workflows/testing/byof-habitat-sim.yaml \
-  --run-id habitat-sim-plan --plan-only
+  workflows/testing/habitat-sim-smoke.yaml --run-id habitat-sim-plan --plan-only
 ```
 
-Planning renders the `workbench.byof.repo` invocation; it does not build an
-image, download the scene, prove the target, or run Habitat-Sim.
+All three commands succeed without submission in Phase A. The plan renders the
+quarantined `-unbuilt` reference; it is not a pullability or capability claim.
+A real run must override it with a later reviewed exact image digest.
 
-## Live qualification
+The spec has one `workflow.habitat_sim.smoke` state, selects
+`tool://habitat-sim`, and requests exactly
+`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. Habitat-Sim is a renderer: use a
+manager-proven STRICT RTX PRO 6000 Blackwell target, never B200.
 
-Do not use an ambient/default project or shared cluster. First obtain the
-owner-only manager runtime context proving the task-owned project, private
-registry, storage prefix, Kubernetes context, and the exact RTX PRO Capacity
-Block bound with policy `STRICT`. Keep those identifiers out of commits, logs,
-PR text, and public artifacts.
+The required proof is `$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`. Success
+requires multiple distinct saved RGBA/depth frames, declared shapes and hashes,
+finite depth statistics, genuine pathfinder actions, nonzero agent displacement,
+Bullet build/enable/step/world-time evidence, measured FPS, NVIDIA EGL/GL library
+and vendor evidence, exactly one RTX PRO 6000 with compute capability 12.0, exact
+source/scene/archive/member provenance, immutable image identity, and exit zero.
+An independent live selector also compares the Kubernetes `containerStatuses`
+image ID and re-reads the proof from storage.
 
-Before building or submitting:
+The dedicated selector is intentionally inert unless all three owner-controlled
+gates are present: `NPA_INTEGRATION_E2E=1`,
+`NPA_HABITAT_SIM_IMAGE_LIVE=1`, and a mode-restricted
+`NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT`. The receipt binds the exact Git/workflow
+bytes, image digest, pod UID, storage proof hash, and STRICT one-RTX target. A live
+transaction and cleanup require separate manager authorization.
 
-```bash
-npa/.venv/bin/npa configure --show
-npa/.venv/bin/npa workbench health preflight --checks nebius --json
-npa/.venv/bin/npa workbench health preflight --checks s3 --json
-```
+## Deferred
 
-The live E2E does not accept an ambient context, default registry, or boolean
-STRICT attestation. The manager must create an owner-only runtime receipt
-outside the repository and bind it to the exact run. It references a second
-owner-only provider-readback JSON whose SHA-256 is recorded in the runtime
-receipt. The provider receipt must prove the active Capacity Block and the
-cluster node-group policy independently:
-
-```json
-{
-  "schema_version": "npa.byof.habitat-sim.runtime-context.v1",
-  "solution": "habitat-sim",
-  "run_id": "<unique-habitat-run-id>",
-  "task_owned": true,
-  "manager_published": true,
-  "project": "<npa-project-alias>",
-  "registry": "<authorized-private-registry-path>",
-  "registry_visibility": "private",
-  "registry_push_authorized": true,
-  "docker_config_path": "<absolute-owner-only-config-json>",
-  "bucket": "<run-owned-bucket>",
-  "output_prefix": "oss-solutions/habitat-sim/<unique-habitat-run-id>",
-  "s3_endpoint": "<task-owned-s3-endpoint>",
-  "kubeconfig_path": "<absolute-owner-only-kubeconfig>",
-  "kubernetes_context": "<exact-task-owned-context>",
-  "kubernetes_namespace": "<exact-namespace>",
-  "skypilot_config_path": "<absolute-owner-only-skypilot-config>",
-  "reservation": {
-    "policy": "STRICT",
-    "state": "ACTIVE",
-    "accelerator": "RTX PRO 6000 Blackwell",
-    "gpu_count": 1,
-    "kubernetes_context": "<exact-task-owned-context>",
-    "capacity_block_group_id": "<private-capacity-block-id>",
-    "provider_receipt_path": "<absolute-owner-only-provider-readback-json>",
-    "provider_receipt_sha256": "<sha256-of-provider-readback-json>",
-    "verified_at": "<provider-readback-timestamp>"
-  }
-}
-```
-
-The referenced provider JSON uses schema
-`npa.nebius.strict-capacity-binding.v1` and repeats the project, Kubernetes
-context, capacity-block ID, active state, accelerator, and GPU count. Its
-`node_group_reservation_policy` must be exactly
-`{"policy":"STRICT","reservation_ids":["<same-capacity-block-id>"]}`.
-All referenced files must be absolute, use no symlinked path component, remain
-outside this checkout, and be readable only by their owner. Their immediate
-parent directories must also be owner-only. The private registry must not
-resolve to the public NPA GHCR namespace. The run ID must be a bounded,
-DNS-safe name beginning with `habitat-`; option-like values are rejected before
-the runner or teardown receives them.
-
-Use a fresh run ID and replace only `config.bucket` in an owner-private copy of
-the workflow. The normal `workbench.byof.repo` state then builds the source,
-pushes only to the authorized private registry, resolves the pushed tag to an
-immutable digest, and launches the dedicated resource profile. It uploads the
-summary, exact proof, rendered observations, and diagnostic logs beneath that
-unique run prefix. Run the dedicated E2E with
-`NPA_INTEGRATION_E2E=1`, `NPA_BYOF_HABITAT_SIM_RUN_ID`,
-`NPA_BYOF_HABITAT_SIM_RUNTIME_RECEIPT`, and
-`NPA_BYOF_HABITAT_SIM_LIVE=1`:
-
-```bash
-npa/.venv/bin/python -m pytest \
-  npa/tests/e2e/test_byof_onboarding_live_e2e.py \
-  -k test_live_habitat_sim_private_digest_rgb_depth_bullet_traversal -v
-```
-
-It captures the Kubernetes-observed image ID, downloads and re-hashes all
-RGB/depth and inventory objects, then tears down only the exact SkyPilot-owned
-pod/cluster. Do not publish or promote the BYOF image to GHCR.
-
-## Explicitly deferred
-
-- proprietary or gated datasets, including Matterport3D and HM3D;
-- Replica, Gibson, or any other scene pack beyond the two pinned Skokloster
-  files;
+- all proprietary or gated datasets and every scene beyond the two pinned members;
 - semantic annotations and semantic-sensor claims;
-- Habitat-Lab installation, policy learning, and distributed Habitat-Lab
-  training;
-- interactive viewers, GUI workflows, audio sensors, and multi-GPU rendering;
-- a stable public NPA image or first-class CLI/SDK tool.
-
-These are outside the smallest correct BYOF candidate and need separate license,
-data, packaging, resource, and live-capability reviews.
+- Habitat-Lab installation, policy training, and distributed training;
+- GUI, interactive viewer, audio, CUDA build, multi-GPU, and B200 rendering;
+- built-image, private/public pull, RTX capability, anonymous publication, catalog,
+  and supported-release claims until their separate exact-byte gates pass.

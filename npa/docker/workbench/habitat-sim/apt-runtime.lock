@@ -1,0 +1,21 @@
+schema_version: npa.habitat-sim.apt-lock.v1
+ubuntu_base: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+snapshot: "20260903T121500Z"
+components: [main, universe]
+signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+packages:
+  - {binary: ca-certificates, version: 20260601~22.04.1, source: ca-certificates, sha256: 6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245}
+  - {binary: libegl1, version: 1.4.0-1, source: libglvnd, sha256: 4a35c0e925e15a076e7ce11d7c76f8ecb16615fc347c2c09afa4c205a7ca8ec4}
+  - {binary: libgl1, version: 1.4.0-1, source: libglvnd, sha256: 4fb2bbff94bb1a59bbdb40041e7a8ab58db2a003a151f4055357af03f0b78666}
+  - {binary: libglvnd0, version: 1.4.0-1, source: libglvnd, sha256: 6956d8be93b160b439a043141a061adfd54561d877423a956ace84d2fb3bfb4e}
+  - {binary: libjpeg-turbo8, version: 2.1.2-0ubuntu1, source: libjpeg-turbo, sha256: bb9538fa94f06bf6b7907105439f0a0a30e3ec27030832820a6c2cc2dc6578a8}
+  - {binary: libomp5-14, version: "1:14.0.0-1ubuntu1.1", source: llvm-toolchain-14, sha256: 7b69ec021dd19555c16e250827f57be88381ff2fff9bdbd1b3a2d25d27558cea}
+  - {binary: netcat-openbsd, version: 1.218-4ubuntu1, source: netcat-openbsd, sha256: 135685b9a101ccb18753b7d79b5843290859d63a026d2368fa0161fbc4c5eaf9}
+  - {binary: openssh-client, version: "1:8.9p1-3ubuntu0.16", source: openssh, sha256: 4bbb878ae5b99f7f82c0f52e7d68d6fa9c7427a5a1707efc53e65ff939fea391}
+  - {binary: openssh-server, version: "1:8.9p1-3ubuntu0.16", source: openssh, sha256: 72ae9540fd81b44dbdf70dd7a3b0b8d4859f80f25555074c035b0e058779f7f0}
+  - {binary: python3, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: 43dbcc12d790ed9360be4a1dc690ac0a7464a5e7c3170785886df84811a3f5a5}
+  - {binary: rsync, version: 3.2.7-0ubuntu0.22.04.7, source: rsync, sha256: 0f1f6c57367d67027f735171e69c769fe4c5552e267314a31f5e92064e36c153}
+  - {binary: sudo, version: 1.9.9-1ubuntu2.6, source: sudo, sha256: a6f151b3cee2dc09afc625330a7156d4c61ebb80aad9d447abb8806d26c428f2}
+transitive_contract: >-
+  The final verifier binds the complete dpkg inventory, source packages,
+  copyright bytes, ELF DT_NEEDED closure, and absence of build-only packages.

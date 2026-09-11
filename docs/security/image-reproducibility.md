@@ -39,6 +39,15 @@ login, and every base digest is resolvable anonymously.
 
 ### OSS source-built images (Lichtblick)
 
+Habitat-Sim is a stricter unbuilt source candidate. Its top-level source and
+every selected dependency use official HTTPS archive locators plus exact archive
+size/SHA-256, and the materializer emits a path/size/SHA-256 inventory for every
+selected build-source file. The build also pins the Ubuntu base digest, signed
+snapshot timestamp and packages, CA bootstrap hash, and platform-specific Python
+wheels. A future trusted public workflow rebuilds an exact reviewed full Git SHA;
+that output is a new digest and must repeat OCI/layer, SBOM, provenance, scanner,
+license, payload, anonymous-pull, and RTX capability gates.
+
 Some workbench images build a third-party OSS project from source rather than
 installing a published package. `npa-lichtblick` compiles the Lichtblick web
 viewer (MPL-2.0) from `lichtblick-suite/lichtblick`. Git tags are mutable, so

@@ -32,6 +32,7 @@ PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 #: Modules whose CLI parser is reachable. A module without one cannot be checked, and is
 #: listed here so adding a module toolRef without an entry point is a visible choice.
 PARSER_FACTORIES = {
+    "npa.workflows.habitat_sim_smoke": "build_parser",
     "npa.workflows.sim2real_envgen": "build_parser",
     "npa.workflows.token_factory_triage": "build_parser",
     "npa.workbench.lerobot.policy_container": "build_parser",

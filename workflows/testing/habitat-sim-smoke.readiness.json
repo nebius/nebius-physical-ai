@@ -1,0 +1,54 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "2bdfbb97405bd4971a93295d48375adde331124d19270d3852e086521c3ec745",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Python 3.12 schema validation and planning passed on September 11, 2026 without building an image or touching runtime infrastructure.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/habitat-sim-smoke.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/habitat-sim-smoke.yaml --run-id habitat-phase-a --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The static plan has one terminal state, one reachable module toolRef, one STRICT RTX PRO 6000 Blackwell request, and the named RGB/depth/Bullet/EGL output contract. Runtime capability remains unverified for this unbuilt digest.",
+      "evidence": [
+        "npa/tests/workflows/test_habitat_sim_workflow.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "The example bucket is intentionally non-runnable. A future authorized run must use a writable operator-owned prefix and prove independent readback.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The genuine official Meta archive is runtime-only and was not fetched in Phase A. A future run must verify the pinned archive and exact GLB/navmesh hashes before Habitat opens the scene.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#data-and-output-boundaries"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "A future private or public exact-digest run requires fresh operator-owned registry, storage, and cluster authentication. Credentials do not authorize scene bytes.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The dedicated image is unbuilt and publication-quarantined. A trusted full-SHA rebuild is a new digest requiring complete byte, layer, SBOM, provenance, vulnerability, license, and payload scans.",
+      "evidence": [
+        "npa/docker/workbench/habitat-sim/REDISTRIBUTION.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No dedicated-image capability run exists. Qualification requires the exact digest on exactly one STRICT RTX PRO 6000 Blackwell and explicitly refuses B200.",
+      "evidence": [
+        "docs/workbench/byof-habitat-sim.md#live-qualification-contract"
+      ]
+    }
+  }
+}
