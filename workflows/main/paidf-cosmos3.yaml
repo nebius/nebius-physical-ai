@@ -121,6 +121,12 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
+  caption:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    # Reuse the pinned CPU image's FFmpeg, Pillow and hosted-client dependencies.
+    image: tool://rerun-viewer
 
 initial: prepare-input
 
@@ -320,7 +326,7 @@ states:
   annotate-augmented:
     description: Caption a separate frame sample from every accepted variant with the hosted VLM.
     needs: [require-accepted-quality]
-    resources: cpu
+    resources: caption
     run:
       argv:
         - python3

@@ -32,6 +32,7 @@ def test_submit_requires_actual_runtime_decisions_before_side_effects(monkeypatc
 
 
 def test_source_overlay_is_selected_by_the_spec(monkeypatch):
+    from npa.deploy.images import container_image_for_tool
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions, render_skypilot_yaml
     from npa.orchestration.npa_workflow.spec import load_spec
@@ -48,6 +49,10 @@ def test_source_overlay_is_selected_by_the_spec(monkeypatch):
     baked = [task for task in tasks if task["resources"].get("image_id")]
     assert baked
     assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in baked)
+    annotation = next(task for task in tasks if "paidf_cosmos3_annotation" in task["run"])
+    assert annotation["resources"]["image_id"] == "docker:" + container_image_for_tool(
+        "rerun-viewer", registry="ghcr.io/nebius/nebius-physical-ai")
+    assert not annotation["resources"].get("accelerators")
 
 
 def test_legacy_evaluator_argv_omits_new_options():

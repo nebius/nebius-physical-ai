@@ -430,7 +430,7 @@ export CAPTION_MODEL='<available-vision-model-id>'
 ```
 
 The workflow currently defaults to `MiniMaxAI/MiniMax-M3`; check the model list
-for availability at run time. Historical runs used `google/gemma-3-27b-it`.
+for availability at run time.
 Do not assume a historically working model is still offered.
 
 Workbench images use the public anonymous GHCR namespace
@@ -475,8 +475,9 @@ The first run needs no input preparation: submit fetches and verifies the
 pinned upstream starter video, stages it for the run, and passes the source
 to the Cosmos 3 workflow. It also stages source code and forwards the four
 named secrets without requiring their values in the command.
-The starter exercises the workflow; it is not a known passing quality fixture.
-Its generated variants can be rejected with the default settings.
+Both starter variants passed the exploratory default quality gate in the
+recorded live run. Review generated data separately for training suitability.
+Generation and evaluator results can vary, and a new run can still be rejected.
 
 On a cold worker, image pulls, source setup, and model downloads happen before
 the payload. Runtime stages launch managed jobs and can repeat worker setup,
@@ -543,6 +544,19 @@ report an identity mismatch, use the durable record above and have the operator
 connect to that run's exact API/controller. Do not reset shared state or cancel
 a running GPU job solely because its live logs are unavailable.
 
+An isolated API also verifies the project configuration it started with.
+Staging a different checkout revision can update the project's saved source URI
+and stop an existing driver with `credential configuration changed after
+verification`, even when its credentials are unchanged. Finish the active run
+before changing that configuration, or use separate NPA configuration stores
+for independently isolated controllers. The check also covers the Nebius CLI
+credential cache: another process refreshing a shared cache can interrupt the
+driver. Use a dedicated operator environment for a long run and keep its
+configuration stable. Preserve the run records and original authentication
+state; do not edit API ownership records or assume that restarting the API
+accepts changed credentials. Ask the platform operator to reconcile the exact
+controller before retrying after this error.
+
 For an interrupted launch, follow the recovery command reported by NPA. Replace
 `--run-id "$RUN_ID"` with `--resume-run "$RUN_ID"` in the same submit command,
 retaining the project, runtime, inputs, configuration, and secret names.
@@ -582,6 +596,11 @@ Use a fresh run ID after changing inputs or settings.
 | `source_motion_weight` | `0.0` | Must remain zero: publish model output after guardrail processing; blending does not align motion. |
 | `curator_clip_len_s`, `curator_min_clip_len_s` | `3`, `1` | Curator's target and minimum clip durations in seconds. Use a source at least one second long for the full pipeline with these defaults. |
 | `curator_motion_filter` | `score-only` | Retain Curator motion measurements without discarding clips based on that diagnostic. |
+
+The `resources.caption` entry selects the pinned CPU image with FFmpeg for
+extracting accepted-video frames. Keep that image selection when adapting the
+workflow; installing FFmpeg on your submitting machine does not install it in
+the worker container.
 
 For example, adding `--var seed=29 --var augmentation_seed=17` to both commands
 changes the generation seed and fixes appearance sampling. This is a controlled
@@ -785,15 +804,28 @@ with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
 The current structural-transfer validation has completed real input preparation,
-configuration generation, hosted source captioning, and both native GPU variants.
+configuration generation, hosted source captioning, both native GPU variants,
+and Cosmos Evaluator scoring at revision `e1a6215b` on September 11, 2026.
 Its 169-frame source
 at 50 fps and 640×480 becomes an 81-frame reference at 24 fps and 832×480.
 Duration changes from 3.38 to 3.375 seconds through frame-rate sampling;
 letterboxing preserves aspect ratio and does not stretch time. Both generated
 videos fully decode with the prepared reference's dimensions, frame count,
 frame rate, and duration. Native control readback and text/video guardrails
-passed for both variants. Evaluation and the accepted downstream path are
-still being validated.
+passed for both variants.
+
+Both variants passed evaluation with an aggregate score of `0.392244` against
+`grade_threshold: 0.2`. Their attribute scores were `0.25` and `0.5` against
+`attribute_threshold: 0.25`; all eight attribute answers were complete, with
+no skipped checks or warnings. Evaluation matched the exact published video
+hashes and found zero timestamp error. The accepted downstream path is still
+being validated.
+
+Matched-time visual review showed recognizable pickup/removal timing, with
+gripper appearance changes, extra shadows, and strong warm coloration and
+colored borders in one variant. These exploratory acceptance settings do not
+certify physical fidelity or suitability for training. Review your own outputs
+against the task's visual and motion requirements before using them as data.
 
 Automated checks cover media corruption and alignment failures, native control
 pixels and guardrail processing, incomplete evaluator responses, runtime

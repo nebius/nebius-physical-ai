@@ -53,8 +53,10 @@ The committed `example-bucket` and run-scoped fixture path are placeholders.
 The generic workflow submit command stages a verified, pinned starter video
 when no input is supplied; use `--input-video` or `--input-uri` for your own
 source as shown in the setup guide. Direct stage execution still requires a
-staged input. The starter is not a known passing quality fixture. No customer
-dataset, episode, camera, bucket, or infrastructure identifier is embedded.
+staged input. Both starter variants passed the exploratory default quality gate
+in the recorded live run. Training-data suitability requires separate assessment,
+and another run can still be rejected. No customer dataset, episode, camera,
+bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
