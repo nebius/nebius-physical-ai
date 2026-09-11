@@ -337,6 +337,27 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
 
 
+def test_robomimic_is_a_public_eligible_but_quarantined_neutral_contract() -> None:
+    entry = _load_contract()["images"]["robomimic"]
+    assert entry["dockerfile"] == "robomimic/Dockerfile"
+    assert entry["tier"] == "job"
+    assert entry["redistribution"] == "public"
+    assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
+    notes = entry["notes"].lower()
+    for boundary in (
+        "torch",
+        "cuda",
+        "weight",
+        "dataset",
+        "runtime cache",
+        "credential",
+        "output",
+        "read-only",
+        "quarantined",
+    ):
+        assert boundary in notes
+
+
 def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> None:
     contract = _load_contract()
     declared = {

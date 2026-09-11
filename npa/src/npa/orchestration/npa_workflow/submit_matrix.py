@@ -998,12 +998,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         plan_only=True,
         plan_only_justification=(
-            "the delegated private-registry build and exact one-B200 training gate "
-            "are covered by the opt-in robomimic live BYOF E2E"
+            "the neutral image is quarantined and the dependent CUDA runtime-use "
+            "decision plus exact one-B200 training gate remain deferred"
         ),
         notes=(
-            "Pinned robomimic Lift PH low-dimensional BC training, disjoint held-out "
-            "validation, checkpoint reload, and held-out action inference."
+            "Plans pinned robomimic Lift PH low-dimensional BC training, disjoint "
+            "held-out validation, checkpoint reload, and held-out action inference; "
+            "no live acceptance is claimed."
         ),
     ),
     SubmitLiveCase(

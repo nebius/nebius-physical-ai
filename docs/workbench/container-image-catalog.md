@@ -302,16 +302,16 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
-- **robomimic BYOF** is an operator-private registry candidate built from MIT
-  `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`
-  on a digest-pinned PyTorch CUDA 12.8 base. The official Lift PH low-dimensional
-  dataset is hash-verified and fetched only at runtime. It remains outside the
-  supported public release plan until an exact built-image payload/security
-  scan proves that no dataset, pretrained weight, checkpoint, cache, credential,
-  or run output was baked, and the live one-B200 train/validation/checkpoint-
-  reload gate is accepted. CUDA/cuDNN bytes are expected in the separately
-  classified operator-private runtime; private-registry access and build
-  eligibility do not grant runtime-use permission or add a public-image row.
+- **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
+  published image. Its intended bytes are pinned MIT robomimic source plus 48
+  hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
+  torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
+  Lift PH data, populated runtime cache, credentials, and outputs are excluded.
+  The CUDA runtime is a separate exact-inventory read-only operator mount whose
+  use remains deferred pending an authoritative rights decision and manager
+  transaction authorization. No accepted digest, built-byte scan, SBOM,
+  provenance, private B200 result, anonymous pull proof, or public availability
+  is claimed; `UNVALIDATED_PUBLICATION_TOOLS` mechanically preserves quarantine.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
