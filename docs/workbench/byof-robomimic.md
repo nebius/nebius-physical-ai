@@ -11,6 +11,11 @@ The executable workflow is
 [`workflows/testing/byof-robomimic.yaml`](../../workflows/testing/byof-robomimic.yaml).
 Its separate readiness record reports what has actually been checked; schema
 validation and planning do not imply that a B200 result exists.
+Normal `workflow submit` execution is intentionally refused before preflight:
+the checked-in spec is planned there, while the dedicated robomimic live gate
+consumes its immutable configuration and owns the build, RBAC, and cleanup
+lifecycle. This prevents a direct toolRef submission from bypassing the
+manager-context refusal.
 
 ## Immutable inputs, outputs, and licensing
 
@@ -70,12 +75,16 @@ decision. This candidate is build-your-own and operator-private, and NPA does
 not publish its CUDA/cuDNN-derived image.
 
 The source and dataset are public and anonymously readable, so there is no
-source, dataset, or model-entitlement credential refusal to fabricate. The live
-gate instead fails before invoking the BYOF runner unless every manager-issued
-selector is present: project, private registry, kubeconfig file, Kubernetes
-context, non-default namespace, and output bucket. In the current child state,
-authorization is false and no robomimic context is published, so no build,
-runtime download, RBAC mutation, or GPU submission is permitted.
+source, dataset, or model-entitlement credential refusal to fabricate. The
+production BYOF runner refuses this registered robomimic request before base
+resolution or Docker build unless every manager-issued selector is present:
+project, private registry, factual private-visibility record, kubeconfig file,
+Kubernetes context, non-default namespace, output bucket, STRICT capacity, and
+the two dedicated live-suite selectors. The registry is also checked against
+NPA's centralized public-registry policy. The visibility record describes a
+registry property; it is not CUDA/cuDNN consent or permission. In the current
+child state, authorization is false and no robomimic context is published, so
+no build, runtime download, RBAC mutation, or GPU submission is permitted.
 
 After authorization, qualification must scan the exact pushed image digest,
 including every layer and image history entry. It must prove the absence of the
@@ -135,68 +144,38 @@ npa workbench workflow plan-spec workflows/testing/byof-robomimic.yaml \
   --run-id <fresh-run-id> --json
 ```
 
-Before submission, replace `config.bucket` only in a run-local copy, select the
-manager-assigned private registry and Kubernetes context, and verify that the
-capacity policy is STRICT with exactly `B200:1`. The operator must confirm its
-authority to use the governed CUDA/cuDNN runtime before pulling or building;
-that decision stays outside workflow arguments and environment-variable
-self-attestation. Export `NPA_E2E_MK8S_RESERVED_CAPACITY=1` only in the reviewed
-run environment. Create the temporary
-`npa-robomimic-observer` ServiceAccount, Role, and RoleBinding in the assigned
-namespace immediately before launch. The Role grants only `get` on `pods`; this
-lets the workload read its own Pod status using its mounted service-account
-token. Prove that permission with `kubectl auth can-i`, and remove all three
-objects after SkyPilot cleanup.
+Before the dedicated gate is selected, replace `config.bucket` only in a
+run-local copy, select the manager-assigned private registry and Kubernetes
+context, and verify that the capacity policy is STRICT with exactly `B200:1`.
+The operator must confirm its authority to use the governed CUDA/cuDNN runtime
+before pulling or building; that decision stays outside workflow arguments and
+environment-variable self-attestation. Publish the registry's factual
+visibility as `private` in the owner-only runtime context and export the two
+live-suite selectors plus `NPA_E2E_MK8S_RESERVED_CAPACITY=1` only in the reviewed
+run environment.
 
-The exact temporary RBAC shape is below. Kubernetes RBAC cannot restrict a
-dynamic Pod name before SkyPilot creates it, so this Role can get any Pod object
-in the assigned namespace; it cannot list or watch Pods, read logs, or access
-Secrets. Use a dedicated validation namespace and delete this binding
-immediately after the single run.
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: npa-robomimic-observer
-  namespace: <assigned-namespace>
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: npa-robomimic-observer
-  namespace: <assigned-namespace>
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: npa-robomimic-observer
-  namespace: <assigned-namespace>
-subjects:
-  - kind: ServiceAccount
-    name: npa-robomimic-observer
-    namespace: <assigned-namespace>
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: npa-robomimic-observer
-```
+The dedicated gate derives a collision-resistant ServiceAccount, Role, and
+RoleBinding name from the run ID, creates all three in the assigned namespace,
+and annotates them with a one-way run-ID digest. Before invoking the BYOF runner it
+uses `kubectl auth can-i` to prove that the identity can only `get` Pods: Pod
+list/watch, Pod logs, and Secret reads must all be denied. Kubernetes cannot
+restrict `get` to the dynamic Pod name before SkyPilot creates it, so use the
+dedicated validation namespace. A `finally` cleanup deletes all three objects
+after SkyPilot cleanup or failure and verifies their absence; failure to create,
+verify, delete, or prove absence fails the live gate.
 
 Build and push through the BYOF runner so the mutable build tag is resolved to a
 digest before scheduling. The dedicated live E2E requires
 `NPA_BYOF_LIVE_GPU=1`, `NPA_BYOF_ROBOMIMIC_LIVE_B200=1`, the STRICT-capacity
-attestation, and explicit manager-issued project, private registry (via
-`NPA_BYOF_ROBOMIMIC_REGISTRY`), kubeconfig, context,
+attestation, and explicit manager-issued project, private registry plus factual
+`NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY=private`, kubeconfig, context,
 non-default namespace, and output-bucket selectors. The harness checks
 `NPA_E2E_MK8S_RESERVED_CAPACITY=1`, then writes the corresponding boolean only
 into its run-local profile copy; the checked-in profile deliberately carries no
-attestation value. The run is valid only in that assigned context and after the
-operator has made the NVIDIA-terms decision described above. The runner cancels
-and cleans up its SkyPilot workload after the artifact is uploaded. Preserve
+attestation value or usable observer identity. The run is valid only in that
+assigned context and after the operator has made the NVIDIA-terms decision
+described above. The runner cancels and cleans up its SkyPilot workload after
+the artifact is uploaded, then the harness removes the temporary RBAC. Preserve
 shared infrastructure.
 
 ## Scope and deferred work

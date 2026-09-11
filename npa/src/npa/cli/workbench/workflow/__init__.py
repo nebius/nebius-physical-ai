@@ -869,6 +869,30 @@ def submit_cmd(
         except Exception as exc:
             _fail(str(exc))
             return
+        config_repo = (
+            str(merged_npa_spec.config.get("repo_url") or "")
+            .rstrip("/")
+            .removesuffix(".git")
+            .rsplit("/", 1)[-1]
+            .lower()
+        )
+        is_robomimic_gate = (
+            str(merged_npa_spec.config.get("solution_name") or "").strip().lower()
+            == "robomimic"
+            or config_repo == "robomimic"
+        )
+        if not plan_only and (
+            is_robomimic_gate
+            or str(merged_npa_spec.config.get("execution_policy") or "").strip()
+            == "dedicated-live-gate-only"
+        ):
+            _fail(
+                f"workflow {merged_npa_spec.name!r} is executable only through its "
+                "dedicated live gate, which verifies manager-issued selectors and "
+                "run-owned cleanup before any build, runtime pull, or GPU submission; "
+                "use --plan-only here"
+            )
+            return
         from npa.orchestration.npa_workflow.submit import spec_requires_runtime
 
         if spec_requires_runtime(merged_npa_spec):

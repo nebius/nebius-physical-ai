@@ -14,10 +14,9 @@ config:
   kubernetes:
     pod_config:
       spec:
-        # Created immediately before the one live smoke and removed after SkyPilot
-        # cleanup. Its Role grants only get on Pods, allowing the workload to
-        # attest its own status.containerStatuses imageID.
-        serviceAccountName: npa-robomimic-observer
+        # The dedicated live gate replaces this inert checked-in name with a
+        # run-scoped ServiceAccount that it creates, verifies, and removes.
+        serviceAccountName: npa-robomimic-observer-placeholder
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"

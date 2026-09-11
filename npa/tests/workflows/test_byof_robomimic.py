@@ -4,12 +4,16 @@ import ast
 import hashlib
 import importlib
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
+from npa.cli.main import app
 from npa.orchestration.npa_workflow import build_plan, load_spec
 
 
@@ -66,11 +70,14 @@ def _live_e2e_module():
     (
         "NPA_E2E_PROJECT",
         "NPA_BYOF_ROBOMIMIC_REGISTRY",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY",
         "NPA_BYOF_KUBECONFIG",
         "NPA_BYOF_K8S_CONTEXT",
         "NPA_BYOF_K8S_NAMESPACE",
         "NPA_E2E_S3_BUCKET",
         "NPA_E2E_MK8S_RESERVED_CAPACITY",
+        "NPA_BYOF_LIVE_GPU",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200",
     ),
 )
 def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
@@ -83,11 +90,14 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
     selectors = {
         "NPA_E2E_PROJECT": "manager-project",
         "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
         "NPA_BYOF_KUBECONFIG": str(kubeconfig),
         "NPA_BYOF_K8S_CONTEXT": "manager-context",
         "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
         "NPA_E2E_S3_BUCKET": "manager-bucket",
         "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
     }
     for variable, value in selectors.items():
         monkeypatch.setenv(variable, value)
@@ -103,13 +113,176 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
     monkeypatch.setenv("NPA_E2E_MK8S_RESERVED_CAPACITY", "1")
     module = _live_e2e_module()
     rendered = module._materialize_robomimic_attested_profile(
-        tmp_path / "robomimic-attested.yaml"
+        tmp_path / "robomimic-attested.yaml",
+        service_account="npa-robomimic-run-scoped",
     )
 
     source_task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
     rendered_task = list(yaml.safe_load_all(rendered.read_text(encoding="utf-8")))[1]
     assert source_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
     assert rendered_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == "1"
+    assert (
+        rendered_task["config"]["kubernetes"]["pod_config"]["spec"][
+            "serviceAccountName"
+        ]
+        == "npa-robomimic-run-scoped"
+    )
+
+
+def test_robomimic_observer_manifest_is_run_scoped_and_least_privilege() -> None:
+    module = _live_e2e_module()
+    run_id = "robomimic-contract-test"
+    name = module._robomimic_observer_name(run_id)
+    manifests = module._robomimic_observer_manifests(
+        run_id=run_id,
+        namespace="robomimic-validation",
+        service_account=name,
+    )
+
+    assert len(manifests) == 3
+    assert {manifest["kind"] for manifest in manifests} == {
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+    }
+    assert all(manifest["metadata"]["name"] == name for manifest in manifests)
+    role = next(manifest for manifest in manifests if manifest["kind"] == "Role")
+    assert role["rules"] == [
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
+    ]
+    binding = next(
+        manifest for manifest in manifests if manifest["kind"] == "RoleBinding"
+    )
+    assert binding["roleRef"]["name"] == name
+    assert binding["subjects"] == [
+        {
+            "kind": "ServiceAccount",
+            "name": name,
+            "namespace": "robomimic-validation",
+        }
+    ]
+
+
+def test_robomimic_observer_cleanup_runs_after_gate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls: list[list[str]] = []
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "auth" in command:
+            verb = command[command.index("can-i") + 1]
+            resource = command[command.index("can-i") + 2]
+            allowed = (verb, resource) == ("get", "pods")
+            return subprocess.CompletedProcess(
+                command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
+            )
+        if "get" in command:
+            return subprocess.CompletedProcess(command, 1, "", "NotFound")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="simulated gate failure"):
+        with module._robomimic_observer_rbac(
+            run_id="cleanup-contract", selectors=selectors, env={}
+        ):
+            raise RuntimeError("simulated gate failure")
+
+    assert any("create" in command for command in calls)
+    assert any("delete" in command for command in calls)
+    assert sum("-o" in command and "name" in command for command in calls) == 3
+
+
+@pytest.mark.parametrize(
+    "public_registry",
+    ("docker.io/example", "quay.io/example", "public.ecr.aws/example"),
+)
+def test_robomimic_gate_rejects_known_public_registry_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    public_registry: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    values = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": public_registry,
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+    }
+    for variable, value in values.items():
+        monkeypatch.setenv(variable, value)
+
+    with pytest.raises(AssertionError):
+        _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+def test_robomimic_runner_refuses_before_build_without_manager_context() -> None:
+    env = dict(os.environ)
+    for variable in (
+        "NPA_E2E_PROJECT",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY",
+        "NPA_BYOF_KUBECONFIG",
+        "NPA_BYOF_K8S_CONTEXT",
+        "NPA_BYOF_K8S_NAMESPACE",
+        "NPA_E2E_S3_BUCKET",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY",
+        "NPA_BYOF_LIVE_GPU",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200",
+    ):
+        env.pop(variable, None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "npa" / "scripts" / "run_byof_repo.py"),
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--skip-build",
+            "--skip-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 64
+    assert payload["status"] == "refused"
+    assert payload["build_started"] is False
+    assert payload["push_started"] is False
+    assert payload["run_started"] is False
+
+
+def test_robomimic_workflow_direct_submit_refuses_before_preflight() -> None:
+    for extra_args in ([], ["--var", "execution_policy=direct"]):
+        result = CliRunner().invoke(
+            app,
+            ["workbench", "workflow", "submit", str(WORKFLOW), *extra_args],
+        )
+
+        assert result.exit_code != 0
+        assert "dedicated live gate" in result.output
+        assert "before any build, runtime pull, or GPU submission" in result.output
 
 
 def test_robomimic_workflow_validates_and_plans_real_byof_stage() -> None:
@@ -117,6 +290,7 @@ def test_robomimic_workflow_validates_and_plans_real_byof_stage() -> None:
     plan = build_plan(spec, run_id="robomimic-plan-test")
 
     assert spec.name == "byof-robomimic"
+    assert spec.config["execution_policy"] == "dedicated-live-gate-only"
     assert len(plan.steps) == 1
     step = plan.steps[0]
     assert step.tool_ref == "workbench.byof.repo"
@@ -215,7 +389,7 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert task["resources"]["accelerators"] == "B200:1"
     assert (
         task["config"]["kubernetes"]["pod_config"]["spec"]["serviceAccountName"]
-        == "npa-robomimic-observer"
+        == "npa-robomimic-observer-placeholder"
     )
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert task["envs"]["BYOF_IMAGE"] == ""

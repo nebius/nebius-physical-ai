@@ -19,6 +19,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
+    is_public_registry,
     wan_accepted_image_manifest,
 )
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
@@ -89,6 +90,74 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _is_robomimic_request(args: argparse.Namespace) -> bool:
+    """Recognize the registered robomimic gate even if its display label changes."""
+
+    repo = args.repo_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].lower()
+    return args.solution_name.strip().lower() == "robomimic" or repo == "robomimic"
+
+
+def _require_robomimic_manager_context(
+    args: argparse.Namespace, *, registry: str
+) -> None:
+    """Refuse the governed robomimic build before pulling any runtime bytes.
+
+    These values attest only the manager-selected execution target and registry
+    visibility. They do not represent, or substitute for, the operator's
+    separate CUDA/cuDNN terms decision.
+    """
+
+    if not _is_robomimic_request(args):
+        return
+    selectors = {
+        "NPA_E2E_PROJECT": os.environ.get("NPA_E2E_PROJECT", "").strip(),
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_REGISTRY", ""
+        ).strip(),
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY", ""
+        ).strip(),
+        "NPA_BYOF_KUBECONFIG": os.environ.get("NPA_BYOF_KUBECONFIG", "").strip(),
+        "NPA_BYOF_K8S_CONTEXT": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
+        "NPA_BYOF_K8S_NAMESPACE": os.environ.get(
+            "NPA_BYOF_K8S_NAMESPACE", ""
+        ).strip(),
+        "NPA_E2E_S3_BUCKET": os.environ.get("NPA_E2E_S3_BUCKET", "").strip(),
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": os.environ.get(
+            "NPA_E2E_MK8S_RESERVED_CAPACITY", ""
+        ).strip(),
+        "NPA_BYOF_LIVE_GPU": os.environ.get("NPA_BYOF_LIVE_GPU", "").strip(),
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_LIVE_B200", ""
+        ).strip(),
+    }
+    missing = sorted(name for name, value in selectors.items() if not value)
+    if missing:
+        raise ValueError(
+            "robomimic manager context is incomplete; missing: " + ", ".join(missing)
+        )
+    if args.project.strip() != selectors["NPA_E2E_PROJECT"]:
+        raise ValueError("robomimic --project does not match the manager-issued project")
+    selected_registry = registry.rstrip("/")
+    if selected_registry != selectors["NPA_BYOF_ROBOMIMIC_REGISTRY"].rstrip("/"):
+        raise ValueError("robomimic registry does not match the manager-issued registry")
+    if is_public_registry(selected_registry):
+        raise ValueError("robomimic requires an operator-private registry")
+    if selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower() != "private":
+        raise ValueError("manager-published robomimic registry visibility must be private")
+    kubeconfig = Path(selectors["NPA_BYOF_KUBECONFIG"])
+    if not kubeconfig.is_file():
+        raise ValueError("manager-issued robomimic kubeconfig is not a readable file")
+    if selectors["NPA_BYOF_K8S_NAMESPACE"] == "default":
+        raise ValueError("robomimic requires a manager-issued non-default namespace")
+    if selectors["NPA_E2E_MK8S_RESERVED_CAPACITY"] != "1":
+        raise ValueError("robomimic requires the manager's STRICT capacity binding")
+    if selectors["NPA_BYOF_LIVE_GPU"] != "1" or selectors[
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200"
+    ] != "1":
+        raise ValueError("robomimic requires explicit selection of its dedicated live gate")
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -614,6 +683,24 @@ def main(argv: list[str] | None = None) -> int:
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
+    try:
+        _require_robomimic_manager_context(args, registry=registry)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "solution_name": args.solution_name or "robomimic",
+                    "build_started": False,
+                    "push_started": False,
+                    "run_started": False,
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 64
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     base_candidates = _base_image_candidates(
         profile=base_profile,

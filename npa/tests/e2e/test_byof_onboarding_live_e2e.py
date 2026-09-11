@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -9,7 +10,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 import yaml
@@ -18,6 +21,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
+from npa.deploy.images import is_public_registry
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -328,6 +332,9 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     selectors = {
         "project": os.environ.get("NPA_E2E_PROJECT", "").strip(),
         "registry": os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip(),
+        "registry_visibility": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY", ""
+        ).strip(),
         "kubeconfig": os.environ.get("NPA_BYOF_KUBECONFIG", "").strip(),
         "context": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
         "namespace": os.environ.get("NPA_BYOF_K8S_NAMESPACE", "").strip(),
@@ -335,6 +342,8 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     }
     assert selectors["project"] and e2e_project == selectors["project"]
     assert selectors["registry"], "a manager-issued private registry is required"
+    assert not is_public_registry(selectors["registry"])
+    assert selectors["registry_visibility"].lower() == "private"
     assert selectors["kubeconfig"] and Path(selectors["kubeconfig"]).is_file()
     assert selectors["context"], "a manager-issued Kubernetes context is required"
     assert selectors["namespace"] and selectors["namespace"] != "default"
@@ -342,6 +351,8 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
         "the manager's STRICT reserved-capacity gate is required"
     )
+    assert os.environ.get("NPA_BYOF_LIVE_GPU") == "1"
+    assert os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") == "1"
     return selectors
 
 
@@ -378,7 +389,9 @@ def _robomimic_runner_command(
     ]
 
 
-def _materialize_robomimic_attested_profile(destination: Path) -> Path:
+def _materialize_robomimic_attested_profile(
+    destination: Path, *, service_account: str
+) -> Path:
     """Bind the manager's STRICT gate into a run-local profile, never the repo."""
 
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1"
@@ -390,10 +403,194 @@ def _materialize_robomimic_attested_profile(destination: Path) -> Path:
     task = documents[1]
     assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
     task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = "1"
+    task["config"]["kubernetes"]["pod_config"]["spec"][
+        "serviceAccountName"
+    ] = service_account
     destination.write_text(
         yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
     )
     return destination
+
+
+def _robomimic_observer_name(run_id: str) -> str:
+    digest = hashlib.sha256(run_id.encode()).hexdigest()[:12]
+    return f"npa-robomimic-{digest}"
+
+
+def _robomimic_observer_manifests(
+    *, run_id: str, namespace: str, service_account: str
+) -> list[dict[str, object]]:
+    labels = {
+        "app.kubernetes.io/managed-by": "npa-robomimic-live-gate",
+    }
+    annotations = {
+        "npa.nebius.ai/run-id-sha256": hashlib.sha256(run_id.encode()).hexdigest(),
+    }
+    metadata = {
+        "name": service_account,
+        "namespace": namespace,
+        "labels": labels,
+        "annotations": annotations,
+    }
+    return [
+        {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": metadata,
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "Role",
+            "metadata": metadata,
+            "rules": [
+                {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
+            ],
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "RoleBinding",
+            "metadata": metadata,
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": service_account,
+                    "namespace": namespace,
+                }
+            ],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": service_account,
+            },
+        },
+    ]
+
+
+def _robomimic_kubectl(selectors: dict[str, str]) -> list[str]:
+    return [
+        "kubectl",
+        "--kubeconfig",
+        selectors["kubeconfig"],
+        "--context",
+        selectors["context"],
+    ]
+
+
+def _robomimic_can_i(
+    kube: list[str],
+    *,
+    namespace: str,
+    service_account: str,
+    verb: str,
+    resource: str,
+    env: dict[str, str],
+) -> bool:
+    result = subprocess.run(
+        [
+            *kube,
+            "auth",
+            "can-i",
+            verb,
+            resource,
+            "--namespace",
+            namespace,
+            "--as",
+            f"system:serviceaccount:{namespace}:{service_account}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    answer = result.stdout.strip().lower()
+    if (result.returncode, answer) == (0, "yes"):
+        return True
+    if (result.returncode, answer) == (1, "no"):
+        return False
+    raise AssertionError(
+        "kubectl auth can-i returned an uncertain robomimic result: "
+        f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+    )
+
+
+@contextmanager
+def _robomimic_observer_rbac(
+    *, run_id: str, selectors: dict[str, str], env: dict[str, str]
+) -> Iterator[str]:
+    """Own, verify, and remove the run-scoped Pod-observation identity."""
+
+    namespace = selectors["namespace"]
+    service_account = _robomimic_observer_name(run_id)
+    kube = _robomimic_kubectl(selectors)
+    manifests = _robomimic_observer_manifests(
+        run_id=run_id,
+        namespace=namespace,
+        service_account=service_account,
+    )
+    created_resources: list[str] = []
+    try:
+        for manifest in manifests:
+            subprocess.run(
+                [*kube, "create", "--namespace", namespace, "-f", "-"],
+                input=yaml.safe_dump(manifest, sort_keys=False),
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            created_resources.append(
+                f"{str(manifest['kind']).lower()}/{service_account}"
+            )
+        permissions = {
+            ("get", "pods"): True,
+            ("list", "pods"): False,
+            ("watch", "pods"): False,
+            ("get", "pods/log"): False,
+            ("get", "secrets"): False,
+        }
+        for (verb, resource), expected in permissions.items():
+            assert (
+                _robomimic_can_i(
+                    kube,
+                    namespace=namespace,
+                    service_account=service_account,
+                    verb=verb,
+                    resource=resource,
+                    env=env,
+                )
+                is expected
+            )
+        yield service_account
+    finally:
+        resources = list(reversed(created_resources))
+        if resources:
+            subprocess.run(
+                [
+                    *kube,
+                    "delete",
+                    "--namespace",
+                    namespace,
+                    "--ignore-not-found=true",
+                    *resources,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        for resource in resources:
+            absent = subprocess.run(
+                [*kube, "get", "--namespace", namespace, resource, "-o", "name"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            assert absent.returncode != 0 and not absent.stdout.strip(), (
+                resource,
+                absent.stdout,
+                absent.stderr,
+            )
 
 
 def _robomimic_target_env(
@@ -424,7 +621,7 @@ def _invoke_robomimic_gate(
     config = load_spec(ROBOMIMIC_SPEC).config
     registry = resolve_container_registry(e2e_project)
     assert registry == selectors["registry"].rstrip("/")
-    assert registry.split("/", 1)[0].lower() not in {"docker.io", "ghcr.io", "nvcr.io"}
+    assert not is_public_registry(registry)
     bucket = live_bucket(e2e_project)
     assert bucket == selectors["bucket"].removeprefix("s3://").split("/", 1)[0]
     run_id = (
@@ -432,8 +629,10 @@ def _invoke_robomimic_gate(
         or f"robomimic-live-{os.getpid()}"
     )
     with tempfile.TemporaryDirectory(prefix="npa-robomimic-profile-") as temp_dir:
+        service_account = _robomimic_observer_name(run_id)
         profile_yaml = _materialize_robomimic_attested_profile(
-            Path(temp_dir) / "robomimic-attested.yaml"
+            Path(temp_dir) / "robomimic-attested.yaml",
+            service_account=service_account,
         )
         cmd = _robomimic_runner_command(
             config,
@@ -443,21 +642,25 @@ def _invoke_robomimic_gate(
             run_id,
             profile_yaml,
         )
-        accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
-        if accepted_image:
-            assert "@sha256:" in accepted_image and accepted_image.startswith(
-                f"{registry}/"
-            )
-            cmd.extend(["--image", accepted_image, "--skip-build"])
         env = _robomimic_target_env(selectors["project"], selectors, cmd)
-        proc = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=str(REPO_ROOT),
-            env=env,
-        )
+        with _robomimic_observer_rbac(
+            run_id=run_id, selectors=selectors, env=env
+        ) as observed_service_account:
+            assert observed_service_account == service_account
+            accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+            if accepted_image:
+                assert "@sha256:" in accepted_image and accepted_image.startswith(
+                    f"{registry}/"
+                )
+                cmd.extend(["--image", accepted_image, "--skip-build"])
+            proc = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+            )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
