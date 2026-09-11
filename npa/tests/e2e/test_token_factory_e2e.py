@@ -164,6 +164,16 @@ def _shape_frame(path: Path, *, red_inside: bool) -> Path:
     return path
 
 
+def _episode_without_reset() -> dict[str, object]:
+    """Describe one continuous simulator episode for the synthetic diagrams."""
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0, "reset_events": [],
+        "reset_on_current_step": False, "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
+
+
 def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> None:
     """Exercise positional generation constraints against the actual hosted model."""
     _require_key()
@@ -172,10 +182,11 @@ def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> 
 
     frames = [_shape_frame(tmp_path / f"frame-{index:03d}.png", red_inside=index >= 3)
               for index in range(6)]
-    actions = [{"step": index, "sim_step": index, "action": [0.1]}
-               for index in range(5)]
+    actions = [{"step": index, "sim_step": index, "action": [0.1],
+                "episode_boundary": _episode_without_reset()} for index in range(5)]
     metadata = [{"path": frame.name, "sim_step": index, "view_name": "primary",
-                 "episode_id": "synthetic-diagram"} for index, frame in enumerate(frames)]
+                 "episode_id": "synthetic-diagram", "simulator_episode_id": 0}
+                for index, frame in enumerate(frames)]
     result = run_token_factory_rollout_vlm(
         model_id=DEFAULT_REASONER_MODEL, image_paths=frames, actions=actions,
         frame_metadata=metadata, rollout_id="synthetic-diagram", threshold=0.5,
