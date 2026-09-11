@@ -103,42 +103,42 @@
 <rect x="266" y="238" width="154" height="26" rx="3" fill="#c3e6cd"/>
 <text x="343" y="255" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
 </g>
-<g><title>npa-detection-training on H100 / H200 sm_90: verified</title>
-<rect x="424" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="501" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-detection-training on H100 / H200 sm_90: historical evidence</title>
+<rect x="424" y="238" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="501" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
-<g><title>npa-detection-training on RTX PRO 6000 sm_120: verified</title>
+<g><title>npa-detection-training on RTX PRO 6000 sm_120: verified current release evidence</title>
 <rect x="582" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="659" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
-<g><title>npa-detection-training on B200 sm_100: verified</title>
-<rect x="740" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="817" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-detection-training on B200 sm_100: historical evidence</title>
+<rect x="740" y="238" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="817" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
-<g><title>npa-detection-training on B300 sm_103: verified</title>
-<rect x="898" y="238" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="975" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-detection-training on B300 sm_103: historical evidence</title>
+<rect x="898" y="238" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="975" y="255" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
 <text x="16" y="283" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-envgen</text>
 <g><title>npa-envgen on L40S sm_89: supported</title>
 <rect x="266" y="266" width="154" height="26" rx="3" fill="#c3e6cd"/>
 <text x="343" y="283" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
 </g>
-<g><title>npa-envgen on H100 / H200 sm_90: verified</title>
-<rect x="424" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="501" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-envgen on H100 / H200 sm_90: historical evidence</title>
+<rect x="424" y="266" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="501" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
-<g><title>npa-envgen on RTX PRO 6000 sm_120: verified</title>
-<rect x="582" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="659" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-envgen on RTX PRO 6000 sm_120: historical evidence</title>
+<rect x="582" y="266" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="659" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
-<g><title>npa-envgen on B200 sm_100: verified</title>
-<rect x="740" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="817" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-envgen on B200 sm_100: historical evidence</title>
+<rect x="740" y="266" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="817" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
-<g><title>npa-envgen on B300 sm_103: verified</title>
-<rect x="898" y="266" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="975" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-envgen on B300 sm_103: historical evidence</title>
+<rect x="898" y="266" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="975" y="283" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
 <text x="16" y="311" font-size="12" fill="#1f2328" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npa-genesis</text>
 <g><title>npa-genesis on L40S sm_89: supported</title>
@@ -428,9 +428,9 @@
 <rect x="582" y="696" width="154" height="26" rx="3" fill="#c3e6cd"/>
 <text x="659" y="713" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
 </g>
-<g><title>npa-cosmos2-transfer on B200 sm_100: verified</title>
-<rect x="740" y="696" width="154" height="26" rx="3" fill="#1a7f37"/>
-<text x="817" y="713" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
+<g><title>npa-cosmos2-transfer on B200 sm_100: historical evidence</title>
+<rect x="740" y="696" width="154" height="26" rx="3" fill="#57a773"/>
+<text x="817" y="713" font-size="11.5" fill="#ffffff" text-anchor="middle">historical</text>
 </g>
 <g><title>npa-cosmos2-transfer on B300 sm_103: blocked (cu128 NVRTC cannot JIT `sm_103`)</title>
 <rect x="898" y="696" width="154" height="26" rx="3" fill="#cf222e"/>
@@ -466,9 +466,9 @@
 <rect x="424" y="752" width="154" height="26" rx="3" fill="#c3e6cd"/>
 <text x="501" y="769" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
 </g>
-<g><title>npa-isaac-lab on RTX PRO 6000 sm_120: supported</title>
-<rect x="582" y="752" width="154" height="26" rx="3" fill="#c3e6cd"/>
-<text x="659" y="769" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+<g><title>npa-isaac-lab on RTX PRO 6000 sm_120: verified current release evidence</title>
+<rect x="582" y="752" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="659" y="769" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
 <g><title>npa-isaac-lab on B200 sm_100: blocked</title>
 <rect x="740" y="752" width="154" height="26" rx="3" fill="#cf222e"/>

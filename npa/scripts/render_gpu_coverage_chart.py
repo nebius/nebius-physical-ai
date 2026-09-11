@@ -80,7 +80,17 @@ Band = tuple[str, str, list[str]]
 
 
 def published_images() -> dict[str, str]:
-    """Return public image names mapped to their accepted release tags."""
+    """Read the accepted public publishing plan.
+
+    Args:
+        None.
+
+    Returns:
+        Public image names mapped to their accepted release tags.
+
+    Raises:
+        None.
+    """
     sys.path.insert(0, str(REPO_ROOT / "npa/src"))
     from npa.deploy import images as deploy_images
 
@@ -92,7 +102,17 @@ def published_images() -> dict[str, str]:
 
 
 def matrix_rows() -> dict[str, list[str]]:
-    """Parse image rows from the compatibility matrix's main table."""
+    """Parse the compatibility matrix's main table.
+
+    Args:
+        None.
+
+    Returns:
+        Image names mapped to their five GPU-platform cells.
+
+    Raises:
+        None.
+    """
     section = MATRIX.read_text(encoding="utf-8").split("## Compatibility matrix")[1]
     section = section.split("###")[0]
     rows: dict[str, list[str]] = {}
@@ -108,7 +128,18 @@ def matrix_rows() -> dict[str, list[str]]:
 
 
 def classify(cell: str, image: str) -> tuple[str, str]:
-    """Classify one matrix cell, failing closed on unknown wording."""
+    """Classify one matrix cell, failing closed on unknown wording.
+
+    Args:
+        cell: The matrix cell's Markdown content without bold markers.
+        image: The image name used in any classification error.
+
+    Returns:
+        The color class and compact label for the cell.
+
+    Raises:
+        SystemExit: If the matrix introduces unrecognized cell wording.
+    """
     lowered = cell.lower()
     for prefix, kind, label in CELL_CLASSES:
         if lowered.startswith(prefix):
@@ -120,7 +151,17 @@ def classify(cell: str, image: str) -> tuple[str, str]:
 
 
 def band_of(kinds: list[str]) -> str:
-    """Return the mutually exclusive summary band for an image row."""
+    """Choose the mutually exclusive summary band for an image row.
+
+    Args:
+        kinds: Classified cell kinds in GPU-column order.
+
+    Returns:
+        The row's summary band key.
+
+    Raises:
+        None.
+    """
     if all(kind == "cpu" for kind in kinds):
         return "cpu"
     if any(kind in {"blocked", "unrouted"} for kind in kinds):
@@ -274,7 +315,18 @@ def _legend_elements(y: int) -> list[str]:
 
 
 def render(published: dict[str, str], rows: dict[str, list[str]]) -> str:
-    """Render an SVG for public images and parsed compatibility rows."""
+    """Render an SVG for public images and compatibility rows.
+
+    Args:
+        published: Public image names mapped to accepted release tags.
+        rows: Matrix image names mapped to GPU-platform cells.
+
+    Returns:
+        A complete SVG document.
+
+    Raises:
+        SystemExit: If a public image or matrix cell cannot be represented.
+    """
     grid = _classified_grid(published, rows)
     ordered = _ordered_bands(grid)
     width = LABEL_W + CELL_W * len(COLUMNS) + 32
@@ -301,7 +353,17 @@ def _without_render_date(svg: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Render the chart, or check the committed chart for drift."""
+    """Render the chart, or check the committed chart for drift.
+
+    Args:
+        argv: Optional command-line arguments; defaults to ``sys.argv``.
+
+    Returns:
+        Zero on success, or one when ``--check`` detects drift.
+
+    Raises:
+        None.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--check", action="store_true")

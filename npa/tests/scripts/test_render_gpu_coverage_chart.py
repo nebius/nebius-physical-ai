@@ -101,6 +101,35 @@ def test_every_current_public_cell_has_an_explicit_classification(
             chart.classify(cell, image)
 
 
+def test_release_specific_evidence_stays_tied_to_current_pins(
+    chart: ModuleType,
+) -> None:
+    """Do not present runs on superseded images as current release evidence."""
+    rows = chart.matrix_rows()
+    expected = {
+        "npa-detection-training": (
+            "runtime-v1-20260905",
+            ["supported", "historical", "verified", "historical", "historical"],
+        ),
+        "npa-cosmos2-transfer": (
+            "2.5.1-sim2real-coherent-20260904",
+            ["supported", "supported", "supported", "historical", "blocked"],
+        ),
+        "npa-envgen": (
+            "0.1.2-sim2real-coherent-20260904",
+            ["supported", "historical", "historical", "historical", "historical"],
+        ),
+        "npa-isaac-lab": (
+            "3.0.0b2.post1-sim2real-coherent-20260904",
+            ["supported", "supported", "verified", "blocked", "blocked"],
+        ),
+    }
+    published = chart.published_images()
+    for image, (tag, kinds) in expected.items():
+        assert published[image] == tag
+        assert [chart.classify(cell, image)[0] for cell in rows[image]] == kinds
+
+
 def test_catalog_summary_matches_generated_band_membership(chart: ModuleType) -> None:
     """Keep prose counts and image lists synchronized with generated bands."""
     rows = chart.matrix_rows()
