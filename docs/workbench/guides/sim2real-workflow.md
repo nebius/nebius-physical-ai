@@ -427,6 +427,12 @@ or checkpoint parameter differences. They remain in the original training
 report for schema compatibility. Checkpoint selection and promotion use the
 recorded validation and gold results.
 
+Each pass's validation chart and checkpoint label use that pass's own candidate
+report, matched by outer/inner iteration, checkpoint URI, and SHA-256. The
+selected gold candidate does not replace earlier validation measurements.
+Finalization and recording regeneration reject missing, duplicate, or
+contradictory candidate bindings.
+
 Validation and gold evaluation require each environment's object pose, velocity,
 goal, and episode termination state. Missing or unreadable required state fails
 the evaluation instead of substituting aggregate log values. Terminal metrics

@@ -505,12 +505,11 @@ def _log_rollout(
     return seconds
 
 
-def _all_inner_iteration_records(
+def _inner_evidence_payloads(
     local_dir: Path, inner_evidence: dict[str, Any]
 ) -> list[tuple[int, dict[str, Any]]]:
-    """Load every persisted outer/inner evidence record in chronological order."""
+    """Keep each outer loop's candidates beside its persisted or localized passes."""
 
-    records: dict[tuple[int, str, int], dict[str, Any]] = {}
     payloads: list[tuple[int, dict[str, Any]]] = []
     for path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
         payload = _read_json(path)
@@ -519,7 +518,64 @@ def _all_inner_iteration_records(
         )
         payloads.append((outer, payload))
     payloads.append((int(inner_evidence.get("outer_iteration") or 1), inner_evidence))
-    for outer, payload in payloads:
+    return payloads
+
+
+def _validation_candidates(
+    payload: dict[str, Any], outer: int
+) -> dict[int, dict[str, Any]] | None:
+    """Require one validation candidate for every pass in canonical evidence."""
+
+    if "checkpoint_candidates" not in payload:
+        return None
+    candidates = {}
+    for candidate in payload["checkpoint_candidates"]:
+        iteration = int(candidate.get("inner_iteration") or 0)
+        if (
+            int(candidate.get("outer_iteration") or 0) != outer
+            or iteration < 1
+            or iteration in candidates
+        ):
+            raise Sim2RealVizError("Validation candidate identity is ambiguous")
+        candidates[iteration] = candidate
+    expected = [int(record.get("iteration") or 0) for record in payload["iterations"]]
+    if len(set(expected)) != len(expected) or set(candidates) != set(expected):
+        raise Sim2RealVizError("Validation candidates do not cover the exact passes")
+    return candidates
+
+
+def _candidate_validation_report(
+    record: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind displayed validation facts to the checkpoint produced by this pass."""
+
+    checkpoint = (record.get("update") or {}).get("checkpoint_path")
+    digest = str(candidate.get("checkpoint_sha256") or "")
+    report = candidate.get("validation_report") or {}
+    if (
+        not checkpoint
+        or candidate.get("checkpoint_uri") != checkpoint
+        or report.get("policy_checkpoint") != checkpoint
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or report.get("policy_checkpoint_sha256") != digest
+        or candidate.get("evaluation_split") != "validation"
+        or report.get("evaluation_split", "validation") != "validation"
+    ):
+        raise Sim2RealVizError(
+            "Validation report does not match its training checkpoint"
+        )
+    return {**report, "evaluation_split": candidate["evaluation_split"]}
+
+
+def _all_inner_iteration_records(
+    local_dir: Path, inner_evidence: dict[str, Any]
+) -> list[tuple[int, dict[str, Any]]]:
+    """Load every persisted outer/inner evidence record in chronological order."""
+
+    records: dict[tuple[int, str, int], dict[str, Any]] = {}
+    for outer, payload in _inner_evidence_payloads(local_dir, inner_evidence):
+        candidates = _validation_candidates(payload, outer)
         reward_trend = list(payload.get("reward_trend") or [])
         for record_index, record in enumerate(payload.get("iterations") or []):
             if not isinstance(record, dict):
@@ -527,6 +583,13 @@ def _all_inner_iteration_records(
             record = dict(record)
             if record.get("mean_reward") is None and record_index < len(reward_trend):
                 record["mean_reward"] = reward_trend[record_index]
+            if candidates is not None:
+                validation = _candidate_validation_report(
+                    record, candidates[int(record["iteration"])]
+                )
+                record = _merge_iteration_evidence(
+                    record, {"validation_report": validation}
+                )
             # Legacy regeneration accepts passes without explicit iteration IDs.
             # Their list positions pair persisted and localized copies without
             # conflating distinct passes or an explicit ID with a position.

@@ -488,6 +488,161 @@ def _rrd_training_scalars(path: Path) -> dict[str, Any]:
     return measured
 
 
+def _checkpoint_validation_evidence() -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "outer_iteration": 2,
+        "iterations": [],
+        "checkpoint_candidates": [],
+    }
+    for iteration, lift_rate in ((1, 0.75), (2, 0.5)):
+        checkpoint = f"s3://unit/run/checkpoints/pass-{iteration}/model_latest.pt"
+        digest = str(iteration) * 64
+        report = {
+            "policy_checkpoint": checkpoint,
+            "policy_checkpoint_sha256": digest,
+            "success_rate": 0.0,
+            "decomposed_metrics": {"lift": {"rate": lift_rate}},
+        }
+        evidence["iterations"].append(
+            {
+                "iteration": iteration,
+                "update": {"checkpoint_path": checkpoint},
+            }
+        )
+        evidence["checkpoint_candidates"].append(
+            {
+                "outer_iteration": 2,
+                "inner_iteration": iteration,
+                "evaluation_split": "validation",
+                "checkpoint_uri": checkpoint,
+                "checkpoint_sha256": digest,
+                "validation_report": report,
+            }
+        )
+    evidence["selected_validation_report"] = evidence["checkpoint_candidates"][0][
+        "validation_report"
+    ]
+    evidence["checkpoint_candidates"].reverse()
+    return evidence
+
+
+def test_iteration_validation_uses_each_checkpoint_without_mutating_evidence(
+    tmp_path: Path,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    original = json.dumps(evidence, sort_keys=True)
+    path = tmp_path / "inner_loop" / "outer-02" / "evidence.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(original)
+
+    records = viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+    assert len(records) == 2
+    for (outer, record), rate in zip(records, (0.75, 0.5), strict=True):
+        report = record["validation_report"]
+        assert outer == 2
+        assert report["policy_checkpoint"] == record["update"]["checkpoint_path"]
+        assert report["policy_checkpoint_sha256"] == str(record["iteration"]) * 64
+        assert report["decomposed_metrics"]["lift"]["rate"] == rate
+    assert json.dumps(evidence, sort_keys=True) == original
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "duplicate",
+        "wrong_outer",
+        "extra",
+        "candidate_uri",
+        "report_uri",
+        "report_sha",
+        "non_validation",
+        "conflicting_report",
+    ],
+)
+def test_iteration_validation_rejects_ambiguous_or_mismatched_lineage(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    candidates = evidence["checkpoint_candidates"]
+    candidate = candidates[0]
+    if corruption == "missing":
+        candidates.pop()
+    elif corruption in {"duplicate", "extra"}:
+        candidates.append(json.loads(json.dumps(candidate)))
+        if corruption == "extra":
+            candidates[-1]["inner_iteration"] = 3
+    elif corruption == "wrong_outer":
+        candidate["outer_iteration"] = 1
+    elif corruption == "candidate_uri":
+        candidate["checkpoint_uri"] = "s3://unit/other/model_latest.pt"
+    elif corruption == "report_uri":
+        candidate["validation_report"]["policy_checkpoint"] = "s3://unit/other/model.pt"
+    elif corruption == "report_sha":
+        candidate["validation_report"]["policy_checkpoint_sha256"] = "f" * 64
+    elif corruption == "non_validation":
+        candidate["evaluation_split"] = "gold-heldout"
+    else:
+        evidence["iterations"][1]["validation_report"] = evidence[
+            "selected_validation_report"
+        ]
+
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation|validation_report"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def _decoded_validation_metrics(path: Path) -> tuple[list[float], dict[str, str]]:
+    import pyarrow as pa
+    from rerun.recording import load_recording
+
+    samples, labels = [], {}
+    for chunk in load_recording(path).chunks():
+        batch = chunk.to_record_batch()
+        if chunk.entity_path == "/evaluation/validation_lift_rate":
+            times = batch.column("frame_time").cast(pa.int64()).to_pylist()
+            values = batch.column("Scalars:scalars").to_pylist()
+            samples.extend(
+                (time, row[0]) for time, row in zip(times, values, strict=True)
+            )
+        if chunk.entity_path.startswith("/training/checkpoints/"):
+            labels[chunk.entity_path] = batch.column("TextDocument:text").to_pylist()[
+                0
+            ][0]
+    assert [time for time, _value in sorted(samples)] == [0, 1_000_000_000]
+    return [value for _time, value in sorted(samples)], labels
+
+
+def test_rrd_validation_rates_and_checkpoint_labels_roundtrip(tmp_path: Path) -> None:
+    evidence = _checkpoint_validation_evidence()
+    tree, heldout = _build_run_tree(tmp_path)
+    for record in evidence["iterations"]:
+        record.update(
+            {
+                key: tree["iterations"][0][key]
+                for key in ("actions_dir", "vlm_eval_dir", "signal_dir")
+            }
+        )
+    output = tmp_path / "reports" / "validation-lineage.rrd"
+    emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=evidence,
+        heldout_report=heldout,
+        output_rrd=output,
+    )
+    rates, labels = _decoded_validation_metrics(output)
+    assert rates == pytest.approx([0.75, 0.5])
+    for iteration, rate in ((1, 0.75), (2, 0.5)):
+        label = labels[f"/training/checkpoints/outer_02_inner_{iteration:02d}"]
+        report = json.loads(label.split("```json\n", 1)[1].split("\n```", 1)[0])
+        assert report["checkpoint_uri"].endswith(f"pass-{iteration}/model_latest.pt")
+        assert report["checkpoint_sha256"] == str(iteration) * 64
+        assert report["decomposed_metrics"]["lift"]["rate"] == rate
+        assert report["evaluation_split"] == "validation"
+
+
 @pytest.mark.parametrize("backend", ["isaac_rsl_rl_ppo", "vlm_signal_adapter"])
 def test_rrd_excludes_isaac_adapter_proxies_but_preserves_measured_losses(
     tmp_path: Path, backend: str
