@@ -218,6 +218,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "upstream Isaac-Reach-OpenArm-v0 vectorized environment steps on CUDA",
         "upstream RSL-RL trainer writes a real checkpoint",
     ],
+    "robomimic": [
+        "neutral image contains pinned robomimic source and no CUDA runtime",
+        "missing external runtime refuses without network or cache mutation",
+        "real four-step BC, held-out validation, checkpoint reload, and one-B200 proof remain deferred",
+    ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
         "machine-readable runtime health/version contract",
