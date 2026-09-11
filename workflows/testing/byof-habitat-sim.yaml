@@ -70,8 +70,9 @@ config:
     src/deps/rapidjson src/deps/recastnavigation src/deps/tinyobjloader
     src/deps/zstd &&
     HABITAT_BUILD_GUI_VIEWERS=OFF HABITAT_WITH_BULLET=ON HABITAT_WITH_CUDA=OFF
+    SKBUILD_CMAKE_BUILD_TYPE=Release
     PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --no-cache-dir .
-    --no-build-isolation --no-deps --config-settings=cmake.build-type=Release &&
+    --no-build-isolation --no-deps &&
     python3 -m pip check &&
     python3 -m pip freeze --all | LC_ALL=C sort > /opt/byof/npa_python_packages.txt &&
     dpkg-query -W -f='${binary:Package}=${Version}\n' | LC_ALL=C sort

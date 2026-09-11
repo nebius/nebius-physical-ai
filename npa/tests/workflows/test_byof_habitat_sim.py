@@ -6,9 +6,11 @@ import ast
 import hashlib
 import io
 import json
+import optparse
 from pathlib import Path
 import re
 import runpy
+import shlex
 import tempfile
 import zipfile
 import zlib
@@ -61,6 +63,17 @@ def _smoke_python() -> str:
     marker = "python3 - <<'PY'\n"
     assert marker in smoke
     return smoke.split(marker, 1)[1].rsplit("\nPY", 1)[0]
+
+
+def _habitat_install_tokens() -> list[str]:
+    build = str(_config()["build_command"])
+    matches = [
+        shlex.split(command.strip())
+        for command in build.split("&&")
+        if "python3 -m pip install --no-cache-dir ." in command
+    ]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def _asset_fetch_namespace() -> dict[str, object]:
@@ -163,6 +176,8 @@ def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
     assert "HABITAT_BUILD_GUI_VIEWERS=OFF" in build
     assert "HABITAT_WITH_BULLET=ON" in build
     assert "HABITAT_WITH_CUDA=OFF" in build
+    assert "SKBUILD_CMAKE_BUILD_TYPE=Release" in build
+    assert "--config-settings" not in build
     locked_requirements = re.findall(r"'([^']+ --hash=sha256:[0-9a-f]{64})'", build)
     assert len(locked_requirements) == 35
     lock_sha256 = hashlib.sha256(
@@ -205,6 +220,30 @@ def test_habitat_sim_source_build_and_asset_boundary_are_immutable() -> None:
         "mp3d",
     ):
         assert forbidden not in smoke.lower()
+
+
+def test_habitat_sim_release_build_works_with_legacy_pip_frontend(capsys) -> None:
+    tokens = _habitat_install_tokens()
+    python_index = tokens.index("python3")
+    environment = dict(token.split("=", 1) for token in tokens[:python_index])
+    install_args = tokens[tokens.index("install") + 1 :]
+
+    legacy_frontend = optparse.OptionParser(add_help_option=False)
+    legacy_frontend.add_option("--no-cache-dir", action="store_true")
+    legacy_frontend.add_option("--no-build-isolation", action="store_true")
+    legacy_frontend.add_option("--no-deps", action="store_true")
+
+    with pytest.raises(SystemExit) as failure:
+        legacy_frontend.parse_args(
+            [*install_args, "--config-settings=cmake.build-type=Release"]
+        )
+    assert failure.value.code == 2
+    assert "no such option: --config-settings" in capsys.readouterr().err
+
+    _options, projects = legacy_frontend.parse_args(install_args)
+    assert projects == ["."]
+    assert environment["SKBUILD_CMAKE_BUILD_TYPE"] == "Release"
+    assert not any(token.startswith("--config-settings") for token in install_args)
 
 
 def test_habitat_sim_official_archive_fetch_extracts_only_exact_members(
