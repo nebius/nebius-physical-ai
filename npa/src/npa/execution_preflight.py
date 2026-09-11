@@ -411,6 +411,14 @@ def verify_solution_payload_service_accounts(
     LIBERO payload only calls ``get`` for its own Pod imageID attestation and
     must never inherit that engine identity.  Both identities are explicit so
     a missing task override cannot silently fall back to SkyPilot's default.
+
+    Args:
+        documents: Rendered SkyPilot workflow documents to inspect.
+        global_config: The exact SkyPilot controller configuration.
+    Returns:
+        None after every applicable payload/controller identity passes.
+    Raises:
+        ExecutionPreflightError: A LIBERO identity is absent, shared, or invalid.
     """
 
     def pod_spec(value: object, *, check: str) -> Mapping[str, Any]:

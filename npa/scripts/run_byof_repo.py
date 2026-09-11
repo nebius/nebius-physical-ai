@@ -21,6 +21,7 @@ from npa.deploy.images import (
     container_image_for_tool,
     wan_accepted_image_manifest,
 )
+from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
@@ -41,6 +42,8 @@ DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
 LIBERO_SOLUTION_NAME = "libero"
+LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
+LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 
 # SkyPilot 0.12.2 checks these package capabilities synchronously while starting a
 # Kubernetes worker.  Ubuntu's ``fuse3`` package provides the logical ``fuse``
@@ -108,6 +111,24 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _validate_libero_identity(args: argparse.Namespace) -> None:
+    """Reject ambiguous LIBERO identity before registry or build operations."""
+
+    solution = args.solution_name.strip().lower()
+    profile = Path(args.yaml).name.removesuffix(".yaml")
+    repository = args.repo_url.strip().removesuffix(".git").rstrip("/")
+    is_libero = (
+        solution == LIBERO_SOLUTION_NAME
+        or profile == LIBERO_PROFILE_NAME
+        or repository == LIBERO_REPOSITORY
+    )
+    if not is_libero:
+        return
+    if args.solution_name != LIBERO_SOLUTION_NAME:
+        raise ValueError("LIBERO requires the exact --solution-name libero identity")
+    cluster_name_patterns_for_run(args.run_id)
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -828,6 +849,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    _validate_libero_identity(args)
     private_source = args.repo_auth == "github"
     try:
         validate_repository_url(args.repo_url, private=private_source)

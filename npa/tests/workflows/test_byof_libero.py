@@ -1,3 +1,5 @@
+"""Static LIBERO workflow, provenance, and hard-gate contract tests."""
+
 from __future__ import annotations
 
 import ast
