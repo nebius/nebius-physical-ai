@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -22,6 +24,7 @@ PROFILE_PATH = (
     / "profiles"
     / "byof-solution-smoke-libero-b200-gpu.yaml"
 )
+BYOF_RUNNER_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
 
 SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 DATASET_REF = "f13aa24a3da8c43c7225569f28c562979fa0e35a"
@@ -47,6 +50,34 @@ def _smoke_source() -> str:
     source = smoke.split("/opt/venv/bin/python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     ast.parse(source)
     return source
+
+
+def _expected_source_metadata_keys() -> set[str]:
+    tree = ast.parse(_smoke_source())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare) or not node.comparators:
+            continue
+        if not isinstance(node.left, ast.Name) or node.left.id != "source_metadata":
+            continue
+        expected = node.comparators[0]
+        if isinstance(expected, ast.Dict):
+            return {
+                key.value
+                for key in expected.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+    raise AssertionError("source_metadata equality contract is missing")
+
+
+def _generated_public_source_metadata_keys() -> set[str]:
+    spec = importlib.util.spec_from_file_location("run_byof_repo_libero", BYOF_RUNNER_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    dockerfile = module._dockerfile_text()
+    line = next(line for line in dockerfile.splitlines() if '"source": "oss-byof"' in line)
+    return set(re.findall(r'"([a-z_]+)"\s*:', line))
 
 
 def test_libero_workflow_pins_reviewed_source_data_and_base_image() -> None:
@@ -137,6 +168,20 @@ def test_libero_smoke_binds_exact_task_assets_and_real_sample_inventory() -> Non
     assert '"dataset_bddl_path": dataset_bddl' in smoke
     assert "libero_official_demo_sha256" in smoke
     assert "libero_trajectory_disjoint_heldout_split" in smoke
+
+
+def test_libero_expected_source_metadata_matches_generated_public_schema() -> None:
+    expected = {
+        "source",
+        "repo",
+        "ref",
+        "commit",
+        "source_prune_path",
+        "source_pruned",
+        "git_objects_removed",
+    }
+    assert _expected_source_metadata_keys() == expected
+    assert _generated_public_source_metadata_keys() == expected
 
 
 def test_libero_smoke_requires_one_observed_b200_digest_and_never_renders() -> None:

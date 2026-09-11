@@ -88,6 +88,17 @@ resolved immutable digest. The workload itself queries its Kubernetes Pod and
 requires the matching `status.containerStatuses[].imageID`; merely echoing the
 requested image is not accepted as runtime evidence.
 
+That Pod query requires `get` access to its own Pod. Separately, SkyPilot
+0.12.2's default Kubernetes bootstrap creates a namespace-wide wildcard Role
+for `skypilot-service-account` so its controller can create and manage workload
+resources. This candidate does not silently accept or provision that Role.
+Before launch, the run manager must review the pinned SkyPilot RBAC behavior,
+approve the exact namespace-scoped service-account contract (or supply a
+reviewed custom account with the permissions SkyPilot needs), and record the
+decision in owner-only evidence. A private kubeconfig or registry credential is
+not that approval. Until this dependent runtime-use decision is complete, keep
+the live B200 claim deferred and do not submit the workflow.
+
 ## Acceptance artifact
 
 Success requires `$NPA_SMOKE_OUTPUT_DIR/libero-smoke.json` with all of the

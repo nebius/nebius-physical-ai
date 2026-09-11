@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "0b24872a8047c53767c29384cfae7f6d06ae75a6424e4fa6a1090629a03a3f12",
+  "workflow_sha256": "7496422b21e5d7da3cbb90bb34aadfa01c697a4adb4e37bb6581a371c5972034",
   "planning": {
     "validation": {
       "status": "verified",
@@ -15,7 +15,7 @@
       "status": "verified",
       "reason": "Focused static tests prove that the rendered BYOF operation pins one official LIBERO-Spatial demonstration, prunes unused third-party render assets and Git objects in the source clone layer, invokes upstream Sequential.observe with BCRNNPolicy for nonzero steps, reloads a checkpoint, evaluates trajectory-disjoint held-out data, requires one B200, and never invokes rendering.",
       "evidence": [
-        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (6 passed)",
+        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (7 passed)",
         "docs/workbench/byof-libero.md#acceptance-artifact"
       ]
     }
@@ -37,11 +37,13 @@
       ]
     },
     "credentials": {
-      "status": "verified",
-      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries. The public LIBERO source and dataset require no acceptance token.",
+      "status": "blocked",
+      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source and dataset require no acceptance token. Launch remains blocked pending manager approval of the Kubernetes service-account permissions required by SkyPilot 0.12.2; its default bootstrap would create a namespace-wide wildcard Role and has not been allowed to do so.",
       "evidence": [
         "owner-only runtime-context validation",
-        "owner-only pull-secret receipt"
+        "owner-only pull-secret receipt",
+        "owner-only SkyPilot RBAC prelaunch receipt",
+        "docs/workbench/byof-libero.md#before-spending-gpu-time"
       ]
     },
     "source_image": {
@@ -55,9 +57,10 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager review of the prelaunch receipt. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
+      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager review of the namespace-binding and SkyPilot RBAC prelaunch receipts. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
       "evidence": [
         "owner-only namespace-binding prelaunch receipt",
+        "owner-only SkyPilot RBAC prelaunch receipt",
         "docs/workbench/byof-libero.md#acceptance-artifact"
       ]
     }
