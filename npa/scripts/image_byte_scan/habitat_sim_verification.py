@@ -34,6 +34,7 @@ def bind(
 ) -> None:
     """Bind a prior Habitat verifier receipt to freshly inspected graph bytes."""
 
+    W.require(verification["valid"] is True, "habitat_oci_verifier_not_valid")
     W.require(
         verification["expected_image_id"]
         == expected_id
@@ -64,6 +65,13 @@ def bind(
             re.fullmatch(r"[0-9a-f]{64}", verification[key]) is not None,
             "habitat_oci_runtime_closure_binding",
         )
+    W.require(
+        verification["dpkg_inventory_sha256"]
+        == verification["expected_dpkg_inventory_sha256"]
+        and verification["native_elf_closure_sha256"]
+        == verification["expected_native_closure_sha256"],
+        "habitat_oci_runtime_closure_binding",
+    )
     W.require(
         re.fullmatch(r"[0-9a-f]{40}", verification["expected_source_revision"])
         is not None,
@@ -599,7 +607,8 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
     string_offsets = [
         file_offset + string_address - address
         for address, file_offset, file_size in loads
-        if address <= string_address < address + file_size
+        if address <= string_address
+        and string_address + string_size <= address + file_size
     ]
     W.require(len(string_offsets) == 1, "habitat_elf_string_table_mapping")
     string_offset = string_offsets[0]
@@ -663,6 +672,10 @@ def _native_findings(
         resolved: dict[str, str] = {}
         search = _runtime_library_dirs(path, row["runpath"])
         for needed in row["needed"]:
+            W.require(
+                needed == posixpath.basename(needed) and needed not in {"", ".", ".."},
+                "habitat_elf_needed_name",
+            )
             candidates = [
                 candidate
                 for candidate, target in metadata.items()
