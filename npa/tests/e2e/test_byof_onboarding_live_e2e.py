@@ -341,6 +341,9 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         "context": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
         "namespace": os.environ.get("NPA_BYOF_K8S_NAMESPACE", "").strip(),
         "bucket": os.environ.get("NPA_E2E_S3_BUCKET", "").strip(),
+        "runtime_pvc": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC", ""
+        ).strip(),
     }
     assert selectors["project"] and e2e_project == selectors["project"]
     assert selectors["registry"], "a manager-issued private registry is required"
@@ -350,6 +353,7 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     assert selectors["context"], "a manager-issued Kubernetes context is required"
     assert selectors["namespace"] and selectors["namespace"] != "default"
     assert selectors["bucket"], "a manager-issued output bucket is required"
+    assert selectors["runtime_pvc"], "a manager-issued pre-populated runtime PVC is required"
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
         "the manager's STRICT reserved-capacity gate is required"
     )
@@ -392,7 +396,7 @@ def _robomimic_runner_command(
 
 
 def _materialize_robomimic_attested_profile(
-    destination: Path, *, namespace: str, service_account: str
+    destination: Path, *, namespace: str, service_account: str, runtime_pvc: str
 ) -> Path:
     """Bind the manager's STRICT gate into a run-local profile, never the repo."""
 
@@ -412,6 +416,13 @@ def _materialize_robomimic_attested_profile(
     task["config"]["kubernetes"]["pod_config"]["spec"][
         "serviceAccountName"
     ] = service_account
+    volumes = task["config"]["kubernetes"]["pod_config"]["spec"]["volumes"]
+    runtime_volume = next(item for item in volumes if item["name"] == "robomimic-runtime")
+    assert (
+        runtime_volume["persistentVolumeClaim"]["claimName"]
+        == "npa-robomimic-runtime-placeholder"
+    )
+    runtime_volume["persistentVolumeClaim"]["claimName"] = runtime_pvc
     destination.write_text(
         yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
     )
@@ -891,6 +902,7 @@ def _invoke_robomimic_gate(
             Path(temp_dir) / "robomimic-attested.yaml",
             namespace=selectors["namespace"],
             service_account=service_account,
+            runtime_pvc=selectors["runtime_pvc"],
         )
         cmd = _robomimic_runner_command(
             config,
@@ -906,8 +918,8 @@ def _invoke_robomimic_gate(
         ) as observed_service_account:
             assert observed_service_account == service_account
             accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
-            if accepted_image:
-                cmd.extend(["--image", accepted_image, "--skip-build"])
+            assert accepted_image, "a manager-accepted exact private candidate is required"
+            cmd.extend(["--image", accepted_image, "--skip-build"])
             proc = subprocess.run(
                 cmd,
                 check=False,
@@ -937,7 +949,7 @@ def _assert_robomimic_inputs(artifact: dict[str, object]) -> None:
     assert source["repository"] == "ARISE-Initiative/robomimic"
     assert source["revision"] == ROBOMIMIC_SOURCE_REVISION
     assert source["observed_head"] == ROBOMIMIC_SOURCE_REVISION
-    assert source["byof_metadata"]["ref"] == ROBOMIMIC_SOURCE_REVISION
+    assert re.fullmatch(r"[0-9a-f]{64}", source["tree_archive_sha256"])
     dataset = artifact["dataset"]
     assert dataset["repository"] == "robomimic/robomimic_datasets"
     assert dataset["revision"] == ROBOMIMIC_DATASET_REVISION
@@ -988,6 +1000,11 @@ def _assert_robomimic_action(artifact: dict[str, object]) -> None:
 def _assert_robomimic_runtime(
     artifact: dict[str, object], summary_image: str, run_id: str
 ) -> None:
+    external_runtime = artifact["external_runtime"]
+    assert external_runtime["prepopulated"] is True
+    assert external_runtime["read_only"] is True
+    assert re.fullmatch(r"[0-9a-f]{64}", external_runtime["lock_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", external_runtime["inventory_sha256"])
     hardware = artifact["hardware"]
     assert hardware["accelerator_count"] == 1 and "B200" in hardware["model"].upper()
     assert hardware["architecture"] == "sm_100"
@@ -1021,7 +1038,7 @@ def _assert_robomimic_runtime(
     ),
 )
 def test_live_robomimic_b200_train_reload_gate(e2e_project: str | None) -> None:
-    """Build the private candidate and require its complete run-derived artifact."""
+    """Use an accepted private candidate and require its complete run artifact."""
 
     summary, bucket, run_id = _invoke_robomimic_gate(e2e_project)
     summary_image = str(summary.get("image", ""))
@@ -1036,6 +1053,8 @@ def test_live_robomimic_b200_train_reload_gate(e2e_project: str | None) -> None:
     _assert_robomimic_action(artifact)
     _assert_robomimic_runtime(artifact, summary_image, run_id)
     assert set(artifact["deferred"]) == {
+        "public_image_acceptance",
+        "cuda_cudnn_runtime_use_authorization",
         "image_policy_sweeps",
         "simulator_rollouts",
         "full_algorithm_matrix",

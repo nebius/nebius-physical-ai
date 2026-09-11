@@ -23,7 +23,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
-| robomimic | `ARISE-Initiative/robomimic` `d309eae…` | `lift_ph_lowdim_checkpoint_reload_action` | `robomimic-smoke.json` | `byof-robomimic.yaml` |
+| robomimic | `ARISE-Initiative/robomimic` `d309eae…` | `lift_ph_lowdim_checkpoint_reload_action` (deferred) | `robomimic-smoke.json` (not produced) | `byof-robomimic.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
@@ -134,6 +134,14 @@ Pinned: `ARISE-Initiative/robomimic`
 `d309eaecc18acf4152a830a895a6984b8ac71b05`. The runtime-only input is the
 official Lift PH low-dimensional HDF5 at immutable dataset revision
 `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`.
+
+Phase A provides an unbuilt, quarantined neutral bootstrap candidate: pinned
+source and 48 hash-locked non-CUDA dependencies only. CUDA/PyTorch is an
+externally prepared exact-inventory read-only runtime; the official HDF5 is an
+immutable runtime fetch; pretrained weights are unnecessary. No runtime/data
+bytes were fetched, no image was built or published, and no B200 result is
+claimed. An authoritative CUDA/cuDNN runtime-use decision plus separate manager
+transaction authorization must precede the hard gate.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

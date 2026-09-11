@@ -1,19 +1,21 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "942b49a8a72330fd81143f8eaa5574333ec00aa6be2e859a79a0f1c24a64fe4a",
+  "workflow_sha256": "234311bbbcfec85f6dba30a3aaaa1d6cbb0e7f15a5ec1908db09fb005c714b58",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The checked-in workflow passed the repository schema validator.",
+      "reason": "The redesigned Phase A workflow passed the repository schema validator under Python 3.12.",
       "evidence": [
-        "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid"
+        "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid",
+        "config.base_profile=prebuilt; config.base_image=tool://robomimic; config.build_command is empty"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The rendered plan contains one workbench.byof.repo step with the pinned source, runtime-only dataset smoke, dedicated B200 profile, and both declared outputs.",
+      "reason": "The Python 3.12 planner produced one B200 workbench.byof.repo step with both declared outputs; static tests preserve the real four-step held-out checkpoint-reload contract. No image, external CUDA runtime, dataset, workflow execution, or GPU was used.",
       "evidence": [
-        "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, robomimic-smoke.json output",
+        "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, tool://robomimic, two outputs",
+        "npa/docker/workbench/robomimic/smoke.py",
         "npa/tests/workflows/test_byof_robomimic.py"
       ]
     }
@@ -21,48 +23,44 @@
   "prerequisites": {
     "output_storage": {
       "status": "blocked",
-      "reason": "The checked-in bucket is a placeholder. The manager runtime is deployed and verified globally, but robomimic child cloud authorization is false and no child runtime context is published, so no run-owned S3 prefix may be selected or preflighted yet.",
+      "reason": "No child runtime context or transaction authority was published; the checked-in bucket is inert.",
       "evidence": [
         "config.bucket=example-bucket",
-        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
+        "Phase A forbids storage and cloud mutation"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Source and dataset metadata, licenses, revision, LFS hash, and byte count were independently verified, but the exact HDF5 payload has not yet been downloaded and hashed by the B200 workload.",
+      "reason": "Immutable public metadata records the official Lift PH hash and size, but Phase A fetched no dataset bytes.",
       "evidence": [
-        "ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05 exact MIT LICENSE",
-        "robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203 tree entry: sha256:2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540, 21084088 bytes"
+        "dataset revision 74fa018461f479cd9fd15b924a16103012096203",
+        "expected SHA-256 2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540; 21084088 bytes"
       ]
     },
     "credentials": {
       "status": "blocked",
-      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may be selected only after this child is explicitly authorized and receives a manager-published runtime context. An authorized operator must make the applicable NVIDIA CUDA Toolkit and cuDNN runtime-use decision before the private build and run; neither agreement exposes a vendor entitlement probe or documented environment acceptance mechanism.",
+      "reason": "A credential, environment flag, private registry, runtime fetch, or click-through proxy is not legal acceptance. An authorized Nebius/operator representative must record the applicable CUDA/cuDNN distribution, use, and service-rights decision before a separate manager transaction authorization.",
       "evidence": [
-        "Public source and dataset require no token",
-        "The production runner refuses missing manager-issued project, private-registry visibility, kubeconfig, context, namespace, bucket, STRICT-capacity, or live-suite selectors and any immutable-input, skip-mode, cleanup, or attested-profile mismatch before base resolution or Docker build",
-        "NPA does not use a local consent proxy because a boolean, credential, runtime fetch, or private registry cannot prove the operator's legal decision",
-        "docs/workbench/byof-robomimic.md: six separate boundaries, official NVIDIA terms links, private-build decision, and run-owned Pod-read RBAC lifecycle",
-        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
+        "runtime bootstrap contains no acceptance proxy",
+        "production runner retains an unconditional Phase A runtime-use refusal"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The base image tag resolved to an immutable OCI digest and the headless CPython 3.11 x86-64 image closure is pinned to 48 exact wheel hashes. The unauthorized context correctly prevents building it, so the private derivative has not been pushed, resolved by digest, or scanned and no built-image byte-absence claim is made.",
+      "reason": "The neutral Dockerfile and byte scanner are implemented but Phase A authorized neither source fetch nor image build, scan, push, pull, SBOM, provenance, or anonymous availability proof.",
       "evidence": [
-        "pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime -> sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2",
-        "dependency lock sha256:910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71; artifact_count=48",
-        "declared build command sha256:40934ad75e79127e2b494adf73c59e0cd2164dda71dac2a142891cdda7a43bf6",
-        "docs/workbench/byof-robomimic.md: post-authorization exact-digest scan must cover all layers and history and prove no dataset, pretrained weight, checkpoint, cache, credential, or run output is baked"
+        "pinned intended base python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84",
+        "48-entry non-CUDA lock SHA-256 910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71",
+        "no accepted image digest exists"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Exactly one STRICT-bound B200 and a run-scoped service account with get-only Pod access are required. The gate verifies the selected context namespace and complete resource permissions before launch; the workload observes its effective namespace and service account. The global manager runtime is deployed and verified, but this child has no authorization or published project, cluster, namespace, registry, output, or network binding.",
+      "reason": "The exact-inventory read-only runtime contract exists only as code. No runtime bytes or cache were populated, and the applicable runtime-use decision and B200 authorization remain absent.",
       "evidence": [
-        "byof-solution-smoke-robomimic-b200-gpu resources.accelerators=B200:1",
-        "The checked-in observer name is inert; the dedicated live gate creates a run-scoped ServiceAccount/Role/RoleBinding, verifies its complete resource-rule allowlist, deletes only with matching token/UID/resource-version preconditions, and proves absence after the run",
-        "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
+        "profile requires one B200 and a read-only external runtime PVC",
+        "missing or mismatched runtime inventory exits 78 before workload execution",
+        "no B200 or live capability claim is made"
       ]
     }
   }

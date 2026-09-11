@@ -183,6 +183,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "headless EGL environment reset",
         "random rollout with video artifact",
     ],
+    "robomimic": [
+        "neutral image contains pinned robomimic source and no CUDA runtime",
+        "missing external runtime refuses without network or cache mutation",
+        "real four-step BC, held-out validation, checkpoint reload, and one-B200 proof remain deferred",
+    ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
         "machine-readable runtime health/version contract",

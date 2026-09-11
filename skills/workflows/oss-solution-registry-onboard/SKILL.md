@@ -294,6 +294,15 @@ Pinned: `ARISE-Initiative/robomimic`
 dataset revision `robomimic/robomimic_datasets`
 `74fa018461f479cd9fd15b924a16103012096203`.
 
+The Phase A image is a quarantined neutral candidate only: bake the pinned MIT
+source and exact non-CUDA lock, with no torch, NVIDIA/CUDA runtime, weights,
+dataset, populated cache, credential, or output. Consume CUDA/PyTorch only from
+an independently prepared exact-inventory read-only operator mount after an
+authoritative runtime-use decision and separate manager transaction
+authorization. The bootstrap verifies or refuses; it must not fetch, install,
+warm, populate, or accept terms. An environment flag, credential, private
+registry, or runtime fetch never supplies permission.
+
 The hard gate must pass all three solution-specific capabilities on exactly one
 STRICT-reserved B200 (`sm_100`):
 
@@ -313,9 +322,10 @@ zero-step training config fails the gate. CUDA and cuDNN remain governed by the
 NVIDIA CUDA Toolkit EULA and cuDNN Software License Agreement. Those terms have
 no vendor entitlement probe or documented environment acceptance mechanism, so
 do not invent a local consent proxy: require an authorized operator to make the
-legal decision outside the workflow. Keep the image operator-private; download
-the official dataset at runtime only. Defer image-policy sweeps, simulator
-rollouts, and the full algorithm matrix.
+legal decision outside the workflow. During Phase A the runner refuses even
+when ordinary target selectors are present. Keep the dependent capability
+private; download the official dataset at runtime only after authorization.
+Defer image-policy sweeps, simulator rollouts, and the full algorithm matrix.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 

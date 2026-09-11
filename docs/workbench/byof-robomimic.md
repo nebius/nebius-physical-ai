@@ -1,211 +1,142 @@
-# robomimic BYOF candidate
+# robomimic neutral BYOF candidate
 
-This candidate is the smallest end-to-end robomimic proof that exercises real
-learning rather than import or dataset inspection. On one B200, it runs the
-upstream BC training entrypoint for four Adam steps over the official Lift PH
-low-dimensional demonstrations, evaluates two forward steps on a disjoint
-held-out split, saves and reloads the resulting checkpoint, and infers an action
-from a held-out trajectory. It does not start robosuite or any renderer.
-
-The executable workflow is
+This is a quarantined Phase A packaging candidate, not a published image or a
+live acceptance record. The intended image bakes immutable robomimic source and
+non-CUDA low-dimensional dependencies on a neutral Python base. CUDA/PyTorch is
+a separate, externally prepared runtime boundary. The planned workflow is
 [`workflows/testing/byof-robomimic.yaml`](../../workflows/testing/byof-robomimic.yaml).
-Its separate readiness record reports what has actually been checked; schema
-validation and planning do not imply that a B200 result exists.
-Normal `workflow submit` execution is intentionally refused before preflight:
-the checked-in spec is planned there, while the dedicated robomimic live gate
-consumes its immutable configuration and owns the build, RBAC, and cleanup
-lifecycle. This prevents a direct toolRef submission from bypassing the
-manager-context refusal.
 
-## Immutable inputs, outputs, and licensing
+No image has been built. No source, dataset, CUDA runtime, or cache payload was
+fetched while implementing this candidate. There is no accepted image digest,
+anonymous pull proof, runtime-use approval, or B200 result.
 
-| Boundary | Immutable identity | Delivery and permission boundary |
+## Six independent boundaries
+
+| Boundary | Phase A contract | Status and gate |
 | --- | --- | --- |
-| Source | `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05` | MIT source is cloned into the private BYOF image. The exact commit's `LICENSE` was checked before build preparation and has SHA-256 `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. |
-| Baked runtime | `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2` | Operator-private derivative only. PyTorch is BSD-3-Clause. CUDA/cuDNN bytes are expected in this base and remain governed by their upstream NVIDIA terms; a private registry is only a delivery destination and supplies no permission to build, use, or redistribute them. This candidate is not selected for public NPA publication. |
-| Weights | None supplied | No pretrained weights are downloaded or baked. The trained BC checkpoint is a run output, not an input weight. |
-| Data and assets | `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, `v1.5/lift/ph/low_dim_v15.hdf5` | The dataset card declares MIT. Bytes are fetched only by the authorized running workload and must match SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes before HDF5 is opened. Dataset bytes and simulator assets are never baked into the image. |
-| Runtime cache | Run-local only | Builds use `--no-cache-dir`. The downloaded HDF5 is kept under a separate ephemeral input directory and is never traversed by the output uploader. Training logs and the checkpoint live under the run output directory. No credential, shared cache, downloaded dataset, or generated checkpoint may survive in image layers. |
-| Outputs | Run-scoped checkpoint, config, logs, BYOF summary, provenance, and `robomimic-smoke.json` | These are generated from the authorized run and uploaded only to its manager-issued private S3 prefix. Their production or storage does not derive permission from a runtime fetch, credential, registry, or input license; the operator remains responsible for applicable use and output restrictions. |
+| Source | Bake only `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`. Its MIT `LICENSE` SHA-256 is `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. | Intended and statically checked; source bytes were not fetched or built in Phase A. A future build must record the observed commit and tree hash. |
+| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 48 hash-locked non-CUDA Python distributions. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
+| Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
+| Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
+| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. |
+| Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
-The low-dimensional dependency closure is resolved for CPython 3.11 on Linux
-x86-64, pinned to 48 exact package versions, and bound to one reviewed wheel
-hash per package. The build installs that complete closure with
-`--only-binary=:all: --no-deps --require-hashes`, then installs the immutable
-robomimic source with `--no-deps`. PyTorch 2.7.1 and TorchVision 0.22.1 come from
-the digest-pinned base and are asserted during the build. Two
-upstream-declared packages are deliberately excluded from this capability
-closure: `egl_probe` is only an EGL device probe for simulator rendering, and
-`imageio-ffmpeg` is only needed for video and adds a separately licensed static
-FFmpeg wheel payload. This headless low-dimensional gate uses neither. The final
-artifact records the lock SHA-256 and 48-artifact count, and the smoke binds the
-BYOF build metadata to the exact declared build-command SHA-256. A release
-decision still requires scanning the built image bytes and reviewing the
-installed inventory.
+Runtime fetching changes delivery, not permission. A credential, environment
+flag, private registry, click-through proxy, or pre-populated cache is not
+evidence that restricted bytes may be used, redistributed, or offered as a
+service. Phase A deliberately adds no local consent proxy.
 
-### Runtime delivery decision
+## Neutral candidate
 
-A neutral Python bootstrap plus an immutable runtime fetch was reassessed.
-PyTorch publishes a 2.7.1 CUDA 12.8 wheel channel, so that delivery is
-technically possible. It would still download CUDA/cuDNN-governed bytes and
-would not establish authority to use them. NVIDIA's current CUDA and cuDNN
-agreements require an authorized user and acceptance before download, install,
-or use; neither documents a machine-readable entitlement check that NPA can
-enforce. Moving those bytes from build time to Pod startup therefore changes
-delivery, not permission, and adds a large first-start dependency without
-removing the pending operator decision.
+The Dockerfile intends to use the exact parent index digest
+`sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84`.
+An authorized build must re-resolve its Linux/amd64 child and record the result;
+historical resolution metadata is not byte-portable evidence.
 
-The candidate consequently retains the smaller digest-pinned,
-operator-private build path. That path may execute only after the operator has
-made the applicable runtime-use decision and the manager has published this
-child's exact private registry and Kubernetes context. A credential or private
-registry is not evidence of that decision. No workflow flag or locally invented
-consent variable substitutes for it.
+`baked-requirements.lock` contains 48 exact wheel hashes and intentionally omits
+torch, torchvision, Triton, and every `nvidia-*` distribution. The Dockerfile
+installs the wheels with `--only-binary=:all: --no-deps --require-hashes`,
+retains the immutable source without `.git`, removes SSH host keys, runs as
+`ubuntu`, starts no SSH daemon by default, and leaves the runtime/input/output
+mount points empty. Passwordless sudo exists solely for the repository's
+SkyPilot Kubernetes bootstrap contract.
 
-The public Lift dataset needs no model entitlement or Hugging Face token. The
-CUDA/cuDNN-derived base remains subject to the current
-[NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html) and
-[NVIDIA cuDNN Software License Agreement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html),
-including their use and redistribution conditions. Neither agreement exposes a
-vendor entitlement probe or documented environment-variable acceptance
-mechanism, so NPA does not invent a local consent proxy. An authorized operator
-must review and accept those terms under its own authority before the private
-build or run; registry credentials and a local boolean cannot prove that legal
-decision. This candidate is build-your-own and operator-private, and NPA does
-not publish its CUDA/cuDNN-derived image.
+`runtime-requirements.lock` records the compatibility target used by the
+deferred gate. It is not a downloader and its version list is not an artifact
+hash closure. The external runtime inventory must supply that closure for every
+installed file before consumption. `runtime_bootstrap.sh` exposes only
+`verify`, `exec`, and `assert-refusal`; it has no ensure, fetch, install, sync,
+warm, or network path.
 
-The source and dataset are public and anonymously readable, so there is no
-source, dataset, or model-entitlement credential refusal to fabricate. The
-production BYOF runner refuses this registered robomimic request before base
-resolution or Docker build unless every manager-issued selector is present:
-project, private registry, factual private-visibility record, kubeconfig file,
-Kubernetes context, non-default namespace, output bucket, STRICT capacity, and
-the two dedicated live-suite selectors. The registry is also checked against
-NPA's centralized public-registry policy. The visibility record describes a
-registry property; it is not CUDA/cuDNN consent or permission. In the current
-child state, authorization is false and no robomimic context is published, so
-no build, runtime download, RBAC mutation, or GPU submission is permitted.
+`scan_image_robomimic_payload.py` is designed to inspect every layer and image history entry
+plus OCI config, so deleting a prohibited object in a later layer cannot conceal
+it. It rejects CUDA/PyTorch/NVIDIA payloads, tools and headers, HDF5 data,
+weights, populated caches, credentials, run outputs, CUDA/vendor base history,
+build-time runtime or dataset population, and invented acceptance variables.
+Unreadable or unsupported images fail closed. This describes a future gate; it
+is not a claim that built bytes were scanned in Phase A.
 
-The runner also binds the fresh build image to the exact run-scoped repository
-and tag under that private registry and binds `--output-root` to
-`s3://<manager-bucket>/oss-solutions/robomimic`. Known public-registry hosts are
-rejected even when written with a standard port. The ordinary workflow-submit
-path identifies this checked-in candidate by its immutable workflow name, so
-overriding mutable config values cannot bypass the plan-only boundary.
-The local `run-spec --execute` surface enforces the same boundary. The
-robomimic runner forbids the generic `prebuilt` profile, `--skip-push`,
-`--skip-run`, and `--no-cleanup`. `--skip-build` is accepted only for the exact
-private `npa-byof@sha256:...` digest published by the manager after its separate
-build and byte scan; the CLI image must equal that selector. This operational
-identity is not CUDA/cuDNN permission. Both fresh-build and accepted-digest
-modes require the exact source revision, CUDA base digest, build command, smoke
-command, capability, artifact, and semantic contents of the run-local attested
-profile before any runtime pull.
-Run-scoped observer objects carry a per-invocation ownership token; cleanup
-verifies that token and uses the observed object UID and resource-version as
-server-side deletion preconditions. It checks every object for absence even
-when another cleanup operation fails. Before the workload starts, a
-SelfSubjectRulesReview must show no namespaced resource authority beyond Pod
-`get` (apart from Kubernetes' standard self-review resources), and the selected
-kubeconfig context must resolve to the manager-issued namespace. The workload
-then observes its own Pod and requires both that namespace and the exact
-run-owned ServiceAccount before training.
+## CUDA and cuDNN decision
 
-After authorization, qualification must scan the exact pushed image digest,
-including every layer and image history entry. It must prove the absence of the
-Lift HDF5 payload, pretrained weights, generated checkpoints, run outputs,
-runtime caches, and credentials, and it must inventory installed licenses.
-CUDA/cuDNN runtime bytes are expected in this private image and are assessed at
-their separate baked-runtime boundary. No image has been built in the current
-unauthorized context, so this document does not claim that byte-absence gate
-has passed.
+The dependent capability remains private and deferred. An authorized
+Nebius/operator representative must record the exact CUDA/cuDNN distribution,
+use, and service-rights decision. When authoritative NVIDIA interpretation is
+needed, use NVIDIA's official license contact. Only then may the manager issue a
+separate private staging/runtime transaction authorization.
 
-## Hard gate
+The preferred sequence remains:
 
-The workload fails before writing its final artifact unless all of these facts
-are true:
+1. Independently redistributable exact CUDA closure, if component-by-component
+   provenance, licenses, files, and service rights close.
+2. Vendor-direct pinned operator-side installation under the documented
+   acceptance/entitlement boundary, materialized outside this image.
+3. Operator-private build-your-own image or runtime volume under the operator's
+   controlled license and security process.
 
-- the executing image is an immutable post-push `@sha256:` reference, the
-  built source metadata contains the exact commit, and the build metadata and
-  48-artifact dependency lock match their exact declared hashes;
-- the Kubernetes API reports the same immutable digest in the executing Pod's
-  `status.containerStatuses[].imageID`; the configured image reference alone is
-  not accepted as observation;
-- the operator-provided target carries the explicit STRICT reserved-capacity
-  attestation, and PyTorch and `nvidia-smi` independently expose exactly one
-  B200 with compute capability 10.0 (`sm_100`);
-- the downloaded dataset matches the immutable file hash and contains the
-  official 200 trajectories plus a nonzero sample inventory;
-- upstream `robomimic/scripts/split_train_val.py` produces nonempty,
-  exhaustive, disjoint train and validation masks;
-- upstream `robomimic/scripts/train.py` finishes one BC epoch, emits finite
-  train and validation losses, and the saved Adam state proves exactly four
-  optimizer steps;
-- `policy_from_checkpoint` reloads that checkpoint and produces one finite
-  seven-dimensional held-out action within the policy's `[-1, 1]` action range.
+The first option is not currently closed. CUDA and cuDNN licenses identify some
+redistributable runtime components, but that does not prove every byte in the
+PyTorch/NVIDIA wheels is redistributable, excludes developer/static/header
+payloads, satisfies notices/pass-through duties, or authorizes anonymous
+distribution and downstream service use. The runner therefore retains an
+unconditional Phase A refusal even when ordinary target selectors are present.
 
-The exact run-derived output is
-`$NPA_SMOKE_OUTPUT_DIR/robomimic-smoke.json`. The B200 profile uploads this file,
-the BYOF summary, logs, config, checkpoint, and provenance metadata to the fresh
-run prefix. A zero-step configuration, import-only check, overlapping split,
-mutable image, wrong GPU, bad hash, missing artifact, or failed upload is a hard
-failure.
+Official sources for the later human/vendor decision include the NVIDIA CUDA
+Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch
+2.7.1 license/release material and CUDA 12.8 wheel index, and the official
+Python image recipe/license. Review current authoritative copies immediately
+before any transaction; repository prose is not the decision.
 
-Focused local workflow and contract evidence was produced with the repository
-`npa/.venv` interpreter reporting CPython 3.12.14. Draft-PR CI also selects
-Python 3.12. Evidence from unrelated solution runs is not relabeled as this
-environment.
+## Deferred exact-digest hard gate
 
-## Operator sequence
+After legal and transaction authorization, a future manager-approved stage must:
 
-Use only a manager-issued runtime context. In particular, do not infer a cloud
-project, cluster, registry, bucket, network, or capacity binding from local
-defaults.
+1. Build the reviewed neutral image under a full repository SHA without
+   downloading runtime/data payloads into a layer.
+2. Scan every built layer and OCI history, inventory all packages/licenses,
+   scan vulnerabilities/secrets/malware, generate and verify SBOM/provenance,
+   and prove the cache/input/output roots are empty.
+3. Push only to authorized private staging, re-pull by exact digest, and repeat
+   byte/security verification.
+4. Prepare the CUDA runtime independently, record every file and symlink, hash
+   its inventory, mount it read-only, and prove missing/corrupt/extra inventory
+   refusal independently.
+5. Bind the workload to exactly one STRICT-reserved B200; create a run-owned
+   service account with only `get pods`; verify the executing pod's exact image
+   digest, service account, one B200 model, and `sm_100` architecture before the
+   dataset fetch.
+6. Fetch and hash the official HDF5, produce nonempty disjoint train/held-out
+   masks, run upstream `robomimic/scripts/train.py` for exactly four serialized
+   Adam optimizer steps and two validation forward steps, and require finite
+   train/validation loss.
+7. Save and hash the genuine epoch checkpoint, reload it through
+   `policy_from_checkpoint`, and infer exactly one held-out action of shape
+   `[7]` whose values are finite and within `[-1, 1]`.
+8. Write `$NPA_SMOKE_OUTPUT_DIR/robomimic-smoke.json` with the solution,
+   capability list, immutable source/data/runtime identities, trajectory/sample
+   and split proof, optimizer/loss proof, checkpoint/reload/action proof,
+   observed B200 and pod digest, and exit status. Upload no HDF5 input.
+9. Run a distinct read-only verifier against the exact private digest and
+   evidence, then clean run-owned RBAC/resources with ownership preconditions.
+
+Only after private acceptance may a separate authorized publication transaction
+copy digest-identical neutral bytes, repeat all scans, and prove a clean
+anonymous pull from an empty Docker configuration. Add a public catalog row
+only after that proof; the current candidate remains quarantined.
+
+Image-policy sweeps, simulator rollouts, rendering, and the full algorithm
+matrix remain deferred.
+
+## Local Phase A checks
+
+Use the repository Python 3.12 interpreter:
 
 ```bash
-npa workbench health preflight --checks nebius
-npa workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json
-npa workbench workflow plan-spec workflows/testing/byof-robomimic.yaml \
-  --run-id <fresh-run-id> --json
+npa/.venv/bin/python --version
+npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json
+npa/.venv/bin/python -m npa.cli.main workbench workflow plan-spec workflows/testing/byof-robomimic.yaml --run-id robomimic-plan-local --json
+npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robomimic_image_contract.py npa/tests/docker/test_robomimic_runtime_bootstrap.py npa/tests/docker/test_robomimic_image_payload_scan.py npa/tests/workflows/test_byof_robomimic.py
 ```
 
-Before the dedicated gate is selected, replace `config.bucket` only in a
-run-local copy, select the manager-assigned private registry and Kubernetes
-context, and verify that the capacity policy is STRICT with exactly `B200:1`.
-The operator must confirm its authority to use the governed CUDA/cuDNN runtime
-before pulling or building; that decision stays outside workflow arguments and
-environment-variable self-attestation. Publish the registry's factual
-visibility as `private` in the owner-only runtime context and export the two
-live-suite selectors plus `NPA_E2E_MK8S_RESERVED_CAPACITY=1` only in the reviewed
-run environment.
-
-The dedicated gate derives a collision-resistant ServiceAccount, Role, and
-RoleBinding name from the run ID, creates all three in the assigned namespace,
-and annotates them with a one-way run-ID digest. Before invoking the BYOF runner it
-uses `kubectl auth can-i` to prove that the identity can only `get` Pods: Pod
-list/watch, Pod logs, and Secret reads must all be denied. Kubernetes cannot
-restrict `get` to the dynamic Pod name before SkyPilot creates it, so use the
-dedicated validation namespace. A `finally` cleanup deletes all three objects
-after SkyPilot cleanup or failure and verifies their absence; failure to create,
-verify, delete, or prove absence fails the live gate.
-
-Build and push through the BYOF runner so the mutable build tag is resolved to a
-digest before scheduling. The dedicated live E2E requires
-`NPA_BYOF_LIVE_GPU=1`, `NPA_BYOF_ROBOMIMIC_LIVE_B200=1`, the STRICT-capacity
-attestation, and explicit manager-issued project, private registry plus factual
-`NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY=private`, kubeconfig, context,
-non-default namespace, and output-bucket selectors. The harness checks
-`NPA_E2E_MK8S_RESERVED_CAPACITY=1`, then writes the corresponding boolean only
-into its run-local profile copy; the checked-in profile deliberately carries no
-attestation value or usable observer identity. The run is valid only in that
-assigned context and after the operator has made the NVIDIA-terms decision
-described above. The runner cancels and cleans up its SkyPilot workload after
-the artifact is uploaded, then the harness removes the temporary RBAC. Preserve
-shared infrastructure.
-
-## Scope and deferred work
-
-This artifact proves only a short offline BC operational path on the official
-Lift PH low-dimensional dataset. It is not convergence, task-success, sim-to-real,
-or physical-robot evidence. Image-policy sweeps, simulator rollouts, and the full
-robomimic algorithm matrix are intentionally deferred.
+These local checks validate source contracts and refusal behavior. They do not
+build an image, fetch a payload, use CUDA, submit a workflow, or claim public or
+live acceptance.
