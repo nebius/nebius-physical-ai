@@ -403,12 +403,21 @@ def _select_lerobot_video(
     row = next(
         (item for item in rows if int(item.get("episode_index", -1)) == episode), {}
     )
-    if rows and not row:
+    if (rows or version.startswith("v3")) and not row:
         raise PaidfCosmos3Error(
             "selected LeRobot episode is absent from episode metadata"
         )
+    source = _lerobot_video_path(root, info, row, episode, feature)
+    timestamps = _lerobot_episode_timestamps(row, feature, required=version.startswith("v3"))
+    return source, timestamps, feature
+
+
+def _lerobot_video_path(
+    root: Path, info: Mapping[str, Any], row: Mapping[str, Any], episode: int, feature: str,
+) -> Path:
     chunk_index = int(row.get(f"videos/{feature}/chunk_index", 0) or 0)
-    file_index = int(row.get(f"videos/{feature}/file_index", episode) or episode)
+    raw_file_index = row.get(f"videos/{feature}/file_index")
+    file_index = episode if raw_file_index is None else int(raw_file_index)
     pattern = str(
         info.get("video_path")
         or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
@@ -436,21 +445,50 @@ def _select_lerobot_video(
     source = next((path for path in candidates if path.is_file()), None)
     if source is None:
         raise PaidfCosmos3Error("selected LeRobot episode/camera video is missing")
+    return source
+
+
+def _lerobot_episode_timestamps(
+    row: Mapping[str, Any], feature: str, *, required: bool,
+) -> tuple[float, float] | None:
     start = row.get(f"videos/{feature}/from_timestamp")
     end = row.get(f"videos/{feature}/to_timestamp")
-    timestamps: tuple[float, float] | None = None
-    if start is not None or end is not None:
-        if (
-            start is None
-            or end is None
-            or float(start) < 0
-            or float(end) <= float(start)
-        ):
-            raise PaidfCosmos3Error(
-                "LeRobot episode video timestamps are incomplete or invalid"
+    if not required and start is None and end is None:
+        return None
+    try:
+        start, end = float(start), float(end)
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise PaidfCosmos3Error(
+            "LeRobot episode video timestamps are incomplete or invalid"
+        ) from exc
+    return start, end
+
+
+def _prepare_lerobot_source(
+    uri: str, root: Path, episode: int, camera: str, storage: Any | None,
+) -> tuple[Path, tuple[float, float] | None, str]:
+    if _is_s3(uri):
+        from npa.workflows.data_factory_input import (
+            PaidfInputError,
+            _materialize_lerobot_episode,
+        )
+
+        source = root / "selected.mp4"
+        try:
+            _materialize_lerobot_episode(
+                storage or _storage(), lerobot_uri=uri, camera=camera,
+                episode=episode, explicit_selection=bool(camera), destination=source,
             )
-        timestamps = (float(start), float(end))
-    return source, timestamps, feature
+        except PaidfInputError as exc:
+            raise PaidfCosmos3Error(str(exc)) from exc
+        # The shared selector has already trimmed this episode from its video.
+        return source, None, camera
+    dataset = _download_source(uri, root / "dataset", storage=storage)
+    if dataset.is_file():
+        raise PaidfCosmos3Error("LeRobot dataset URI must resolve to a directory")
+    return _select_lerobot_video(dataset, episode, camera)
 
 
 def _normalize_video(
@@ -561,13 +599,8 @@ def prepare_input(
                     )
                 source = videos[0]
         else:
-            dataset = _download_source(selected_uri, root / "dataset", storage=client)
-            if dataset.is_file():
-                raise PaidfCosmos3Error(
-                    "LeRobot dataset URI must resolve to a directory"
-                )
-            source, timestamps, feature = _select_lerobot_video(
-                dataset, episode_index, camera
+            source, timestamps, feature = _prepare_lerobot_source(
+                selected_uri, root, episode_index, camera, client
             )
         canonical = root / "source.mp4"
         timeline = None

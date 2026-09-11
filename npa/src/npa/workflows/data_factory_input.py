@@ -1290,8 +1290,8 @@ def _read_lerobot_episode_record(
 
     if chunks_size < 1:
         raise PaidfInputError("LeRobot chunks_size must be a positive integer")
-    chunk = episode // chunks_size
-    marker = f"{prefix}meta/episodes/chunk-{chunk:03d}/"
+    # V3 metadata files are packed by file size, independently of episode IDs.
+    marker = f"{prefix}meta/episodes/"
     try:
         candidates = sorted(
             key
