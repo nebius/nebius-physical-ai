@@ -318,7 +318,18 @@ config:
     final_goal = np.asarray(observation["achieved_goal"], dtype=np.float64).copy()
     graphics_libraries = loaded_graphics_libraries()
     renderer_type = f"{type(raw.mujoco_renderer).__module__}.{type(raw.mujoco_renderer).__name__}"
-    mujoco_library = Path(mujoco.__file__).resolve().parent / f"libmujoco.so.{MUJOCO_VERSION}"
+    mujoco_package_root = Path(mujoco.__file__).resolve().parent
+    mujoco_library_candidates = sorted(mujoco_package_root.rglob("libmujoco.so*"))
+    if len(mujoco_library_candidates) != 1:
+        relative_candidates = [
+            str(path.relative_to(mujoco_package_root))
+            for path in mujoco_library_candidates
+        ]
+        raise RuntimeError(
+            "expected exactly one MuJoCo shared library in the pinned wheel; "
+            f"found {relative_candidates}"
+        )
+    mujoco_library = mujoco_library_candidates[0]
     env.close()
 
     if not any(contact_counts):
