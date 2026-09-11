@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,12 @@ from npa.deploy.images import (
 )
 from npa.orchestration.npa_workflow.robotwin_preflight import (
     BUILD_COMMAND_SHA256 as ROBOTWIN_BUILD_COMMAND_SHA256,
+    CHILD_BUCKET_ENV as ROBOTWIN_CHILD_BUCKET_ENV,
+    CHILD_CONFIG_PATH_ENV as ROBOTWIN_CHILD_CONFIG_PATH_ENV,
+    CHILD_IMAGE_ENV as ROBOTWIN_CHILD_IMAGE_ENV,
+    CHILD_OUTPUT_PREFIX_ENV as ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_OUTPUT_ROOT_ENV as ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+    CHILD_RUN_ID_ENV as ROBOTWIN_CHILD_RUN_ID_ENV,
     CONTEXT_ENV_NAMES as ROBOTWIN_CONTEXT_ENV_NAMES,
     INVOCATION as ROBOTWIN_INVOCATION,
     PUBLIC_CONTEXT_ENV as ROBOTWIN_RUNTIME_CONTEXT_ENV,
@@ -241,8 +249,30 @@ def _run(
     capture: bool = False,
     env: dict[str, str] | None = None,
     redactions: tuple[str, ...] = (),
+    inherit_env: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    runtime_env = dict(os.environ)
+    runtime_env = (
+        dict(os.environ)
+        if inherit_env
+        else {
+            name: os.environ[name]
+            for name in (
+                "HOME",
+                "LANG",
+                "LC_ALL",
+                "LD_LIBRARY_PATH",
+                "LOGNAME",
+                "PATH",
+                "PYTHONPATH",
+                "SSL_CERT_DIR",
+                "SSL_CERT_FILE",
+                "TMPDIR",
+                "USER",
+                "VIRTUAL_ENV",
+            )
+            if os.environ.get(name)
+        }
+    )
     # Avoid stale operator tokens overriding profile-based auth on shared VMs.
     runtime_env.pop("NEBIUS_IAM_TOKEN", None)
     runtime_env.pop("NEBIUS_IAM_TOKEN_FILE", None)
@@ -579,16 +609,32 @@ def _authorized_live_env(
     scan_evidence: dict[str, Any],
     *,
     project: str,
+    image: str,
 ) -> dict[str, str]:
-    selected_project = authorization.project if authorization is not None else project
-    context_redactions = authorization.redactions if authorization is not None else ()
-    env = (
-        _live_runner_env(selected_project, redactions=context_redactions)
-        if context_redactions
-        else _live_runner_env(selected_project)
-    )
     if authorization is None:
-        return env
+        return _live_runner_env(project)
+    # The outer worker receives only values selected by the owner client. Do not
+    # inherit generic BYOF/SkyPilot knobs that could redirect or weaken the
+    # already-authorized inner launch.
+    env = {
+        name: os.environ[name]
+        for name in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_DEFAULT_REGION",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SECURITY_TOKEN",
+            "AWS_SESSION_TOKEN",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_STORAGE_ENDPOINT",
+            "S3_ENDPOINT_URL",
+        )
+        if os.environ.get(name)
+    }
+    output_prefix = (
+        f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+    )
     env.update(
         {
             "KUBECONFIG": authorization.kubeconfig,
@@ -597,6 +643,12 @@ def _authorized_live_env(
             "NPA_NEBIUS_PROFILE": authorization.profile,
             "NEBIUS_PROFILE": authorization.profile,
             "NPA_BYOF_PROJECT": authorization.project,
+            ROBOTWIN_CHILD_BUCKET_ENV: authorization.bucket,
+            ROBOTWIN_CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_path,
+            ROBOTWIN_CHILD_IMAGE_ENV: image,
+            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: output_prefix,
+            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+            ROBOTWIN_CHILD_RUN_ID_ENV: authorization.run_id,
             "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": authorization.context_sha256,
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": str(scan_evidence["report_sha256"]),
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": str(
@@ -619,8 +671,45 @@ def _private_runtime_redactions(env: dict[str, str]) -> tuple[str, ...]:
             "NEBIUS_S3_ENDPOINT",
             "NPA_S3_BUCKET",
             "S3_BUCKET",
+            ROBOTWIN_CHILD_BUCKET_ENV,
+            ROBOTWIN_CHILD_CONFIG_PATH_ENV,
+            ROBOTWIN_CHILD_IMAGE_ENV,
+            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
+            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+            ROBOTWIN_CHILD_RUN_ID_ENV,
         )
         if (value := env.get(key, "").strip())
+    )
+
+
+def _run_robotwin_container_verify(
+    cmd: list[str],
+    *,
+    authorization: _RuntimeAuthorization,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Keep the validated authorization in-process until the inner Sky bridge."""
+
+    spec = importlib.util.spec_from_file_location(
+        "npa_robotwin_container_verify", CONTAINER_VERIFY_RUNNER
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("RoboTwin container verifier could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        spec.loader.exec_module(module)
+        returncode = module.run_authorized_robotwin(
+            cmd[2:],
+            authorization=authorization,
+            environment=environment,
+        )
+    return subprocess.CompletedProcess(
+        cmd,
+        int(returncode),
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
     )
 
 
@@ -1088,20 +1177,19 @@ def _run_byof(
                     BYOF_REPO_MOUNT,
                 ]
             elif args.workload in {"container-verify", "solution-smoke"}:
-                cmd = [
-                    sys.executable,
-                    str(CONTAINER_VERIFY_RUNNER),
-                    "--image",
-                    image,
-                    "--run-id",
-                    args.run_id,
-                    "--wait-timeout",
-                    str(args.wait_timeout),
-                    "--poll-interval",
-                    str(args.poll_interval),
-                    "--repo-root",
-                    BYOF_REPO_MOUNT,
-                ]
+                cmd = [sys.executable, str(CONTAINER_VERIFY_RUNNER)]
+                if authorization is None:
+                    cmd.extend(["--image", image, "--run-id", args.run_id])
+                cmd.extend(
+                    [
+                        "--wait-timeout",
+                        str(args.wait_timeout),
+                        "--poll-interval",
+                        str(args.poll_interval),
+                        "--repo-root",
+                        BYOF_REPO_MOUNT,
+                    ]
+                )
                 if args.smoke_command:
                     cmd.extend(["--smoke-command", args.smoke_command])
                 if args.solution_name:
@@ -1129,16 +1217,16 @@ def _run_byof(
                 ]
             if args.yaml:
                 cmd.extend(["--yaml", args.yaml])
-            if args.output_root:
+            if args.output_root and authorization is None:
                 cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
                 cmd.extend(["--sky-bin", args.sky_bin])
-            if args.config_path:
+            if args.config_path and authorization is None:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
             live_env = _authorized_live_env(
-                authorization, scan_evidence, project=args.project
+                authorization, scan_evidence, project=args.project, image=image
             )
             runtime_redactions = (
                 tuple(
@@ -1151,9 +1239,19 @@ def _run_byof(
                 "capture": True,
                 "env": live_env,
             }
+            if authorization is not None:
+                run_kwargs["inherit_env"] = False
             if runtime_redactions:
                 run_kwargs["redactions"] = runtime_redactions
-            run_proc = _run(cmd, **run_kwargs)
+            run_proc = (
+                _run_robotwin_container_verify(
+                    cmd,
+                    authorization=authorization,
+                    environment=live_env,
+                )
+                if authorization is not None
+                else _run(cmd, **run_kwargs)
+            )
             sys.stdout.write(_redact_text(run_proc.stdout, runtime_redactions))
             if run_proc.stderr:
                 sys.stderr.write(_redact_text(run_proc.stderr, runtime_redactions))

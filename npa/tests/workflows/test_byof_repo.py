@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import subprocess
@@ -75,13 +76,14 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
         path = tmp_path / filename
         content = (
             "apiVersion: v1\nkind: Config\n"
+            "current-context: private-context-canary\n"
             "clusters: [{name: robotwin-cluster, cluster: {server: "
             "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
             "contexts: [{name: private-context-canary, context: {cluster: "
             "robotwin-cluster, user: robotwin-user}}]\n"
             "users: [{name: robotwin-user, user: {token: portable-test-token}}]\n"
             if field == "kubeconfig"
-            else "kubernetes: {}\n"
+            else "kubernetes:\n  allowed_contexts: [private-context-canary]\n"
         )
         path.write_text(content, encoding="utf-8")
         path.chmod(0o600)
@@ -100,6 +102,8 @@ def _robotwin_args(module, *extra: str) -> list[str]:
         str(config["repo_url"]),
         "--repo-ref",
         str(config["repo_ref"]),
+        "--repo-token-env",
+        "GH_TOKEN",
         "--base-profile",
         str(config["base_profile"]),
         "--base-image",
@@ -356,6 +360,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     )
     events: list[str] = []
     seen_env: dict[str, str] = {}
+    seen_runner_cmd: list[str] = []
 
     def fake_scan(image: str, **_kwargs):
         events.append("scan")
@@ -367,10 +372,44 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
             "status": "pass",
         }
 
-    def fake_live_env(project: str, **_kwargs):
+    def fake_live_env(authorization, scan_evidence, *, project: str, image: str):
         events.append("live-env")
         assert project == payload["project"]
-        return {"MOCK_STORAGE": "yes"}
+        assert authorization.registry == payload["registry"]
+        assert scan_evidence["report_sha256"] == "b" * 64
+        assert image.endswith("@sha256:" + "a" * 64)
+        return {
+            "KUBECONFIG": str(payload["kubeconfig"]),
+            "KUBECONTEXT": str(payload["kubernetes_context"]),
+            "NPA_BYOF_K8S_CONTEXT": str(payload["kubernetes_context"]),
+            "NPA_BYOF_PROJECT": str(payload["project"]),
+            "NPA_NEBIUS_PROFILE": str(payload["nebius_profile"]),
+            "NEBIUS_PROFILE": str(payload["nebius_profile"]),
+            module.ROBOTWIN_CHILD_BUCKET_ENV: str(payload["bucket"]),
+            module.ROBOTWIN_CHILD_CONFIG_PATH_ENV: str(
+                payload["skypilot_config_path"]
+            ),
+            module.ROBOTWIN_CHILD_IMAGE_ENV: image,
+            module.ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: (
+                f"{payload['output_root']}/{payload['run_id']}/"
+            ),
+            module.ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: str(payload["output_root"]),
+            module.ROBOTWIN_CHILD_RUN_ID_ENV: str(payload["run_id"]),
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "3",
+            "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": hashlib.sha256(
+                json.dumps(payload, sort_keys=True).encode()
+            ).hexdigest(),
+        }
+
+    def fake_container_verify(cmd, *, authorization, environment):
+        events.append("runner")
+        seen_runner_cmd.extend(cmd)
+        seen_env.update(environment)
+        assert authorization.registry == payload["registry"]
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        )
 
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["docker", "build"]:
@@ -382,18 +421,15 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
             return subprocess.CompletedProcess(
                 cmd, 0, stdout="Digest: sha256:" + "a" * 64 + "\n", stderr=""
             )
-        elif str(module.CONTAINER_VERIFY_RUNNER) in cmd:
-            events.append("runner")
-            seen_env.update(kwargs["env"])
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout='{"status":"success"}\n', stderr=""
-            )
         else:
             pytest.fail(f"unexpected external command: {cmd[0]}")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_scan_robotwin_image", fake_scan)
-    monkeypatch.setattr(module, "_live_runner_env", fake_live_env)
+    monkeypatch.setattr(module, "_authorized_live_env", fake_live_env)
+    monkeypatch.setattr(
+        module, "_run_robotwin_container_verify", fake_container_verify
+    )
     monkeypatch.setattr(module, "_run", fake_run)
 
     assert module.main(_robotwin_args(module)) == 0
@@ -408,6 +444,15 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] == "b" * 64
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] == "3"
     assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in seen_env
+    for private_value in (
+        payload["bucket"],
+        payload["kubernetes_context"],
+        payload["output_root"],
+        payload["run_id"],
+        payload["skypilot_config_path"],
+        seen_env[module.ROBOTWIN_CHILD_IMAGE_ENV],
+    ):
+        assert str(private_value) not in seen_runner_cmd
     output = capsys.readouterr().out
     for field in (
         "project",
@@ -421,6 +466,48 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         "run_id",
     ):
         assert str(payload[field]) not in output
+
+
+def test_robotwin_authorized_child_environment_drops_hostile_runtime_controls(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    authorization = module.load_runtime_authorization()
+    for name, value in {
+        "NPA_BYOF_DIRECT_LAUNCH": "1",
+        "NPA_BYOF_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_BIN": "/untrusted/sky",
+        "NPA_BYOF_S3_ENDPOINT": "https://unauthorized.invalid",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE": "1",
+        "NPA_BYOF_SKIP_SKY_CHECK": "1",
+        "NPA_E2E_PROJECT": "unauthorized-project",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "authorized-storage-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "authorized-storage-secret")
+
+    env = module._authorized_live_env(
+        authorization,
+        {"report_sha256": "b" * 64, "archives_scanned": 2},
+        project=authorization.project,
+        image="registry.example/private/image@sha256:" + "a" * 64,
+    )
+
+    assert env["AWS_ACCESS_KEY_ID"] == "authorized-storage-id"
+    assert env[module.ROBOTWIN_CHILD_RUN_ID_ENV] == authorization.run_id
+    for name in (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+        "NPA_BYOF_SKIP_SKY_CHECK",
+        "NPA_E2E_PROJECT",
+    ):
+        assert name not in env
 
 
 def test_robotwin_image_scan_failure_precedes_live_runner(
@@ -503,6 +590,44 @@ def test_runtime_authorization_is_removed_from_child_environment(monkeypatch) ->
     monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
     module._run(["true"])
     assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in captured
+
+
+def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    captured: dict[str, str] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    for name in (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+    ):
+        monkeypatch.setenv(name, "hostile-canary")
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+
+    module._run(
+        ["true"],
+        env={"AUTHORIZED_CANARY": "yes"},
+        inherit_env=False,
+    )
+
+    assert captured["AUTHORIZED_CANARY"] == "yes"
+    assert not any(name in captured for name in (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+    ))
 
 
 def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:

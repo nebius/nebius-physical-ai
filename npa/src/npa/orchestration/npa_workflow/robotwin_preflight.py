@@ -22,11 +22,23 @@ PUBLIC_CONTEXT_ENV = "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
 TRANSPORT_CONTEXT_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1"
 MATERIALIZED_KUBECONFIG_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_KUBECONFIG"
 MATERIALIZED_SKYPILOT_CONFIG_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_SKYPILOT_CONFIG"
+CHILD_IMAGE_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE"
+CHILD_RUN_ID_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_RUN_ID"
+CHILD_OUTPUT_ROOT_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_ROOT"
+CHILD_OUTPUT_PREFIX_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX"
+CHILD_BUCKET_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET"
+CHILD_CONFIG_PATH_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_CHILD_SKYPILOT_CONFIG"
 CONTEXT_ENV_NAMES = (
     PUBLIC_CONTEXT_ENV,
     TRANSPORT_CONTEXT_ENV,
     MATERIALIZED_KUBECONFIG_ENV,
     MATERIALIZED_SKYPILOT_CONFIG_ENV,
+    CHILD_IMAGE_ENV,
+    CHILD_RUN_ID_ENV,
+    CHILD_OUTPUT_ROOT_ENV,
+    CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_BUCKET_ENV,
+    CHILD_CONFIG_PATH_ENV,
 )
 MAX_CONTEXT_BYTES = 64 * 1024
 MAX_CONFIG_BYTES = 24 * 1024
@@ -41,6 +53,15 @@ BUILD_COMMAND_SHA256 = (
 )
 SMOKE_COMMAND_SHA256 = (
     "bc26a3019d36863326cf4e55bd3536c303355c7b661ede5bc20ed9a4607deb2d"
+)
+OUTER_RUN_SHA256 = (
+    "a0f3c13af1f1f7614fa5cff90c484e76793334ec55ec77f57924f83f3485d31d"
+)
+INNER_SETUP_SHA256 = (
+    "67ac77e6b1b780ff9e02e32dce0252abbb3e2d25fed7faa09a75f09246338f74"
+)
+INNER_RUN_SHA256 = (
+    "99ca0eb714e1d8b24b7bf2464677b9b2add47fa9f2ccf56004da33751d8ae12f"
 )
 REQUIRED_DECISIONS = (
     "nvidia_cuda_eula",
@@ -135,6 +156,9 @@ class RobotwinSubmitContext:
     context_sha256: str
     authorization: RobotwinAuthorization = field(repr=False)
     transport_value: str = field(repr=False)
+    layer: str = "outer"
+    private_values: tuple[str, ...] = field(default=(), repr=False)
+    private_environment: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
@@ -212,15 +236,19 @@ def _load_yaml_mapping(raw: bytes, *, label: str, context: bytes) -> dict[str, A
 def _has_external_reference(value: Any) -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            normalized = str(key).lower().replace("-", "_")
+            normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower().replace(
+                "-", "_"
+            )
             if normalized in {
                 "include",
                 "includes",
+                "auth_provider",
                 "credential_process",
                 "token_file",
                 "client_certificate",
                 "client_key",
                 "certificate_authority",
+                "proxy_url",
             }:
                 return True
             if _has_external_reference(child):
@@ -237,10 +265,21 @@ def _validate_kubeconfig(
     raw: bytes, *, context_name: str, context: bytes
 ) -> None:
     payload = _load_yaml_mapping(raw, label="kubeconfig", context=context)
+    if set(payload) != {
+        "apiVersion",
+        "kind",
+        "clusters",
+        "contexts",
+        "users",
+        "current-context",
+    } or payload.get("apiVersion") != "v1" or payload.get("kind") != "Config":
+        raise _refusal("kubeconfig-schema-mismatch", context)
+    if payload.get("current-context") != context_name:
+        raise _refusal("kubeconfig-current-context-mismatch", context)
 
     def named_entry(section: str, name: str) -> Mapping[str, Any]:
         entries = payload.get(section)
-        if not isinstance(entries, list):
+        if not isinstance(entries, list) or len(entries) != 1:
             raise _refusal("kubeconfig-structure-invalid", context)
         matches = [
             entry
@@ -249,10 +288,25 @@ def _validate_kubeconfig(
         ]
         if len(matches) != 1:
             raise _refusal(f"kubeconfig-{section}-mismatch", context)
-        return matches[0]
+        entry = matches[0]
+        singular = {"clusters": "cluster", "contexts": "context", "users": "user"}[
+            section
+        ]
+        if set(entry) != {"name", singular}:
+            raise _refusal("kubeconfig-structure-invalid", context)
+        return entry
 
     selected = named_entry("contexts", context_name).get("context")
-    if not isinstance(selected, Mapping):
+    if (
+        not isinstance(selected, Mapping)
+        or not set(selected).issubset({"cluster", "user", "namespace"})
+        or not {"cluster", "user"}.issubset(selected)
+    ):
+        raise _refusal("kubeconfig-context-invalid", context)
+    namespace = selected.get("namespace")
+    if namespace is not None and (
+        not isinstance(namespace, str) or not namespace.strip()
+    ):
         raise _refusal("kubeconfig-context-invalid", context)
     cluster_name = selected.get("cluster")
     user_name = selected.get("user")
@@ -262,6 +316,8 @@ def _validate_kubeconfig(
     user = named_entry("users", user_name).get("user")
     if not isinstance(cluster, Mapping) or not isinstance(user, Mapping):
         raise _refusal("kubeconfig-structure-invalid", context)
+    if set(cluster) != {"server", "certificate-authority-data"}:
+        raise _refusal("kubeconfig-cluster-schema-mismatch", context)
     server = cluster.get("server")
     parsed_server = urlparse(server if isinstance(server, str) else "")
     if (
@@ -273,6 +329,13 @@ def _validate_kubeconfig(
         or not cluster["certificate-authority-data"].strip()
     ):
         raise _refusal("kubeconfig-cluster-not-portable", context)
+    try:
+        if not base64.b64decode(
+            cluster["certificate-authority-data"], validate=True
+        ):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise _refusal("kubeconfig-cluster-not-portable", context) from None
     if "exec" in user:
         raise _refusal("kubeconfig-exec-plugin-refused", context)
     inline_token = isinstance(user.get("token"), str) and bool(user["token"].strip())
@@ -280,8 +343,24 @@ def _validate_kubeconfig(
         isinstance(user.get(name), str) and bool(user[name].strip())
         for name in ("client-certificate-data", "client-key-data")
     )
-    if not (inline_token or inline_cert):
+    allowed_user_keys = (
+        {"token"}
+        if inline_token and not inline_cert
+        else {"client-certificate-data", "client-key-data"}
+        if inline_cert and not inline_token
+        else set()
+    )
+    if not allowed_user_keys or set(user) != allowed_user_keys:
         raise _refusal("kubeconfig-user-not-portable", context)
+    if inline_cert:
+        try:
+            if any(
+                not base64.b64decode(user[name], validate=True)
+                for name in ("client-certificate-data", "client-key-data")
+            ):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise _refusal("kubeconfig-user-not-portable", context) from None
     if _has_external_reference(payload):
         raise _refusal("kubeconfig-external-reference", context)
 
@@ -292,16 +371,41 @@ def _validate_skypilot_config(
     payload = _load_yaml_mapping(raw, label="skypilot-config", context=context)
     if _has_external_reference(payload):
         raise _refusal("skypilot-config-external-reference", context)
+    if set(payload) != {"kubernetes"}:
+        raise _refusal("skypilot-config-schema-mismatch", context)
     kubernetes = payload.get("kubernetes")
-    if not isinstance(kubernetes, Mapping):
+    if not isinstance(kubernetes, Mapping) or not set(kubernetes).issubset(
+        {"allowed_contexts", "pod_config"}
+    ) or "allowed_contexts" not in kubernetes:
         raise _refusal("skypilot-config-kubernetes-invalid", context)
     allowed = kubernetes.get("allowed_contexts")
-    if allowed is not None and (
-        not isinstance(allowed, list)
-        or any(not isinstance(item, str) for item in allowed)
-        or context_name not in allowed
-    ):
+    if allowed != [context_name]:
         raise _refusal("skypilot-config-context-mismatch", context)
+    pod_config = kubernetes.get("pod_config")
+    if pod_config is None:
+        return
+    if not isinstance(pod_config, Mapping) or set(pod_config) != {"spec"}:
+        raise _refusal("skypilot-config-pod-schema-mismatch", context)
+    pod_spec = pod_config.get("spec")
+    if not isinstance(pod_spec, Mapping) or set(pod_spec) != {"imagePullSecrets"}:
+        raise _refusal("skypilot-config-pod-schema-mismatch", context)
+    pull_secrets = pod_spec.get("imagePullSecrets")
+    if (
+        not isinstance(pull_secrets, list)
+        or not pull_secrets
+        or any(
+            not isinstance(item, Mapping)
+            or set(item) != {"name"}
+            or not isinstance(item.get("name"), str)
+            or re.fullmatch(
+                r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?",
+                item["name"],
+            )
+            is None
+            for item in pull_secrets
+        )
+    ):
+        raise _refusal("skypilot-config-pod-schema-mismatch", context)
 
 
 def _portable_config_redactions(raw: bytes) -> tuple[str, ...]:
@@ -317,7 +421,11 @@ def _portable_config_redactions(raw: bytes) -> tuple[str, ...]:
         elif isinstance(value, list):
             for child in value:
                 collect(child)
-        elif isinstance(value, str) and len(value.strip()) >= 4:
+        elif (
+            isinstance(value, str)
+            and len(value.strip()) >= 4
+            and value.strip() != "Config"
+        ):
             values.append(value.strip())
 
     collect(payload)
@@ -367,7 +475,34 @@ def _validate_authorization_fields(payload: dict[str, Any], raw: bytes) -> dict[
 
 def _validate_destination(values: Mapping[str, str], raw: bytes) -> str:
     registry = values["registry"]
-    if is_public_registry(registry):
+    if (
+        "://" in registry
+        or any(character.isspace() for character in registry)
+        or "@" in registry
+        or registry.startswith("/")
+    ):
+        raise _refusal("registry-not-private", raw)
+    authority, separator, namespace = registry.partition("/")
+    parsed_registry = urlparse(f"//{authority}")
+    try:
+        parsed_registry.port
+    except ValueError:
+        raise _refusal("registry-not-private", raw) from None
+    host = (parsed_registry.hostname or "").lower()
+    explicit_authority = bool(
+        separator
+        and namespace
+        and parsed_registry.netloc == authority
+        and parsed_registry.username is None
+        and parsed_registry.password is None
+        and host not in {"", "localhost"}
+        and ("." in host or ":" in authority)
+        and all(
+            re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", part) is not None
+            for part in namespace.split("/")
+        )
+    )
+    if not explicit_authority or is_public_registry(registry):
         raise _refusal("registry-not-private", raw)
     bucket = values["bucket"]
     parsed = urlparse(values["output_root"])
@@ -642,6 +777,8 @@ def validate_invocation(args: Any) -> None:
             raise _refusal(f"invocation-{name}-mismatch")
     scalar_match = (
         args.repo_auth == "none"
+        and args.repo_token_env == "GH_TOKEN"
+        and not args.wan_acceptance_candidate_image
         and args.iterations == 1
         and args.num_envs == 1
         and args.num_demos == 1
@@ -653,7 +790,7 @@ def validate_invocation(args: Any) -> None:
         raise _refusal("invocation-smoke-contract-mismatch")
     private_empty = all(
         not getattr(args, name).strip()
-        for name in ("project", "registry", "image", "config_path")
+        for name in ("project", "registry", "image", "config_path", "sky_bin")
     )
     if not private_empty or args.output_root.strip() not in {
         "", "s3://example-bucket/oss-solutions/robotwin"
@@ -678,6 +815,87 @@ def prepare_live_submit(
         authorization.context_sha256,
         authorization,
         encode_transport(authorization),
+    )
+
+
+def prepare_inner_submit(
+    authorization: RobotwinAuthorization,
+    environment: Mapping[str, str],
+) -> RobotwinSubmitContext:
+    """Bind the inner launcher to the same in-process validated authorization."""
+
+    output_prefix = f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+    expected = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        "KUBECONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_PROJECT": authorization.project,
+        "NPA_NEBIUS_PROFILE": authorization.profile,
+        "NEBIUS_PROFILE": authorization.profile,
+        CHILD_BUCKET_ENV: authorization.bucket,
+        CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_source,
+        CHILD_OUTPUT_PREFIX_ENV: output_prefix,
+        CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+        CHILD_RUN_ID_ENV: authorization.run_id,
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
+            authorization.context_sha256
+        ),
+    }
+    if any(str(environment.get(name) or "") != value for name, value in expected.items()):
+        raise _refusal("inner-environment-mismatch", authorization.raw_context)
+    image = str(environment.get(CHILD_IMAGE_ENV) or "")
+    scan_sha256 = str(environment.get("NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256") or "")
+    scan_archives = str(
+        environment.get("NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES") or ""
+    )
+    image_prefix = authorization.registry.rstrip("/") + "/"
+    if not image.startswith(image_prefix) or re.fullmatch(
+        r".+@sha256:[0-9a-f]{64}", image
+    ) is None:
+        raise _refusal("inner-image-mismatch", authorization.raw_context)
+    if re.fullmatch(r"[0-9a-f]{64}", scan_sha256) is None or not (
+        scan_archives.isdecimal() and int(scan_archives) >= 2
+    ):
+        raise _refusal("inner-image-scan-evidence-missing", authorization.raw_context)
+    endpoint = str(environment.get("AWS_ENDPOINT_URL") or "")
+    if (
+        re.fullmatch(r"https://storage\.[a-z0-9-]+\.nebius\.cloud", endpoint)
+        is None
+        or environment.get("NEBIUS_S3_ENDPOINT") != endpoint
+    ):
+        raise _refusal("inner-storage-endpoint-mismatch", authorization.raw_context)
+    bound_environment = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        CHILD_BUCKET_ENV: authorization.bucket,
+        CHILD_IMAGE_ENV: image,
+        CHILD_OUTPUT_PREFIX_ENV: output_prefix,
+        CHILD_RUN_ID_ENV: authorization.run_id,
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
+            authorization.context_sha256
+        ),
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": scan_sha256,
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": scan_archives,
+    }
+    private_values = tuple(
+        dict.fromkeys(
+            (
+                *authorization.redactions,
+                image,
+                endpoint,
+                scan_sha256,
+                authorization.context_sha256,
+            )
+        )
+    )
+    return RobotwinSubmitContext(
+        authorization.context_sha256,
+        authorization,
+        "",
+        layer="inner",
+        private_values=private_values,
+        private_environment=tuple(bound_environment.items()),
     )
 
 
@@ -718,6 +936,258 @@ def bind_submit_coordinates(
         expected_infra,
         Path(authorization.skypilot_config_source),
     )
+
+
+def _recognize_rendered_contract(documents: Sequence[Mapping[str, Any]]) -> bool:
+    """Recognize the one rendered task produced by the immutable public spec."""
+
+    if len(documents) != 2 or documents[0] != {
+        "name": "byof-robotwin",
+        "execution": "serial",
+    }:
+        return False
+    task = documents[1]
+    resources = task.get("resources")
+    environment = task.get("envs")
+    command = task.get("run")
+    if task.get("name") != "byof-run" or resources != {
+        "cloud": "kubernetes",
+        "cpus": "4+",
+        "memory": "8+",
+    }:
+        return False
+    if not isinstance(environment, Mapping) or not isinstance(command, str):
+        return False
+    required_environment = {
+        "NPA_WORKFLOW_NAME": "byof-robotwin",
+        "NPA_WORKFLOW_STATE": "byof-run",
+        "NPA_EXECUTION_OUTPUTS": "[]",
+        "NPA_WORKFLOW_FENCE_SEQUENCE": "1",
+        "NPA_WORKFLOW_FENCE_ATTEMPT": "1",
+    }
+    allowed_environment = {
+        *required_environment,
+        "NPA_WORKFLOW_RUN_ID",
+        "NPA_WORKFLOW_ATTEMPT_ID",
+        "NPA_SRC_S3_URI",
+        "AWS_ENDPOINT_URL",
+    }
+    if set(environment) != allowed_environment or any(
+        environment.get(name) != value
+        for name, value in required_environment.items()
+    ):
+        return False
+    run_id = environment.get("NPA_WORKFLOW_RUN_ID")
+    attempt_id = environment.get("NPA_WORKFLOW_ATTEMPT_ID")
+    source_uri = urlparse(str(environment.get("NPA_SRC_S3_URI") or ""))
+    endpoint = str(environment.get("AWS_ENDPOINT_URL") or "")
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or command.count(run_id) != 1
+        or re.fullmatch(r"[0-9a-f]{64}", str(attempt_id or "")) is None
+        or source_uri.scheme != "s3"
+        or not source_uri.netloc
+        or re.fullmatch(r"https://storage\.[a-z0-9-]+\.nebius\.cloud", endpoint)
+        is None
+    ):
+        return False
+    normalized_command = command.replace(run_id, "<run-id>")
+    return (
+        hashlib.sha256(normalized_command.encode()).hexdigest() == OUTER_RUN_SHA256
+        and TRANSPORT_CONTEXT_ENV not in command
+    )
+
+
+def _recognize_inner_rendered_contract(
+    documents: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Recognize the exact one-GPU profile rendered by the validated runner."""
+
+    if len(documents) != 2 or documents[0] != {
+        "name": "byof-solution-smoke-robotwin-rtxpro-gpu",
+        "execution": "serial",
+    }:
+        return False
+    task = documents[1]
+    expected_resources = {
+        "cloud": "kubernetes",
+        "accelerators": f"{RTX_ACCELERATOR}:1",
+        "cpus": "16+",
+        "memory": "64+",
+        "disk_size": 100,
+        "image_id": f"docker:${{{CHILD_IMAGE_ENV}}}",
+        "kubernetes": {
+            "pod_config": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "env": [
+                                {
+                                    "name": "POD_NAME",
+                                    "valueFrom": {
+                                        "fieldRef": {"fieldPath": "metadata.name"}
+                                    },
+                                },
+                                {
+                                    "name": "POD_NAMESPACE",
+                                    "valueFrom": {
+                                        "fieldRef": {"fieldPath": "metadata.namespace"}
+                                    },
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    if task.get("name") != "byof-solution-smoke-robotwin-rtxpro":
+        return False
+    if task.get("resources") != expected_resources:
+        return False
+    if hashlib.sha256(str(task.get("setup") or "").encode()).hexdigest() != INNER_SETUP_SHA256:
+        return False
+    if hashlib.sha256(str(task.get("run") or "").encode()).hexdigest() != INNER_RUN_SHA256:
+        return False
+    environment = task.get("envs")
+    if not isinstance(environment, Mapping):
+        return False
+    required_environment = {
+        "NPA_BYOF_RUN_ID": f"${{{CHILD_RUN_ID_ENV}}}",
+        "BYOF_REPO_ROOT": "/opt/byof",
+        "BYOF_SOLUTION_NAME": "robotwin",
+        "BYOF_CAPABILITY_NAME": INVOCATION["capability_name"],
+        "BYOF_SMOKE_ARTIFACT_NAME": INVOCATION["smoke_artifact_name"],
+        "BYOF_IMAGE": f"${{{CHILD_IMAGE_ENV}}}",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "VK_ICD_FILENAMES": "/usr/share/vulkan/icd.d/nvidia_icd.json",
+        "S3_OUTPUT_PREFIX": f"${{{CHILD_OUTPUT_PREFIX_ENV}}}",
+        "NPA_S3_BUCKET": f"${{{CHILD_BUCKET_ENV}}}",
+    }
+    if any(environment.get(name) != value for name, value in required_environment.items()):
+        return False
+    if hashlib.sha256(str(environment.get("BYOF_SMOKE_COMMAND") or "").encode()).hexdigest() != SMOKE_COMMAND_SHA256:
+        return False
+    allowed = {*required_environment, "BYOF_SMOKE_COMMAND", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"}
+    if set(environment) != allowed:
+        return False
+    return environment.get("AWS_ENDPOINT_URL") == "${AWS_ENDPOINT_URL}" and (
+        environment.get("NEBIUS_S3_ENDPOINT") == "${NEBIUS_S3_ENDPOINT}"
+    )
+
+
+def _validate_preverified_target(
+    authorization: RobotwinAuthorization,
+    target: Any,
+    report: Mapping[str, Any] | None,
+) -> None:
+    """Require the exact owner/output target and its completed verification report."""
+
+    from npa.execution_preflight import ExecutionTarget
+
+    checks = report.get("checks") if isinstance(report, Mapping) else None
+    if (
+        not isinstance(checks, Mapping)
+        or report.get("schema_version") != "npa.execution-preflight.v1"
+        or report.get("presence") != "pass"
+        or report.get("access") != "pass"
+        or report.get("execution_readiness") != "pass"
+        or report.get("destination_count") != 1
+        or checks.get("scope") != "pass"
+        or checks.get("storage_owner") != "pass"
+        or checks.get("cluster_owner") != "pass"
+        or checks.get("storage_write_read") != "pass"
+    ):
+        raise _refusal("submit-target-not-preverified", authorization.raw_context)
+    if (
+        not isinstance(target, ExecutionTarget)
+        or getattr(target, "project", None) != authorization.project
+        or getattr(target, "context", None) != authorization.kubernetes_context
+    ):
+        raise _refusal("submit-target-mismatch", authorization.raw_context)
+    output_uris = tuple(getattr(target, "output_uris", ()) or ())
+    summary_outputs = [
+        uri for uri in output_uris if str(uri).endswith("/npa_byof_summary.json")
+    ]
+    output_kinds = dict(getattr(target, "output_kinds", {}) or {})
+    if (
+        summary_outputs != [authorization.summary_uri]
+        or output_kinds.get(authorization.summary_uri) != "file"
+    ):
+        raise _refusal("submit-output-binding-mismatch", authorization.raw_context)
+
+
+def validate_confidential_submit_bridge(
+    context: RobotwinSubmitContext,
+    *,
+    documents: Sequence[Mapping[str, Any]],
+    infra: str,
+    config_path: Path | None,
+    secret_envs: Sequence[str],
+    extra_env: Mapping[str, str],
+    execution_target: Any,
+    execution_report: Mapping[str, Any] | None,
+) -> RobotwinAuthorization:
+    """Authorize the narrow shared submit bridge without exposing private values."""
+
+    if not isinstance(context, RobotwinSubmitContext):
+        raise _refusal("submit-bridge-contract-mismatch")
+    authorization = context.authorization
+    if context.context_sha256 != authorization.context_sha256:
+        raise _refusal("submit-bridge-context-mismatch", authorization.raw_context)
+    expected_infra = f"k8s/{authorization.kubernetes_context}"
+    expected_config = authorization.skypilot_config_source
+    common_valid = (
+        infra == expected_infra
+        and config_path is not None
+        and str(Path(config_path).expanduser()) == expected_config
+        and extra_env.get("KUBECONFIG") == authorization.kubeconfig_source
+        and PUBLIC_CONTEXT_ENV not in secret_envs
+    )
+    if context.layer == "outer":
+        if not _recognize_rendered_contract(documents):
+            raise _refusal("submit-bridge-contract-mismatch", authorization.raw_context)
+        transport = extra_env.get(TRANSPORT_CONTEXT_ENV)
+        layer_valid = (
+            TRANSPORT_CONTEXT_ENV in secret_envs
+            and transport == context.transport_value
+            and transport == encode_transport(authorization)
+        )
+    elif context.layer == "inner":
+        if not _recognize_inner_rendered_contract(documents):
+            raise _refusal("submit-bridge-contract-mismatch", authorization.raw_context)
+        required_secrets = {
+            CHILD_BUCKET_ENV,
+            CHILD_IMAGE_ENV,
+            CHILD_OUTPUT_PREFIX_ENV,
+            CHILD_RUN_ID_ENV,
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
+            "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+        }
+        layer_valid = (
+            not context.transport_value
+            and TRANSPORT_CONTEXT_ENV not in secret_envs
+            and TRANSPORT_CONTEXT_ENV not in extra_env
+            and execution_target is None
+            and execution_report is None
+            and required_secrets.issubset(secret_envs)
+            and CHILD_CONFIG_PATH_ENV not in secret_envs
+            and CHILD_OUTPUT_ROOT_ENV not in secret_envs
+            and all(extra_env.get(name) == value for name, value in context.private_environment)
+        )
+    else:
+        layer_valid = False
+    if not common_valid or not layer_valid:
+        raise _refusal("submit-bridge-input-mismatch", authorization.raw_context)
+    if context.layer == "outer":
+        _validate_preverified_target(
+            authorization, execution_target, execution_report
+        )
+    return authorization
 
 
 def write_owner_file(path: Path, raw: bytes) -> None:

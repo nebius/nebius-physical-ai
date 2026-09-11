@@ -116,6 +116,7 @@ def _install_robotwin_submit_context(
     kubeconfig = tmp_path / "kubeconfig.yaml"
     kubeconfig.write_text(
         "apiVersion: v1\nkind: Config\n"
+        "current-context: robotwin-context\n"
         "clusters: [{name: robotwin-cluster, cluster: {server: "
         "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
         "contexts: [{name: robotwin-context, context: {cluster: "
@@ -338,6 +339,11 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     assert ROBOTWIN_CONTEXT_ENV not in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["extra_env"]
+    assert submit_kwargs["infra"] == "k8s/robotwin-context"
+    assert submit_kwargs["robotwin_submit_context"] is not None
+    assert submit_kwargs["execution_preflight_report"] == {
+        "execution_readiness": "pass"
+    }
     assert str(context_path) not in json.dumps(submit_kwargs["secret_envs"])
     rendered = str(captured["rendered"])
     assert ROBOTWIN_CONTEXT_ENV in rendered
