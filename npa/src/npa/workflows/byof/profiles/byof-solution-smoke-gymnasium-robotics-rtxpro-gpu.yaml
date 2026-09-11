@@ -1,0 +1,216 @@
+# Gymnasium-Robotics Shadow Hand capability smoke on exactly one datacenter
+# RTX PRO 6000 Blackwell GPU. The cluster itself must already be manager-owned
+# and bound STRICT to the assigned reserved-capacity block.
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 4+
+  memory: 16+
+  disk_size: 20
+  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NPA_BYOF_POD_IMAGE_ID: ""
+  NVIDIA_DRIVER_CAPABILITIES: "all"
+  MUJOCO_GL: "egl"
+  PYOPENGL_PLATFORM: "egl"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"
+  test -x /opt/venv/bin/python
+  /opt/venv/bin/python - <<'PY'
+  import gymnasium_robotics
+  import mujoco
+
+  assert gymnasium_robotics.__version__ == "1.4.2"
+  assert mujoco.__version__ == "3.12.0"
+  PY
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  cp "${BYOF_REPO_ROOT}/npa_build_metadata.json" "${OUTPUT_DIR}/npa_build_metadata.json"
+  test -n "${BYOF_IMAGE}"
+  case "${BYOF_IMAGE}" in
+    *@sha256:????????????????????????????????????????????????????????????????) ;;
+    *) echo "BYOF_IMAGE must be an immutable sha256 reference" >&2; exit 65 ;;
+  esac
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
+  test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 1
+  nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader,nounits \
+    > "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "RTX PRO 6000" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "Blackwell" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "12.0" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libEGL|libGL' \
+    > "${OUTPUT_DIR}/graphics_libraries_before_render.txt"
+
+  # Kubernetes reports the image actually running in this pod. Fail closed if
+  # the service account cannot read its own pod or the observed digest differs.
+  export NPA_BYOF_POD_IMAGE_ID="$(/opt/venv/bin/python - <<'PY'
+  import json
+  import os
+  import re
+  import ssl
+  import urllib.request
+  from pathlib import Path
+
+  expected = os.environ["BYOF_IMAGE"]
+  match = re.search(r"sha256:[0-9a-f]{64}$", expected)
+  if match is None:
+      raise SystemExit("BYOF_IMAGE is not immutable")
+  expected_digest = match.group(0)
+  service_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+  namespace = (service_root / "namespace").read_text(encoding="utf-8").strip()
+  token = (service_root / "token").read_text(encoding="utf-8").strip()
+  host = os.environ["KUBERNETES_SERVICE_HOST"]
+  port = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
+  pod = os.environ["HOSTNAME"]
+  url = f"https://{host}:{port}/api/v1/namespaces/{namespace}/pods/{pod}"
+  request = urllib.request.Request(
+      url,
+      headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+  )
+  context = ssl.create_default_context(cafile=str(service_root / "ca.crt"))
+  with urllib.request.urlopen(request, context=context) as response:
+      payload = json.load(response)
+  statuses = list(payload.get("status", {}).get("containerStatuses") or [])
+  matching = [
+      str(item.get("imageID") or "")
+      for item in statuses
+      if item.get("state", {}).get("running")
+      and expected_digest in str(item.get("imageID") or "")
+  ]
+  if len(matching) != 1:
+      raise SystemExit(
+          f"expected one pod container with {expected_digest}, observed {matching!r}"
+      )
+  print(matching[0])
+  PY
+  )"
+  test -n "${NPA_BYOF_POD_IMAGE_ID}"
+
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  /opt/venv/bin/python <<'PY'
+  import hashlib
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+  artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
+  artifact_path = root / artifact_name if artifact_name else None
+  artifact_evidence = None
+  if artifact_path is not None and artifact_path.is_file():
+      payload = artifact_path.read_bytes()
+      artifact_evidence = {
+          "name": artifact_name,
+          "media_type": "application/json",
+          "size_bytes": len(payload),
+          "sha256": hashlib.sha256(payload).hexdigest(),
+      }
+  metadata = json.loads(
+      (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(
+          encoding="utf-8"
+      )
+  )
+  summary = {
+      "status": "success" if smoke_exit_code == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-gymnasium-robotics-rtxpro",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "pod_observed_image_id": os.environ.get("NPA_BYOF_POD_IMAGE_ID", ""),
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_artifact_name": artifact_name,
+      "smoke_artifact": artifact_evidence,
+      "smoke_exit_code": smoke_exit_code,
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(
+      json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+  )
+  print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      endpoint = (
+          os.environ.get("AWS_ENDPOINT_URL")
+          or os.environ.get("NEBIUS_S3_ENDPOINT")
+          or ""
+      ).strip() or None
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
+      prefix = parsed.path.lstrip("/")
+      uploaded = 0
+      for path in root.rglob("*"):
+          if path.is_file():
+              key = prefix + str(path.relative_to(root))
+              s3.put_object(
+                  Bucket=parsed.netloc,
+                  Key=key,
+                  Body=path.read_bytes(),
+                  IfNoneMatch="*",
+              )
+              uploaded += 1
+      s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
+      if artifact_name:
+          s3.head_object(Bucket=parsed.netloc, Key=prefix + artifact_name)
+      print(f"uploaded_file_count={uploaded}", flush=True)
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

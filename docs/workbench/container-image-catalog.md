@@ -20,6 +20,11 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
+The Gymnasium-Robotics registry candidate is intentionally built ad hoc into a
+task-private registry and executed only by immutable digest. It has no public
+image row, is not eligible for promotion through this catalog, and does not
+change any public-release, packaging, mapped-tool, or quarantine count below.
+
 The combined public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-17**. All **34 current release tags**
 matched their recorded digests; independent manifest and OCI config reads
