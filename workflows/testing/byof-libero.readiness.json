@@ -1,13 +1,14 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "9c8668f1d900f2033e1ffd2bb529aedf1b6848b913e7d96db9ac39b5d1940f86",
+  "workflow_sha256": "0b24872a8047c53767c29384cfae7f6d06ae75a6424e4fa6a1090629a03a3f12",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 10, 2026; neither command launched infrastructure.",
+      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026 after the child runtime context was rebound to its assigned namespace; neither command launched infrastructure.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id libero-offline-plan --json"
+        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id <owner-run-id> --json",
+        "owner-only namespace-binding prelaunch receipt"
       ]
     },
     "task_fidelity": {
@@ -21,10 +22,10 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "blocked",
-      "reason": "The manager-owned runtime context has not yet assigned the private bucket and unique output prefix. The checked-in example-bucket is intentionally non-runnable.",
+      "status": "verified",
+      "reason": "The owner-only runtime context assigns a private bucket and unique output prefix, and its storage probes are recorded. The checked-in example-bucket remains intentionally non-runnable.",
       "evidence": [
-        "manager runtime-context.json absent from the owner-only child directory"
+        "owner-only runtime-context storage validation"
       ]
     },
     "worker_input": {
@@ -36,24 +37,27 @@
       ]
     },
     "credentials": {
-      "status": "blocked",
-      "reason": "No run-owned context is available yet for Nebius, private-registry, Kubernetes, or S3 credential checks. The public LIBERO source and dataset require no acceptance token.",
+      "status": "verified",
+      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries. The public LIBERO source and dataset require no acceptance token.",
       "evidence": [
-        "manager runtime-context.json absent from the owner-only child directory"
+        "owner-only runtime-context validation",
+        "owner-only pull-secret receipt"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The private LIBERO BYOF image has not been built or pushed because runtime ownership is not assigned. A live run must resolve its private tag to an immutable digest and prove pullability before submit.",
+      "reason": "The operator-private LIBERO BYOF image was built, pushed at an immutable digest, and scanned byte-for-byte with no dataset, render-asset, or Git payload. Kubernetes pullability of that exact digest remains unverified because the isolated attempt created no payload pod.",
       "evidence": [
+        "owner-only private-image push receipt",
+        "owner-only complete OCI layer scan",
         "docs/workbench/byof-libero.md#before-spending-gpu-time"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The manager has not yet assigned the STRICT reserved-capacity B200 runtime. Live acceptance requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
+      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager review of the prelaunch receipt. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
       "evidence": [
-        "manager runtime-context.json absent from the owner-only child directory",
+        "owner-only namespace-binding prelaunch receipt",
         "docs/workbench/byof-libero.md#acceptance-artifact"
       ]
     }

@@ -172,7 +172,11 @@ def render_workflow(
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
         normalized_root = _normalize_output_root(output_root)
-        envs["S3_OUTPUT_PREFIX"] = normalized_root.rstrip("/") + f"/{run_id}/"
+        output_prefix = normalized_root.rstrip("/") + f"/{run_id}/"
+        envs["S3_OUTPUT_PREFIX"] = output_prefix
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [{"uri": output_prefix, "kind": "directory"}], separators=(",", ":")
+        )
         bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
             os.environ.get("NPA_S3_BUCKET", "")
         )
