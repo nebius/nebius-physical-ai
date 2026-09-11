@@ -153,7 +153,7 @@ def test_libero_profile_refuses_missing_or_mistyped_solution_name(monkeypatch) -
         "render_workflow",
         lambda *_a, **_k: [{"execution": "serial"}, {"name": "task"}],
     )
-    for solution_name in ("", "not-libero"):
+    for solution_name in ("", "not-libero", "LIBERO", " libero", "libero "):
         args = module._parse_args(
             [
                 "--yaml",
@@ -794,6 +794,11 @@ def test_managed_cleanup_cancels_and_drains_exact_job_before_down(
     )
     monkeypatch.setattr(module, "workflow_status", status)
     monkeypatch.setattr(module, "cancel_workflow_job", cancel)
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        lambda **_k: calls.append("verify-absent") or module.CleanupResult(),
+    )
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
     result = module._cancel_then_teardown_managed_job(
@@ -806,7 +811,7 @@ def test_managed_cleanup_cancels_and_drains_exact_job_before_down(
     )
 
     assert result.ok is True
-    assert calls[-1] == "down"
+    assert calls[-2:] == ["down", "verify-absent"]
     cancel_call = next(call for call in calls if call[0] == "cancel")[1]
     assert cancel_call == {
         "sky_bin": "sky",
@@ -858,6 +863,115 @@ def test_managed_cleanup_preserves_clusters_when_exact_cancel_fails(
     assert result.ok is False
     assert result.errors == ["exact managed-job cancellation failed"]
     assert down == []
+
+
+def test_managed_cleanup_preserves_clusters_on_ambiguous_controller_status(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="FAILED_CONTROLLER"),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert result.errors == [
+        "managed job did not reach a verified terminal or absent state; "
+        "preserving its clusters"
+    ]
+    assert calls == ["cancel"]
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected_error"),
+    [
+        ("not-json", "was not exact JSON"),
+        ('{"unexpected": []}', "invalid schema"),
+        ('[{"status": "UP"}]', "invalid row"),
+        ('[{"name": "human-run-name-worker"}]', "still contains"),
+    ],
+)
+def test_post_teardown_inventory_refuses_ambiguous_or_present_state(
+    monkeypatch, stdout, expected_error
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            ["sky", "status"], 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name",
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        timeout=10,
+    )
+
+    assert result.ok is False
+    assert expected_error in result.errors[0]
+    assert result.remote_absence_verified is False
+
+
+def test_post_teardown_inventory_proves_exact_run_absence(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "config.yaml"
+    observed = {}
+
+    def run(cmd, **kwargs):
+        observed.update(cmd=cmd, kwargs=kwargs)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='[{"name": "unrelated-cluster"}]', stderr=""
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name",
+        sky_bin="sky",
+        isolated_config_dir=isolated,
+        config_path=config,
+        timeout=10,
+    )
+
+    assert result.ok is True
+    assert result.remote_absence_verified is True
+    assert observed["cmd"] == [
+        "sky",
+        "status",
+        "--config",
+        str(config),
+        "--refresh",
+        "--output",
+        "json",
+    ]
+    assert observed["kwargs"]["env"]["HOME"] == str(isolated / "home")
 
 
 def test_managed_cleanup_preserves_resources_without_scheduler_id() -> None:
