@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -354,6 +355,18 @@ def _snapshot_perl_compatibility_script() -> str:
     )
 
 
+def _scoped_build_command_script(*, repo_mount: str = BYOF_REPO_MOUNT) -> str:
+    trusted_repo = shlex.quote(repo_mount)
+    return (
+        'if [ -n "${BYOF_BUILD_COMMAND}" ]; then \\\n'
+        "  GIT_CONFIG_COUNT=1 \\\n"
+        "  GIT_CONFIG_KEY_0=safe.directory \\\n"
+        f"  GIT_CONFIG_VALUE_0={trusted_repo} \\\n"
+        '    /bin/sh -lc "${BYOF_BUILD_COMMAND}"; \\\n'
+        "fi"
+    )
+
+
 def _dockerfile_text(*, apt_snapshot: str = "") -> str:
     ca_bootstrap_stage = ""
     apt_run = "RUN set -eu; \\\n"
@@ -471,7 +484,7 @@ def _dockerfile_text(*, apt_snapshot: str = "") -> str:
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
-        'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
+        f"RUN {_scoped_build_command_script()}\n"
         "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
         '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
         f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'

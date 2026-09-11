@@ -25,6 +25,22 @@ def _load_module():
     return module
 
 
+def _run_scoped_build(module, *, cwd: Path, trusted_repo: Path, command: str, env):
+    return subprocess.run(
+        [
+            "/bin/sh",
+            "-eu",
+            "-c",
+            module._scoped_build_command_script(repo_mount=str(trusted_repo)),
+        ],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "BYOF_BUILD_COMMAND": command},
+    )
+
+
 def _accepted_wan_base_args(module) -> list[str]:
     digest = module.wan_accepted_image_manifest()["oci_digest"]
     return [
@@ -1226,6 +1242,65 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+
+
+def test_dockerfile_scopes_root_build_git_trust_to_byof_repo() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    build_run = text.index("RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]")
+    runtime_user = text.index("USER ubuntu", build_run)
+
+    assert text.rindex("USER root", 0, build_run) < build_run < runtime_user
+    assert text.count("GIT_CONFIG_COUNT=1") == 1
+    assert text.count("GIT_CONFIG_KEY_0=safe.directory") == 1
+    assert text.count("GIT_CONFIG_VALUE_0=/opt/byof") == 1
+    assert "safe.directory=*" not in text
+    assert "git config --global" not in text
+    assert "git config --system" not in text
+    assert ".gitconfig" not in text
+    assert "sudo -u" not in text[build_run:runtime_user]
+
+
+def test_scoped_build_git_trust_propagates_and_rejects_other_repo(tmp_path) -> None:
+    module = _load_module()
+    trusted_repo = tmp_path / "trusted"
+    unrelated_repo = tmp_path / "unrelated"
+    private_home = tmp_path / "home"
+    private_home.mkdir()
+    for repo in (trusted_repo, unrelated_repo):
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    environment = {
+        **os.environ,
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+        "HOME": str(private_home),
+        "NPA_TEST_CALLER_UID": str(os.getuid()),
+        "NPA_TEST_TRUSTED_REPO": str(trusted_repo),
+        "NPA_TEST_UNRELATED_REPO": str(unrelated_repo),
+    }
+    trusted = _run_scoped_build(
+        module,
+        cwd=trusted_repo,
+        trusted_repo=trusted_repo,
+        env=environment,
+        command=(
+            'test "$(id -u)" = "${NPA_TEST_CALLER_UID}" && '
+            'test "$(git config --get-all safe.directory)" = '
+            '"${NPA_TEST_TRUSTED_REPO}" && git submodule update --init'
+        ),
+    )
+    unrelated = _run_scoped_build(
+        module,
+        cwd=trusted_repo,
+        trusted_repo=trusted_repo,
+        env=environment,
+        command='git -C "${NPA_TEST_UNRELATED_REPO}" status --short',
+    )
+
+    assert trusted.returncode == 0, trusted.stderr
+    assert unrelated.returncode != 0
+    assert "dubious ownership" in unrelated.stderr
+    assert not (private_home / ".gitconfig").exists()
 
 
 def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
