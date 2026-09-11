@@ -50,6 +50,9 @@ envs:
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
   NPA_ROBOMIMIC_RUNTIME_ROOT: "/opt/npa-runtime/robomimic"
+  # Exact identity only, never legal acceptance. The authorized live harness
+  # fills the manager-approved digest of inventory.json in its run-local copy.
+  NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256: ""
   # The authorized live harness materializes this boolean in a run-local copy
   # only after checking the manager's STRICT-capacity gate. The private
   # reservation identity stays outside rendered task YAML and repo artifacts.

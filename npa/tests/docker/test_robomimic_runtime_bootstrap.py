@@ -23,7 +23,7 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _runtime(tmp_path: Path) -> tuple[Path, Path]:
+def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
     runtime_root = tmp_path / "runtime"
     interpreter = runtime_root / "payload" / "bin" / "python"
     interpreter.parent.mkdir(parents=True)
@@ -43,7 +43,7 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path]:
                 "name": name,
                 "version": version,
                 "filename": f"{name}-{version}.whl",
-                "source": "https://operator.invalid/runtime-wheelhouse/",
+                "source": "https://download.pytorch.org/whl/cu128/",
                 "sha256": hashlib.sha256(f"{name}=={version}".encode()).hexdigest(),
             }
             for name, version in lock["packages"].items()
@@ -71,20 +71,23 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path]:
     (runtime_root / ".ready.json").write_text(
         json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
     )
-    return runtime_root, lock_path
+    return runtime_root, lock_path, _sha(inventory_path)
 
 
 def test_exact_external_runtime_inventory_verifies_without_mutation(
     tmp_path: Path,
 ) -> None:
-    runtime_root, lock_path = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
     before = {
         path.relative_to(runtime_root).as_posix(): _sha(path)
         for path in runtime_root.rglob("*")
         if path.is_file()
     }
     result = verifier.verify_external_runtime(
-        runtime_root=runtime_root, runtime_lock_path=lock_path
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=inventory_sha256,
+        require_read_only_mount=False,
     )
     after = {
         path.relative_to(runtime_root).as_posix(): _sha(path)
@@ -99,7 +102,7 @@ def test_exact_external_runtime_inventory_verifies_without_mutation(
 
 @pytest.mark.parametrize("mutation", ["missing", "corrupt", "wrong-package", "extra"])
 def test_runtime_inventory_fails_closed(tmp_path: Path, mutation: str) -> None:
-    runtime_root, lock_path = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
     if mutation == "missing":
         (runtime_root / ".ready.json").unlink()
     elif mutation == "corrupt":
@@ -117,12 +120,15 @@ def test_runtime_inventory_fails_closed(tmp_path: Path, mutation: str) -> None:
         (runtime_root / "payload" / "extra").write_text("undeclared")
     with pytest.raises(verifier.VerificationError):
         verifier.verify_external_runtime(
-            runtime_root=runtime_root, runtime_lock_path=lock_path
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=False,
         )
 
 
 def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
-    runtime_root, lock_path = _runtime(tmp_path)
+    runtime_root, lock_path, _ = _runtime(tmp_path)
     inventory_path = runtime_root / "inventory.json"
     inventory = json.loads(inventory_path.read_text())
     link = runtime_root / "payload" / "escape"
@@ -135,7 +141,107 @@ def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     with pytest.raises(verifier.VerificationError, match="escapes"):
         verifier.verify_external_runtime(
-            runtime_root=runtime_root, runtime_lock_path=lock_path
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+            require_read_only_mount=False,
+        )
+
+
+def test_manager_inventory_digest_is_an_external_trust_anchor(tmp_path: Path) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    with pytest.raises(verifier.VerificationError, match="manager-approved digest"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256="0" * 64,
+            require_read_only_mount=False,
+        )
+
+
+def test_production_verification_rejects_a_writable_mount(tmp_path: Path) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    with pytest.raises(verifier.VerificationError, match="not mounted read-only"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=True,
+        )
+
+
+def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    destination = tmp_path / "private" / "active-runtime"
+    result = verifier.materialize_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=inventory_sha256,
+        destination=destination,
+        require_source_read_only=False,
+    )
+    source_interpreter = runtime_root / "payload" / "bin" / "python"
+    snapshot_interpreter = destination / "payload" / "bin" / "python"
+    source_interpreter.write_text("changed after snapshot\n", encoding="utf-8")
+
+    assert result["atomic_snapshot_published"] is True
+    assert result["manager_inventory_digest_matched"] is True
+    assert result["snapshot_root"] == str(destination)
+    assert snapshot_interpreter.read_text(encoding="utf-8") == "#!/bin/sh\nexit 0\n"
+    assert destination.stat().st_mode & 0o222 == 0
+    destination.chmod(0o755)
+    for path in destination.rglob("*"):
+        if path.is_dir() and not path.is_symlink():
+            path.chmod(0o755)
+
+
+def test_runtime_snapshot_never_overwrites_an_existing_destination(
+    tmp_path: Path,
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    destination = tmp_path / "existing"
+    destination.mkdir()
+    sentinel = destination / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+    with pytest.raises(verifier.VerificationError, match="already exists"):
+        verifier.materialize_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            destination=destination,
+            require_source_read_only=False,
+        )
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_symlink_cannot_escape_payload_into_uninventoried_runtime_file(
+    tmp_path: Path,
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    outside_payload = runtime_root / "unreviewed-python"
+    outside_payload.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    outside_payload.chmod(0o755)
+    interpreter = runtime_root / "payload" / "bin" / "python"
+    interpreter.unlink()
+    os.symlink("../../unreviewed-python", interpreter)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text())
+    inventory["files"] = []
+    inventory["symlinks"] = [
+        {"path": "payload/bin/python", "target": "../../unreviewed-python"}
+    ]
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text())
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    with pytest.raises(verifier.VerificationError, match="escapes runtime payload"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+            require_read_only_mount=False,
         )
 
 
@@ -152,3 +258,8 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
         assert forbidden not in text
     assert "assert-refusal" in text
     assert "verify" in text
+    assert "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256" in text
+    assert "--expected-inventory-sha256" in text
+    assert '"${verifier}" snapshot' in text
+    assert 'NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"' in text
+    assert 'exec "${snapshot_root}/payload/bin/python"' in text

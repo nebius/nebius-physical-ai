@@ -32,6 +32,8 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
             "opt/robomimic/LICENSE": b"MIT\n",
             "opt/robomimic/robomimic/models/__init__.py": b"\n",
             "opt/robomimic/robomimic/models/obs_nets.py": b"class ObservationNet:\n    pass\n",
+            "opt/robomimic-deps/transformers/models/auto/configuration_auto.py": b"\n",
+            "opt/robomimic-deps/diffusers/models/transformers/transformer_2d.py": b"\n",
         },
     )
     assert scanner.scan(layer, {"history": [{"created_by": "COPY source"}]}) == []
@@ -57,6 +59,9 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
             "opt/robomimic/robomimic/models/checkpoints/pretrained.bin",
             "checkpoint_or_weight",
         ),
+        ("opt/robomimic-deps/model.onnx", "checkpoint_or_weight"),
+        ("opt/robomimic-deps/policy.msgpack", "checkpoint_or_weight"),
+        ("opt/robomimic-deps/weights.npz", "checkpoint_or_weight"),
         ("root/.docker/config.json", "credential_file"),
     ],
 )
