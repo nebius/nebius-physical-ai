@@ -1,13 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "38c9a06d6fe632a8eebd4a5e1ab720c2e455a551aee23e1c10d6f0b323a04541",
+  "workflow_sha256": "84de8aa4b6c14fce5e688c5d7e776cb548b19ea42415624d93dc5a04f040c4bf",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "The redesigned Phase A workflow passed the repository schema validator under Python 3.12.",
       "evidence": [
         "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid",
-        "config.base_profile=prebuilt; config.base_image=tool://robomimic; config.build_command is empty"
+        "config.base_profile=prebuilt; config.controller_image is explicitly neutral-unbuilt; config.base_image=tool://robomimic; config.build_command is empty"
       ]
     },
     "task_fidelity": {

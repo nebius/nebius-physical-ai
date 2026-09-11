@@ -4,6 +4,7 @@ import importlib.util
 import io
 from pathlib import Path
 import tarfile
+import zipfile
 
 import pytest
 
@@ -23,6 +24,14 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
     return path
+
+
+def _zip_bytes(members: dict[str, bytes]) -> bytes:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        for name, payload in members.items():
+            archive.writestr(name, payload)
+    return stream.getvalue()
 
 
 def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
@@ -67,6 +76,33 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
 )
 def test_forbidden_payload_is_detected(tmp_path: Path, path: str, kind: str) -> None:
     layer = _tar(tmp_path / "bad.tar", {path: b"payload"})
+    assert kind in {finding.kind for finding in scanner.scan(layer, {})}
+
+
+@pytest.mark.parametrize(
+    ("wheel_path", "members", "kind"),
+    [
+        (
+            "tmp/torch-2.7.1-py3-none-any.whl",
+            {"torch/__init__.py": b""},
+            "torch_or_triton_distribution",
+        ),
+        (
+            "tmp/renamed-python-payload.whl",
+            {"torchvision/__init__.py": b""},
+            "torch_or_triton_distribution",
+        ),
+        (
+            "tmp/renamed-vendor-payload.whl",
+            {"nvidia/cudnn/lib/libcudnn.so.9": b""},
+            "nvidia_python_distribution",
+        ),
+    ],
+)
+def test_forbidden_distribution_inside_wheel_is_detected(
+    tmp_path: Path, wheel_path: str, members: dict[str, bytes], kind: str
+) -> None:
+    layer = _tar(tmp_path / "wheel-layer.tar", {wheel_path: _zip_bytes(members)})
     assert kind in {finding.kind for finding in scanner.scan(layer, {})}
 
 
