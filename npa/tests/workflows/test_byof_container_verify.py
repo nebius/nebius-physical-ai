@@ -99,15 +99,20 @@ def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     ]
 
 
-def test_robotwin_reservation_evidence_uses_secret_channel(monkeypatch) -> None:
+def test_robotwin_gate_evidence_uses_secret_channel(monkeypatch) -> None:
     module = _load_module()
-    evidence_name = "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256"
-    monkeypatch.setenv(evidence_name, "a" * 64)
+    evidence_names = [
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+    ]
+    for name in evidence_names:
+        monkeypatch.setenv(name, "2" if name.endswith("ARCHIVES") else "a" * 64)
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
 
-    assert module.resolve_secret_envs(None, solution_name="robotwin") == [evidence_name]
+    assert module.resolve_secret_envs(None, solution_name="robotwin") == evidence_names
 
 
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:

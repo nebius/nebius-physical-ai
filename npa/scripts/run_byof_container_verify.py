@@ -53,12 +53,12 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-#: Operator-held runtime state that a vendor gate reads inside the pod: vendor
-#: terms acceptances and the operator's own gated-repository token. These are
-#: things a person holds or did, not workflow configuration, so they travel
-#: through SkyPilot's redacted secret channel and never appear in a rendered
-#: YAML. Unset names are dropped, so a run that holds nothing forwards nothing
-#: and the container's own gate refuses.
+#: Operator-held runtime state and pre-launch evidence that a solution gate reads
+#: inside the pod: vendor terms acceptances, a gated-repository token, or hashes
+#: of owner-only authorization/scan records. These are not workflow
+#: configuration, so they travel through SkyPilot's redacted secret channel and
+#: never appear in rendered YAML. Unset names are dropped, so a run that holds
+#: nothing forwards nothing and the container's own gate refuses.
 #:
 #: Keyed by solution, because these are per-vendor answers and a single shared
 #: tuple quietly widens every other image's environment: a variable added for
@@ -68,7 +68,11 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
     "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
     # Hash of the owner-only manager authorization record. The RoboTwin smoke
     # records it without exposing private cluster, reservation, or registry IDs.
-    "robotwin": ("NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",),
+    "robotwin": (
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+    ),
     "ltx2.5": (
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the
@@ -90,15 +94,15 @@ def resolve_secret_envs(
 
     An explicit ``--secret-env`` list replaces the default storage names. The
     operator-runtime gates *this solution* reads are appended in either case, so
-    acceptance cannot fall back to rendered YAML — and a solution never receives
-    another vendor's answers. Names with no value are dropped, since SkyPilot
-    rejects a secret it cannot resolve.
+    runtime decisions/evidence cannot fall back to rendered YAML — and a
+    solution never receives another solution's values. Names with no value are
+    dropped, since SkyPilot rejects a secret it cannot resolve.
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
-    # Operator acceptance is runtime state, not workflow configuration. Always
-    # carry an explicitly set gate through SkyPilot's redacted secret channel,
-    # even when a caller supplies an otherwise explicit secret allowlist.
+    # Operator decisions/evidence are runtime state, not workflow configuration.
+    # Always carry an explicitly set gate through SkyPilot's redacted secret
+    # channel, even when a caller supplies an explicit secret allowlist.
     names.extend(OPERATOR_RUNTIME_ENVS_BY_SOLUTION.get(solution_name.strip(), ()))
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
 
