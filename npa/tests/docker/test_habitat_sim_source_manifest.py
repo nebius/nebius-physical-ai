@@ -140,6 +140,21 @@ def test_excluded_noncommercial_and_gui_gitlinks_are_never_fetched() -> None:
 
 def test_final_source_projection_preserves_the_manifest_directory_layout() -> None:
     dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
-    assert "/opt/habitat-sim/src/esp /opt/source-projection/src/" in dockerfile
+    assert "/opt/habitat-sim/src/esp /opt/habitat-sim/src/utils" in dockerfile
+    assert "/opt/habitat-sim/src/deps /opt/source-projection/src/" in dockerfile
     assert "/opt/habitat-sim/src_python /opt/source-projection/" in dockerfile
     assert "/opt/habitat-sim/src/esp /opt/habitat-sim/src_python" not in dockerfile
+    assert set(MANIFEST["source"]["final_projection"]) == {
+        "LICENSE",
+        "MANIFEST.in",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+        "data/default.physics_config.json",
+        "src/CMakeLists.txt",
+        "src/cmake",
+        "src/deps",
+        "src/esp",
+        "src/utils",
+        "src_python",
+    }

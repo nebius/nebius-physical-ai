@@ -22,8 +22,10 @@
       "setup.py",
       "src/CMakeLists.txt",
       "src/cmake",
+      "src/deps",
       "src/esp",
-      "src_python/habitat_sim",
+      "src/utils",
+      "src_python",
       "data/default.physics_config.json"
     ]
   },
