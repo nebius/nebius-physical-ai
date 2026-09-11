@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -62,6 +63,23 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "run_id": "robotwin-private-run-canary",
     }
     payload.update(updates)
+    return payload
+
+
+def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
+    payload = _robotwin_context(**updates)
+    for field, filename in (
+        ("kubeconfig", "kubeconfig.yaml"),
+        ("skypilot_config_path", "skypilot.yaml"),
+    ):
+        path = tmp_path / filename
+        path.write_text("{}\n", encoding="utf-8")
+        path.chmod(0o600)
+        payload[field] = str(path)
+    context = tmp_path / "runtime-context.json"
+    context.write_text(json.dumps(payload), encoding="utf-8")
+    context.chmod(0o600)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context))
     return payload
 
 
@@ -133,13 +151,16 @@ def _robotwin_args(module, *extra: str) -> list[str]:
     ],
 )
 def test_robotwin_authorization_refuses_before_any_side_effect(
-    monkeypatch, capsys, context: str | None, error: str
+    monkeypatch, capsys, tmp_path, context: str | None, error: str
 ) -> None:
     module = _load_module()
     if context is None:
         monkeypatch.delenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, raising=False)
     else:
-        monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, context)
+        context_path = tmp_path / "context.json"
+        context_path.write_text(context, encoding="utf-8")
+        context_path.chmod(0o600)
+        monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context_path))
     monkeypatch.setattr(
         module,
         "validate_repository_url",
@@ -161,6 +182,90 @@ def test_robotwin_authorization_refuses_before_any_side_effect(
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "failed"
     assert error in output["error"]
+
+
+def test_robotwin_inline_context_refuses_before_any_side_effect(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setenv(
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    assert "must name an owner-only file" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("updates", "error"),
+    [
+        ({"project": {"unexpected": "object"}}, "project must be a string"),
+        (
+            {
+                "reservation": {
+                    "policy": "STRICT",
+                    "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+                    "count": True,
+                }
+            },
+            "exactly one reserved GPU",
+        ),
+    ],
+)
+def test_robotwin_malformed_context_types_refuse_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, updates: dict[str, object], error: str
+) -> None:
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path, **updates)
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    assert error in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("field", ["kubeconfig", "skypilot_config_path"])
+def test_robotwin_missing_runtime_config_refuses_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, field: str
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload[field] = str(tmp_path / "missing-private-config")
+    context_path = Path(os.environ[module.ROBOTWIN_RUNTIME_CONTEXT_ENV])
+    context_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    assert f"{field} is not readable" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("field", ["kubeconfig", "skypilot_config_path"])
+def test_robotwin_runtime_config_must_be_owner_only_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, field: str
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    Path(str(payload[field])).chmod(0o644)
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    assert f"{field} must be owner-only" in capsys.readouterr().out
 
 
 def test_robotwin_context_file_must_be_owner_only(
@@ -191,11 +296,10 @@ def test_robotwin_context_file_must_be_owner_only(
 
 
 def test_robotwin_profile_failure_precedes_build_and_redacts_context(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    payload = _robotwin_context()
-    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(payload))
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
     )
@@ -234,11 +338,10 @@ def test_robotwin_profile_failure_precedes_build_and_redacts_context(
 
 
 def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    payload = _robotwin_context()
-    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(payload))
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
     )
@@ -319,11 +422,11 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         assert str(payload[field]) not in output
 
 
-def test_robotwin_image_scan_failure_precedes_live_runner(monkeypatch, capsys) -> None:
+def test_robotwin_image_scan_failure_precedes_live_runner(
+    monkeypatch, capsys, tmp_path
+) -> None:
     module = _load_module()
-    monkeypatch.setenv(
-        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
-    )
+    _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(module, "validate_repository_url", lambda *_args, **_kwargs: None)
 
     def fake_run(cmd, **_kwargs):
@@ -348,12 +451,10 @@ def test_robotwin_image_scan_failure_precedes_live_runner(monkeypatch, capsys) -
 
 
 def test_robotwin_rejects_unscannable_build_modes_before_profile(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    monkeypatch.setenv(
-        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
-    )
+    _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
         module,
         "_run",
@@ -368,12 +469,10 @@ def test_robotwin_rejects_unscannable_build_modes_before_profile(
 
 
 def test_robotwin_rejects_modified_public_smoke_contract_before_profile(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    monkeypatch.setenv(
-        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
-    )
+    _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
         module,
         "_run",

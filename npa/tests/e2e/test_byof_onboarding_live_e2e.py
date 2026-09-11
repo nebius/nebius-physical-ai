@@ -718,7 +718,6 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
         env=env,
     )
     combined = proc.stdout + "\n" + proc.stderr
-    assert proc.returncode == 0, combined
     private_values = tuple(
         str(runtime[key])
         for key in (
@@ -733,8 +732,18 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
             "run_id",
         )
     )
-    if any(value and value in combined for value in private_values):
-        raise AssertionError("public BYOF output exposed manager runtime context")
+    try:
+        assert_no_credential_leakage(
+            combined,
+            extra_forbidden=(*live_credential_markers(), *private_values),
+        )
+    except AssertionError:
+        raise AssertionError(
+            "public BYOF output exposed private runtime or credential material"
+        ) from None
+    assert proc.returncode == 0, (
+        "RoboTwin BYOF command failed; inspect the owner-only command evidence"
+    )
     summary = _parse_last_json_blob(combined)
     assert summary.get("status") == "ok", summary
     build = summary.get("build", {})
