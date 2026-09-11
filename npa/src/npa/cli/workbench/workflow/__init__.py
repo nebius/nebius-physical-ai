@@ -57,6 +57,34 @@ class ControllerBackendOption(str, Enum):
     nebius = "nebius"
 
 
+def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
+    """Recognize specs that may execute only through their owned live harness."""
+
+    config_repo = (
+        str(spec.config.get("repo_url") or "")
+        .rstrip("/")
+        .removesuffix(".git")
+        .rsplit("/", 1)[-1]
+        .lower()
+    )
+    return (
+        spec.name == "byof-robomimic"
+        or str(spec.config.get("solution_name") or "").strip().lower()
+        == "robomimic"
+        or config_repo == "robomimic"
+        or str(spec.config.get("execution_policy") or "").strip()
+        == "dedicated-live-gate-only"
+    )
+
+
+def _refuse_dedicated_live_gate_execution(spec) -> None:  # noqa: ANN001
+    _fail(
+        f"workflow {spec.name!r} is executable only through its dedicated live "
+        "gate, which verifies manager-issued selectors and run-owned cleanup "
+        "before any build, runtime pull, or GPU submission; use a planning mode here"
+    )
+
+
 def _bounded_log_text(
     text: str, max_output_chars: int
 ) -> tuple[str, dict[str, object]]:
@@ -869,30 +897,8 @@ def submit_cmd(
         except Exception as exc:
             _fail(str(exc))
             return
-        config_repo = (
-            str(merged_npa_spec.config.get("repo_url") or "")
-            .rstrip("/")
-            .removesuffix(".git")
-            .rsplit("/", 1)[-1]
-            .lower()
-        )
-        is_robomimic_gate = (
-            merged_npa_spec.name == "byof-robomimic"
-            or str(merged_npa_spec.config.get("solution_name") or "").strip().lower()
-            == "robomimic"
-            or config_repo == "robomimic"
-        )
-        if not plan_only and (
-            is_robomimic_gate
-            or str(merged_npa_spec.config.get("execution_policy") or "").strip()
-            == "dedicated-live-gate-only"
-        ):
-            _fail(
-                f"workflow {merged_npa_spec.name!r} is executable only through its "
-                "dedicated live gate, which verifies manager-issued selectors and "
-                "run-owned cleanup before any build, runtime pull, or GPU submission; "
-                "use --plan-only here"
-            )
+        if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
+            _refuse_dedicated_live_gate_execution(merged_npa_spec)
             return
         from npa.orchestration.npa_workflow.submit import spec_requires_runtime
 
@@ -7221,6 +7227,9 @@ def run_spec_cmd(
     resolved_assume = assume_decision or str(
         spec.config.get("plan_assume_decision") or ""
     )
+    if execute and _is_dedicated_live_gate_spec(spec):
+        _refuse_dedicated_live_gate_execution(spec)
+        return
     if execute:
         _enforce_workflow_access(
             spec,

@@ -349,7 +349,15 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
 
 
 @pytest.mark.parametrize(
-    ("registry", "manager_registry", "visibility", "image", "output_root", "expected_error"),
+    (
+        "registry",
+        "manager_registry",
+        "visibility",
+        "image",
+        "output_root",
+        "extra_args",
+        "expected_error",
+    ),
     (
         (
             "private.invalid/robomimic",
@@ -357,6 +365,7 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
             "private",
             "quay.io/example/robomimic:latest",
             "s3://manager-bucket/oss-solutions/robomimic",
+            (),
             "image does not target the manager-issued private registry",
         ),
         (
@@ -365,6 +374,7 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
             "private",
             "",
             "s3://manager-bucket/oss-solutions/robomimic",
+            (),
             "requires an operator-private registry",
         ),
         (
@@ -373,6 +383,7 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
             "private",
             "",
             "s3://other-bucket/oss-solutions/robomimic",
+            (),
             "manager-issued bucket and solution prefix",
         ),
         (
@@ -381,6 +392,7 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
             "private",
             "",
             "s3://manager-bucket/oss-solutions/robomimic",
+            (),
             "registry does not match the manager-issued registry",
         ),
         (
@@ -389,7 +401,17 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
             "public",
             "",
             "s3://manager-bucket/oss-solutions/robomimic",
+            (),
             "registry visibility must be private",
+        ),
+        (
+            "private.invalid/robomimic",
+            "private.invalid/robomimic",
+            "private",
+            "",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            ("--base-profile", "prebuilt", "--base-image", "quay.io/example/runtime"),
+            "prebuilt mode is forbidden",
         ),
     ),
 )
@@ -400,6 +422,7 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
     visibility: str,
     image: str,
     output_root: str,
+    extra_args: tuple[str, ...],
     expected_error: str,
 ) -> None:
     kubeconfig = tmp_path / "kubeconfig"
@@ -435,6 +458,7 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
         "--skip-build",
         "--skip-push",
         "--skip-run",
+        *extra_args,
     ]
     if image:
         command.extend(["--image", image])
@@ -475,6 +499,29 @@ def test_robomimic_workflow_direct_submit_refuses_before_preflight() -> None:
         assert result.exit_code != 0
         assert "dedicated live gate" in result.output
         assert "before any build, runtime pull, or GPU submission" in result.output
+
+
+def test_robomimic_run_spec_execute_refuses_all_mutable_overrides() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "run-spec",
+            str(WORKFLOW),
+            "--execute",
+            "--var",
+            "execution_policy=direct",
+            "--var",
+            "solution_name=renamed",
+            "--var",
+            "repo_url=https://github.com/example/unrelated.git",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "dedicated live gate" in result.output
+    assert "before any build, runtime pull, or GPU submission" in result.output
 
 
 def test_robomimic_workflow_validates_and_plans_real_byof_stage() -> None:

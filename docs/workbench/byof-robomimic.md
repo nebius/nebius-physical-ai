@@ -92,6 +92,9 @@ registry and binds `--output-root` to
 rejected even when written with a standard port. The ordinary workflow-submit
 path identifies this checked-in candidate by its immutable workflow name, so
 overriding mutable config values cannot bypass the plan-only boundary.
+The local `run-spec --execute` surface enforces the same boundary, and the
+robomimic runner forbids `prebuilt` mode so profile resolution cannot replace
+the checked image after target validation.
 
 After authorization, qualification must scan the exact pushed image digest,
 including every layer and image history entry. It must prove the absence of the

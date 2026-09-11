@@ -715,7 +715,7 @@ def _invoke_robomimic_gate(
                 cwd=str(REPO_ROOT),
                 env=env,
             )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+            assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
     summary_image = str(summary.get("image", ""))
