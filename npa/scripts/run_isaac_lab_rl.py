@@ -146,6 +146,9 @@ def render_workflow(
         if multiple and variant:
             prefix += f"{variant}/"
         envs["S3_OUTPUT_PREFIX"] = prefix
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [{"uri": prefix, "kind": "directory"}]
+        )
         if image:
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):

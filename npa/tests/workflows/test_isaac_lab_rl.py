@@ -177,6 +177,12 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
     rendered_task = captured["docs"][1]
     assert rendered_task["envs"]["ISAAC_LAB_ITERATIONS"] == "3"
     assert rendered_task["envs"]["S3_OUTPUT_PREFIX"] == "s3://bucket/isaac-lab-rl/isaac-test-run/"
+    assert json.loads(rendered_task["envs"]["NPA_EXECUTION_OUTPUTS"]) == [
+        {
+            "uri": "s3://bucket/isaac-lab-rl/isaac-test-run/",
+            "kind": "directory",
+        }
+    ]
     assert rendered_task["resources"]["image_id"] == "docker:registry.example/npa-isaac-lab:test"
     assert rendered_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     assert rendered_task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
