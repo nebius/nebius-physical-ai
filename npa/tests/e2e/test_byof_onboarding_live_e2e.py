@@ -598,7 +598,7 @@ def test_libero_b200_qualification_report() -> None:
     assert language_model["delivery"] == "runtime_fetch"
     assert language_model["source_path"] == "libero/lifelong/utils.py"
     assert language_model["source_sha256"] == (
-        "d1df48c6984a2938d60eebf70ba1c61cd2ea512e859fa0ed11abfc550beee3f1c"
+        "d1df48c6984a2938d60eebf70ba1c61cd2ea512e859fa0ed11abfc550beee3f1"
     )
     assert language_model["embedding_method"] == "upstream_LIBERO_bert_pooler_output"
     assert language_model["embedding_shape"] == [768]
