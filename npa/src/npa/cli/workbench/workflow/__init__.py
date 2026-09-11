@@ -2409,6 +2409,8 @@ def submit_cmd(
                     transaction_recorder=_record_transaction,
                     project=project,
                     execution_target=execution_target,
+                    execution_preflight_report=execution_preflight_report,
+                    robotwin_submit_context=robotwin_submit_context,
                 )
 
             if current_operation() is not None:

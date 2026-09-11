@@ -49,6 +49,10 @@ setup: |
   python3 -c 'import boto3, cv2, h5py, sapien, torch; import curobo'
 run: |
   set -euo pipefail
+  export NPA_BYOF_RUN_ID="${NPA_INTERNAL_BYOF_ROBOTWIN_RUN_ID:?}"
+  export S3_OUTPUT_PREFIX="${NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX:?}"
+  export NPA_S3_BUCKET="${NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET:?}"
+  export BYOF_IMAGE="${NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE:?}"
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"

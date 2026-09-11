@@ -103,6 +103,13 @@ all four independent use decisions, portable Kubernetes/SkyPilot configuration
 bytes, the STRICT one-RTX reservation, and the derived summary destination
 before credential resolution, image work, source staging, registry/storage
 access, scheduling, or GPU work. `--skip-preflight` cannot bypass this gate.
+The portable kubeconfig is deliberately minimal: it contains exactly one
+selected context, cluster, and inline-token or inline-certificate user; its
+`current-context` must match the authorization. File-backed credentials,
+credential plugins, auth providers, proxy paths, and includes are refused. The
+SkyPilot config allows only the same singleton Kubernetes context and an
+optional image-pull-secret list; provider sections, controller images,
+accelerators, and other topology overrides are refused before scheduling.
 
 After validation, the local path is not forwarded. The exact validated bytes
 and their digests travel as the value of one internal SkyPilot secret; only its
@@ -115,6 +122,19 @@ sanitized placeholders, while the execution preflight and owner-only receipt
 bind their one summary output to
 `<authorized-output-root>/<authorized-inner-run-id>/npa_byof_summary.json`.
 Neither that destination nor any private coordinate is printed or rendered.
+The delegated launcher uses a neutral scheduler identity and passes its exact
+image, run ID, bucket, and output prefix as secret values referenced only by
+fixed variable names; hostile ambient SkyPilot, direct-launch, endpoint, and
+failure-acceptance controls are not inherited.
+After the authorized ownership/storage preflight, that CPU worker uses NPA's
+existing pinned bootstrap to create a worker-local SkyPilot 0.12.2 environment;
+it does not reuse or forward an owner-host executable path, NPA project config,
+or cluster-state file. The client has already verified project, cluster, and
+storage ownership before scheduling the CPU launcher. The inner bridge then
+rechecks the exact transported authorization, credential pair, derived output,
+portable kube context, and sole STRICT RTX request against live Kubernetes
+inventory. The temporary runtime and confidential submit files are owner-only
+and removed after the inner job reaches a terminal state.
 
 The selected Kubernetes worker group must already be bound to the reservation;
 the repository deliberately contains no tenant capacity-block or node-group

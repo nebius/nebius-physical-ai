@@ -222,6 +222,13 @@ def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> N
         "metadata.namespace",
     }
     assert isinstance(envs, dict)
+    for secret_name in (
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUN_ID",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE",
+    ):
+        assert f'${{{secret_name}:?}}' in run
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     assert envs["VK_ICD_FILENAMES"] == "/usr/share/vulkan/icd.d/nvidia_icd.json"
     assert 'vulkaninfo --summary' in run

@@ -125,10 +125,14 @@ def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
 
+    from npa.execution_preflight import skypilot_output_destinations
+
     assert task["resources"]["cloud"] == "kubernetes"
     assert "accelerators" not in task["resources"]
     assert task["resources"].get("image_id") != str(spec.config["base_image"])
-    assert "NPA_EXECUTION_OUTPUTS" not in task["envs"]
+    assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
+    assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
+    assert skypilot_output_destinations([task]) == {}
     assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in task["run"]
     assert "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1" not in rendered
     assert "private-bucket-canary" not in rendered

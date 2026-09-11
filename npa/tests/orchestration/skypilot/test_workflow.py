@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -29,8 +30,6 @@ from npa.orchestration.skypilot.launch_transaction import (
 
 
 _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
-
-
 def _fake_sky(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -38,6 +37,142 @@ def _fake_sky(tmp_path: Path) -> Path:
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
     sky.chmod(0o755)
     return sky
+
+
+def _robotwin_bridge_fixture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, object, object, dict[str, object], dict[str, str]]:
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        RobotwinSubmitContext,
+        TRANSPORT_CONTEXT_ENV,
+        encode_transport,
+        validate_context_bytes,
+    )
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+    from npa.execution_preflight import ExecutionTarget
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
+
+    context_name = "robotwin-private-context-canary"
+    output_root = "s3://robotwin-private-bucket-canary/output"
+    run_id = "robotwin-private-run-canary"
+    payload = {
+        "solution": "robotwin",
+        "ownership_provenance": "manager-issued",
+        "reservation": {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        },
+        "license_acceptance": {
+            "nvidia_cuda_eula": True,
+            "nvidia_cudnn_sla": True,
+            "curobo_noncommercial_research_or_evaluation": True,
+            "robotwin2_aggregate_asset_and_output_terms": True,
+        },
+        "project": "robotwin-private-project-canary",
+        "nebius_profile": "robotwin-private-profile-canary",
+        "kubeconfig": "/owner-only/robotwin-kubeconfig-canary",
+        "kubernetes_context": context_name,
+        "skypilot_config_path": "/owner-only/robotwin-skypilot-canary",
+        "registry": "registry.example/robotwin-private-canary",
+        "bucket": "robotwin-private-bucket-canary",
+        "output_root": output_root,
+        "run_id": run_id,
+    }
+    raw = json.dumps(payload, sort_keys=True).encode()
+    kubeconfig = yaml.safe_dump(
+        {
+            "apiVersion": "v1",
+            "kind": "Config",
+            "current-context": context_name,
+            "clusters": [
+                {
+                    "name": "robotwin-cluster",
+                    "cluster": {
+                        "server": "https://cluster.example.invalid",
+                        "certificate-authority-data": "Y2E=",
+                    },
+                }
+            ],
+            "contexts": [
+                {
+                    "name": context_name,
+                    "context": {
+                        "cluster": "robotwin-cluster",
+                        "user": "robotwin-user",
+                    },
+                }
+            ],
+            "users": [
+                {"name": "robotwin-user", "user": {"token": "portable-test-token"}}
+            ],
+        },
+        sort_keys=False,
+    ).encode()
+    skypilot = (
+        f"kubernetes:\n  allowed_contexts: [{context_name}]\n"
+    ).encode()
+    authorization = validate_context_bytes(
+        raw,
+        config_bytes={
+            "kubeconfig": kubeconfig,
+            "skypilot_config_path": skypilot,
+        },
+    )
+    transport = encode_transport(authorization)
+    submit_context = RobotwinSubmitContext(
+        authorization.context_sha256, authorization, transport
+    )
+    summary = f"{output_root}/{run_id}/npa_byof_summary.json"
+    target = ExecutionTarget(
+        project=payload["project"],
+        project_id="robotwin-private-project-id-canary",
+        tenant_id="robotwin-private-tenant-id-canary",
+        region="eu-north1",
+        context=context_name,
+        output_uris=(summary,),
+        output_kinds={summary: "file"},
+        credentials=SubmitCredentialContext(
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            access_key_id="inner-access-canary",
+            secret_access_key="inner-secret-canary",
+        ),
+    )
+    report: dict[str, object] = {
+        "schema_version": "npa.execution-preflight.v1",
+        "presence": "pass",
+        "access": "pass",
+        "execution_readiness": "pass",
+        "destination_count": 1,
+        "checks": {
+            "scope": "pass",
+            "storage_owner": "pass",
+            "cluster_owner": "pass",
+            "storage_write_read": "pass",
+        },
+    }
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/public")
+    spec_path = Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
+    spec = load_spec(spec_path)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="robotwin-public-launcher"),
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    yaml_path = tmp_path / "robotwin-rendered.yaml"
+    yaml_path.write_text(rendered, encoding="utf-8")
+    extra_env = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        TRANSPORT_CONTEXT_ENV: transport,
+    }
+    return yaml_path, submit_context, target, report, extra_env
 
 
 def _is_status_cmd(cmd: list[str]) -> bool:
@@ -1257,6 +1392,431 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     ]
 
 
+def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    private_values = (
+        *authorization.redactions,
+        submit_context.transport_value,
+        authorization.summary_uri,
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    records: list[dict[str, object]] = []
+    captured_files: dict[str, object] = {}
+
+    def preflight(documents, **kwargs):
+        assert kwargs["infra"] == f"k8s/{authorization.kubernetes_context}"
+        assert kwargs["target"] is target
+        assert kwargs["global_config"]["kubernetes"]["allowed_contexts"] == [
+            authorization.kubernetes_context
+        ]
+        assert TRANSPORT_CONTEXT_ENV not in kwargs["extra_env"]
+        documents[1]["resources"]["region"] = authorization.kubernetes_context
+        return target, report, {}
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        if cmd[1:3] == ["jobs", "launch"]:
+            prepared_path = Path(cmd[-1])
+            kubeconfig_path = Path(kwargs["env"]["KUBECONFIG"])
+            captured_files.update(
+                prepared=prepared_path.read_text(encoding="utf-8"),
+                submission_dir=prepared_path.parent,
+                kubeconfig=kubeconfig_path.read_bytes(),
+                kubeconfig_mode=kubeconfig_path.stat().st_mode & 0o777,
+            )
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "Job submitted, ID: 42\n"
+                f"context={authorization.kubernetes_context}\n"
+                f"output={authorization.summary_uri}\n"
+            ),
+            stderr="",
+        )
+
+    legacy_transaction = workflow_module.run_launch_transaction
+
+    def recording_transaction(**kwargs):
+        transaction = legacy_transaction(**kwargs)
+        kwargs["record"](transaction.to_dict())
+        return transaction
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", recording_transaction
+    )
+    result = submit_workflow(
+        yaml_path,
+        "robotwin-public-launcher",
+        isolated_config_dir=tmp_path / "sky-state",
+        config_path=Path(authorization.skypilot_config_source),
+        sky_bin=_fake_sky(tmp_path),
+        infra=f"k8s/{authorization.kubernetes_context}",
+        secret_envs=(TRANSPORT_CONTEXT_ENV,),
+        extra_env=extra_env,
+        project=authorization.project,
+        execution_target=target,
+        execution_preflight_report=report,
+        robotwin_submit_context=submit_context,
+        transaction_recorder=records.append,
+    )
+
+    launch_cmd, launch_kwargs = next(
+        item for item in calls if item[0][1:3] == ["jobs", "launch"]
+    )
+    control_calls = [item for item in calls if item[0] != launch_cmd]
+    serialized_argv = json.dumps(launch_cmd)
+    assert "--infra" not in launch_cmd
+    assert ["--secret", TRANSPORT_CONTEXT_ENV] == launch_cmd[-3:-1]
+    assert all(private not in serialized_argv for private in private_values)
+    assert launch_kwargs["stdout"] == subprocess.PIPE
+    assert launch_kwargs["stderr"] == subprocess.PIPE
+    assert all(
+        TRANSPORT_CONTEXT_ENV not in kwargs["env"] for _cmd, kwargs in control_calls
+    )
+    assert all(
+        private not in kwargs["env"].values()
+        for _cmd, kwargs in control_calls
+        for private in private_values
+    )
+    prepared = str(captured_files["prepared"])
+    assert all(private not in prepared for private in private_values)
+    assert "region:" not in prepared
+    assert not Path(captured_files["submission_dir"]).exists()
+    assert result.log_paths == {}
+    assert result.submitted_yaml_path == ""
+    assert authorization.kubernetes_context not in result.stdout
+    assert authorization.summary_uri not in result.stdout
+    assert "<redacted>" in result.stdout
+    assert result.launch_transaction["controller"]["selected_context"] == ""
+    assert all(
+        private not in json.dumps(result.launch_transaction, sort_keys=True)
+        for private in private_values
+    )
+    assert len(records) == 1
+    assert all(
+        private not in json.dumps(records, sort_keys=True) for private in private_values
+    )
+    assert captured_files["kubeconfig"] == authorization.kubeconfig_bytes
+    assert captured_files["kubeconfig_mode"] == 0o600
+
+
+def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CHILD_BUCKET_ENV,
+        CHILD_CONFIG_PATH_ENV,
+        CHILD_IMAGE_ENV,
+        CHILD_OUTPUT_PREFIX_ENV,
+        CHILD_OUTPUT_ROOT_ENV,
+        CHILD_RUN_ID_ENV,
+        prepare_inner_submit,
+    )
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _outer, outer_context, _target, _report, _extra = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = outer_context.authorization
+    endpoint = "https://storage.eu-north1.nebius.cloud"
+    image = authorization.registry + "/npa-byof@sha256:" + "a" * 64
+    environment = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        "KUBECONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_PROJECT": authorization.project,
+        "NPA_NEBIUS_PROFILE": authorization.profile,
+        "NEBIUS_PROFILE": authorization.profile,
+        "AWS_ACCESS_KEY_ID": "inner-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "inner-secret-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+        CHILD_BUCKET_ENV: authorization.bucket,
+        CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_source,
+        CHILD_IMAGE_ENV: image,
+        CHILD_OUTPUT_PREFIX_ENV: (
+            f"{authorization.output_root}/{authorization.run_id}/"
+        ),
+        CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+        CHILD_RUN_ID_ENV: authorization.run_id,
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
+            authorization.context_sha256
+        ),
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
+    }
+    inner_context = prepare_inner_submit(authorization, environment)
+    script = Path(__file__).resolve().parents[3] / "scripts/run_byof_container_verify.py"
+    spec = importlib.util.spec_from_file_location("robotwin_inner_render", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    public_workflow = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[4]
+            / "workflows/testing/byof-robotwin.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    documents = module.render_workflow(
+        Path(__file__).resolve().parents[3]
+        / "src/npa/workflows/byof/profiles/byof-solution-smoke-robotwin-rtxpro-gpu.yaml",
+        run_id=authorization.run_id,
+        output_root=authorization.output_root,
+        image=image,
+        smoke_command=public_workflow["config"]["smoke_command"],
+        solution_name="robotwin",
+        capability_name="beat_block_hammer_successful_seed_replay_collection",
+        smoke_artifact_name="robotwin-smoke.json",
+        runtime_env=environment,
+    )
+    inner_yaml = tmp_path / "robotwin-inner.yaml"
+    inner_yaml.write_text(
+        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
+    )
+    private_values = (
+        *authorization.redactions,
+        authorization.summary_uri,
+        image,
+        environment["AWS_ACCESS_KEY_ID"],
+        environment["AWS_SECRET_ACCESS_KEY"],
+        endpoint,
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    records: list[dict[str, object]] = []
+
+    gpu_checks: list[str] = []
+
+    def verify_gpu(_inventory, *, accelerator, **_kwargs):
+        gpu_checks.append(accelerator)
+
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda *, context, runner: (
+            {"context": context, "runner": runner}
+            if context == ""
+            else pytest.fail("private context reached kubectl argv")
+        ),
+    )
+    monkeypatch.setattr(
+        k8s_gpu_catalog, "preflight_kubernetes_gpu_gang", verify_gpu
+    )
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "Job submitted, ID: 43\n"
+                f"context={authorization.kubernetes_context}\n"
+                f"output={authorization.summary_uri}\n"
+            ),
+            stderr="",
+        )
+
+    legacy_transaction = workflow_module.run_launch_transaction
+
+    def recording_transaction(**kwargs):
+        transaction = legacy_transaction(**kwargs)
+        kwargs["record"](transaction.to_dict())
+        return transaction
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: pytest.fail(
+            "inner bridge attempted owner-host execution-target resolution"
+        ),
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", recording_transaction
+    )
+    inner_dir = tmp_path / "inner"
+    inner_dir.mkdir()
+    result = submit_workflow(
+        inner_yaml,
+        "robotwin-inner-sanitized",
+        isolated_config_dir=tmp_path / "inner-sky-state",
+        config_path=Path(authorization.skypilot_config_source),
+        sky_bin=_fake_sky(inner_dir),
+        infra=f"k8s/{authorization.kubernetes_context}",
+        secret_envs=module.resolve_secret_envs(
+            None, solution_name="robotwin", environment=environment
+        ),
+        extra_env=module._robotwin_submit_environment(inner_context, environment),
+        project=authorization.project,
+        execution_target=None,
+        execution_preflight_report=None,
+        robotwin_submit_context=inner_context,
+        transaction_recorder=records.append,
+    )
+
+    launch_cmd, launch_kwargs = next(
+        item for item in calls if item[0][1:3] == ["jobs", "launch"]
+    )
+    control_calls = [item for item in calls if item[0] != launch_cmd]
+    assert "--infra" not in launch_cmd
+    assert all(private not in json.dumps(launch_cmd) for private in private_values)
+    assert all(
+        value not in kwargs["env"].values()
+        for _cmd, kwargs in control_calls
+        for value in private_values
+    )
+    assert launch_kwargs["env"][CHILD_IMAGE_ENV] == image
+    assert launch_kwargs["env"][CHILD_OUTPUT_PREFIX_ENV] == environment[
+        CHILD_OUTPUT_PREFIX_ENV
+    ]
+    assert launch_kwargs["env"]["AWS_ENDPOINT_URL"] == endpoint
+    prepared = Path(result.submitted_yaml_path).read_text(encoding="utf-8")
+    assert all(private not in prepared for private in private_values)
+    assert "region:" not in prepared
+    assert "NPA_EXECUTION_OUTPUTS" not in prepared
+    prepared_document = list(yaml.safe_load_all(prepared))[1]
+    assert prepared_document["envs"]["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
+    assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == (
+        "${NEBIUS_S3_ENDPOINT}"
+    )
+    assert "AWS_ENDPOINT_URL_S3" not in prepared_document["envs"]
+    assert "NPA_STORAGE_ENDPOINT" not in prepared_document["envs"]
+    assert "S3_ENDPOINT_URL" not in prepared_document["envs"]
+    assert gpu_checks == ["RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"]
+    assert result.launch_transaction["controller"]["selected_context"] == ""
+    assert all(
+        private not in json.dumps(result.launch_transaction, sort_keys=True)
+        for private in private_values
+    )
+    assert len(records) == 1
+    assert all(
+        private not in json.dumps(records, sort_keys=True) for private in private_values
+    )
+
+def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    yaml_path, submit_context, target, _report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("bridge mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError, match="submit-target-not-preverified"
+    ) as exc_info:
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report={},
+            robotwin_submit_context=submit_context,
+        )
+    assert exc_info.value.__cause__ is None
+
+
+def test_confidential_bridge_cannot_select_a_generic_workflow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    _path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    generic = tmp_path / "generic.yaml"
+    generic.write_text(
+        "name: generic\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("generic workflow reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            generic,
+            "generic-run",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+def test_confidential_bridge_rejects_modified_robotwin_command_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    documents[1]["run"] += "\nprintf 'unapproved command'\n"
+    path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("modified contract reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")
@@ -1723,6 +2283,71 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
         "-c",
         "pwd -P >/dev/null && test -d /proc/1/cwd",
     ]
+
+
+def test_confidential_readiness_uses_kubeconfig_current_context() -> None:
+    private_context = "robotwin-private-context-canary"
+    calls: list[list[str]] = []
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=f"context={private_context}"
+        )
+
+    observation = workflow_module._CurrentKubeconfigApiProbe(
+        env={"KUBECONFIG": "/owner-only/materialized"},
+        redactions=(private_context,),
+        runner=runner,
+        clock=lambda: 1.0,
+        kubectl="/usr/bin/kubectl",
+    )()
+
+    assert calls == [["/usr/bin/kubectl", "get", "--raw=/readyz"]]
+    assert private_context not in observation.evidence.stderr
+    assert "<redacted>" in observation.evidence.stderr
+
+
+def test_confidential_controller_probe_omits_context_argument() -> None:
+    private_context = "robotwin-private-context-canary"
+    calls: list[list[str]] = []
+    pod_payload = json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "controller-head",
+                        "namespace": "controller-ns",
+                        "labels": {"ray-node-type": "head"},
+                    },
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                }
+            ]
+        }
+    )
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=pod_payload if "get" in cmd else "", stderr=""
+        )
+
+    result = workflow_module._probe_kubernetes_controller_cwd(
+        "sky-jobs-controller-test",
+        context="",
+        env={"KUBECONFIG": "/owner-only/materialized"},
+        runner=runner,
+        kubectl="/usr/bin/kubectl",
+        use_current_context=True,
+        redactions=(private_context,),
+    )
+
+    assert result.healthy is True
+    assert all("--context" not in cmd for cmd in calls)
+    assert all(private_context not in json.dumps(cmd) for cmd in calls)
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:

@@ -175,6 +175,7 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
     kubeconfig = tmp_path / "kubeconfig.yaml"
     kubeconfig.write_text(
         "apiVersion: v1\nkind: Config\n"
+        "current-context: robotwin-context\n"
         "clusters: [{name: robotwin-cluster, cluster: {server: "
         "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
         "contexts: [{name: robotwin-context, context: {cluster: "
@@ -183,7 +184,10 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
         encoding="utf-8",
     )
     skypilot = tmp_path / "skypilot.yaml"
-    skypilot.write_text("kubernetes: {}\n", encoding="utf-8")
+    skypilot.write_text(
+        "kubernetes:\n  allowed_contexts: [robotwin-context]\n",
+        encoding="utf-8",
+    )
     kubeconfig.chmod(0o600)
     skypilot.chmod(0o600)
     context = tmp_path / "runtime-context.json"

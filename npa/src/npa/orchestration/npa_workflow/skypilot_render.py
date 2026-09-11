@@ -1938,7 +1938,12 @@ def build_skypilot_task_doc(
     }
     from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
 
-    if not recognize_contract(spec):
+    if recognize_contract(spec):
+        # This exact contract binds its real output on the preverified target.
+        # An explicit empty declaration keeps source-input URIs from being
+        # mistaken for undeclared writes by the shared raw-submit preflight.
+        envs["NPA_EXECUTION_OUTPUTS"] = "[]"
+    else:
         # Retain output roles for the shared raw/rendered SDK submission gate.
         envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
             [
