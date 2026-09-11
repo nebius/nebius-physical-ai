@@ -340,10 +340,12 @@ def prepare_video_input_cmd(
     input_uri: str = typer.Option(..., "--output-uri"),
     provenance_uri: str = typer.Option(..., "--provenance-uri"),
     run_id: str = typer.Option("", "--run-id"),
+    conditioning_fps: int = typer.Option(0, "--conditioning-fps", help="Normalize the complete source to 832x480 at 10–30 fps; 0 preserves legacy preparation."),
 ) -> None:
     """Select a direct video or one LeRobot v2/v3 episode/camera for conditioning."""
 
     from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, prepare_input
+    from npa.workflows.paidf_cosmos3_media import VideoAlignmentError
 
     try:
         payload = prepare_input(
@@ -355,8 +357,9 @@ def prepare_video_input_cmd(
             input_uri,
             provenance_uri,
             run_id,
+            conditioning_fps=conditioning_fps,
         )
-    except PaidfCosmos3Error as exc:
+    except (PaidfCosmos3Error, VideoAlignmentError, ValueError) as exc:
         typer.echo(f"cosmos3 prepare-video-input failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -394,10 +397,15 @@ def generate_variants_cmd(
             "ghosting, so variants publish unmodified model output."
         ),
     ),
+    structural_control: str = typer.Option("none", "--structural-control", help="edge uses native full-video structural transfer; none uses prefix conditioning."),
+    conditioning_fps: int = typer.Option(24, "--conditioning-fps", help="Prepared-source and generated-video frame rate."),
+    transfer_chunk_frames: int = typer.Option(93, "--transfer-chunk-frames", help="Native transfer window, 4k+1 frames; complete source coverage is mandatory."),
+    control_guidance: float = typer.Option(1.5, "--control-guidance", help="Positive native structural-control strength."),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
     from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, generate_variants
+    from npa.workflows.paidf_cosmos3_media import VideoAlignmentError
 
     try:
         payload = generate_variants(
@@ -424,8 +432,12 @@ def generate_variants_cmd(
             guardrails,
             run_id,
             source_motion_weight,
+            structural_control=structural_control,
+            conditioning_fps=conditioning_fps,
+            transfer_chunk_frames=transfer_chunk_frames,
+            control_guidance=control_guidance,
         )
-    except (PaidfCosmos3Error, Cosmos3GenerateError) as exc:
+    except (PaidfCosmos3Error, Cosmos3GenerateError, VideoAlignmentError, ValueError) as exc:
         typer.echo(f"cosmos3 generate-variants failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))

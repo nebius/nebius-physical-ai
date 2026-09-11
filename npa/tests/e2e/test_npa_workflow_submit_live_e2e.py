@@ -319,6 +319,11 @@ def test_npa_workflow_submit_live_reaches_terminal(
         )
 
     submitted = RUNNER.invoke(app, submit_args)
+    if case.spec == "paidf-cosmos3.yaml":
+        assert submitted.exit_code != 0
+        assert "reject --assume-decision for execution" in submitted.output
+        # Real full-pipeline execution is covered by the runtime test below.
+        return
     submit_payload = parse_json_payload(submitted, forbidden_markers)
     assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
     job_id = str(submit_payload.get("job_id") or run_id)
@@ -570,6 +575,103 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
 
+def _assert_transfer_variant(client, bucket, prefix, variant, evaluated, source, folder, read_json):
+    from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
+
+    clip = variant["clip"]
+    base = f"cosmos_augmented/{clip}/"
+    generated = folder / f"{clip}.mp4"
+    client.download_file(bucket, prefix + base + "augmented_video.mp4", str(generated))
+    alignment = verify_pair(source, generated, variant["temporal_alignment"]["fps"])
+    assert alignment == variant["temporal_alignment"] == evaluated["temporal_alignment"]
+    metadata = read_json(base + "metadata.json")
+    assert metadata["published_video_sha256"] == alignment["generated_sha256"]
+    transfer = read_json(base + "transfer.json")
+    assert transfer["source_frames"] == alignment["decoded_frames"]
+    assert transfer["native_torch_compile"] is False
+    for field in ("control_loader_verified", "text_guardrail_passed", "video_guardrail_passed",
+                  "guardrail_postprocessing_applied"):
+        assert transfer[field] is True
+    control = folder / f"{clip}-edges.mkv"
+    client.download_file(bucket, prefix + base + "source_edges.mkv", str(control))
+    assert video_sha256(control) == transfer["control_sha256"]
+
+
+def _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json):
+    import tempfile
+    from npa.workflows.paidf_cosmos3_annotation import _validate_caption_coverage
+    from npa.workflows.paidf_cosmos3_media import probe_video
+
+    timeline = read_json("input/timeline.json")
+    assert timeline["time_stretch"] is False
+    assert augment["structural_control"] == "edge"
+    assert evaluator["alignment_mode"] == "required"
+    assert evaluator["status"] == "completed" and evaluator["passed"] is True
+    clips = {clip["clip_id"]: clip for clip in evaluator["clips"]}
+    with tempfile.TemporaryDirectory(prefix="npa-paidf-transfer-e2e-") as temporary:
+        folder = Path(temporary)
+        source = folder / "source.mp4"
+        client.download_file(bucket, prefix + "input/source.mp4", str(source))
+        assert probe_video(source) == timeline["prepared"]
+        original = folder / "original.mp4"
+        client.download_file(bucket, prefix + "input/original_source.mp4", str(original))
+        assert probe_video(original) == timeline["original"]
+        for variant in augment["variants"]:
+            _assert_transfer_variant(client, bucket, prefix, variant, clips[variant["clip"]], source, folder, read_json)
+        _assert_transfer_recording(client, bucket, prefix, folder, augment["variants"], read_json)
+    expected = {item["clip"]: item["temporal_alignment"]["generated_sha256"] for item in augment["variants"]}
+    _validate_caption_coverage(read_json("labeled_augmented/captions.json"), expected)
+
+
+def _assert_recorded_video(batches, video, alignment):
+    import hashlib
+    from npa.workflows.paidf_cosmos3_media import probe_video
+
+    blobs, timestamps = [], []
+    for batch in batches:
+        for name in batch.schema.names:
+            for row in batch.column(name).to_pylist():
+                if row and name == "AssetVideo:blob":
+                    blobs.append(bytes(row[0]))
+                if row and "VideoFrameReference" in name and "timestamp" in name:
+                    timestamps.extend(row)
+    assert len(blobs) == 1
+    assert hashlib.sha256(blobs[0]).hexdigest() == alignment["generated_sha256"]
+    expected = [round(value * 1e9) for value in probe_video(video)["timestamps"]]
+    assert len(timestamps) == len(expected) == alignment["decoded_frames"]
+    assert max(abs(a - b) for a, b in zip(sorted(timestamps), expected)) <= 1000
+
+
+def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_json):
+    from rerun.recording import load_recording
+
+    path = folder / "final.rrd"
+    client.download_file(bucket, prefix + "reports/sim2real.rrd", str(path))
+    entities = {}
+    for chunk in load_recording(path).chunks():
+        entities.setdefault(str(chunk.entity_path), []).append(chunk.to_record_batch())
+
+    def document(entity):
+        parts = []
+        for batch in entities[entity]:
+            for name in batch.schema.names:
+                if "text" in name.lower() or "body" in name.lower():
+                    for row in batch.column(name).to_pylist():
+                        parts.extend(str(value) for value in (row if isinstance(row, list) else [row]))
+        return "\n".join(parts)
+
+    for entity, relative in (("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
+                             ("/pipeline/4_curation", "curation/report.json")):
+        assert json.dumps(read_json(relative), indent=2, sort_keys=True) in document(entity)
+    captions = document("/captions/labeled_augmented")
+    for variant in variants:
+        clip = variant["clip"]
+        assert clip + "/" in captions
+        _assert_recorded_video(entities[f"/augmented/{clip}/video"], folder / f"{clip}.mp4",
+                               variant["temporal_alignment"])
+        assert "ACCEPTED" in document(f"/augmented/{clip}/disposition").upper()
+
+
 def _assert_paidf_live_artifacts(
     *,
     spec: str,
@@ -592,6 +694,9 @@ def _assert_paidf_live_artifacts(
             "evaluate",
             "quality-gate",
             "quality-disposition",
+            "visualize-quality-evidence",
+            "quality-route",
+            "require-accepted-quality",
             "annotate-augmented",
             "cosmos-curate",
             "curate",
@@ -666,6 +771,10 @@ def _assert_paidf_live_artifacts(
     evaluator = read_json("grade/cosmos_evaluator.json")
     assert evaluator.get("schema") == "npa.cosmos_evaluator.report.v1"
     assert evaluator.get("engines")
+    if spec == "paidf-cosmos3.yaml":
+        _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json)
+        quality_rrd = client.head_object(Bucket=bucket, Key=prefix + "reports/quality-evidence.rrd")
+        assert int(quality_rrd["ContentLength"]) > 0
     decision = read_json("grade/decision.json")
     assert decision.get("decision") in {"promote_checkpoint", "loop_back"}
     disposition = read_json("grade/quality_disposition.json")
@@ -684,6 +793,10 @@ def _assert_paidf_live_artifacts(
         assert int(final.get("curated_clip_count") or 0) > 0
         assert final.get("fiftyone_engine") == "fiftyone-brain"
         assert final.get("has_rrd") is True
+        assert final["alignment_verified"] is True
+        assert final["annotated_variant_count"] == len(augment["variants"])
+        assert final["quality_threshold"] == evaluator["threshold"]
+        assert final["attribute_threshold"] == evaluator["attribute_threshold"]
     assert int(final.get("artifact_count") or 0) > 0
 
 

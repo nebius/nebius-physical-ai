@@ -888,6 +888,12 @@ def submit_cmd(
                 )
                 return
             runtime = True
+            if not plan_only and assume_decision:
+                _fail(
+                    "Runtime-required workflows reject --assume-decision for execution; "
+                    "actual evaluator decisions must control the run."
+                )
+                return
     runtime = bool(runtime)
     if image_override and not is_npa_spec:
         _fail(
@@ -1426,7 +1432,7 @@ def submit_cmd(
                         merged_npa_spec, context=infra_context, allowed_nodes=None,
                         sky_bin=sky_bin, config_path=config_path,
                         isolated_config_dir=isolated_config_dir,
-                    )) if infra_context and not deploy_if_absent else None,
+                    )) if infra_context and not deploy_if_absent and not runtime else None,
                 )
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc))
@@ -1828,7 +1834,10 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
-        if not plan_only and merged_npa_spec is not None:
+        # Runtime submits one rendered wave at a time through the mandatory SDK
+        # execution preflight. Checking every state here would block CPU-only
+        # resume on GPU capacity needed by an already completed generation stage.
+        if not runtime and not plan_only and merged_npa_spec is not None:
             try:
                 _preflight_submit_gang_capacity(
                     merged_npa_spec,
@@ -1889,16 +1898,9 @@ def submit_cmd(
                     raise RuntimeError(
                         "accelerator resolution changed after initial preflight"
                     )
-                if merged_npa_spec is not None:
-                    _preflight_submit_gang_capacity(
-                        merged_npa_spec,
-                        context=infra_context,
-                        accelerator_overrides=refreshed_accelerators,
-                        allowed_nodes=None,
-                        sky_bin=sky_bin,
-                        config_path=config_path,
-                        isolated_config_dir=isolated_config_dir,
-                    )
+                # submit_workflow checks current capacity against this wave's
+                # rendered resources, including gang size and placement rules.
+                # The complete plan above binds stable image/accelerator identity.
 
             _run_npa_workflow_runtime(
                 yaml_path,

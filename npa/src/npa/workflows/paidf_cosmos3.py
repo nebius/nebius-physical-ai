@@ -526,6 +526,7 @@ def prepare_input(
     run_id: str = "",
     *,
     storage: Any | None = None,
+    conditioning_fps: int = 0,
 ) -> dict[str, Any]:
     """Select and stage one direct video or LeRobot v2/v3 episode/camera."""
 
@@ -569,18 +570,33 @@ def prepare_input(
                 dataset, episode_index, camera
             )
         canonical = root / "source.mp4"
-        _normalize_video(source, canonical, timestamps)
+        timeline = None
+        if conditioning_fps:
+            from npa.workflows.paidf_cosmos3_media import prepare_reference
+
+            original = root / "original_source.mp4"
+            if timestamps:
+                _normalize_video(source, original, timestamps)
+            else:
+                shutil.copy2(source, original)
+            timeline = prepare_reference(original, canonical, int(conditioning_fps))
+        else:
+            _normalize_video(source, canonical, timestamps)
         frames = _extract_frames(canonical, root / "frames")
         base = input_uri if input_uri.endswith("/") else input_uri + "/"
         if _is_s3(base):
             assert client is not None
             client.upload_file(str(canonical), base + "source.mp4")
+            if timeline is not None:
+                client.upload_file(str(original), base + "original_source.mp4")
             for frame in frames:
                 client.upload_file(str(frame), base + frame.name)
         else:
             output = Path(base)
             output.mkdir(parents=True, exist_ok=True)
             shutil.copy2(canonical, output / "source.mp4")
+            if timeline is not None:
+                shutil.copy2(original, output / "original_source.mp4")
             for frame in frames:
                 shutil.copy2(frame, output / frame.name)
         payload = {
@@ -597,6 +613,11 @@ def prepare_input(
             "frame_count": len(frames),
             "run_id": str(run_id or ""),
         }
+        if timeline is not None:
+            payload["timeline_uri"] = _write_json(timeline, base + "timeline.json", storage=client)
+            payload["original_video_uri"] = base + "original_source.mp4"
+            payload["media"] = {key: value for key, value in timeline["prepared"].items() if key != "timestamps"}
+            payload["conditioning_fps"] = conditioning_fps
         payload["written_uri"] = _write_json(payload, provenance_uri, storage=client)
     print(
         json.dumps(
@@ -701,7 +722,7 @@ def _variant_metadata(
     artifact: Path,
     frame_count: int,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
         "engine": ENGINE,
@@ -725,6 +746,10 @@ def _variant_metadata(
         "motion_preservation": None,
         "published_video_sha256": _sha256(artifact),
     }
+    if metadata.get("temporal_alignment") is not None:
+        payload["temporal_alignment"] = metadata["temporal_alignment"]
+        payload["structural_control"] = "edge"
+    return payload
 
 
 def _publish_variant(
@@ -750,6 +775,12 @@ def _publish_variant(
         for frame in frames:
             storage.upload_file(str(frame), base + frame.name)
         clip_meta = _variant_metadata(clip, variables, metadata, artifact, len(frames))
+        if result.get("structural_transfer") is not None:
+            transfer = dict(result["structural_transfer"])
+            control_path = Path(transfer.pop("control_path"))
+            transfer["control_uri"] = storage.upload_file(str(control_path), base + "source_edges.mkv")
+            _write_json(transfer, base + "transfer.json", storage=storage)
+            clip_meta["transfer_uri"] = base + "transfer.json"
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
         "clip": clip,
@@ -761,6 +792,7 @@ def _publish_variant(
         "steps": clip_meta["steps"],
         "variables": dict(variables),
         "motion_preservation": None,
+        **({"temporal_alignment": metadata["temporal_alignment"]} if "temporal_alignment" in metadata else {}),
     }
 
 
@@ -792,6 +824,10 @@ def generate_variants(
     storage: Any | None = None,
     environ: Mapping[str, str] | None = None,
     generator: Any | None = None,
+    structural_control: str = "none",
+    conditioning_fps: int = 24,
+    transfer_chunk_frames: int = 93,
+    control_guidance: float = 1.5,
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -801,6 +837,14 @@ def generate_variants(
         )
     if str(mode) != VIDEO_MODE:
         raise PaidfCosmos3Error("PAIDF Cosmos 3 generation must use video2video")
+    if structural_control not in {"none", "edge"}:
+        raise PaidfCosmos3Error("structural_control must be none or edge")
+    transfer = None
+    if structural_control == "edge":
+        from npa.workbench.cosmos.structural_transfer import TransferSettings
+
+        transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance)
+        transfer.validate()
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
         raise PaidfCosmos3Error("PAIDF Cosmos 3 guardrails must remain enabled")
@@ -891,7 +935,12 @@ def generate_variants(
             parallelism_preset=parallelism_preset,
             run_id=run_id,
             environ=env,
+            **({"transfer": transfer} if transfer is not None else {}),
         )
+        if transfer is not None:
+            from npa.workflows.paidf_cosmos3_media import verify_pair
+
+            result["temporal_alignment"] = verify_pair(Path(local_input), Path(result["output_path"]), conditioning_fps)
         return index, result, combo, variant_prompt
 
     generated: list[tuple[int, dict[str, Any], dict[str, Any], str]] = []
@@ -917,6 +966,7 @@ def generate_variants(
                         "guardrails": True,
                         "attempt": attempt,
                         "input_provenance_uri": input_provenance_uri,
+                        **({"temporal_alignment": result["temporal_alignment"]} if transfer is not None else {}),
                     },
                     storage=client,
                 )
@@ -945,6 +995,7 @@ def generate_variants(
             "captions_uri": captions_uri,
         },
         "run_id": run_id,
+        "structural_control": structural_control,
         "motion_preservation": {
             "enabled": bool(motion_weight),
             "source_weight": motion_weight,
@@ -1041,6 +1092,11 @@ def finalize(
     manifest = _read_json(root + "cosmos_augmented/manifest.json", storage=client)
     if not isinstance(manifest, dict):
         raise PaidfCosmos3Error("Cosmos 3 manifest is not a JSON object")
+    annotation = None
+    if manifest.get("structural_control") == "edge":
+        from npa.workflows.paidf_cosmos3_annotation import validate_annotation
+
+        annotation = validate_annotation(root, client)
     evaluator = _complete_evaluator_report(
         _read_json(root + "grade/cosmos_evaluator.json", storage=client)
     )
@@ -1141,6 +1197,10 @@ def finalize(
         "fiftyone_engine": fiftyone["curation_engine"],
         "has_rrd": True,
         "artifact_count": len(keys),
+        "annotated_variant_count": len(annotation["variants"]) if annotation else None,
+        "alignment_verified": annotation is not None,
+        "quality_threshold": evaluator.get("threshold"),
+        "attribute_threshold": evaluator.get("attribute_threshold", 1.0),
     }
     payload["written_uri"] = _write_json(payload, report_uri, storage=client)
     print(

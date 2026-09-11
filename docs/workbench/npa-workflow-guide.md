@@ -105,7 +105,8 @@ runtime orchestrator automatically. Use it when live execution must re-read a
 decision artifact to exit a loop or choose a transition. Read-only planning still
 flattens the selected `--assume-decision` path. An explicit `--no-runtime` is
 rejected for these workflows because a one-shot plan cannot honor their real
-data-dependent control flow.
+data-dependent control flow. These workflows also reject `--assume-decision`
+for execution; use it only for offline planning previews.
 
 | Field | Purpose |
 | --- | --- |
@@ -171,8 +172,9 @@ and launches it. Use `--plan-only` to inspect the plan without launching.
 
 ### Runtime orchestrator (`--runtime`)
 
-The default submit path is one-shot: it renders the flattened serial plan (loops
-unrolled with `--assume-decision`) and launches it. That path is unchanged.
+Without `metadata.executionMode: runtime`, the default submit path is one-shot:
+it renders the flattened serial plan (loops unrolled with `--assume-decision`)
+and launches it. Runtime-required workflows select the driver automatically.
 
 `--runtime` adds a driver that executes the graph wave by wave:
 

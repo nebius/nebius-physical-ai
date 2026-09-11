@@ -157,14 +157,22 @@ def test_remote_absence_receipt_precedes_real_local_state_removal(
     )
 
 
+@pytest.mark.parametrize("selection", ["explicit", "environment", "saved_config"])
 def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
-    monkeypatch, identity_fixture, tmp_path: Path
+    monkeypatch, identity_fixture, tmp_path: Path, selection: str
 ) -> None:  # noqa: ANN001
     # The process/socket lifecycle is covered by test_local_api; this case
     # exercises the receipt and independent cloud-absence ordering.
     import json
     import subprocess
-    from npa.orchestration.skypilot import local_api
+    from npa.orchestration.skypilot import _bin, local_api
+
+    selected_root = tmp_path if selection == "explicit" else None
+    if selection == "environment":
+        monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path))
+    elif selection == "saved_config":
+        monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa-config.yaml")
+        _bin.CONFIG_PATH.write_text(f"skypilot:\n  isolated_config_dir: {tmp_path}\n")
 
     source_sky = tmp_path / "home/.sky"
     source_sky.mkdir(parents=True)
@@ -184,6 +192,7 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     status_calls = {"count": 0}
 
     def status(**kwargs):  # noqa: ANN001
+        assert kwargs["isolated_config_dir"] == tmp_path
         status_calls["count"] += 1
         if status_calls["count"] == 1:
             return [_row(name), _row(other, context="other-context")], ""
@@ -222,7 +231,7 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch.setattr(controller, "_down_jobs_controller", down)
 
     result = controller.cleanup_jobs_controller(
-        project="demo", context="verified-context", isolated_config_dir=tmp_path, sky_bin=sky_bin
+        project="demo", context="verified-context", isolated_config_dir=selected_root, sky_bin=sky_bin
     )
 
     assert result.ok

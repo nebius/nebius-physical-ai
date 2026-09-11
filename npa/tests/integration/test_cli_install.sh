@@ -113,6 +113,7 @@ run_npa_check "npa workbench lerobot --help" workbench lerobot --help
 run_npa_check "npa workbench genesis --help" workbench genesis --help
 run_npa_check "npa adapter --help" adapter --help
 run_npa_check "npa workbench workflow --help" workbench workflow --help
+run_npa_check "npa workbench workflow submit --help" workbench workflow submit --help
 run_npa_check "npa workbench lerobot list" workbench lerobot list
 
 finish

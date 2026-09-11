@@ -581,8 +581,7 @@ def preflight_skypilot_submission(
                 if len(gpu) != 1:
                     raise ExecutionPreflightError("gpu", "one accelerator product is required per task")
                 gpu = ":".join(str(value) for value in next(iter(gpu.items())))
-            kube = resources.get("kubernetes") or {}
-            pod_spec = (kube.get("pod_config") or {}).get("spec") or {}
+            pod_spec = _task_kubernetes_pod_spec(document)
             global_pod = (global_kube.get("pod_config") or {}).get("spec") or {}
             if any(global_pod.get(key) for key in ("nodeSelector", "affinity", "nodeName", "tolerations", "topologySpreadConstraints")) or any(
                 isinstance(container, Mapping) and container.get("resources") for container in global_pod.get("containers") or []
@@ -596,6 +595,24 @@ def preflight_skypilot_submission(
 
     report = verify_execution_target(target, gpu_check=gpu_check)
     return target, report, {name: value for name, value in injected.items() if value}
+
+
+def _task_kubernetes_pod_spec(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Preserve placement checks after the renderer lifts pod config out of resources."""
+    pod_specs = []
+    for location in ("config", "resources"):
+        value = document.get(location) or {}
+        for key in ("kubernetes", "pod_config", "spec"):
+            if not isinstance(value, Mapping):
+                raise ExecutionPreflightError("gpu", "task pod configuration must be a mapping", status="unknown")
+            value = value.get(key) or {}
+        if not isinstance(value, Mapping):
+            raise ExecutionPreflightError("gpu", "task pod specification must be a mapping", status="unknown")
+        if value:
+            pod_specs.append(value)
+    if len(pod_specs) > 1 and pod_specs[0] != pod_specs[1]:
+        raise ExecutionPreflightError("gpu", "task and resource pod configurations disagree", status="unknown")
+    return pod_specs[0] if pod_specs else {}
 
 
 def replace_execution_outputs(target: ExecutionTarget, destinations: Mapping[str, str]) -> ExecutionTarget:

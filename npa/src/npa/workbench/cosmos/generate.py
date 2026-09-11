@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workbench.cosmos.cosmos3 import build_cosmos3_inference_args
+from npa.workbench.cosmos.structural_transfer import TransferSettings
 
 DEFAULT_REPO = "/opt/cosmos3/cosmos-framework"
 DEFAULT_REPO_ENV = "COSMOS3_REPO"
@@ -364,6 +365,7 @@ def generate_plan(
     no_guardrails: bool = False,
     parallelism_preset: str = DEFAULT_PARALLELISM_PRESET,
     environ: Mapping[str, str] | None = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Resolve the input sample and inference argv without running the model.
 
@@ -381,6 +383,12 @@ def generate_plan(
         guidance=guidance,
     )
     resolved_output = _resolve_output_dir(output_dir, environ)
+    if transfer is not None:
+        from npa.workbench.cosmos.structural_transfer import transfer_sample
+
+        if no_guardrails:
+            raise Cosmos3GenerateError("Structural transfer requires model guardrails")
+        spec = transfer_sample(spec, transfer, resolved_output, int(seed))
     resolved_checkpoint = _resolve_checkpoint(checkpoint, environ)
     input_json = resolved_output / f"{spec['name']}.json"
     args = build_cosmos3_inference_args(
@@ -406,7 +414,8 @@ def generate_plan(
         "argv": [
             str(_venv_python(repo)),
             "-m",
-            "cosmos_framework.scripts.inference",
+            ("npa.workbench.cosmos.structural_transfer_runner" if transfer is not None
+             else "cosmos_framework.scripts.inference"),
             *args,
         ],
     }
@@ -470,6 +479,7 @@ def run_cosmos3_generate(
     environ: Mapping[str, str] | None = None,
     runner: Any = None,
     version_probe_runner: Any = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Run a real Cosmos 3 generation; return the artifact plus its metadata.
 
@@ -496,6 +506,7 @@ def run_cosmos3_generate(
         no_guardrails=no_guardrails,
         parallelism_preset=parallelism_preset,
         environ=env,
+        transfer=transfer,
     )
     if not cosmos3_generate_available(env):
         raise Cosmos3GenerateError(
@@ -534,6 +545,9 @@ def run_cosmos3_generate(
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     run = runner or subprocess.run
+    if transfer is not None:
+        source_root = str(Path(__file__).resolve().parents[3])
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, env.get("PYTHONPATH", ""))))
     completed = run(list(plan["argv"]), cwd=str(plan["repo"]), env=env, check=False)
     returncode = int(getattr(completed, "returncode", 0) or 0)
     if returncode != 0:
@@ -544,7 +558,14 @@ def run_cosmos3_generate(
 
     sample_dir = output_root / str(plan["name"])
     expected = "image" if plan["mode"] in IMAGE_MODES else "video"
-    artifact, kind = _artifact_for(sample_dir, expected_kind=expected)
+    transfer_evidence = None
+    if transfer is not None:
+        from npa.workbench.cosmos.structural_transfer import transfer_artifact
+
+        artifact, transfer_evidence = transfer_artifact(sample_dir)
+        kind = "video"
+    else:
+        artifact, kind = _artifact_for(sample_dir, expected_kind=expected)
     if artifact is None:
         raise Cosmos3GenerateError(
             f"cosmos-framework produced no image/video artifact in {sample_dir}"
@@ -573,6 +594,8 @@ def run_cosmos3_generate(
             "weights_baked": False,
         }
     )
+    if transfer_evidence is not None:
+        result["structural_transfer"] = transfer_evidence
     sample_outputs = sample_dir / "sample_outputs.json"
     if sample_outputs.is_file():
         try:
@@ -710,6 +733,7 @@ def generate_and_publish(
     run_id: str = "",
     dry_run: bool = False,
     environ: Mapping[str, str] | None = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Generate, then publish to S3 when ``output_path`` is an ``s3://`` prefix.
 
@@ -738,6 +762,7 @@ def generate_and_publish(
             no_guardrails=no_guardrails,
             parallelism_preset=parallelism_preset,
             environ=environ,
+            transfer=transfer,
         )
         plan.update({"status": "planned", "run_id": run_id, "weights_baked": False})
         if is_s3:
@@ -758,6 +783,7 @@ def generate_and_publish(
         no_guardrails=no_guardrails,
         parallelism_preset=parallelism_preset,
         environ=environ,
+        transfer=transfer,
     )
     result["run_id"] = run_id
     if is_s3:

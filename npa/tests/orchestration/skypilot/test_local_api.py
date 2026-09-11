@@ -6,11 +6,13 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 
 import pytest
 
 from npa.orchestration.skypilot import local_api as api
+from npa.orchestration.skypilot import _bin, cleanup, workflow_state
 
 
 @pytest.fixture
@@ -559,3 +561,57 @@ def test_stop_recovers_process_created_before_pid_was_saved(local_runtime):
     api.stop_isolated_api(local_runtime["isolated_dir"])
     assert _record(local_runtime)["state"] == "stopped"
     assert not api._session_members(original)
+
+
+@pytest.fixture
+def log_runtime(monkeypatch, tmp_path):
+    executable = tmp_path / "sky"
+    executable.touch(mode=0o700)
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa-config.yaml")
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda value: value)
+    return executable, tmp_path / "run-sky", tmp_path / "sky-config.yaml"
+
+
+@pytest.mark.parametrize("selection", ["environment", "saved_config"])
+def test_live_logs_use_selected_api_and_config(monkeypatch, log_runtime, selection):
+    executable, root, config = log_runtime
+    if selection == "environment":
+        monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(root))
+        monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(config))
+    else:
+        _bin.CONFIG_PATH.write_text(
+            f"skypilot:\n  isolated_config_dir: {root}\n  global_config_path: {config}\n"
+        )
+    owned_environment = {"HOME": str(root / "home"), "SKYPILOT_API_SERVER_ENDPOINT": "fixture-owned-api"}
+
+    def environment(selected):
+        assert selected == root
+        return dict(owned_environment)
+
+    def logs(argv, **kwargs):
+        assert argv == [str(executable), "jobs", "logs", "7", "0", "--no-follow"]
+        assert kwargs["env"] == {**owned_environment, "SKYPILOT_GLOBAL_CONFIG": str(config)}
+        assert kwargs["cwd"] == root
+        return subprocess.CompletedProcess(argv, 0, stdout="selected run logs", stderr="")
+
+    monkeypatch.setattr(cleanup, "sky_environment", environment)
+    monkeypatch.setattr(workflow_state.subprocess, "run", logs)
+    result = workflow_state.tail_live_job_logs(sky_bin=str(executable), job_id="7", stage="0")
+    assert result.stdout == "selected run logs"
+
+
+@pytest.mark.parametrize("reason", ["unowned API process", "credential configuration changed after verification"])
+def test_live_logs_refuse_failed_api_identity_without_shared_fallback(monkeypatch, log_runtime, reason):
+    executable, root, _ = log_runtime
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(root))
+    calls = []
+
+    def reject(selected):
+        assert selected == root
+        raise api.IsolatedApiError(reason)
+
+    monkeypatch.setattr(cleanup, "sky_environment", reject)
+    monkeypatch.setattr(workflow_state.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(api.IsolatedApiError, match=reason):
+        workflow_state.tail_live_job_logs(sky_bin=str(executable), job_id="7")
+    assert calls == []

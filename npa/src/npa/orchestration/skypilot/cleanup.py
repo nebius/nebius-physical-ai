@@ -23,6 +23,7 @@ from npa.orchestration.skypilot._bin import (
     SkyBin,
     ensure_skypilot_version,
     resolve_config,
+    resolve_isolated_config_dir,
 )
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
@@ -349,6 +350,7 @@ def cleanup_jobs_controller(
         _record_controller_result(identity, cleanup, "verified_absent")
         return cleanup
 
+    isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
     remote_pods: list[tuple[str, str, str]] = []
     if not identity.cluster_absent:
         remote_pods, remote_error = _kubernetes_controller_pods(
@@ -1479,6 +1481,7 @@ def _cloned_skypilot_state(
 
     runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
                              isolated_config_dir=source_root)
+    source_root = runtime.isolated_config_dir
     executable = str(ensure_skypilot_version(runtime.sky_bin))
     owned_source = bool(source_root and (Path(source_root) / "local-api" / "server-config.yaml").is_file())
     if owned_source:

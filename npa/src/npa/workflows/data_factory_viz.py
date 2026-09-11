@@ -984,7 +984,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     aug = _read_json(aug_dir / "manifest.json")
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
-        docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        docs["pipeline/2_augment"] = _json_block("Augment — generated variants", aug)
         conditioning = f"control={aug.get('control') or 'n/a'}"
         if aug.get("control_prompt"):
             conditioning += f" on '{aug['control_prompt']}'"
@@ -1039,7 +1039,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     if grade_docs:
         docs["pipeline/3_grade"] = "\n".join(grade_docs)
 
-    # Curation report.
+    # Curation reports from both real components, when available.
+    curator = _read_json(local / "curation" / "cosmos_curator.json")
+    if isinstance(curator, dict):
+        docs["pipeline/4_cosmos_curator"] = _json_block("Cosmos Curator report", curator)
+        stage_log.append(f"cosmos-curator: {curator.get('clip_count', 0)} clip(s)")
     cur = _read_json(local / "curation" / "report.json")
     if isinstance(cur, dict):
         docs["pipeline/4_curation"] = _json_block("Curation report", cur)
@@ -1260,7 +1264,7 @@ _CAPTION_HEADERS = {
     ),
     "labeled_augmented": (
         "## Augmented-clip captions — Token Factory VLM\n\n"
-        "_Descriptive per-frame labels of the Cosmos Transfer 2.5 OUTPUT. This is "
+        "_Descriptive per-frame labels of the generated video output. This is "
         "captioning, not the quality gate — see `pipeline/3_grade` for the "
         "attribute-verify / hallucination check (score + promote/loop_back decision)._\n\n"
     ),

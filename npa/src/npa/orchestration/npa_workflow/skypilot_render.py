@@ -2114,8 +2114,8 @@ def build_skypilot_task_doc(
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
         if (
-            str(os.environ.get("NPA_SRC_OVERLAY") or "").strip()
-            in {"1", "true", "True"}
+            str(os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or "").strip().lower()
+            in {"1", "true"}
             and src_uri
         ):
             envs["NPA_SRC_OVERLAY"] = "1"
