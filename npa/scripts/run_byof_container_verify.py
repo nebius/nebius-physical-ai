@@ -166,6 +166,12 @@ TERMINAL_STATUSES = {
     "FAILED_CONTROLLER",
 }
 VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
+STATUS_OBSERVATION_ERRORS = (
+    OSError,
+    RuntimeError,
+    ValueError,
+    subprocess.SubprocessError,
+)
 
 
 def _is_libero_invocation(
@@ -806,8 +812,13 @@ def _cancel_then_teardown_managed_job(
         "config_path": config_path,
         "poll_interval": poll_interval,
     }
-    final, _ = _wait_for_terminal(scheduler_job_id, wait_timeout=0, **status_kwargs)
-    if final.status not in VERIFIED_DRAIN_STATUSES:
+    try:
+        final, _ = _wait_for_terminal(
+            scheduler_job_id, wait_timeout=0, **status_kwargs
+        )
+    except STATUS_OBSERVATION_ERRORS:
+        final = None
+    if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
         cleanup.extend(
             _cancel_exact_managed_job(
                 scheduler_job_id,
@@ -817,12 +828,19 @@ def _cancel_then_teardown_managed_job(
         )
         if not cleanup.ok:
             return cleanup
-        final, _ = _wait_for_terminal(
-            scheduler_job_id,
-            wait_timeout=max(int(teardown_guard.timeout), 1),
-            **status_kwargs,
-        )
-    if final.status not in VERIFIED_DRAIN_STATUSES:
+        try:
+            final, _ = _wait_for_terminal(
+                scheduler_job_id,
+                wait_timeout=max(int(teardown_guard.timeout), 1),
+                **status_kwargs,
+            )
+        except STATUS_OBSERVATION_ERRORS:
+            cleanup.errors.append(
+                "managed job drain status could not be verified after exact "
+                "cancellation; preserving its clusters"
+            )
+            return cleanup
+    if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
         cleanup.errors.append(
             "managed job did not reach a verified terminal or absent state; "
             "preserving its clusters"
@@ -830,15 +848,16 @@ def _cancel_then_teardown_managed_job(
         return cleanup
     cleanup.extend(teardown_guard.teardown())
     if cleanup.ok:
-        cleanup.extend(
-            _verify_managed_clusters_absent(
-                run_id=teardown_guard.run_id,
-                sky_bin=sky_bin,
-                isolated_config_dir=isolated_config_dir,
-                config_path=config_path,
-                timeout=max(int(teardown_guard.timeout), 1),
-            )
+        absence = _verify_managed_clusters_absent(
+            run_id=teardown_guard.run_id,
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            timeout=max(int(teardown_guard.timeout), 1),
         )
+        cleanup.extend(absence)
+        cleanup.verified = absence.verified
+        cleanup.remote_absence_verified = absence.remote_absence_verified
     return cleanup
 
 
@@ -932,6 +951,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
     is_libero = _is_libero_invocation(args, docs)
     if is_libero and args.solution_name != LIBERO_SOLUTION_NAME:
         raise ValueError("the LIBERO profile requires --solution-name libero")
+    if is_libero:
+        cluster_name_patterns_for_run(run_id)
     outputs = {
         "root": output_root.rstrip("/") + f"/{run_id}/",
         "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
