@@ -206,6 +206,7 @@ def test_libero_smoke_requires_one_observed_b200_digest_and_never_renders() -> N
     assert profile_docs[1]["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert "missing required smoke artifact" in profile_text
     assert "SMOKE_EXIT_CODE=1" in profile_text
+    assert "/usr/local/sbin/npa-skypilot-bootstrap-guard verify" in profile_text
 
     smoke = _smoke_source()
     assert "torch.cuda.device_count() != 1" in smoke
@@ -278,6 +279,7 @@ def test_libero_readiness_record_tracks_final_workflow_bytes() -> None:
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] in {
+        "blocked",
         "unverified",
         "verified",
     }

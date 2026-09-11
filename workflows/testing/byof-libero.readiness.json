@@ -1,7 +1,7 @@
 {
   "schema_version": "workflow-readiness/v1",
   "workflow_sha256": "7496422b21e5d7da3cbb90bb34aadfa01c697a4adb4e37bb6581a371c5972034",
-  "resource_profile_sha256": "b471ff81d00ba9bfd8839cd128836ba7962738f9690bb239a13d5101b7e85117",
+  "resource_profile_sha256": "608411b7ea7968162ef650e1dfa55a3a9ce3cde8237edc76f4e40661549526b6",
   "planning": {
     "validation": {
       "status": "verified",
@@ -48,11 +48,11 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The operator-private LIBERO BYOF image was built, pushed at an immutable digest, and scanned byte-for-byte with no dataset, render-asset, or Git payload. Kubernetes pullability of that exact digest remains unverified because the isolated attempt created no payload pod.",
+      "status": "blocked",
+      "reason": "The current BYOF generator adds the complete verified SkyPilot bootstrap package set plus APT-bypass and process-tree deadline guards, changing the generated image bytes. The earlier private candidate predates this repair and is retained only as failed-bootstrap evidence. A newly built immutable private digest must pass complete byte, scanner, pullability, and pod-observed identity gates before another live attempt.",
       "evidence": [
-        "owner-only private-image push receipt",
-        "owner-only complete OCI layer scan",
+        "focused Python 3.12 bootstrap-guard regression tests",
+        "owner-only prior-attempt failure and cleanup receipts",
         "docs/workbench/byof-libero.md#before-spending-gpu-time"
       ]
     },
