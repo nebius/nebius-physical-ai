@@ -166,12 +166,6 @@ TERMINAL_STATUSES = {
     "FAILED_CONTROLLER",
 }
 VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
-STATUS_OBSERVATION_ERRORS = (
-    OSError,
-    RuntimeError,
-    ValueError,
-    subprocess.SubprocessError,
-)
 
 
 def _is_libero_invocation(
@@ -401,6 +395,8 @@ def _bind_libero_runtime_contract(
         raise ValueError("the LIBERO profile requires --solution-name libero")
     if args.direct_launch:
         raise ValueError("LIBERO requires managed scheduler submission")
+    if not getattr(args, "cleanup", True):
+        raise ValueError("LIBERO requires verified managed cleanup")
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
         raise ValueError("LIBERO requires one explicit Kubernetes context")
     allowed_node = _libero_allowed_node(global_config)
@@ -816,7 +812,7 @@ def _cancel_then_teardown_managed_job(
         final, _ = _wait_for_terminal(
             scheduler_job_id, wait_timeout=0, **status_kwargs
         )
-    except STATUS_OBSERVATION_ERRORS:
+    except Exception:  # noqa: BLE001 - cleanup must still attempt exact cancellation
         final = None
     if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
         cleanup.extend(
@@ -834,7 +830,7 @@ def _cancel_then_teardown_managed_job(
                 wait_timeout=max(int(teardown_guard.timeout), 1),
                 **status_kwargs,
             )
-        except STATUS_OBSERVATION_ERRORS:
+        except Exception:  # noqa: BLE001 - ambiguous drain must preserve resources
             cleanup.errors.append(
                 "managed job drain status could not be verified after exact "
                 "cancellation; preserving its clusters"
@@ -870,18 +866,27 @@ def _strict_cluster_names(output: str) -> list[str]:
         raise ValueError("inventory was not exact JSON") from exc
     if isinstance(payload, list):
         clusters = payload
-    elif isinstance(payload, dict) and isinstance(payload.get("clusters"), list):
+    elif (
+        isinstance(payload, dict)
+        and set(payload) == {"clusters"}
+        and isinstance(payload["clusters"], list)
+    ):
         clusters = payload["clusters"]
     else:
         raise ValueError("inventory had an invalid schema")
     names: list[str] = []
     for cluster in clusters:
-        name = (
-            (cluster.get("name") or cluster.get("cluster"))
-            if isinstance(cluster, dict)
-            else None
-        )
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(cluster, dict):
+            raise ValueError("inventory contained an invalid row")
+        if any(cluster.get(key) for key in ("error", "errors", "exception")):
+            raise ValueError("inventory contained contradictory error metadata")
+        name_fields = [key for key in ("name", "cluster") if key in cluster]
+        if not name_fields:
+            raise ValueError("inventory contained an invalid row")
+        if len(name_fields) > 1:
+            raise ValueError("inventory contained an ambiguous name row")
+        name = cluster[name_fields[0]]
+        if not isinstance(name, str) or not name or name != name.strip():
             raise ValueError("inventory contained an invalid row")
         names.append(name)
     return names
@@ -1042,16 +1047,30 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             def cleanup_submission() -> CleanupResult:
                 nonlocal cleanup_result, cleanup_started
                 if cleanup_started:
-                    return cleanup_result or CleanupResult()
+                    if cleanup_result is not None:
+                        return cleanup_result
+                    pending = CleanupResult()
+                    pending.outcome = "unsafe"
+                    pending.errors.append(
+                        "cleanup is already in progress; absence is not verified"
+                    )
+                    return pending
                 cleanup_started = True
-                cleanup_result = _cancel_then_teardown_managed_job(
-                    scheduler_job_id,
-                    teardown_guard=teardown_guard,
-                    sky_bin=sky_bin,
-                    isolated_config_dir=teardown_guard.isolated_config_dir,
-                    config_path=submitted_config_path,
-                    poll_interval=args.poll_interval,
-                )
+                try:
+                    cleanup_result = _cancel_then_teardown_managed_job(
+                        scheduler_job_id,
+                        teardown_guard=teardown_guard,
+                        sky_bin=sky_bin,
+                        isolated_config_dir=teardown_guard.isolated_config_dir,
+                        config_path=submitted_config_path,
+                        poll_interval=args.poll_interval,
+                    )
+                except Exception:  # noqa: BLE001 - never claim ambiguous cleanup
+                    cleanup_result = CleanupResult()
+                    cleanup_result.outcome = "unsafe"
+                    cleanup_result.errors.append(
+                        "cleanup transaction failed; owned-resource absence is unverified"
+                    )
                 return cleanup_result
 
             previous_handlers = install_teardown_signal_handlers(cleanup_submission)
@@ -1111,12 +1130,21 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 if args.cleanup:
                     cleanup_result = cleanup_submission()
             if summary is not None and cleanup_result is not None:
+                cleanup_verified = bool(
+                    cleanup_result.ok
+                    and cleanup_result.verified
+                    and cleanup_result.remote_absence_verified
+                )
                 summary["cleanup"] = {
-                    "ok": cleanup_result.ok,
+                    "ok": cleanup_verified,
                     "errors": cleanup_result.errors,
                     "resources_removed": cleanup_result.resources_removed,
+                    "verified": cleanup_result.verified,
+                    "remote_absence_verified": (
+                        cleanup_result.remote_absence_verified
+                    ),
                 }
-                if not cleanup_result.ok:
+                if not cleanup_verified:
                     return_code = 1
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
