@@ -994,6 +994,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-robomimic.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "the delegated private-registry build and exact one-B200 training gate "
+            "are covered by the opt-in robomimic live BYOF E2E"
+        ),
+        notes=(
+            "Pinned robomimic Lift PH low-dimensional BC training, disjoint held-out "
+            "validation, checkpoint reload, and held-out action inference."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-open-dreamer.yaml",
         "multi",
         plan_only=True,

@@ -26,6 +26,9 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
+  # Boolean attestation only; the private reservation identity stays outside
+  # rendered task YAML and repository artifacts.
+  NPA_ROBOMIMIC_STRICT_B200_ATTESTED: "${NPA_E2E_MK8S_RESERVED_CAPACITY}"
   NVIDIA_VISIBLE_DEVICES: "all"
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
@@ -35,7 +38,7 @@ setup: |
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
   test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"
-  python3 - <<'PY' || python3 -m pip install --quiet boto3
+  python3 - <<'PY'
   import boto3
   PY
 run: |

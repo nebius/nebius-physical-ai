@@ -111,6 +111,10 @@ config:
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    if os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1":
+        raise RuntimeError(
+            "the operator must attest this target is STRICT reserved B200 capacity"
+        )
     runtime_image = os.environ.get("BYOF_IMAGE", "")
     image_match = re.fullmatch(r".+@(sha256:[0-9a-f]{64})", runtime_image)
     if image_match is None:
@@ -223,14 +227,23 @@ config:
             f"official Lift PH inventory mismatch: demos={len(demo_keys)} samples={sum(sample_counts.values())}"
         )
 
+    split_script = repo_root / "robomimic" / "scripts" / "split_train_val.py"
+    split_program = "\n".join(
+        [
+            "import numpy as np, runpy, sys",
+            "script, dataset = sys.argv[1:3]",
+            "np.random.seed(0)",
+            "sys.argv = [script, '--dataset', dataset, '--ratio', '0.1']",
+            "runpy.run_path(script, run_name='__main__')",
+        ]
+    )
     split = subprocess.run(
         [
             sys.executable,
-            str(repo_root / "robomimic" / "scripts" / "split_train_val.py"),
-            "--dataset",
+            "-c",
+            split_program,
+            str(split_script),
             str(dataset),
-            "--ratio",
-            "0.1",
         ],
         check=True,
         capture_output=True,
@@ -241,7 +254,13 @@ config:
         train_keys = [value.decode("utf-8") for value in handle["mask/train"][:]]
         valid_keys = [value.decode("utf-8") for value in handle["mask/valid"][:]]
     overlap = sorted(set(train_keys).intersection(valid_keys))
-    if overlap or not train_keys or not valid_keys or set(train_keys + valid_keys) != set(demo_keys):
+    if (
+        overlap
+        or not train_keys
+        or not valid_keys
+        or len(train_keys) + len(valid_keys) != len(demo_keys)
+        or set(train_keys + valid_keys) != set(demo_keys)
+    ):
         raise RuntimeError(
             f"invalid held-out split: train={len(train_keys)} valid={len(valid_keys)} overlap={overlap}"
         )
@@ -410,6 +429,7 @@ config:
             "architecture_family": "NVIDIA Blackwell",
             "compute_capability": compute_capability,
             "nvidia_smi_rows": smi_rows,
+            "strict_reserved_capacity_attested": True,
         },
         "pod_image": {
             "runtime_ref": runtime_image,

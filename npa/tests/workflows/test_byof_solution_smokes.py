@@ -84,6 +84,16 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "droid_100_config_gen",
         ],
     },
+    "robomimic": {
+        "capability_name": "lift_ph_lowdim_checkpoint_reload_action",
+        "smoke_artifact_name": "robomimic-smoke.json",
+        "spec": "byof-robomimic.yaml",
+        "must_exercise": [
+            "lift_ph_lowdim_bc_train",
+            "lift_ph_lowdim_heldout_validate",
+            "lift_ph_lowdim_checkpoint_reload_action",
+        ],
+    },
     "open-dreamer": {
         "capability_name": "dreamer4_tokenizer_train_two_gpu",
         "smoke_artifact_name": "open_dreamer_world_model_2gpu.json",

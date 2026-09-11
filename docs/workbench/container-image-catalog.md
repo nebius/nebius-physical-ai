@@ -302,6 +302,14 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **robomimic BYOF** is an operator-private registry candidate built from MIT
+  `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`
+  on a digest-pinned PyTorch CUDA 12.8 base. The official Lift PH low-dimensional
+  dataset is hash-verified and fetched only at runtime. It remains outside the
+  supported public release plan until an exact built-image payload/security
+  scan and live one-B200 train/validation/checkpoint-reload gate are accepted;
+  private build eligibility alone does not add a public-image row.
+
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.
