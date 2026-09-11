@@ -184,6 +184,8 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
             repo_ref,
             "--repo-auth",
             "github",
+            "--source-prune-path",
+            "private-assets/render-only",
             "--run-id",
             "private-build-test",
             "--skip-push",
@@ -208,7 +210,15 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert 'ARG OSS_REPO_URL=""' in dockerfile
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
+    assert '"commit":"<private-commit>"' in dockerfile
+    assert '"commit_sha256":"%s"' in dockerfile
+    assert '"source_prune_path":"%s"' in dockerfile
+    assert '"source_prune_path_sha256":"%s"' in dockerfile
+    assert '"source_pruned":%s' in dockerfile
+    assert '"git_objects_removed":%s' in dockerfile
+    assert "<private-source-prune-path>" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
+    assert "BYOF_SOURCE_PRUNE_PATH=private-assets/render-only" in command
     assert seen["redactions"] == (token, repo_url, repo_ref)
     summary = json.loads(output)
     assert summary["repo_url"] == "<private-repository>"
@@ -216,6 +226,7 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
         "repository_sha256": "a" * 64,
         "ref_sha256": "b" * 64,
     }
+    assert summary["source_prune_path"] == "private-assets/render-only"
 
 
 def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
