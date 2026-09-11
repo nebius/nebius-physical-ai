@@ -7,11 +7,16 @@ import base64
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tests.e2e import test_byof_onboarding_live_e2e as live_e2e  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -152,6 +157,10 @@ def test_robotwin_smoke_hard_fails_closed_on_gpu_vulkan_image_and_artifacts() ->
     assert 'compute_capability != "12.0"' in smoke
     assert 'torch_capability != (12, 0)' in smoke
     assert "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256" in smoke
+    assert "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256" in smoke
+    assert "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES" in smoke
+    assert '"built_image_asset_cache_output_absence"' in smoke
+    assert '"npa_robotwin_image_byte_scan_v1"' in smoke
     assert '"policy": "STRICT"' in smoke
     assert 'vulkan.returncode != 0' in smoke
     assert '"RTX PRO 6000" not in vulkan_text.upper()' in smoke
@@ -194,10 +203,69 @@ def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> 
         '"nvidia_cuda_eula"',
         '"nvidia_cudnn_sla"',
         '"curobo_noncommercial_research_or_evaluation"',
+        '"robotwin2_aggregate_asset_and_output_terms"',
+        'ROBOTWIN_IMAGE_SCANNER',
+        '"--skip-run"',
+        '"--skip-build"',
         'env["NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256"] = runtime_sha256',
+        'env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] = scan_report_sha256',
     ):
         assert required in live_test
     assert "NPA_BYOF_ROBOTWIN_STRICT_CAPACITY" not in live_test
+
+
+def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", raising=False)
+    monkeypatch.setattr(
+        live_e2e,
+        "_activate_nebius_profile",
+        lambda *_: pytest.fail("authorization refusal occurred too late"),
+    )
+
+    with pytest.raises(AssertionError, match="RUNTIME_CONTEXT is required"):
+        live_e2e.test_live_robotwin_build_push_run_and_artifacts(None)
+
+
+def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    context = tmp_path / "runtime-context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "solution": "robotwin",
+                "ownership_provenance": "manager-issued",
+                "reservation": {
+                    "policy": "STRICT",
+                    "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+                    "count": 1,
+                },
+                "license_acceptance": {
+                    "nvidia_cuda_eula": True,
+                    "nvidia_cudnn_sla": True,
+                    "curobo_noncommercial_research_or_evaluation": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(live_e2e, "REPO_ROOT", repo)
+    monkeypatch.setenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", str(context))
+    monkeypatch.setattr(
+        live_e2e,
+        "_activate_nebius_profile",
+        lambda *_: pytest.fail("license refusal occurred too late"),
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match="robotwin2_aggregate_asset_and_output_terms",
+    ):
+        live_e2e.test_live_robotwin_build_push_run_and_artifacts(None)
 
 
 def test_robotwin_readiness_hash_matches_workflow() -> None:

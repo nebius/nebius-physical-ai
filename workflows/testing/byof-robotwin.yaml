@@ -153,6 +153,12 @@ config:
         "vulkan_renderer": {"available": False},
         "observed_gpu": {"count": 0, "model": "", "architecture": ""},
         "strict_reservation": {"policy": "", "manager_runtime_context_sha256": ""},
+        "built_image_payload_scan": {
+            "format": "npa_robotwin_image_byte_scan_v1",
+            "report_sha256": "",
+            "archives_scanned": 0,
+            "status": "failed",
+        },
         "pod_observed_immutable_image_digest": "",
         "exit_status": 1,
     }
@@ -221,6 +227,29 @@ config:
             "policy": "STRICT",
             "manager_runtime_context_sha256": reservation_evidence,
         }
+
+        image_scan_sha256 = os.environ.get(
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256", ""
+        ).strip()
+        image_scan_archives_raw = os.environ.get(
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES", ""
+        ).strip()
+        if re.fullmatch(r"[0-9a-f]{64}", image_scan_sha256) is None:
+            raise RuntimeError("missing exact-digest image payload-scan report hash")
+        if not image_scan_archives_raw.isdecimal():
+            raise RuntimeError("missing image payload-scan archive count")
+        image_scan_archives = int(image_scan_archives_raw)
+        if image_scan_archives < 2:
+            raise RuntimeError("image payload scan did not inspect rootfs and layers")
+        payload["built_image_payload_scan"] = {
+            "format": "npa_robotwin_image_byte_scan_v1",
+            "report_sha256": image_scan_sha256,
+            "archives_scanned": image_scan_archives,
+            "status": "pass",
+        }
+        payload["capabilities_exercised"].append(
+            "built_image_asset_cache_output_absence"
+        )
 
         smi = subprocess.run(
             [

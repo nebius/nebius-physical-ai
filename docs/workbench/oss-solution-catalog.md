@@ -109,7 +109,8 @@ source is `RoboTwin-Platform/RoboTwin`
 `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. The clean smoke fetches and
 hash-checks only the aggregate objects and embodiments archives, then uses the
 ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
-into the image.
+into the image: the live harness scans the exact private image digest's rootfs
+and every layer before it may submit the GPU run.
 
 | Capability | Status | Upstream basis / required evidence |
 | --- | --- | --- |
@@ -124,7 +125,9 @@ limits use to noncommercial research/evaluation, so the candidate is restricted
 to the operator's private run registry and is ineligible for public GHCR or the
 public image table. The Hugging Face asset repository card says MIT, while the
 aggregate object archive includes mixed documented source families; future
-tasks must review the terms of their selected objects. See
+tasks must review the terms of their selected objects. Registry credentials,
+runtime fetch, and the byte-absence scan do not grant permission; the
+manager-owned runtime decision remains a pre-build gate. See
 [`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
 artifact contract.
 

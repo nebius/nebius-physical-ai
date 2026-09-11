@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "6e4ed7740151c32a105a260c525a6d227ae51f0b978fd4acdaf98e88c3faafa7",
+  "workflow_sha256": "82e95138d659cd780b3045a1f7236bfe24fd2e6f67d8699cce3a4439b6a94e25",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused contract tests verify the pinned task/config, exact 148-distribution build lock, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
+      "reason": "Focused Python 3.12 contract tests verify the pinned task/config, exact 148-distribution CPython 3.10 image lock, missing-authorization refusal before work, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_robotwin.py npa/tests/workflows/test_byof_solution_smokes.py"
       ]
@@ -34,12 +34,12 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "A future live run needs an owner-only manager context with private-registry, S3, Kubernetes, SkyPilot, ownership, STRICT reservation, and authorized NVIDIA/CuRobo license decisions. The upstream source and asset dataset are public and ungated.",
+      "reason": "A future live run needs an owner-only manager context with private-registry, S3, Kubernetes, SkyPilot, ownership, STRICT reservation, and authorized NVIDIA/CuRobo/aggregate-asset/output-use decisions. Credentials and a private registry are not permission. The upstream source and asset dataset are public and ungated.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The image has not been built or pushed. Its exact Python closure is pinned and license-audited, but the image must remain private because baked CuRobo v0.7.8 is licensed only for noncommercial research/evaluation use and CUDA/cuDNN require operator acceptance.",
+      "reason": "The image has not been built, pushed, or byte-scanned. Its exact Python closure is pinned and license-audited, but the image must remain private because baked CuRobo v0.7.8 is licensed only for noncommercial research/evaluation use and CUDA/cuDNN require operator acceptance. The live harness scans the built exact digest before submitting it.",
       "evidence": [
         "https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE"
       ]
