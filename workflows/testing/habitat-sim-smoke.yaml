@@ -1,0 +1,37 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: habitat-sim-smoke
+  description: >-
+    Run the pinned official Skokloster Castle RGB/depth traversal with Bullet
+    physics and headless NVIDIA EGL on exactly one RTX PRO 6000 Blackwell.
+
+config:
+  bucket: example-bucket
+  prefix: "habitat-sim-smoke/{{run.id}}"
+  output_dir: "/tmp/habitat-sim-{{run.id}}"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+
+resources:
+  rtx-renderer:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 32Gi
+    disk_size: 100
+    image: tool://habitat-sim
+
+initial: render-traversal
+
+states:
+  render-traversal:
+    description: Render and persist the genuine Skokloster RGB-D/Bullet traversal.
+    toolRef: workflow.habitat_sim.smoke
+    resources: rtx-renderer
+    outputs:
+      - uri: "{{config.output_uri}}habitat-sim-smoke.json"
+        schema: npa.habitat-sim.smoke.v1
+      - uri: "{{config.output_uri}}habitat-sim-observations/"
+        schema: application/x-directory
+    terminal: true

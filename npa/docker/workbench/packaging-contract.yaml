@@ -159,6 +159,23 @@ images:
       checkpoints, and populated caches are runtime-only. Built-image byte and
       layer scanning plus an eight-node RTX PRO 6000 qualification are required
       before release promotion.
+  habitat-sim:
+    dockerfile: habitat-sim/Dockerfile
+    tier: interactive
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap may invoke package and SSH setup through
+      passwordless sudo as the non-root ubuntu user. The image starts no SSH
+      service by default, removes build-time host keys, and bakes no credentials.
+    notes: >-
+      Unbuilt, publication-quarantined candidate. It bakes only the exact MIT
+      Habitat-Sim 0.3.3 source projection and its hash-locked redistributable
+      Ubuntu/Python closure. The CC BY 4.0 Skokloster Castle scene is fetched
+      only at runtime from the official HTTPS locator after complete archive and
+      selected-member hash checks; scene, cache, credentials, and outputs are
+      absent from the image. A trusted public full-SHA rebuild creates a new
+      digest and requires complete repeat scans and exact-digest one-RTX proof.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

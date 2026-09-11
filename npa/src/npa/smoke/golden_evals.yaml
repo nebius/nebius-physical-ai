@@ -34,6 +34,36 @@
 format: npa_golden_evals_v1
 
 containers:
+  habitat-sim:
+    image: npa-habitat-sim
+    dockerfile: npa/docker/workbench/habitat-sim/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Renders a genuine Skokloster Castle RGB/depth traversal with Bullet
+        physics and headless EGL on an RTX-class renderer.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: official Meta scene runtime fetch and operator S3 output
+      external_fetch: [official-meta-habitat-test-scene-runtime, s3-runtime]
+      notes: >-
+        Unbuilt and publication-quarantined. The image candidate contains pinned
+        MIT source and a redistributable hash-locked runtime, but no scene,
+        cache, credential, output, CUDA, or NVIDIA driver payload. The CC BY 4.0
+        scene is hash-verified and attributed after runtime fetch.
+    golden_eval:
+      kind: container-smoke
+      command: >-
+        python3 -m npa.workflows.habitat_sim_smoke
+        --output-dir /tmp/npa-habitat-sim-golden
+        --output-uri s3://example-bucket/habitat-sim-golden/
+      artifact: /tmp/npa-habitat-sim-golden/habitat-sim-smoke.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
   openpi:
     image: npa-openpi
     dockerfile: npa/docker/workbench/openpi/Dockerfile

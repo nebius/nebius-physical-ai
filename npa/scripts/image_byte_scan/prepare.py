@@ -86,7 +86,10 @@ def authorize(args, directory):
     archive, verification = binding(args.archive), binding(args.verification_report)
     report = W.bound_json(verification)
     W.require(report.get("valid") is True and report.get("schema_version") in (
-        "npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"), "accepted_graph_report_required")
+        "npa.curobo.image-verification.v1",
+        "npa.ncore.oci-verification.v1",
+        "npa.habitat-sim.oci-verification.v1",
+    ), "accepted_graph_report_required")
     W.require(W.verification_archive_digest(report) == archive["sha256"] and report.get("expected_image_id") == args.expected_image_id, "prepared_image_binding")
     W.require(W.DIGEST.fullmatch(args.expected_image_id) is not None, "expected_image_digest")
     authorization = {"schema_version": "npa.image-byte-scan-authorization.v1", "accepted_verification": True,
