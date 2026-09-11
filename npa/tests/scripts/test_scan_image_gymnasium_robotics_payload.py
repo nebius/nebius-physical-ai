@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import bz2
+import gzip
 import importlib.util
 import hashlib
 import io
 import json
+import lzma
 from pathlib import Path
 import tarfile
 import zipfile
@@ -483,6 +486,47 @@ def test_nested_archive_vendor_signatures_are_scanned(tmp_path: Path) -> None:
         SCAN.scan(archive)
 
 
+def test_misnamed_zip_and_tar_archives_are_scanned_by_bytes(tmp_path: Path) -> None:
+    zip_output = io.BytesIO()
+    with zipfile.ZipFile(
+        zip_output, mode="w", compression=zipfile.ZIP_DEFLATED
+    ) as nested:
+        nested.writestr("source/private-key.txt", b"BEGIN " + b"RSA PRIVATE" + b" KEY")
+    zip_archive = tmp_path / "misnamed-zip.tar"
+    _docker_save(
+        zip_archive,
+        {**REQUIRED, "opt/extra/innocent.bin": zip_output.getvalue()},
+    )
+    with pytest.raises(ValueError, match="forbidden secret signature"):
+        SCAN.scan(zip_archive)
+
+    tar_output = _tar_bytes({"usr/local/cuda/libcuda.so": b"otherwise-clean-binary"})
+    tar_archive = tmp_path / "misnamed-tar.tar"
+    _docker_save(
+        tar_archive,
+        {**REQUIRED, "opt/extra/innocent.data": tar_output},
+    )
+    with pytest.raises(ValueError, match="forbidden nested archive member"):
+        SCAN.scan(tar_archive)
+
+
+@pytest.mark.parametrize(
+    "compressed",
+    (
+        gzip.compress(b"registry=" + b"nvcr.io/vendor/image"),
+        bz2.compress(b"registry=" + b"nvcr.io/vendor/image"),
+        lzma.compress(b"registry=" + b"nvcr.io/vendor/image"),
+    ),
+)
+def test_misnamed_compressed_streams_are_expanded(
+    tmp_path: Path, compressed: bytes
+) -> None:
+    archive = tmp_path / f"compressed-{hashlib.sha256(compressed).hexdigest()}.tar"
+    _docker_save(archive, {**REQUIRED, "opt/extra/innocent.bin": compressed})
+    with pytest.raises(ValueError, match="forbidden vendor payload signature"):
+        SCAN.scan(archive)
+
+
 def test_second_level_nested_archive_signatures_are_scanned(tmp_path: Path) -> None:
     archive = tmp_path / "nested-twice.tar"
     inner = io.BytesIO()
@@ -493,7 +537,7 @@ def test_second_level_nested_archive_signatures_are_scanned(tmp_path: Path) -> N
         info = tarfile.TarInfo("source/dependency.whl")
         info.size = len(inner.getvalue())
         nested.addfile(info, io.BytesIO(inner.getvalue()))
-    _docker_save(archive, {**REQUIRED, "opt/extra/sources.tar.gz": outer.getvalue()})
+    _docker_save(archive, {**REQUIRED, "opt/extra/sources.bin": outer.getvalue()})
     with pytest.raises(ValueError, match="forbidden vendor payload signature"):
         SCAN.scan(archive)
 
