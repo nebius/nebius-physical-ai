@@ -20,7 +20,6 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
-  NPA_BYOF_POD_IMAGE_ID: ""
   NVIDIA_DRIVER_CAPABILITIES: "all"
   MUJOCO_GL: "egl"
   PYOPENGL_PLATFORM: "egl"
@@ -62,14 +61,17 @@ run: |
   ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libEGL|libGL' \
     > "${OUTPUT_DIR}/graphics_libraries_before_render.txt"
 
-  # Kubernetes reports the image actually running in this pod. Fail closed if
-  # the service account cannot read its own pod or the observed digest differs.
+  # The owner-side live gate reads this exact SkyPilot Pod through the
+  # task-owned kubeconfig and writes a receipt through pods/exec. The workload
+  # service account deliberately needs no Kubernetes API permission.
+  POD_IMAGE_RECEIPT="${OUTPUT_DIR}/npa_pod_image_receipt.json"
+  while [ ! -s "${POD_IMAGE_RECEIPT}" ]; do
+    sleep 1
+  done
   export NPA_BYOF_POD_IMAGE_ID="$(/opt/venv/bin/python - <<'PY'
   import json
   import os
   import re
-  import ssl
-  import urllib.request
   from pathlib import Path
 
   expected = os.environ["BYOF_IMAGE"]
@@ -77,32 +79,43 @@ run: |
   if match is None:
       raise SystemExit("BYOF_IMAGE is not immutable")
   expected_digest = match.group(0)
-  service_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
-  namespace = (service_root / "namespace").read_text(encoding="utf-8").strip()
-  token = (service_root / "token").read_text(encoding="utf-8").strip()
-  host = os.environ["KUBERNETES_SERVICE_HOST"]
-  port = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
-  pod = os.environ["HOSTNAME"]
-  url = f"https://{host}:{port}/api/v1/namespaces/{namespace}/pods/{pod}"
-  request = urllib.request.Request(
-      url,
-      headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-  )
-  context = ssl.create_default_context(cafile=str(service_root / "ca.crt"))
-  with urllib.request.urlopen(request, context=context) as response:
-      payload = json.load(response)
-  statuses = list(payload.get("status", {}).get("containerStatuses") or [])
-  matching = [
-      str(item.get("imageID") or "")
-      for item in statuses
-      if item.get("state", {}).get("running")
-      and expected_digest in str(item.get("imageID") or "")
-  ]
-  if len(matching) != 1:
-      raise SystemExit(
-          f"expected one pod container with {expected_digest}, observed {matching!r}"
-      )
-  print(matching[0])
+  receipt_path = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "npa_pod_image_receipt.json"
+  payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+  required = {
+      "schema_version",
+      "source",
+      "run_id",
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "container_name",
+      "spec_image",
+      "image_id",
+      "expected_digest",
+      "observed_digest",
+      "observed_unix",
+  }
+  if set(payload) != required:
+      raise SystemExit("owner-side Pod image receipt has an unexpected schema")
+  if payload["schema_version"] != "npa.byof.pod-image-receipt.v1":
+      raise SystemExit("owner-side Pod image receipt has an unexpected version")
+  if payload["source"] != "owner-side-kubernetes-status":
+      raise SystemExit("Pod image receipt did not come from the owner-side gate")
+  if payload["run_id"] != os.environ["NPA_BYOF_RUN_ID"]:
+      raise SystemExit("Pod image receipt belongs to a different run")
+  if payload["spec_image"] != expected:
+      raise SystemExit("Pod spec image differs from BYOF_IMAGE")
+  if payload["expected_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt expected digest differs from BYOF_IMAGE")
+  if payload["observed_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt observed a different digest")
+  image_id = str(payload["image_id"])
+  if expected_digest not in image_id:
+      raise SystemExit("Kubernetes imageID differs from BYOF_IMAGE")
+  for key in ("pod_name", "pod_namespace", "pod_uid", "container_name"):
+      if not isinstance(payload[key], str) or not payload[key]:
+          raise SystemExit(f"Pod image receipt is missing {key}")
+  print(image_id)
   PY
   )"
   test -n "${NPA_BYOF_POD_IMAGE_ID}"

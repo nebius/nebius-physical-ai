@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -702,9 +703,12 @@ def _gymnasium_live_command(
         e2e_project or "",
     ]
     preset = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
-    if preset:
-        _immutable_image_digest(preset)
-        cmd.extend(["--image", preset, "--skip-build"])
+    assert preset, (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned, "
+        "task-private immutable image reference"
+    )
+    _immutable_image_digest(preset)
+    cmd.extend(["--image", preset, "--skip-build"])
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:
         cmd.extend(["--config-path", config_path])
@@ -723,6 +727,197 @@ def _gymnasium_live_env(e2e_project: str | None) -> dict[str, str]:
     if sky_bin:
         env["PATH"] = f"{Path(sky_bin).parent}:{env.get('PATH', '')}"
     return env
+
+
+def _gymnasium_kubectl(
+    env: dict[str, str],
+    namespace: str,
+    *args: str,
+    stdin: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    kubeconfig = env.get("NPA_BYOF_KUBECONFIG", "").strip()
+    context = env.get("NPA_BYOF_K8S_CONTEXT", "").strip()
+    assert kubeconfig and context
+    command = [
+        "kubectl",
+        "--kubeconfig",
+        kubeconfig,
+        "--context",
+        context,
+        "--namespace",
+        namespace,
+        *args,
+    ]
+    return subprocess.run(
+        command,
+        input=stdin,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _require_gymnasium_owner_receipt_access(
+    env: dict[str, str], *, namespace: str
+) -> None:
+    for verb, resource in (("get", "pods"), ("create", "pods/exec")):
+        result = _gymnasium_kubectl(
+            env, namespace, "auth", "can-i", verb, resource
+        )
+        assert result.returncode == 0 and result.stdout.strip() == "yes", (
+            "the owner identity needs narrowly scoped "
+            f"{verb} {resource} in the manager-authorized namespace; do not "
+            "grant the workload service account Pod access"
+        )
+
+
+def _gymnasium_pod_image_receipt(
+    proc: subprocess.Popen[str],
+    *,
+    env: dict[str, str],
+    namespace: str,
+    run_id: str,
+    image: str,
+) -> dict[str, object]:
+    expected_image = image.removeprefix("docker:")
+    expected_digest = _immutable_image_digest(expected_image)
+    while proc.poll() is None:
+        result = _gymnasium_kubectl(
+            env,
+            namespace,
+            "get",
+            "pods",
+            "--selector",
+            "parent=skypilot",
+            "--output",
+            "json",
+        )
+        assert result.returncode == 0, (
+            "owner-side Pod lookup failed; no workload RBAC change is permitted"
+        )
+        items = json.loads(result.stdout).get("items", [])
+        pods = [
+            item
+            for item in items
+            if item.get("metadata", {})
+            .get("annotations", {})
+            .get("skypilot-cluster-name")
+            == run_id
+            and not item.get("metadata", {}).get("deletionTimestamp")
+        ]
+        assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
+        if not pods:
+            time.sleep(2)
+            continue
+        pod = pods[0]
+        metadata = pod.get("metadata", {})
+        assert pod.get("status", {}).get("phase") in {"Pending", "Running"}
+        containers = pod.get("spec", {}).get("containers", [])
+        matching_containers = [
+            container
+            for container in containers
+            if str(container.get("image", "")).removeprefix("docker:")
+            == expected_image
+        ]
+        assert len(matching_containers) == 1, (
+            "the exact run Pod must contain one immutable task image"
+        )
+        container = matching_containers[0]
+        gpu_requests = sum(
+            int(
+                item.get("resources", {})
+                .get("requests", {})
+                .get("nvidia.com/gpu", 0)
+            )
+            for item in containers
+        )
+        gpu_limits = sum(
+            int(
+                item.get("resources", {})
+                .get("limits", {})
+                .get("nvidia.com/gpu", 0)
+            )
+            for item in containers
+        )
+        assert gpu_requests == gpu_limits == 1, (
+            "the exact run Pod must request and limit one GPU"
+        )
+        statuses = {
+            item.get("name"): item
+            for item in pod.get("status", {}).get("containerStatuses", [])
+        }
+        status = statuses.get(container.get("name"), {})
+        waiting = status.get("state", {}).get("waiting", {})
+        assert waiting.get("reason") not in {
+            "CreateContainerConfigError",
+            "CreateContainerError",
+            "ErrImagePull",
+            "ImagePullBackOff",
+            "InvalidImageName",
+        }, f"exact run Pod cannot start: {waiting.get('reason', 'unknown')}"
+        if not status.get("state", {}).get("running"):
+            time.sleep(2)
+            continue
+        image_id = str(status.get("imageID", ""))
+        assert expected_digest in image_id, (
+            "Kubernetes imageID differs from the scanned immutable image"
+        )
+        receipt: dict[str, object] = {
+            "schema_version": "npa.byof.pod-image-receipt.v1",
+            "source": "owner-side-kubernetes-status",
+            "run_id": run_id,
+            "pod_name": str(metadata.get("name", "")),
+            "pod_namespace": str(metadata.get("namespace", "")),
+            "pod_uid": str(metadata.get("uid", "")),
+            "container_name": str(container.get("name", "")),
+            "spec_image": str(container.get("image", "")).removeprefix("docker:"),
+            "image_id": image_id,
+            "expected_digest": expected_digest,
+            "observed_digest": expected_digest,
+            "observed_unix": round(time.time(), 3),
+        }
+        assert receipt["pod_name"] and receipt["pod_uid"]
+        assert receipt["pod_namespace"] == namespace
+        evidence_dir = Path(
+            env["NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR"]
+        ).resolve()
+        evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        assert evidence_dir.stat().st_mode & 0o077 == 0, (
+            "owner-side receipt directory must not be group/world accessible"
+        )
+        receipt_path = evidence_dir / f"{run_id}-pod-image-receipt.json"
+        assert not receipt_path.exists(), "refusing to overwrite a Pod image receipt"
+        encoded = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+        receipt_path.write_text(encoded, encoding="utf-8")
+        receipt_path.chmod(0o600)
+        in_pod_path = f"/workspace/byof-runs/{run_id}/npa_pod_image_receipt.json"
+        writer = (
+            "import os,pathlib,sys;"
+            "path=pathlib.Path(sys.argv[1]);path.parent.mkdir(parents=True,exist_ok=True);"
+            "tmp=path.with_name(path.name+'.tmp');tmp.write_bytes(sys.stdin.buffer.read());"
+            "os.chmod(tmp,0o600);tmp.replace(path)"
+        )
+        injected = _gymnasium_kubectl(
+            env,
+            namespace,
+            "exec",
+            "--stdin",
+            str(receipt["pod_name"]),
+            "--container",
+            str(receipt["container_name"]),
+            "--",
+            "/opt/venv/bin/python",
+            "-c",
+            writer,
+            in_pod_path,
+            stdin=encoded,
+        )
+        assert injected.returncode == 0, (
+            "owner-side receipt injection into the exact run Pod failed"
+        )
+        return receipt
+    raise AssertionError("BYOF runner exited before an exact Pod image receipt was written")
 
 
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
@@ -772,18 +967,47 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     e2e_project: str | None,
 ) -> None:
     cmd, output_root, run_id = _gymnasium_live_command(e2e_project)
-    proc = subprocess.run(
+    env = _gymnasium_live_env(e2e_project)
+    namespace = os.environ.get(
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE", ""
+    ).strip()
+    assert namespace, (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE must be the manager-authorized "
+        "task namespace"
+    )
+    assert os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR", "").strip(), (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR must be an owner-private path"
+    )
+    _require_gymnasium_owner_receipt_access(env, namespace=namespace)
+    proc = subprocess.Popen(
         cmd,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         cwd=str(REPO_ROOT),
-        env=_gymnasium_live_env(e2e_project),
+        env=env,
+        start_new_session=True,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    try:
+        receipt = _gymnasium_pod_image_receipt(
+            proc,
+            env=env,
+            namespace=namespace,
+            run_id=run_id,
+            image=os.environ["NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE"],
+        )
+        stdout, stderr = proc.communicate()
+    except BaseException:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.communicate()
+        raise
+    assert proc.returncode == 0, stdout + stderr
+    summary = _parse_last_json_blob(stdout + "\n" + stderr)
     assert summary["status"] == "ok", summary
     expected_digest = _gymnasium_expected_digest(summary)
+    assert receipt["expected_digest"] == expected_digest
+    assert receipt["observed_digest"] == expected_digest
     artifact_bytes, remote_summary = _gymnasium_remote_evidence(
         e2e_project,
         root_uri=output_root.rstrip("/") + f"/{run_id}/",

@@ -206,9 +206,11 @@ def test_gymnasium_robotics_profile_is_one_strict_rtxpro_shape() -> None:
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     assert "NVIDIA_VISIBLE_DEVICES" not in envs
     run = str(task["run"])
-    assert "containerStatuses" in run
+    assert "npa_pod_image_receipt.json" in run
+    assert "owner-side-kubernetes-status" in run
     assert "NPA_BYOF_POD_IMAGE_ID" in run
-    assert "expected one pod container" in run
+    assert "serviceaccount" not in run
+    assert "urllib.request" not in run
     assert "timeout=" not in run
     assert "RTX PRO 6000" in run
     assert "Blackwell" in run
@@ -259,6 +261,13 @@ def test_gymnasium_robotics_documentation_records_license_and_scope() -> None:
         ARTIFACT,
         "RTX PRO 6000 Blackwell",
         "No model, dataset, gated asset, or terms acceptance",
+        "| Source |",
+        "| Baked runtime |",
+        "| Weights | None.",
+        "| Data/assets |",
+        "| Cache |",
+        "| Outputs |",
+        "Private delivery does not change",
         "RL training",
     ):
         assert required in text
@@ -271,3 +280,12 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert 'run_id = f"gymnasium-robotics-{time.time_ns()}"' in source
     assert 'spec.config["output_root"] = authorized_output_root.rstrip("/")' in source
     assert "the manager-authorized output root must include a bucket and prefix" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR" in source
+    assert "owner-side-kubernetes-status" in source
+    assert '("get", "pods"), ("create", "pods/exec")' in source
+    assert 'get("skypilot-cluster-name")' in source
+    assert '"parent=skypilot"' in source
+    assert "expected_digest in image_id" in source
+    assert "assert gpu_requests == gpu_limits == 1" in source
+    assert "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned" in source

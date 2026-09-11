@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The manager-authorized child context records a deployed, healthy, STRICT-reserved single RTX PRO 6000 Blackwell target at compute capability 12.0, but the workload service account's required permission to read its own Pod imageID has not yet been proven. Workload-level proof remains pending until both that permission and the private image are qualified.",
+      "reason": "The manager-authorized child context records a deployed, healthy, STRICT-reserved single RTX PRO 6000 Blackwell target at compute capability 12.0. The owner identity can get Pods and create pods/exec in the exact namespace, while the workload service account deliberately has no Pod-read permission. Workload-level proof remains pending until the private image is qualified and the owner-side exact-Pod image receipt path completes live.",
       "evidence": [
         "manager-issued child runtime context (owner-only)"
       ]
