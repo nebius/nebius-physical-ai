@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,6 +37,49 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _indirect_submit_args(module, monkeypatch, tmp_path):
+    config_path = tmp_path / "skypilot.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
+    monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_a, **_k: [{"name": "task", "envs": {}, "resources": {}}],
+    )
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", lambda *_a: None
+    )
+    monkeypatch.setattr(
+        module,
+        "_write_default_k8s_config",
+        lambda *_a, **_k: str(config_path),
+    )
+    monkeypatch.setattr(
+        module,
+        "verify_solution_payload_service_accounts",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
+    monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    guard = SimpleNamespace(mark_launched=lambda **_k: None, teardown=lambda: None)
+    monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
+    monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_a: None)
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
+    return module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--run-id",
+            "human-run-name",
+            "--output-root",
+            "s3://bucket/prefix",
+            "--no-direct-launch",
+            "--no-cleanup",
+        ]
+    )
 
 
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
@@ -356,6 +400,49 @@ def test_wait_timeout_less_than_negative_one_is_rejected() -> None:
         module._wait_for_terminal(
             "run", sky_bin="sky", wait_timeout=-2, poll_interval=1
         )
+
+
+def test_submit_waits_on_scheduler_id_not_human_run_name(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    observed: dict[str, str] = {}
+
+    def submit(_path, run_id, **_kwargs):
+        observed["submitted_run_id"] = run_id
+        return SimpleNamespace(job_id="73", log_paths={})
+
+    def wait(scheduler_job_id, **_kwargs):
+        observed["waited_job_id"] = scheduler_job_id
+        return SimpleNamespace(status="SUCCEEDED"), {"terminal": True}
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_wait_for_terminal", wait)
+
+    assert module._submit_and_wait(args) == 0
+    assert observed == {
+        "submitted_run_id": "human-run-name",
+        "waited_job_id": "73",
+    }
+
+
+def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: pytest.fail("waiter must not run without a scheduler ID"),
+    )
+
+    with pytest.raises(RuntimeError, match="no scheduler job ID"):
+        module._submit_and_wait(args)
 
 
 def test_render_workflow_normalizes_docker_image_for_summary(monkeypatch) -> None:
