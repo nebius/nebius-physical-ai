@@ -145,7 +145,7 @@ def _runtime_context_bytes(reference: str) -> bytes:
     if not secret:
         raise ValueError(f"{reference} is required and must not be empty")
     if secret.startswith("{"):
-        return secret.encode()
+        raise ValueError("runtime authorization must name an owner-only file")
     path = Path(secret).expanduser()
     descriptor: int | None = None
     try:
@@ -171,9 +171,36 @@ def _runtime_context_bytes(reference: str) -> bytes:
 
 
 def _context_text(payload: dict[str, Any], field: str) -> str:
-    value = str(payload.get(field) or "").strip()
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"runtime authorization {field} must be a string")
+    value = value.strip()
     if not value:
         raise ValueError(f"runtime authorization lacks {field}")
+    return value
+
+
+def _validate_runtime_config_path(payload: dict[str, Any], field: str) -> str:
+    """Validate an owner-only local config before any external command runs."""
+
+    value = _context_text(payload, field)
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"runtime authorization {field} must be an absolute path")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"runtime authorization {field} must be a regular file")
+        if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+            raise ValueError(f"runtime authorization {field} must be owner-only")
+        os.read(descriptor, 1)
+    except OSError as exc:
+        raise ValueError(f"runtime authorization {field} is not readable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return value
 
 
@@ -190,7 +217,7 @@ def _validate_robotwin_context(
         raise ValueError("RoboTwin reservation policy must be STRICT")
     if reservation.get("accelerator") != "RTXPRO-6000-BLACKWELL-SERVER-EDITION":
         raise ValueError("RoboTwin requires the RTX PRO 6000 Blackwell target")
-    if reservation.get("count") != 1:
+    if type(reservation.get("count")) is not int or reservation.get("count") != 1:
         raise ValueError("RoboTwin requires exactly one reserved GPU")
     decisions = payload.get("license_acceptance")
     if not isinstance(decisions, dict):
@@ -209,9 +236,7 @@ def _robotwin_authorization(
         for field in (
             "project",
             "nebius_profile",
-            "kubeconfig",
             "kubernetes_context",
-            "skypilot_config_path",
             "registry",
             "bucket",
             "output_root",
@@ -220,6 +245,10 @@ def _robotwin_authorization(
     }
     if is_public_registry(values["registry"]):
         raise ValueError("RoboTwin requires an operator-private registry")
+    values["kubeconfig"] = _validate_runtime_config_path(payload, "kubeconfig")
+    values["skypilot_config_path"] = _validate_runtime_config_path(
+        payload, "skypilot_config_path"
+    )
     parsed_output = urlparse(values["output_root"])
     if parsed_output.scheme != "s3" or parsed_output.netloc != values["bucket"]:
         raise ValueError("RoboTwin output storage does not match its authorized bucket")
