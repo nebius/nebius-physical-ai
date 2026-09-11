@@ -42,17 +42,18 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The exact source, MuJoCo wheel, and Ubuntu base bytes passed pre-build review, but the task-private BYOF image has not yet been built, pushed, pulled, or scanned.",
+      "status": "verified",
+      "reason": "The corrected task-private immutable image was built, pushed, pulled by exact digest, and passed the complete all-layer secret, private-key, credential, model/weight, external-dataset, cache, package, license, SBOM, and fixed-critical byte gates. The distinct rejected digest was removed and is prohibited for runtime; exact references and receipts remain owner-only.",
       "evidence": [
-        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing"
+        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing",
+        "manager-issued child image qualification receipts (owner-only)"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The manager-authorized child context records a deployed, healthy, STRICT-reserved single RTX PRO 6000 Blackwell target at compute capability 12.0. Owner-only preflight evidence verifies list Pods and create pods/exec in the exact namespace, while the workload service account deliberately has no Pod-read permission. Workload-level proof remains pending until the private image is qualified and the owner-side exact-Pod image receipt plus exact-run cleanup paths complete live.",
+      "status": "verified",
+      "reason": "A mode-0600 child-local kubeconfig context is bound to the exact assigned namespace, and the supported SkyPilot kubernetes.allowed_nodes.names contract contains only the assigned node. Owner-only live preflight matches its UID, Ready state, one allocatable RTX PRO 6000 Blackwell GPU, provider-group label, and one active STRICT reservation; the namespace has no Pod, RoleBinding, or pull secret. Capability execution, Pod-observed digest proof, and exact-run cleanup remain pending and are not claimed here.",
       "evidence": [
-        "manager-issued child runtime context (owner-only)"
+        "manager-issued child runtime context and pre-submit receipts (owner-only)"
       ]
     }
   }

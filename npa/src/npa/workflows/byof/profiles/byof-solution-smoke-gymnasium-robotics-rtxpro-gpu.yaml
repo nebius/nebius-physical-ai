@@ -20,6 +20,7 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
+  NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS: "900"
   NVIDIA_DRIVER_CAPABILITIES: "all"
   MUJOCO_GL: "egl"
   PYOPENGL_PLATFORM: "egl"
@@ -65,7 +66,20 @@ run: |
   # task-owned kubeconfig and writes a receipt through pods/exec. The workload
   # service account deliberately needs no Kubernetes API permission.
   POD_IMAGE_RECEIPT="${OUTPUT_DIR}/npa_pod_image_receipt.json"
+  RECEIPT_TIMEOUT_SECONDS="${NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS}"
+  case "${RECEIPT_TIMEOUT_SECONDS}" in
+    ""|*[!0-9]*) echo "receipt timeout must be a positive integer" >&2; exit 65 ;;
+  esac
+  if [ "${RECEIPT_TIMEOUT_SECONDS}" -le 0 ]; then
+    echo "receipt timeout must be a positive integer" >&2
+    exit 65
+  fi
+  RECEIPT_DEADLINE=$((SECONDS + RECEIPT_TIMEOUT_SECONDS))
   while [ ! -s "${POD_IMAGE_RECEIPT}" ]; do
+    if [ "${SECONDS}" -ge "${RECEIPT_DEADLINE}" ]; then
+      echo "timed out waiting for the owner-side Pod image receipt" >&2
+      exit 124
+    fi
     sleep 1
   done
   export NPA_BYOF_POD_IMAGE_ID="$(/opt/venv/bin/python - <<'PY'

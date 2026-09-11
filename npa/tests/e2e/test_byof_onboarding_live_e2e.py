@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import pytest
 from typer.testing import CliRunner
+import yaml
 
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
@@ -58,6 +59,12 @@ BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 GYMNASIUM_ROBOTICS_SPEC = (
     REPO_ROOT / "workflows" / "testing" / "byof-gymnasium-robotics.yaml"
 )
+GYMNASIUM_KUBECTL_TIMEOUT_SECONDS = 30
+GYMNASIUM_RECEIPT_TIMEOUT_SECONDS = 900
+GYMNASIUM_CLEANUP_TIMEOUT_SECONDS = 180
+GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS = 120
+GYMNASIUM_RUNNER_TIMEOUT_SECONDS = 1800
+GYMNASIUM_RUNNER_TERM_GRACE_SECONDS = 15
 RUNNER = CliRunner()
 
 
@@ -104,7 +111,10 @@ def live_byof_built_image(e2e_project: str | None) -> str:
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_CONTAINER_RUN_ID") or f"byof-container-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_CONTAINER_RUN_ID")
+        or f"byof-container-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -160,7 +170,9 @@ def test_live_isaac_byof_workflow_validate_and_plan(
 ) -> None:
     bucket = live_bucket(e2e_project)
     path = _materialize_byof_spec(tmp_path, bucket=bucket)
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
     assert payload["name"] == "byof"
@@ -181,7 +193,11 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     plan_payload = parse_json_payload(plan, forbidden_markers)
     steps = plan_payload.get("steps", [])
     assert steps
-    tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
+    tool_refs = {
+        step.get("tool_ref") or step.get("toolRef")
+        for step in steps
+        if isinstance(step, dict)
+    }
     assert "workbench.byof.repo" in tool_refs
 
 
@@ -195,7 +211,9 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     spec = load_spec(path)
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
-    assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers
+    )
     assert any(step.tool_ref == "workbench.byof.repo" for step in plan.steps)
 
 
@@ -242,7 +260,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert "<repo-url>" in workflow_yaml
     assert "<workload>" in workflow_yaml
 
-    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
+    validate = ctx.post(
+        "/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0
+    )
     validate.raise_for_status()
     validate_payload = validate.json()
     assert validate_payload.get("ok") is True
@@ -254,7 +274,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    assert (
+        "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    )
 
 
 @pytest.mark.skipif(
@@ -401,11 +423,15 @@ def test_live_byof_runner_submit_smoke(
 @pytest.fixture(scope="module")
 def live_byof_ubuntu_built_image(e2e_project: str | None) -> str:
     if os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1":
-        pytest.skip("Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.")
+        pytest.skip(
+            "Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push."
+        )
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_ubuntu_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -458,7 +484,9 @@ def test_live_agent_oss_repo_onboard_solution_chat() -> None:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.",
 )
-def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_build_push(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     assert live_byof_ubuntu_built_image
     assert "npa-byof" in live_byof_ubuntu_built_image
 
@@ -467,7 +495,9 @@ def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container metadata inspect.",
 )
-def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_metadata(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     repo_url, repo_ref = byof_ubuntu_validation_repo()
     meta_proc = subprocess.run(
         [
@@ -491,7 +521,8 @@ def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: s
 
 
 @pytest.mark.skipif(
-    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1" or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1"
+    or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 and NPA_BYOF_LIVE_GPU=1 for Ubuntu container-verify SkyPilot smoke.",
 )
 def test_live_byof_ubuntu_oss_container_verify_submit(
@@ -499,7 +530,9 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     live_byof_ubuntu_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
+    yaml_override = resolve_byof_resource_yaml(
+        e2e_project, smoke=True, workload="container-verify"
+    )
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
@@ -757,7 +790,67 @@ def _gymnasium_kubectl(
         capture_output=True,
         text=True,
         env=env,
+        timeout=GYMNASIUM_KUBECTL_TIMEOUT_SECONDS,
     )
+
+
+def _require_gymnasium_scheduling_contract(
+    env: dict[str, str],
+    *,
+    namespace: str,
+    config_path: str | None,
+) -> None:
+    assert config_path, "a task-private SkyPilot config is required"
+    document = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+    kubernetes = document.get("kubernetes", {})
+    assert isinstance(kubernetes, dict)
+    allowed = kubernetes.get("allowed_nodes")
+    assert isinstance(allowed, dict) and set(allowed) == {"names"}, (
+        "SkyPilot kubernetes.allowed_nodes must use only the supported names mapping"
+    )
+    names = allowed.get("names")
+    assert (
+        isinstance(names, list)
+        and len(names) == 1
+        and isinstance(names[0], str)
+        and names[0].strip()
+    ), "SkyPilot must allow exactly one named node"
+
+    expected_name = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME", "").strip()
+    expected_uid = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_UID", "").strip()
+    provider_group = env.get(
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_PROVIDER_NODE_GROUP_ID", ""
+    ).strip()
+    assert expected_name and expected_uid and provider_group, (
+        "manager-issued node name, UID, and provider-group evidence are required"
+    )
+    assert names == [expected_name], (
+        "the one allowed SkyPilot node must be the manager-assigned node"
+    )
+
+    result = _gymnasium_kubectl(
+        env, namespace, "get", "node", expected_name, "--output", "json"
+    )
+    assert result.returncode == 0, "the one allowed node is not readable"
+    node = json.loads(result.stdout)
+    metadata = node.get("metadata", {})
+    assert metadata.get("name") == expected_name
+    assert metadata.get("uid") == expected_uid
+    labels = metadata.get("labels", {})
+    assert sum(value == provider_group for value in labels.values()) == 1, (
+        "the allowed node must match exactly one provider-group label"
+    )
+    ready = [
+        condition
+        for condition in node.get("status", {}).get("conditions", [])
+        if condition.get("type") == "Ready"
+    ]
+    assert len(ready) == 1 and ready[0].get("status") == "True"
+    assert node.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu") == "1"
+    products = [value for key, value in labels.items() if "gpu.product" in str(key)]
+    assert len(products) == 1
+    product = str(products[0]).lower().replace("_", "-")
+    assert "rtx-pro-6000" in product and "blackwell" in product
 
 
 def _gymnasium_evidence_dir(env: dict[str, str]) -> Path:
@@ -782,9 +875,7 @@ def _require_gymnasium_owner_receipt_access(
     env: dict[str, str], *, namespace: str
 ) -> None:
     for verb, resource in (("list", "pods"), ("create", "pods/exec")):
-        result = _gymnasium_kubectl(
-            env, namespace, "auth", "can-i", verb, resource
-        )
+        result = _gymnasium_kubectl(env, namespace, "auth", "can-i", verb, resource)
         assert result.returncode == 0 and result.stdout.strip() == "yes", (
             "the owner identity needs narrowly scoped "
             f"{verb} {resource} in the manager-authorized namespace; do not "
@@ -817,13 +908,10 @@ def _exact_gymnasium_run_pods(
         item
         for item in items
         if item.get("metadata", {}).get("labels", {}).get("parent") == "skypilot"
-        and item.get("metadata", {})
-        .get("annotations", {})
-        .get("skypilot-cluster-name")
+        and item.get("metadata", {}).get("annotations", {}).get("skypilot-cluster-name")
         == run_id
         and (
-            include_terminating
-            or not item.get("metadata", {}).get("deletionTimestamp")
+            include_terminating or not item.get("metadata", {}).get("deletionTimestamp")
         )
     ]
     assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
@@ -840,10 +928,11 @@ def _gymnasium_pod_image_receipt(
 ) -> dict[str, object]:
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
+    deadline = time.monotonic() + GYMNASIUM_RECEIPT_TIMEOUT_SECONDS
     while proc.poll() is None:
-        pods = _exact_gymnasium_run_pods(
-            env, namespace=namespace, run_id=run_id
-        )
+        if time.monotonic() >= deadline:
+            raise AssertionError("timed out waiting for the exact Pod image receipt")
+        pods = _exact_gymnasium_run_pods(env, namespace=namespace, run_id=run_id)
         if not pods:
             time.sleep(2)
             continue
@@ -854,28 +943,17 @@ def _gymnasium_pod_image_receipt(
         matching_containers = [
             container
             for container in containers
-            if str(container.get("image", "")).removeprefix("docker:")
-            == expected_image
+            if str(container.get("image", "")).removeprefix("docker:") == expected_image
         ]
         assert len(matching_containers) == 1, (
             "the exact run Pod must contain one immutable task image"
         )
         container = matching_containers[0]
-        gpu_requests = sum(
-            int(
-                item.get("resources", {})
-                .get("requests", {})
-                .get("nvidia.com/gpu", 0)
-            )
-            for item in containers
+        gpu_requests = int(
+            container.get("resources", {}).get("requests", {}).get("nvidia.com/gpu", 0)
         )
-        gpu_limits = sum(
-            int(
-                item.get("resources", {})
-                .get("limits", {})
-                .get("nvidia.com/gpu", 0)
-            )
-            for item in containers
+        gpu_limits = int(
+            container.get("resources", {}).get("limits", {}).get("nvidia.com/gpu", 0)
         )
         assert gpu_requests == gpu_limits == 1, (
             "the exact run Pod must request and limit one GPU"
@@ -949,7 +1027,42 @@ def _gymnasium_pod_image_receipt(
         with _new_gymnasium_private_file(receipt_path) as stream:
             stream.write(encoded)
         return receipt
-    raise AssertionError("BYOF runner exited before an exact Pod image receipt was written")
+    raise AssertionError(
+        "BYOF runner exited before an exact Pod image receipt was written"
+    )
+
+
+def _wait_for_gymnasium_pod_absence(
+    env: dict[str, str], *, namespace: str, run_id: str
+) -> bool:
+    deadline = time.monotonic() + GYMNASIUM_CLEANUP_TIMEOUT_SECONDS
+    while _exact_gymnasium_run_pods(
+        env,
+        namespace=namespace,
+        run_id=run_id,
+        include_terminating=True,
+    ):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(2)
+    return True
+
+
+def _terminate_gymnasium_runner(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=GYMNASIUM_RUNNER_TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=GYMNASIUM_RUNNER_TERM_GRACE_SECONDS)
 
 
 def _cleanup_gymnasium_run(
@@ -968,14 +1081,32 @@ def _cleanup_gymnasium_run(
         if config_path:
             command.extend(["--config", config_path])
         command.extend(["--yes", run_id])
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=str(REPO_ROOT),
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+                timeout=GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            for suffix, content in (
+                ("stdout", exc.stdout or ""),
+                ("stderr", exc.stderr or ""),
+            ):
+                path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
+                with _new_gymnasium_private_file(path) as stream:
+                    stream.write(
+                        content.decode(errors="replace")
+                        if isinstance(content, bytes)
+                        else content
+                    )
+            assert _wait_for_gymnasium_pod_absence(
+                env, namespace=namespace, run_id=run_id
+            ), "sky down timed out and the exact-run Pod remains"
+            return
         for suffix, content in (
             ("stdout", result.stdout),
             ("stderr", result.stderr),
@@ -984,21 +1115,13 @@ def _cleanup_gymnasium_run(
             with _new_gymnasium_private_file(path) as stream:
                 stream.write(content)
         if result.returncode != 0:
-            remaining = _exact_gymnasium_run_pods(
-                env,
-                namespace=namespace,
-                run_id=run_id,
-                include_terminating=True,
-            )
-            assert not remaining, "exact-run SkyPilot cleanup failed and its Pod remains"
+            assert _wait_for_gymnasium_pod_absence(
+                env, namespace=namespace, run_id=run_id
+            ), "exact-run SkyPilot cleanup failed and its Pod remains"
             return
-    while _exact_gymnasium_run_pods(
-        env,
-        namespace=namespace,
-        run_id=run_id,
-        include_terminating=True,
-    ):
-        time.sleep(2)
+    assert _wait_for_gymnasium_pod_absence(env, namespace=namespace, run_id=run_id), (
+        "timed out waiting for the exact-run Pod to disappear"
+    )
 
 
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
@@ -1049,9 +1172,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
 ) -> None:
     cmd, output_root, run_id = _gymnasium_live_command(e2e_project)
     env = _gymnasium_live_env(e2e_project)
-    namespace = os.environ.get(
-        "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE", ""
-    ).strip()
+    namespace = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE", "").strip()
     assert namespace, (
         "NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE must be the manager-authorized "
         "task namespace"
@@ -1059,6 +1180,9 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     evidence_dir = _gymnasium_evidence_dir(env)
     _require_gymnasium_owner_receipt_access(env, namespace=namespace)
     config_path = skypilot_config_for_project(e2e_project)
+    _require_gymnasium_scheduling_contract(
+        env, namespace=namespace, config_path=config_path
+    )
     stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
     stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
     with (
@@ -1082,7 +1206,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 run_id=run_id,
                 image=os.environ["NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE"],
             )
-            returncode = proc.wait()
+            returncode = proc.wait(timeout=GYMNASIUM_RUNNER_TIMEOUT_SECONDS)
             if returncode != 0:
                 stdout_stream.flush()
                 stderr_stream.flush()
@@ -1090,9 +1214,12 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                     f"BYOF runner exited {returncode}; inspect owner-private logs"
                 )
         except BaseException as primary_error:
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait()
+            try:
+                _terminate_gymnasium_runner(proc)
+            except BaseException as termination_error:
+                primary_error.add_note(
+                    f"BYOF runner termination also failed: {termination_error}"
+                )
             try:
                 _cleanup_gymnasium_run(
                     env,
@@ -1102,7 +1229,9 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                     issue_down=True,
                 )
             except BaseException as cleanup_error:
-                primary_error.add_note(f"exact-run cleanup also failed: {cleanup_error}")
+                primary_error.add_note(
+                    f"exact-run cleanup also failed: {cleanup_error}"
+                )
             raise
     stdout = stdout_path.read_text(encoding="utf-8")
     stderr = stderr_path.read_text(encoding="utf-8")
