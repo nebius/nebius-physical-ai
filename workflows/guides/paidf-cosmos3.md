@@ -369,18 +369,12 @@ credentials from the selected project's own storage record.
 
 Current submit stages the NPA package automatically for tasks that need it,
 uses a content-addressed source prefix, and persists that reference for recovery.
-Pinned workbench images also contain an NPA copy. For this guide, enable the
-supported source overlay so those tasks use the current checkout as well:
-
-```bash
-export NPA_SRC_OVERLAY=1
-```
-
-This keeps the image's installed tool dependencies while selecting the staged
-NPA source. It matters for Token Factory compatibility: the current client
-disables MiniMax thinking for direct answers, while an older bundled client can
-return reasoning without the answer required by the evaluator. Automatic source
-staging alone does not replace a bundled NPA installation.
+Pinned workbench images also contain an NPA copy. This workflow sets
+`config.source_overlay: true` so those tasks use the submitted checkout's NPA
+adapters, including structural transfer and aligned evaluation. No shell
+environment override is needed. The overlay retains the image's installed tool
+dependencies. It also selects the current Token Factory client, which requests
+direct answers for captioning and evaluator questions.
 
 Keep the repository checkout available when you submit and use the canonical
 spec at `workflows/main/paidf-cosmos3.yaml`.
@@ -480,9 +474,10 @@ For your own video, add **one** of these input options to the submit command:
 - `--input-video /absolute/path/source.mp4` for a local H.264 MP4.
 - `--input-uri 's3://<your-bucket>/<your-prefix>/source.mp4'` for a stored MP4.
 
-The recorded live validation used a short robot clip. Check the resulting
-duration and motion: basic `video2video` conditioning does not establish
-full-episode motion preservation. For LeRobot episode/camera selection and the
+The workflow retains the selected original and prepares a constant-rate,
+letterboxed reference. Native edge controls cover the complete prepared video;
+generation and evaluation verify its frame count and timestamps. Inspect the
+resulting action and contacts as well as the quality report. For episode/camera selection and the
 generation contract, see the [Cosmos 3 workflow guide](../../docs/workbench/guides/paidf-cosmos3.md).
 
 ### R4. Monitor and recover
@@ -542,23 +537,37 @@ Use a fresh run ID after changing inputs or settings.
 | Setting | Default | What it controls |
 | --- | --- | --- |
 | `cosmos3_mode`, `cosmos3_checkpoint` | `video2video`, `Cosmos3-Nano` | Source-video conditioning and generation checkpoint; this composition requires `video2video`. |
+| `structural_control` | `edge` | Native edge conditioning across every prepared source frame. |
+| `conditioning_fps` | `24` | Preparation and generation frame rate, an integer from 10 through 30. Source duration is preserved within one output frame. |
+| `transfer_chunk_frames` | `93` | Native generation window, `4k+1` frames from 9 through 297. Longer videos use overlapping windows and retain complete source coverage. |
+| `control_guidance` | `1.5` | Native structural-control strength, greater than 0 and at most 10. |
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |
 | `augmentation_seed` | Empty | Appearance sampling uses the run ID by default; set a fixed value to compare experiments with the same sampled profiles. |
 | `refinement_iterations` | `2` | Maximum total generation/evaluation passes, including the initial pass. |
 | `retry_seed_stride`, `retry_guidance_delta`, `retry_steps_delta` | `1000`, `-0.5`, `4` | Changes per retry. The second pass starts at seed `1017`, guidance `4.5`, and `28` steps. |
-| `grade_threshold` | `0.75` | Evaluator and quality-gate threshold; required checks must also pass for every variant. |
+| `grade_threshold` | `0.5` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
+| `attribute_threshold` | `0.5` | Minimum fraction of requested appearance attributes correctly recognized per variant. Every question must have a valid answer. |
+| `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
 | `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |
 | `appearance_fidelity_mode`, `appearance_fidelity_threshold` | `advisory`, `0.8` | Protected-appearance diagnostic. Related `appearance_*` keys configure regions and tolerances. |
-| `source_motion_weight` | `0.0` | Must remain zero: published videos are unmodified model output; blending does not align motion. |
+| `source_motion_weight` | `0.0` | Must remain zero: publish model output after guardrail processing; blending does not align motion. |
 
 For example, adding `--var seed=29 --var augmentation_seed=17` to both commands
 changes the generation seed and fixes appearance sampling. This is a controlled
-experiment, not a demonstrated quality fix. Keep the threshold, required checks,
-and guardrails unchanged when investigating rejection.
+experiment. The reports retain the actual thresholds and all individual
+attribute verdicts, including failures allowed by a reduced attribute threshold.
+Reducing a quality threshold changes the acceptance criteria; it does not repair
+the generated video. Model guardrails, complete evaluator responses, media
+integrity and timeline alignment remain required.
+
+The shipped `0.5`/`0.5` criteria are for exploratory pipeline runs. To require
+the earlier stricter criteria, add `--var grade_threshold=0.75
+--var attribute_threshold=1.0` to both plan and submit. Choose production
+criteria using representative videos and human review of the resulting data.
 
 The actual generation arguments and retry values are applied in
 [`paidf_cosmos3.py`](../../npa/src/npa/workflows/paidf_cosmos3.py).
@@ -567,16 +576,23 @@ maps the YAML keys to the `generate-variants` and `evaluate` commands.
 Inspect `configs/manifest.json`, `configs/cosmos3-attempt.json`, and each
 variant's `metadata.json` to see what was actually sampled and executed.
 
-**Timing is not configurable through this workflow's current generation tool.**
-It exposes no output FPS, frame-count, duration, or timestamp-alignment option.
-Adding `--var fps=24` or `--var num_frames=169` does not configure those behaviors.
-The [generation wrapper](../../npa/src/npa/workbench/cosmos/generate.py) leaves
-those values to the selected
-[Cosmos Framework defaults](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/args.py).
-Exposing new timing controls requires implementation and validation beyond
-editing this YAML. For full-episode structural conditioning, see the separate
-[Nano augmentation deployment](../../npa/deploy/cosmos3-nano-video/README.md#source-conditioned-visual-augmentation)
-and its own input contract; it is not enabled by a setting in this workflow.
+Preparation writes `input/original_source.mp4`, `input/source.mp4`, and
+`input/timeline.json`. The prepared source uses the model's 832×480 bucket with
+letterboxing and a zero-based constant frame rate. It resamples the source
+timeline without stretching the action or changing its aspect ratio. Videos
+must produce at least six prepared frames. The generated video must match every
+prepared timestamp; the adapter never trims, stretches or blends output to force a pass.
+
+Each variant includes `source_edges.mkv`, `transfer.json`, and alignment evidence
+in `metadata.json`. The adapter verifies that the native framework loads all
+control pixels unchanged, checks each effective prompt before generation, and
+saves the video returned by the model's video guardrail. The evaluator independently
+decodes the current source/output pair and verifies the recorded hashes before
+comparing corresponding frames. `--var fps=24` and `--var num_frames=169` are
+not supported controls; use the named settings above.
+Native transfer uses eager execution (`native_torch_compile: false` in
+`transfer.json`) because the pinned attention implementation has a Torch
+compilation incompatibility for structural-control shapes.
 
 ### R6. Diagnose quality rejection and prepare the next run
 
@@ -615,7 +631,7 @@ EVIDENCE_DIR="$(mktemp -d "./paidf-evidence/${RUN_ID}.XXXXXX")"
   umask 077
   mkdir -p "$EVIDENCE_DIR"/{input,configs,grade,cosmos_augmented}
   chmod 700 "$EVIDENCE_DIR"
-  for artifact in input/source.mp4 input/provenance.json \
+  for artifact in input/source.mp4 input/original_source.mp4 input/timeline.json input/provenance.json \
     configs/manifest.json configs/cosmos3-attempt.json \
     cosmos_augmented/manifest.json grade/quality_disposition.json \
     grade/cosmos_evaluator.json grade/decision.json; do
@@ -623,7 +639,8 @@ EVIDENCE_DIR="$(mktemp -d "./paidf-evidence/${RUN_ID}.XXXXXX")"
   done
   aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
     --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
-    --include 'variant-*/metadata.json' --profile nebius
+    --include 'variant-*/metadata.json' --include 'variant-*/transfer.json' \
+    --include 'variant-*/source_edges.mkv' --profile nebius
 )
 ```
 
@@ -643,9 +660,9 @@ Read the aggregate rejection reasons and the individual checks:
 ```bash
 jq '{quality_status, decision, evaluator_status, score, threshold,
      hard_checks_passed, reasons}' "$EVIDENCE_DIR/grade/quality_disposition.json"
-jq '{status, passed, score, threshold, clip_count, passed_clips, warnings,
+jq '{status, passed, score, threshold, attribute_threshold, alignment_mode, clip_count, passed_clips, warnings,
      clips: [.clips[] | {clip_id, status, passed, score,
-       attribute_verification, hallucination, temporal_enforced,
+       temporal_alignment, attribute_verification, hallucination, temporal_enforced,
        temporal_consistency, appearance_enforced, appearance_fidelity, skipped}]}' \
   "$EVIDENCE_DIR/grade/cosmos_evaluator.json"
 ```
@@ -653,7 +670,7 @@ jq '{status, passed, score, threshold, clip_count, passed_clips, warnings,
 `status: completed` with failed checks is a quality verdict. A `degraded`, missing,
 or malformed report is incomplete evidence; resolve its warnings or service errors
 before interpreting its score. Acceptance requires a complete report, passing
-required checks for every variant, and a score at least `0.75`.
+required checks for every variant, and the recorded quality and attribute thresholds.
 
 Compare the decoded media, without modifying the original evidence:
 
@@ -671,12 +688,10 @@ Compare the decoded media, without modifying the original evidence:
 )
 ```
 
-The recorded starter run had **169 frames at 50 fps (3.38 seconds)**; its outputs
-had **189 frames at 24 fps (7.875 seconds)**. Probe your own files rather than
-assuming those values. The current temporal diagnostic compares decoded frame
-positions, not matching timestamps. `frame_counts_match: false` reports unequal
-decoded lengths; equal counts alone would not prove alignment. The motion check
-also compares frame pairs without automatically retiming the videos.
+With this workflow, `temporal_alignment.status` must be `verified` for every
+evaluated variant. A mismatched frame count, frame rate, timestamp or video hash
+stops quality scoring. An older run with unequal durations cannot be fixed by
+lowering the quality threshold; use a fresh run with the updated workflow.
 
 Temporal and appearance diagnostics are `advisory` by default, so their failure
 alone does not cause hard rejection. Read the required attribute and hallucination
@@ -687,8 +702,9 @@ that the model preserved the action; timing adjustments cannot repair scene drif
 
 Once you have a specific input, generation, or evaluator-service correction,
 reserve a new run ID with R2 and submit with R3. Preserve the original rejected
-run and keep `grade_threshold=0.75`. A new seed or another retry is an experiment,
-not a guarantee that the full pipeline will reach curation.
+run. If you intentionally accept weaker visual matching, set the chosen
+`grade_threshold` and `attribute_threshold` in both plan and submit commands.
+Every variant still needs complete evaluation and verified alignment.
 
 ## Troubleshooting
 
@@ -698,6 +714,7 @@ appears.
 | Symptom | What to check | Action |
 | --- | --- | --- |
 | `No such command 'submit'` | Executable, active environment, and installed checkout | Follow [installation recovery](#if-submit-is-missing); verify `.venv/bin/npa workbench workflow submit --help` before setup. |
+| `This workflow requires --runtime without --assume-decision` | Execution is using a planned decision | Use the full R3 runtime command; assumed decisions belong only in offline plans. |
 | Workflow YAML does not exist | Path copied from a previous repository layout | Run from the repository root and use `workflows/main/paidf-cosmos3.yaml`. |
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
 | `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
@@ -713,13 +730,14 @@ appears.
 | `FAILED_SETUP: Forced include not found` | Incomplete manually staged source | Use current automatic source staging. For a persisted bad source URI, follow the [source-staging recovery guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md#if-submit-fails). |
 | `--run-id` and `--resume-run` are mutually exclusive | Recovery command combines both options | Use only `--resume-run` for the existing run, or `prepare-run` for a fresh experiment. |
 | Workflow GPU discovery says `Kubeconfig not found` | Missing NPA-managed kubeconfig | Complete S5/S6 and verify the selected context. |
+| `UnsatisfiableAcceleratorError` reports no free GPU | Matching nodes may already be occupied | Check GPU discovery and active workloads. Wait for capacity or select a compatible available cluster; do not cancel another user's workload. Resume an unchanged run as described in R4. |
 | Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../docs/run-lifecycle.md) and correct its image. Keep image preflight enabled. |
 | GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Inspect node disk pressure and available capacity, or ask the cluster administrator. Keep enough disk for image layers and runtime weights. |
 | Token Factory returns `404` / model does not exist | Hosted model availability | List models again and set `caption_model` to an available vision model. |
-| Evaluator reports `reasoning-only response with no visible answer` | An older bundled NPA client may be running | Update the checkout, enable `NPA_SRC_OVERLAY=1` as in S8, and start a fresh run. Treat the original report as degraded; empty answers do not establish an attribute-quality verdict. |
+| Evaluator reports `reasoning-only response with no visible answer` | An older bundled NPA client may be running | Update the checkout, retain `config.source_overlay: true` as in S8, and start a fresh run. Treat the original report as degraded; empty answers do not establish an attribute-quality verdict. |
 | `annotation requires a complete accepted evaluator disposition` | A one-shot plan assumed promotion, or the accepted disposition is missing/incomplete | Follow [R6](#r6-diagnose-quality-rejection-and-prepare-the-next-run); retain the guard and use R3's runtime command for the next fresh run. |
-| `frame_counts_match: false`, or source/output durations differ | Unequal decoded lengths and possible temporal misalignment | Probe the same run's source and variants in R6; read required checks as well as advisory diagnostics. See [R5](#r5-find-and-change-generation-and-evaluation-settings) for supported settings and timing limitations. |
-| `source_motion_weight must be 0` | Configuration copied from the old guide | Remove the old override or set it to `0.0`; current publication preserves unmodified model output. |
+| `frame_counts_match: false`, or source/output durations differ | Unequal decoded lengths and possible temporal misalignment | Probe the same run's source and variants in R6; read required checks as well as advisory diagnostics. Use R5's required alignment contract and a fresh run after changing generation settings. |
+| `source_motion_weight must be 0` | Configuration copied from the old guide | Remove the old override or set it to `0.0`; publication retains model output after guardrail processing. |
 
 For pod-level and artifact triage, see
 [known Workbench issues](../../docs/workbench/troubleshooting/known-footguns.md).
@@ -819,12 +837,12 @@ that the full pipeline completed.
 
 | Stage | Evidence to check |
 | --- | --- |
-| `prepare-input` | `input/provenance.json` reports `status: prepared`; `input/source.mp4` decodes. |
+| `prepare-input` | `input/provenance.json` reports `status: prepared`; the original and prepared source decode; `input/timeline.json` records timing, dimensions and hashes. |
 | `generate-configs`, `annotate-original` | `configs/manifest.json` contains the requested appearance profiles; `labeled_original/captions.json` contains source captions. |
-| `generate-variants` in each refinement pass | `cosmos_augmented/manifest.json` reports the requested variants; their videos decode and metadata records effective generation settings. |
+| `generate-variants` in each refinement pass | The manifest contains every requested variant; generated videos match the prepared timeline; `transfer.json` records complete edge controls and successful model guardrails. |
 | `evaluate`, `quality-gate` | `grade/cosmos_evaluator.json` is complete; `grade/decision.json` agrees with its required checks and threshold. Rejected intermediate passes trigger refinement while passes remain. |
-| `quality-disposition`, `visualize-quality-evidence`, `quality-route` | Final disposition and route agree; `reports/sim2real.rrd` contains quality evidence. A rejected run ends at `reject-quality` and skips the rows below. |
-| `require-accepted-quality`, `annotate-augmented` | Accepted disposition passes the guard; `labeled_augmented/captions.json` contains augmented captions. |
+| `quality-disposition`, `visualize-quality-evidence`, `quality-route` | Final disposition and route agree; `reports/quality-evidence.rrd` contains quality evidence. A rejected run ends at `reject-quality` and skips the rows below. |
+| `require-accepted-quality`, `annotate-augmented` | Accepted disposition passes the guard; `labeled_augmented/captions.json` contains nonempty captions and verified video hashes for every variant. |
 | `cosmos-curate` | `curation/cosmos_curator.json` identifies the real engine and a positive `clip_count`; declared curated clips exist. |
 | `curate` | `curation/report.json` identifies `curation_engine: fiftyone-brain`. |
 | `visualize`, `finalize` | Final recording exists; `reports/final.json` reports completion with a positive curated count. The runtime reports success through `finalize`. |
@@ -845,6 +863,7 @@ Only after the runtime reports successful finalization, check the final report:
     "$FINAL_DIR/final.json" --profile nebius
   jq -e '.schema == "npa.paidf.cosmos3.final.v1" and .status == "completed"
          and .variant_count > 0 and .video_bytes > 0 and .curated_clip_count > 0
+         and .alignment_verified == true and .annotated_variant_count == .variant_count
          and .fiftyone_engine == "fiftyone-brain" and .has_rrd == true' "$FINAL_DIR/final.json"
 )
 ```
@@ -857,7 +876,9 @@ not an additional claim of live success.
 ### Open the recording
 
 After `visualize-quality-evidence` succeeds, list the run artifacts and locate
-`reports/sim2real.rrd`:
+`reports/quality-evidence.rrd`. Accepted runs additionally publish
+`reports/sim2real.rrd` after curation, including augmented captions and both
+curation reports. The two paths preserve the earlier quality evidence:
 
 ```bash
 npa workbench workflow artifacts "$RUN_ID" --project "$PROJECT_ALIAS"
@@ -868,11 +889,14 @@ For the default prefix used in this guide, verify and download the known output
 directly with the AWS profile from S7:
 
 ```bash
-export RRD_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/reports/sim2real.rrd"
+export RRD_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/reports/quality-evidence.rrd"
 aws s3 ls "$RRD_URI" --profile nebius
-aws s3 cp "$RRD_URI" ./sim2real.rrd --profile nebius
-rerun sim2real.rrd
+aws s3 cp "$RRD_URI" ./quality-evidence.rrd --profile nebius
+rerun quality-evidence.rrd
 ```
+
+For an accepted completed run, use `reports/sim2real.rrd` in the same commands
+to open the final recording.
 
 If you changed the workflow prefix, use its declared output URI instead. Run
 the final `rerun` command in a desktop session. From a headless host, transfer

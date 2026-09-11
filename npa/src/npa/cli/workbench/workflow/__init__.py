@@ -875,6 +875,12 @@ def submit_cmd(
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
             )
+            if not plan_only and _is_truthy_submit_value(merged_npa_spec.config.get("require_runtime")):
+                if not runtime or assume_decision:
+                    raise ValueError(
+                        "This workflow requires --runtime without --assume-decision; "
+                        "submit with a fresh run ID so actual evaluator decisions control execution."
+                    )
         except Exception as exc:
             _fail(str(exc))
             return

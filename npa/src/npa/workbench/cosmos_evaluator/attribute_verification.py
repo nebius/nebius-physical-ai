@@ -122,6 +122,7 @@ class AttributeVerificationResult:
     question_model: str
     vlm_model: str
     checks: list[AttributeVerificationCheck] = field(default_factory=list)
+    threshold: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -141,6 +142,7 @@ def verify_attributes(
     client: Any | None = None,
     max_tokens: int = DEFAULT_VERIFY_MAX_TOKENS,
     sample_policy: str = "ranking",
+    threshold: float = 1.0,
 ) -> AttributeVerificationResult:
     """Verify that ``video`` (or ``frame``) shows every selected attribute value.
 
@@ -152,6 +154,8 @@ def verify_attributes(
 
     if not selected_variables:
         raise CosmosEvaluatorError("attribute verification needs at least one selected variable")
+    if not 0.0 < threshold <= 1.0:
+        raise CosmosEvaluatorError("attribute threshold must be greater than 0 and at most 1")
     if (video is None) == (frame is None):
         raise CosmosEvaluatorError("pass exactly one of video= or frame=")
 
@@ -188,10 +192,10 @@ def verify_attributes(
 
     passed_checks = sum(1 for check in checks if check.passed and check.error is None)
     failed_checks = len(checks) - passed_checks
-    score = (passed_checks / len(checks)) if checks else 0.0
+    score = round(passed_checks / len(checks), 6) if checks else 0.0
     return AttributeVerificationResult(
         clip_id=clip_id,
-        passed=failed_checks == 0,
+        passed=bool(checks) and not any(check.error for check in checks) and score >= threshold,
         total_checks=len(checks),
         passed_checks=passed_checks,
         failed_checks=failed_checks,
@@ -199,6 +203,7 @@ def verify_attributes(
         question_model=llm_model,
         vlm_model=vision_model,
         checks=checks,
+        threshold=threshold,
     )
 
 

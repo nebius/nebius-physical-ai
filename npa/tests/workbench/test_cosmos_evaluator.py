@@ -824,7 +824,8 @@ def test_generate_question_retries_without_structured_output() -> None:
     assert len(client.requests) == 2
 
 
-def test_verify_attributes_scores_a_matching_answer(tmp_path: Path) -> None:
+@pytest.mark.parametrize("threshold,passed", [(1.0, False), (0.5, True)])
+def test_verify_attributes_scores_a_matching_answer(tmp_path: Path, threshold: float, passed: bool) -> None:
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
     client = FakeTokenFactory(
@@ -841,11 +842,13 @@ def test_verify_attributes_scores_a_matching_answer(tmp_path: Path) -> None:
         selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
         variable_options=APPEARANCE_OPTIONS,
         client=client,
+        threshold=threshold,
     )
     assert result.total_checks == 2
     assert result.passed_checks == 1
     assert result.score == 0.5
-    assert result.passed is False
+    assert result.passed is passed
+    assert result.to_dict()["threshold"] == threshold
     assert [check.variable for check in result.checks] == ["cloth_color", "lighting"]
 
 
@@ -871,11 +874,13 @@ def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(
         selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
         variable_options=APPEARANCE_OPTIONS,
         client=client,
+        threshold=0.25,
     )
     assert result.total_checks == 2
     assert result.checks[0].error
     assert result.checks[1].passed
     assert result.score == 0.5
+    assert result.passed is False
 
 
 class _RefusesGuidedJson(FakeTokenFactory):

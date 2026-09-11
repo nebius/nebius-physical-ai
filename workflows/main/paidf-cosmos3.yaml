@@ -12,6 +12,9 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "paidf-cosmos3/{{run.id}}"
+  # Use the submitted checkout's NPA adapters with pinned vendor images.
+  source_overlay: true
+  require_runtime: true
 
   # Input selector. The live matrix seeds this run-scoped fixture URI; operators
   # can point video at another generic MP4, or select a LeRobot v2/v3 dataset.
@@ -21,11 +24,14 @@ config:
   input_episode: "0"
   input_camera: "observation.images.front"
 
-  # Cosmos 3 generation and bounded refinement. video2video is required because
-  # describing an unconditioned or still-conditioned result as source-video-
-  # conditioned is forbidden. Every retry changes at least the seed by default.
+  # Native full-video structural transfer. Preparation preserves source duration,
+  # resamples timestamps and letterboxes to the supported 832x480 model bucket.
   cosmos3_mode: video2video
   cosmos3_checkpoint: Cosmos3-Nano
+  structural_control: edge
+  conditioning_fps: "24"
+  transfer_chunk_frames: "93"
+  control_guidance: "1.5"
   prompt: "Preserve the source robot motion and scene structure while creating a physically plausible appearance variant."
   negative_prompt: "distorted robot geometry, impossible motion, unsafe content"
   seed: "17"
@@ -41,10 +47,14 @@ config:
   retry_seed_stride: "1000"
   retry_guidance_delta: "-0.5"
   retry_steps_delta: "4"
-  # Publish unmodified model output. Blending unaligned source/model frames
+  # Publish model output after guardrail processing. Blending source/model frames
   # creates double exposures and cannot preserve source motion.
   source_motion_weight: "0.0"
-  grade_threshold: "0.75"
+  # Exploratory acceptance: retain measured failures in reports. Production
+  # datasets should set thresholds for their own task and visual review policy.
+  grade_threshold: "0.5"
+  attribute_threshold: "0.5"
+  alignment_mode: required
   # Cosmos Evaluator defaults to the ranking observation policy. Workflows that
   # perform a separate final selection override this per state with `holdout`.
   attribute_sample_policy: ranking
@@ -95,6 +105,7 @@ config:
   curated_clips_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/"
   curator_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  quality_rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/quality-evidence.rrd"
   rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
 
@@ -116,8 +127,9 @@ initial: prepare-input
 states:
   prepare-input:
     description: >-
-      Select exactly one generic MP4 or LeRobot v2/v3 episode and camera. Stage
-      input/source.mp4 plus real decoded frames and truthful provenance.
+      Select exactly one generic MP4 or LeRobot v2/v3 episode and camera. Retain
+      the original, normalize the complete source timeline, and stage decoded
+      caption frames, hashes and the normalization recipe.
     toolRef: workbench.cosmos3.prepare_video_input
     resources: cpu
     outputs:
@@ -184,10 +196,9 @@ states:
 
   generate-variants:
     description: >-
-      Run one real npa-cosmos3/cosmos-framework video2video inference per variant.
-      The source input, captions, prompt, model, seed, guardrails, and lineage are
-      recorded in per-variant metadata and the run manifest. Publication
-      preserves the unmodified Cosmos artifact for evaluation.
+      Run native Cosmos 3 edge transfer across every prepared source frame.
+      Check effective prompts and generated output with model guardrails, verify
+      output timestamps and frame count, then publish generation/control evidence.
     toolRef: workbench.cosmos3.generate_variants
     resources: gpu
     inputs:
@@ -198,7 +209,7 @@ states:
         schema: npa.paidf.cosmos3.augment.v1
 
   evaluate:
-    description: Run real Cosmos Evaluator checks over every conditioned variant.
+    description: Verify source/output alignment and hashes, then run real Cosmos Evaluator checks over every variant.
     toolRef: workbench.cosmos_evaluator.evaluate
     resources: cpu
     inputs:
@@ -248,8 +259,10 @@ states:
     needs: [quality-disposition]
     toolRef: workbench.nurec.visualize
     resources: cpu
+    params:
+      rrd_uri: "{{config.quality_rrd_uri}}"
     outputs:
-      - uri: "{{config.rrd_uri}}"
+      - uri: "{{config.quality_rrd_uri}}"
         schema: npa.sim2real.rerun.v1
     next: quality-route
 
@@ -277,7 +290,7 @@ states:
         goto: reject-quality
 
   require-accepted-quality:
-    description: Fail closed before annotation when a one-shot plan assumed promotion incorrectly.
+    description: Require a complete accepted evaluator disposition before annotation.
     needs: [quality-route]
     resources: cpu
     run:
@@ -305,18 +318,21 @@ states:
     terminal: true
 
   annotate-augmented:
-    description: Caption only accepted Cosmos 3 variants with the hosted VLM.
+    description: Caption a separate frame sample from every accepted variant with the hosted VLM.
     needs: [require-accepted-quality]
     resources: cpu
     run:
-      shell: >-
-        npa workbench token-factory caption
-        --input-path "{{config.augmented_frames_uri}}"
-        --output-path "{{config.labeled_augmented_uri}}"
-        --model "{{config.caption_model}}"
-        --max-images "{{config.max_images}}"
-        --max-tokens "{{config.max_tokens}}"
-        --output json
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3_annotation import annotate_accepted;
+          annotate_accepted(*sys.argv[1:])
+        - "{{config.run_root_uri}}"
+        - "{{config.labeled_augmented_uri}}"
+        - "{{config.caption_model}}"
+        - "{{config.max_images}}"
+        - "{{config.max_tokens}}"
     outputs:
       - uri: "{{config.labeled_augmented_uri}}captions.json"
         schema: npa.token_factory.captions.v1

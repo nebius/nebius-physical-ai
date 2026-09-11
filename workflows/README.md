@@ -8,7 +8,8 @@ Start with the [workflow guides](guides/README.md) for setup and execution.
 For PAIDF with Cosmos 3 on Nebius, follow the
 [PAIDF Cosmos 3 setup and run guide](guides/paidf-cosmos3.md). It includes
 credentials, current CLI installation, runtime submission, monitoring recovery,
-and output inspection, with explicit live-validation limits.
+and output inspection, including full-video structural conditioning, aligned
+evaluation, configurable quality acceptance and per-variant caption coverage.
 
 Agent skills: [author a workflow](../skills/workflows/author-npa-workflow/SKILL.md)
 and [design a new pipeline](../skills/workflows/generate-npa-workflow/SKILL.md).
@@ -23,7 +24,7 @@ project, storage, secret, and runtime options.
 ```bash
 npa workbench workflow validate-spec '<spec.yaml>'
 npa workbench workflow plan-spec '<spec.yaml>' --run-id demo
-npa workbench workflow submit '<spec.yaml>' --run-id demo
+npa workbench workflow submit '<spec.yaml>' --run-id demo --runtime
 npa workbench workflow submit '<spec.yaml>' --plan-only     # plan + render only
 ```
 
@@ -47,6 +48,18 @@ npa workbench workflow plan-spec '<spec.yaml>' --waves    # offline wave preview
 
 See the [workflow guide](../docs/workbench/npa-workflow-guide.md)
 (Runtime orchestrator) and [design reference](../DESIGN.md).
+
+`config.require_runtime: true` requires `submit --runtime` and rejects
+`--assume-decision` for execution before staging or provisioning. Offline plans
+may still use assumed decisions to inspect each route. PAIDF Cosmos 3 enables
+this setting so actual evaluator reports control refinement and downstream work.
+
+`config.source_overlay: true` selects the automatically staged checkout's NPA
+code in pinned workbench images while keeping their installed dependencies.
+The default is false for other workflows; `NPA_SRC_OVERLAY=1` remains available
+as an operator override. Keep the source checkout available during submission.
+PAIDF's additional CLI flags and YAML defaults are described in its
+[generation and evaluation settings](guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
 
 ## Live GPU / CPU submit E2E
 
@@ -72,6 +85,10 @@ explicit override for custom images. Hosted inference stages need
 Use `NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=paidf-cosmos3.yaml` to select the Cosmos 3
 workflow. Matrix source of truth:
 [`submit_matrix.py`](../npa/src/npa/orchestration/npa_workflow/submit_matrix.py).
+Set `NPA_E2E_NPA_WORKFLOW_RUNTIME=1` to run its full dynamic pipeline; the
+one-shot test verifies that assumed promotion is refused. Runtime validation
+downloads and fully decodes the source and generated videos, verifies their
+timelines and control hashes, and checks every downstream component report.
 
 ## Layout
 
@@ -105,7 +122,7 @@ of every stage. Consult each guide and spec for prerequisites and evidence.
 | Spec | Notes |
 | --- | --- |
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
-| [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun ([setup and run guide](guides/paidf-cosmos3.md)) |
+| [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
 
 ### Testing and reference workflows
