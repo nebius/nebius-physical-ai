@@ -41,13 +41,26 @@ for planning previews; execution requires actual evaluator decisions.
 
 ## Inputs and configuration
 
-Choose `input_kind: video` and set `input_video_uri` to one MP4, or choose
+For `workflow submit`, use `--input-video` / `--input-uri` for MP4, or
+`--lerobot-uri` with `--lerobot-camera`, `--lerobot-episode`, and
+`--require-explicit-lerobot-selection`. The setup guide includes a complete
+[LeRobot submission and pinned public example](../../../workflows/guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera).
+The LeRobot CLI selector takes an S3 dataset prefix; upload local files while
+preserving the dataset directory layout first.
+
+For direct stage configuration, choose `input_kind: video` and set
+`input_video_uri` to one MP4, or choose
 `input_kind: lerobot` and set `lerobot_dataset_uri`, `input_episode`, and
 `input_camera`. Dataset URIs may point to generic LeRobot v2.x or v3.x directory
-trees. A full feature name such as `observation.images.front`, or an unambiguous
-camera suffix such as `front`, is accepted. Shared v3 video files are trimmed
+trees. Use a full feature name such as `observation.images.front` for submission.
+The local direct-stage selector also accepts an unambiguous camera suffix.
+The S3 worker reads metadata and fetches only the selected video. Metadata
+shards are searched independently of episode numbering. Shared v3 video files are trimmed
 using the episode metadata timestamps; per-episode v2 video layouts are also
 supported.
+
+The result is augmented video and review artifacts for one episode/camera, not
+a reconstructed LeRobot dataset containing action/state records.
 
 The committed `example-bucket` and run-scoped fixture path are placeholders.
 The generic workflow submit command stages a verified, pinned starter video

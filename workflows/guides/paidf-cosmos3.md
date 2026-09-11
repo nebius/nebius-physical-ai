@@ -507,12 +507,91 @@ For your own video, add **one** of these input options to the submit command:
 
 - `--input-video /absolute/path/source.mp4` for a local H.264 MP4.
 - `--input-uri 's3://<your-bucket>/<your-prefix>/source.mp4'` for a stored MP4.
+- `--lerobot-uri 's3://<your-bucket>/<dataset-prefix>/'` with the episode and
+  camera options in R3a for a LeRobot dataset.
 
 The workflow retains the selected original and prepares a constant-rate,
 letterboxed reference. Native edge controls cover the complete prepared video;
 generation and evaluation verify its frame count and timestamps. Inspect the
 resulting action and contacts as well as the quality report. For episode/camera selection and the
 generation contract, see the [Cosmos 3 workflow guide](../../docs/workbench/guides/paidf-cosmos3.md).
+
+### R3a. Augment one LeRobot episode and camera
+
+LeRobot v2.x and v3.x video datasets use the same full pipeline. Choose one
+episode and the **full camera feature name** declared in `meta/info.json`, such
+as `observation.images.top`. The submit command accepts an S3 dataset prefix;
+upload a local dataset's metadata and video files there first, preserving their
+relative paths. Do not combine `--lerobot-uri` with either MP4 input option.
+
+The selector reads metadata and downloads only the chosen camera's video file.
+In v3, multiple episodes can share that MP4: episode metadata supplies the file
+indices and the exact start/end timestamps. A later episode can legitimately
+use file index zero. Metadata chunk numbers do not have to match episode
+numbers. Both the submitter and worker trim the selected episode; neither
+downloads the whole dataset. V3 episode metadata and finite start/end timestamps
+are required. V2 uses its per-episode video layout.
+
+To try a public v3 example, download the following unchanged files from
+[LeRobot's simulated ALOHA cube-transfer dataset](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human/tree/6a43d500f101255823a9d2b9dc244eeb01a2cd31).
+The dataset card declares the MIT license; retain its README with the sample.
+This example selects episode `1`, camera `observation.images.top`: an eight-second
+simulation episode occupying seconds 8–16 in shared `file-000.mp4`.
+
+```bash
+DATASET_REVISION=6a43d500f101255823a9d2b9dc244eeb01a2cd31
+LEROBOT_DIR="$HOME/Downloads/paidf-lerobot-example/$DATASET_REVISION"
+DATASET_BASE="https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human/resolve/$DATASET_REVISION"
+for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
+  videos/observation.images.top/chunk-000/file-000.mp4; do
+  mkdir -p "$(dirname "$LEROBOT_DIR/$file")"
+  curl --fail --location "$DATASET_BASE/$file" --output "$LEROBOT_DIR/$file" || exit 1
+done
+LEROBOT_URI="s3://$BUCKET/datasets/aloha-sim-transfer-cube-$DATASET_REVISION"
+aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius
+```
+
+For your own dataset, set `LEROBOT_DIR` and `LEROBOT_URI` to your local directory
+and destination, then use the same `aws s3 sync` command. An existing S3 dataset
+needs no upload. This workflow needs `meta/info.json`, v3 episode metadata under
+`meta/episodes/`, and the referenced video files; action/state Parquet tables are
+not consumed for video augmentation.
+
+Complete R1 and R2 for a fresh run, then use this full submission command in
+place of R3. Keep the default seeds and exploratory thresholds for the example.
+Change the explicit camera and episode when using your own dataset.
+
+```bash
+npa workbench workflow submit "$SPEC" \
+  --run-id "$RUN_ID" \
+  --var bucket="$BUCKET" \
+  --var caption_model="$CAPTION_MODEL" \
+  --lerobot-uri "$LEROBOT_URI/" \
+  --lerobot-camera observation.images.top \
+  --lerobot-episode 1 \
+  --require-explicit-lerobot-selection \
+  --runtime \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --project "$PROJECT_ALIAS" \
+  --durable-s3
+```
+
+Follow R4 and **Inspect the outputs** below to verify all stages. The run's
+`input/provenance.json` must report `source_kind: lerobot_dataset`, episode `1`,
+and the selected camera. `input/original_source.mp4` is the selected episode,
+not the whole shared MP4; `input/source.mp4` is its normalized reference.
+Generated videos must match that reference's decoded frame count and timestamps.
+
+Outputs are augmented MP4s, captions, quality reports, curated clips, and Rerun
+recordings. This workflow does not rebuild a trainable LeRobot dataset or copy
+actions/states onto generated observations. It processes one episode/camera per
+run; use a fresh run ID for each further selection. Physical fidelity and
+training suitability still require review, and a complete quality rejection
+can stop a run.
 
 ### R4. Monitor and recover
 
@@ -819,6 +898,8 @@ preflights passed against live services. S5's new-cluster command was validated
 with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
+### Starter MP4
+
 The full runtime completed all 15 stages at revision `1fb58217` on September 11,
 2026, using the starter input and the shipped generation and quality settings.
 Its 169-frame source
@@ -858,12 +939,39 @@ colored borders in one variant. These exploratory acceptance settings do not
 certify physical fidelity or suitability for training. Review your own outputs
 against the task's visual and motion requirements before using them as data.
 
+### LeRobot v3 episode and multiple generation windows
+
+R3a's pinned simulated ALOHA example was exercised at revision `4b09042f` on
+September 11, 2026, with the shipped settings. Episode 1 occupies seconds 8–16
+of the selected camera's shared `file-000.mp4`. The staged original contains
+400 frames at 50 fps; independently comparing every decoded frame with that
+upstream interval confirmed the correct episode was selected. Preparation
+produced 192 frames at 24 fps, retaining the eight-second duration.
+
+Each of the two generated variants used three native generation windows. Both
+published videos fully decode to the reference's 192 frames, dimensions, and
+eight-second timeline, with zero timestamp error. Native control readback and
+text/video guardrails passed. The evaluator accepted both on the first pass:
+aggregate score `0.675465` against `0.2`, and attribute scores `0.5` each against
+`0.25`. All eight attribute answers were complete; four attributes matched.
+The thresholds were unchanged for this run.
+
+Matched-time inspection, including generation-window boundaries, showed the
+recognizable cube-transfer action with altered gripper details and lighting
+artifacts. One variant visibly changes lighting at a window boundary. Matching
+timestamps and passing these exploratory criteria do not establish physical
+fidelity or make the outputs a trainable LeRobot dataset.
+
+### Automated checks and remaining scope
+
 Automated checks cover media corruption and alignment failures, native control
 pixels and guardrail processing, incomplete evaluator responses, runtime
 routing, every accepted variant's captions, and final artifact validation.
-Concurrent two-GPU variants, longer videos requiring multiple native chunks,
-fresh-cluster provisioning, a fresh macOS installation, and the desktop Rerun UI
-have not been validated by this run. Rejection-route adapter checks passed
+Concurrent two-GPU variants, fresh-cluster provisioning, a fresh macOS
+installation, and the desktop Rerun UI have not been validated by these runs.
+LeRobot v2 and metadata in a different chunk are covered by real-video
+regression tests; the live example uses v3 metadata in chunk zero.
+Rejection-route adapter checks passed
 against retained live reports; a full rejected runtime replay was not completed.
 
 ## Inspect the outputs
