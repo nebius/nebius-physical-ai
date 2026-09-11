@@ -210,12 +210,10 @@ class SkyPilotSubmitError(RuntimeError):
         *,
         transaction: LaunchTransactionResult | None = None,
         launch_attempted: bool | None = None,
-        config_path: Path | None = None,
     ) -> None:
         super().__init__(message)
         self.transaction = transaction
         self.launch_attempted = launch_attempted
-        self.config_path = config_path
 
 
 @dataclass(frozen=True)
@@ -1141,11 +1139,7 @@ def submit_workflow(
             message = str(exc)
             if exc.result.operator_remedy and exc.result.operator_remedy not in message:
                 message = f"{message}\n{exc.result.operator_remedy}"
-            raise SkyPilotSubmitError(
-                message,
-                transaction=exc.result,
-                config_path=generated_config_path,
-            ) from exc
+            raise SkyPilotSubmitError(message, transaction=exc.result) from exc
         transaction.controller = {
             **controller_health.to_dict(),
             "selected_context": selected_context,
@@ -1169,10 +1163,8 @@ def submit_workflow(
             submitted_yaml_path=str(prepared_yaml),
             launch_transaction=transaction.to_dict(),
         )
-    except SkyPilotSubmitError as exc:
+    except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        if exc.config_path is None and "generated_config_path" in locals():
-            exc.config_path = generated_config_path
         raise
     except (
         OSError,
@@ -1184,12 +1176,7 @@ def submit_workflow(
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise SkyPilotSubmitError(
-            f"SkyPilot workflow submission failed: {exc}",
-            config_path=(
-                generated_config_path
-                if "generated_config_path" in locals()
-                else None
-            ),
+            f"SkyPilot workflow submission failed: {exc}"
         ) from exc
 
 

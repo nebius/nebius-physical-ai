@@ -1122,6 +1122,14 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             )
             scheduler_job_id = ""
             submitted_config_path = Path(config_path) if config_path else None
+            expected_submission_config_path = (
+                isolated_config_dir
+                / "submissions"
+                / run_id
+                / "skypilot-config.yaml"
+                if isolated_config_dir is not None
+                else None
+            )
             cleanup_result: CleanupResult | None = None
             cleanup_started = False
 
@@ -1205,16 +1213,27 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     return_code = 0
             except SkyPilotSubmitError as exc:
                 transaction = exc.transaction
+                reconciled_scheduler_job_id = False
+                generated_config_recovered = False
                 if transaction is not None and transaction.job_id:
+                    reconciled_scheduler_job_id = True
                     try:
                         scheduler_job_id = _exact_scheduler_job_id(
                             transaction.job_id
                         )
                     except ValueError:
                         scheduler_job_id = ""
-                if exc.config_path is not None:
-                    submitted_config_path = Path(exc.config_path)
-                    api_config_path = submitted_config_path
+                if scheduler_job_id and expected_submission_config_path is not None:
+                    try:
+                        submitted_config_path = _mode_private_regular_file(
+                            str(expected_submission_config_path),
+                            label="generated SkyPilot submission config",
+                        )
+                    except ValueError:
+                        scheduler_job_id = ""
+                    else:
+                        generated_config_recovered = True
+                        api_config_path = submitted_config_path
                 teardown_guard.mark_launched(config_path=submitted_config_path)
                 summary = {
                     "run_id": run_id,
@@ -1222,6 +1241,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         "status": "failed",
                         "error_type": type(exc).__name__,
                         "scheduler_job_id_recovered": bool(scheduler_job_id),
+                        "reconciled_scheduler_job_id": (
+                            reconciled_scheduler_job_id
+                        ),
+                        "generated_config_recovered": generated_config_recovered,
                     },
                     "outputs": outputs,
                 }
