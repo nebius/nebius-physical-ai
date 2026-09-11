@@ -57,13 +57,10 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "checkpoint_or_weight",
-        # Upstream's robomimic/models directory contains direct Python modules.
-        # Exempt only that directory and those direct .py files; nested paths
-        # and every other file type retain the generic model-directory rule.
         re.compile(
-            r"(?:\.(?:safetensors|ckpt|pth|pt|bin\.index\.json)$|"
-            r"^(?!opt/robomimic/robomimic/models(?:$|/[^/]+\.py$)).*"
-            r"(?:^|/)(?:models?|weights?|checkpoints?)(?:/|$))",
+            r"(?:\.(?:safetensors|ckpt|pth|pt|bin|onnx|msgpack|npz|npy|"
+            r"gguf|engine|plan|tflite|mlmodel)$|"
+            r"(?:^|/)(?:weights?|checkpoints?)(?:/|$))",
             re.I,
         ),
     ),
@@ -139,8 +136,8 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
     with walker.payload_policy(
         forbidden_paths=FORBIDDEN_PATHS,
         forbidden_history=FORBIDDEN_HISTORY,
-        audited_secret_files={},
-        audited_libraries={},
+        audited_secret_files=walker.AUDITED_SECRET_LITERAL_FILE_SHA256,
+        audited_libraries=walker.AUDITED_LITERAL_LIBRARY_SHA256,
     ):
         return walker.scan_tars(tars, config)
 

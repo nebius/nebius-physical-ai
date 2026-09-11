@@ -10,8 +10,10 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import sys
+import tempfile
 from typing import Any
 
 
@@ -226,14 +228,32 @@ def _checked_artifacts(value: Any) -> dict[str, dict[str, str]]:
 
 
 def verify_external_runtime(
-    *, runtime_root: Path, runtime_lock_path: Path
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    require_read_only_mount: bool,
 ) -> dict[str, Any]:
+    if re.fullmatch(r"[0-9a-f]{64}", expected_inventory_sha256) is None:
+        raise VerificationError(
+            "manager-approved runtime inventory digest is absent or malformed"
+        )
+    if not runtime_root.is_dir() or runtime_root.is_symlink():
+        raise VerificationError("runtime root is absent or is a symlink")
+    read_only_mount = bool(os.statvfs(runtime_root).f_flag & os.ST_RDONLY)
+    if require_read_only_mount and not read_only_mount:
+        raise VerificationError("external runtime filesystem is not mounted read-only")
     lock = _json_object(runtime_lock_path)
     lock_hash = _sha256(runtime_lock_path)
     marker_path = runtime_root / ".ready.json"
     inventory_path = runtime_root / "inventory.json"
     marker = _json_object(marker_path)
     inventory = _json_object(inventory_path)
+    inventory_sha256 = _sha256(inventory_path)
+    if inventory_sha256 != expected_inventory_sha256:
+        raise VerificationError(
+            "runtime inventory does not match the manager-approved digest"
+        )
     expected_common = {
         "runtime_id": lock.get("runtime_id"),
         "lock_sha256": lock_hash,
@@ -246,7 +266,7 @@ def verify_external_runtime(
     for key, expected in expected_common.items():
         if marker.get(key) != expected or inventory.get(key) != expected:
             raise VerificationError(f"runtime {key} mismatch")
-    if marker.get("inventory_sha256") != _sha256(inventory_path):
+    if marker.get("inventory_sha256") != inventory_sha256:
         raise VerificationError("runtime inventory hash mismatch")
     if inventory.get("abi") != lock.get("abi"):
         raise VerificationError("runtime ABI inventory mismatch")
@@ -286,7 +306,7 @@ def verify_external_runtime(
             f"runtime payload inventory mismatch: missing={sorted(declared - observed)} "
             f"extra={sorted(observed - declared)}"
         )
-    root_resolved = runtime_root.resolve()
+    payload_resolved = payload_root.resolve()
     for relative, entry in files.items():
         path = runtime_root / relative
         if not path.is_file() or path.is_symlink():
@@ -299,10 +319,10 @@ def verify_external_runtime(
             raise VerificationError(f"runtime symlink identity mismatch: {relative}")
         resolved = path.resolve(strict=False)
         try:
-            resolved.relative_to(root_resolved)
+            resolved.relative_to(payload_resolved)
         except ValueError as exc:
             raise VerificationError(
-                f"runtime symlink escapes runtime root: {relative}"
+                f"runtime symlink escapes runtime payload: {relative}"
             ) from exc
     interpreter = payload_root / "bin" / "python"
     if "payload/bin/python" not in declared or not os.access(interpreter, os.X_OK):
@@ -313,11 +333,97 @@ def verify_external_runtime(
         "schema": "npa.robomimic.external-runtime-verification.v1",
         "runtime_id": lock["runtime_id"],
         "runtime_lock_sha256": lock_hash,
-        "runtime_inventory_sha256": marker["inventory_sha256"],
+        "runtime_inventory_sha256": inventory_sha256,
+        "manager_inventory_digest_matched": True,
+        "read_only_mount_observed": read_only_mount,
         "package_count": len(lock["packages"]),
         "artifact_count": len(artifacts),
         "payload_file_count": len(files),
         "payload_symlink_count": len(links),
+    }
+
+
+def _copy_runtime_inventory(
+    source: Path, staging: Path, inventory: dict[str, Any]
+) -> None:
+    """Copy only inventory-declared runtime objects into a private staging tree."""
+
+    staging.mkdir(mode=0o700)
+    for name in (".ready.json", "inventory.json"):
+        shutil.copyfile(source / name, staging / name, follow_symlinks=False)
+    files = _checked_entries(inventory.get("files"), symlinks=False)
+    links = _checked_entries(inventory.get("symlinks"), symlinks=True)
+    for relative in files:
+        source_path = source / relative
+        destination = staging / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination, follow_symlinks=False)
+    for relative, entry in links.items():
+        destination = staging / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(entry["target"])
+
+
+def _make_snapshot_read_only(snapshot: Path) -> None:
+    for path in snapshot.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(0o555)
+            continue
+        path.chmod(path.stat().st_mode & 0o555)
+    snapshot.chmod(0o555)
+
+
+def materialize_external_runtime(
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    destination: Path,
+    require_source_read_only: bool,
+) -> dict[str, Any]:
+    """Atomically publish a verified private snapshot for runtime execution."""
+
+    source_proof = verify_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=require_source_read_only,
+    )
+    if destination.exists() or destination.is_symlink():
+        raise VerificationError("runtime snapshot destination already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
+    )
+    try:
+        staging.rmdir()
+        inventory = _json_object(runtime_root / "inventory.json")
+        _copy_runtime_inventory(runtime_root, staging, inventory)
+        snapshot_proof = verify_external_runtime(
+            runtime_root=staging,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            require_read_only_mount=False,
+        )
+        _make_snapshot_read_only(staging)
+        staging.replace(destination)
+    except VerificationError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise VerificationError("runtime snapshot materialization failed") from exc
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return {
+        **snapshot_proof,
+        "read_only_mount_observed": source_proof["read_only_mount_observed"],
+        "source_read_only_mount_observed": source_proof["read_only_mount_observed"],
+        "atomic_snapshot_published": True,
+        "snapshot_root": str(destination),
     }
 
 
@@ -344,6 +450,24 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
     )
+    runtime.add_argument(
+        "--expected-inventory-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
+    snapshot = subparsers.add_parser("snapshot")
+    snapshot.add_argument(
+        "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
+    )
+    snapshot.add_argument(
+        "--runtime-lock",
+        type=Path,
+        default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
+    )
+    snapshot.add_argument(
+        "--expected-inventory-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
+    snapshot.add_argument("--destination", type=Path, required=True)
     return parser
 
 
@@ -362,14 +486,24 @@ def main() -> int:
                     Path("/workspace/byof-runs"),
                 ),
             )
-        else:
+        elif args.mode == "runtime":
             result = verify_external_runtime(
                 runtime_root=args.runtime_root,
                 runtime_lock_path=args.runtime_lock,
+                expected_inventory_sha256=args.expected_inventory_sha256,
+                require_read_only_mount=True,
+            )
+        else:
+            result = materialize_external_runtime(
+                runtime_root=args.runtime_root,
+                runtime_lock_path=args.runtime_lock,
+                expected_inventory_sha256=args.expected_inventory_sha256,
+                destination=args.destination,
+                require_source_read_only=True,
             )
     except VerificationError as exc:
         print(f"NPA_ROBOMIMIC_RUNTIME_REFUSED: {exc}", file=sys.stderr)
-        return RUNTIME_REFUSAL_STATUS if args.mode == "runtime" else 1
+        return RUNTIME_REFUSAL_STATUS if args.mode in {"runtime", "snapshot"} else 1
     print(json.dumps(result, sort_keys=True))
     return 0
 
