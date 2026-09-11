@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "npa/docker/workbench/gymnasium-robotics/capability_smoke.py"
 
 
-def _constant(name: str) -> object:
-    tree = ast.parse(SMOKE.read_text(encoding="utf-8"))
+def _constant_from(path: Path, name: str) -> object:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == name
@@ -18,6 +19,10 @@ def _constant(name: str) -> object:
     raise AssertionError(name)
 
 
+def _constant(name: str) -> object:
+    return _constant_from(SMOKE, name)
+
+
 def test_fixed_capability_identity_and_trajectory() -> None:
     assert (
         _constant("ENV_ID") == "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
@@ -25,6 +30,17 @@ def test_fixed_capability_identity_and_trajectory() -> None:
     assert _constant("ROLLOUT_STEPS") == 120
     assert _constant("RESET_SEED") == 20260910
     assert _constant("ACTION_SEED") == 11092026
+
+
+def test_every_runtime_verifier_binds_the_exact_asset_lock_bytes() -> None:
+    asset_lock = ROOT / "npa/docker/workbench/gymnasium-robotics/asset-lock.json"
+    expected = hashlib.sha256(asset_lock.read_bytes()).hexdigest()
+    for path in (
+        SMOKE,
+        ROOT / "npa/docker/workbench/gymnasium-robotics/verify_image.py",
+        ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py",
+    ):
+        assert _constant_from(path, "EXPECTED_ASSET_LOCK") == expected
 
 
 def test_smoke_requires_physics_touch_orientation_and_real_egl() -> None:

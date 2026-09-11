@@ -28,8 +28,10 @@ remain required after a manager-authorized evidence closure and build.
 The official source is
 [`Farama-Foundation/Gymnasium-Robotics`](https://github.com/Farama-Foundation/Gymnasium-Robotics)
 at commit `4d1ebecbc6436806cfbc0e42ebc36f594d05844e`. The commit was
-made on September 7, 2026, and the current official release is v1.4.2 from
-January 2, 2026. The repository root is MIT licensed.
+made on September 7, 2026: it is a later maintained main-branch revision, not
+the v1.4.2 tag commit. Its package metadata still reports 1.4.2; the current
+official v1.4.2 release is from January 2, 2026. The repository root is MIT
+licensed.
 
 The Shadow Dexterous Hand files retain
 `gymnasium_robotics/envs/assets/LICENSE.md`. That notice attributes the model to
@@ -38,8 +40,9 @@ Robot `sr_common` `kinetic-devel` source resolves to commit
 `59d6bdf35bd9cf53185a20eb63413fdfe57fe77c` and has a GPL-2.0 root
 license. The asset provenance is therefore conservatively documented as
 GPL-2.0 plus the packaged Apache-2.0 attribution rather than MIT-only. The
-private image contains the complete pinned Gymnasium-Robotics source and its
-notices; this repository does not copy the XML, meshes, or textures.
+historical private image contained the complete pinned Gymnasium-Robotics
+source and its notices. This repository does not copy the XML, meshes, or
+textures, and no Phase A image exists.
 
 The runtime pins official Google DeepMind MuJoCo 3.12.0 (Apache-2.0), release
 commit `13827e9ee56f097f57acf69ae52b078f9839682d`. Its CPython 3.12
