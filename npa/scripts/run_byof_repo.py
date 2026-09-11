@@ -40,9 +40,9 @@ ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
-BYOF_CA_BOOTSTRAP_URL = (
-    "https://snapshot.ubuntu.com/ubuntu/20260801T053000Z/pool/main/"
-    "c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb"
+BYOF_CA_BOOTSTRAP_PATH = (
+    "pool/main/c/ca-certificates/"
+    "ca-certificates_20260601~22.04.1_all.deb"
 )
 BYOF_CA_BOOTSTRAP_SHA256 = (
     "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245"
@@ -316,15 +316,55 @@ def _registry_path(image_ref: str) -> str:
     return without_digest[:last_slash]
 
 
-def _dockerfile_text(*, apt_snapshot_enabled: bool = False) -> str:
+def _snapshot_ca_bootstrap_url(apt_snapshot: str) -> str:
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", apt_snapshot):
+        raise ValueError("APT snapshot must use YYYYMMDDTHHMMSSZ")
+    return (
+        f"https://snapshot.ubuntu.com/ubuntu/{apt_snapshot}/"
+        f"{BYOF_CA_BOOTSTRAP_PATH}"
+    )
+
+
+def _snapshot_perl_compatibility_script() -> str:
+    return (
+        "installed_perl_base=\"$(dpkg-query -W -f='${Version}' perl-base "
+        "2>/dev/null || true)\";\n"
+        "snapshot_perl_candidate=\"$(apt-cache policy perl | "
+        "awk '/Candidate:/ {print $2; exit}')\";\n"
+        "snapshot_perl_base_candidate=\"$(apt-cache policy perl-base | "
+        "awk '/Candidate:/ {print $2; exit}')\";\n"
+        "if [ -z \"${installed_perl_base}\" ] "
+        "|| [ -z \"${snapshot_perl_candidate}\" ] "
+        "|| [ \"${snapshot_perl_candidate}\" = '(none)' ] "
+        "|| [ -z \"${snapshot_perl_base_candidate}\" ] "
+        "|| [ \"${snapshot_perl_base_candidate}\" = '(none)' ]; then\n"
+        "  echo 'BYOF base/snapshot compatibility check could not resolve the "
+        "Perl family' >&2;\n"
+        "  exit 66;\n"
+        "fi;\n"
+        "if [ \"${installed_perl_base}\" != \"${snapshot_perl_base_candidate}\" ] "
+        "|| [ \"${snapshot_perl_candidate}\" != "
+        "\"${snapshot_perl_base_candidate}\" ]; then\n"
+        "  printf 'BYOF base/snapshot Perl family mismatch: base perl-base=%s "
+        "snapshot perl=%s snapshot perl-base=%s\\n' "
+        "\"${installed_perl_base}\" \"${snapshot_perl_candidate}\" "
+        "\"${snapshot_perl_base_candidate}\" >&2;\n"
+        "  exit 66;\n"
+        "fi;"
+    )
+
+
+def _dockerfile_text(*, apt_snapshot: str = "") -> str:
     ca_bootstrap_stage = ""
     apt_run = "RUN set -eu; \\\n"
     ca_bootstrap_commands = ""
-    if apt_snapshot_enabled:
+    snapshot_compatibility_commands = ""
+    if apt_snapshot:
+        ca_bootstrap_url = _snapshot_ca_bootstrap_url(apt_snapshot)
         ca_bootstrap_stage = (
             "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap\n"
             f"ADD --checksum=sha256:{BYOF_CA_BOOTSTRAP_SHA256} "
-            f"{BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb\n"
+            f"{ca_bootstrap_url} /npa-ca-certificates.deb\n"
         )
         apt_run = (
             "RUN --mount=type=bind,from=npa-ca-bootstrap,"
@@ -333,11 +373,16 @@ def _dockerfile_text(*, apt_snapshot_enabled: bool = False) -> str:
             "  set -eu; \\\n"
         )
         ca_bootstrap_commands = (
+            f'    test "${{BYOF_APT_SNAPSHOT}}" = "{apt_snapshot}"; \\\n'
             "    dpkg-deb -x /tmp/npa-ca-certificates.deb /; \\\n"
             "    find /usr/share/ca-certificates -type f -name '*.crt' "
             "-exec cat '{}' + \\\n"
             "      > /etc/ssl/certs/ca-certificates.crt; \\\n"
             "    test -s /etc/ssl/certs/ca-certificates.crt; \\\n"
+        )
+        snapshot_compatibility_commands = "".join(
+            f"  {line} \\\n"
+            for line in _snapshot_perl_compatibility_script().splitlines()
         )
     return (
         "# syntax=docker/dockerfile:1.7\n"
@@ -375,6 +420,7 @@ def _dockerfile_text(*, apt_snapshot_enabled: bool = False) -> str:
         '    grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n'
         "    ! grep -F 'URIs: http://' /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n"
         "  fi; \\\n"
+        f"{snapshot_compatibility_commands}"
         "  apt-get install -y --no-install-recommends \\\n"
         "      ca-certificates git python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
@@ -818,9 +864,7 @@ def _run_byof(
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(
-                    _dockerfile_text(
-                        apt_snapshot_enabled=bool(args.apt_snapshot)
-                    ),
+                    _dockerfile_text(apt_snapshot=args.apt_snapshot),
                     encoding="utf-8",
                 )
                 last_build_error: Exception | None = None

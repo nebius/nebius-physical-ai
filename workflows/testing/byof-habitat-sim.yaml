@@ -15,7 +15,7 @@ config:
   repo_token_env: GH_TOKEN
   base_profile: ubuntu
   base_image: "ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986"
-  apt_snapshot: "20260801T053000Z"
+  apt_snapshot: "20260903T121500Z"
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
