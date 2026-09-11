@@ -17,6 +17,8 @@ RUN chmod 0755 ./build.sh && ./build.sh verify-locks
 RUN ./build.sh install
 
 FROM ${BASE_IMAGE} AS runtime
+# Unreachable placeholder in Phase A: evidence-gate cannot yet produce either
+# COPY source. Future authorization must revalidate both before enabling it.
 ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \

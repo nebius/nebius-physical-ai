@@ -57,12 +57,12 @@ The base is the Linux amd64 Docker Official Image
 Its config is `sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c`
 and its sole layer is
 `sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58`.
-Ubuntu is a package collection under the individual package licenses; all 92
-installed package records, 89 package copyright files, and 17 common-license
-entries in those exact base bytes were inventoried before the workload build.
-A disposable install simulation for the complete builder plus solution package
-set resolved 252 packages and 213 package copyright entries, with no gated or
-interactive-license package.
+Ubuntu is a package collection under the individual package licenses. Prior
+owner-only assessment inventory counts are not release evidence and are not
+carried into the Phase A locks. An authorized closure transaction must persist
+the exact installed binary/source package manifests, copyright material, and
+common-license bytes before any build can proceed; until then no conclusion
+about the complete package set or interactive-license state is claimed.
 
 No model, dataset, gated asset, or terms acceptance is used. There is no
 checkpoint, external runtime asset download, or secret beyond ordinary private
@@ -84,6 +84,12 @@ gated model, dataset, SDK, or asset payload. Private delivery does not change
 the applicable licenses or grant broader usage/output permission. The built
 bytes must still be scanned to prove the absence of secrets, weights, external
 datasets, and persistent caches before the exact digest can run.
+The future acceptance scanner binds independently reviewed hashes for every
+completed evidence lock and the Ubuntu base diff ID; Phase A intentionally pins
+none of those completion hashes. It also checks the exact Docker config, every
+raw ordered layer (including header/padding bytes), all retained regular files,
+directories, links and metadata, and recursively nested source/package
+archives. A locally self-consistent lock or rootfs classification cannot pass.
 
 ## Hard-gate capability
 
