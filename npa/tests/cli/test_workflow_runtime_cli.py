@@ -885,3 +885,103 @@ def test_runtime_resume_keeps_execution_scope_gate(
     assert "execution scope mismatch" in result.output
     capacity.assert_not_called()
     assert fake_runtime == {}
+
+
+@pytest.fixture()
+def runtime_api_environment(fake_runtime, mocker, monkeypatch, tmp_path):
+    """Capture the real readiness/runtime boundary with only network calls faked."""
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES, SubmitCredentialContext,
+    )
+
+    monkeypatch.setenv("NPA_S3_PREFIX", "inherited/old-run")
+    monkeypatch.setenv("NPA_S3_BUCKET", "inherited-bucket")
+    for name in STORAGE_ENDPOINT_ENV_NAMES:
+        monkeypatch.setenv(name, "https://inherited.invalid")
+    selected = {"AWS_ACCESS_KEY_ID": "selected-access", "AWS_SECRET_ACCESS_KEY": "selected-secret"}
+    credentials = SubmitCredentialContext(
+        endpoint_url="https://selected.invalid", secret_values=selected,
+        access_key_id=selected["AWS_ACCESS_KEY_ID"], secret_access_key=selected["AWS_SECRET_ACCESS_KEY"],
+    )
+    mocker.patch("npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+                 return_value=credentials)
+    mocker.patch("npa.orchestration.skypilot.k8s_gpu_catalog.spec_accelerators", return_value={"L4": 1})
+    snapshots = []
+    for target in ("npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+                   "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators"):
+        mocker.patch(target, side_effect=lambda *args, **kwargs: snapshots.append(dict(os.environ)) or {})
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: next-wave\nrun: echo next\n")
+
+    def run(spec, **kwargs):
+        snapshots.append(dict(os.environ))
+        kwargs["options"].pre_submit_hook(wave)
+        return RuntimeReport(workflow=spec.name, run_id=kwargs["run_id"], status="succeeded")
+
+    driver.side_effect = run
+    names = ("NPA_S3_PREFIX", "NPA_S3_BUCKET", *STORAGE_ENDPOINT_ENV_NAMES, *selected)
+    return snapshots, driver, names
+
+
+@pytest.mark.parametrize("prefix_args,ambient,expected", [
+    (["--var", "prefix=selected/{{run.id}}"], True, "selected/environment-test"),
+    (["--var", "prefix=ignored", "--s3-prefix", "explicit/{{run.id}}"], True, "explicit/environment-test"),
+    ([], False, "token-factory-fanout/environment-test"),
+    ([], True, "inherited/old-run"),
+])
+def test_runtime_readiness_uses_resolved_environment(
+    runtime_api_environment, monkeypatch, prefix_args, ambient, expected,
+):
+    snapshots, driver, names = runtime_api_environment
+    if not ambient:
+        monkeypatch.delenv("NPA_S3_PREFIX")
+    before = {name: os.environ.get(name) for name in names}
+    result = RUNNER.invoke(app, [
+        "workbench", "workflow", "submit", str(FANOUT), "--runtime",
+        "--run-id", "environment-test", "--var", "bucket=selected-bucket", *prefix_args,
+    ])
+    assert result.exit_code == 0, result.output
+    assert driver.call_count == 1
+    assert len(snapshots) == 5
+    assert all(snapshot == snapshots[0] for snapshot in snapshots)
+    assert snapshots[0]["NPA_S3_PREFIX"] == expected
+    assert snapshots[0]["NPA_S3_BUCKET"] == "selected-bucket"
+    assert snapshots[0]["AWS_ACCESS_KEY_ID"] == "selected-access"
+    assert snapshots[0]["AWS_SECRET_ACCESS_KEY"] == "selected-secret"
+    assert all(snapshots[0][name] == "https://selected.invalid" for name in names[2:-2])
+    assert {name: os.environ.get(name) for name in names} == before
+
+
+@pytest.mark.parametrize("boundary", ["readiness", "runtime"])
+def test_runtime_environment_is_restored_after_failure(runtime_api_environment, mocker, boundary):
+    snapshots, driver, names = runtime_api_environment
+    before = {name: os.environ.get(name) for name in names}
+    target = ("npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators"
+              if boundary == "readiness" else "npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    failure = mocker.patch(target, side_effect=ValueError("executing identity changed"))
+    result = RUNNER.invoke(app, [
+        "workbench", "workflow", "submit", str(FANOUT), "--runtime",
+        "--run-id", "environment-failure", "--var", "bucket=selected-bucket",
+        "--var", "prefix=selected/{{run.id}}",
+    ])
+    assert result.exit_code != 0
+    failure.assert_called_once()
+    assert snapshots[0]["NPA_S3_PREFIX"] == "selected/environment-failure"
+    assert {name: os.environ.get(name) for name in names} == before
+    if boundary == "readiness":
+        driver.assert_not_called()
+
+
+def test_plan_only_does_not_bind_runtime_api_environment(runtime_api_environment):
+    snapshots, driver, names = runtime_api_environment
+    before = {name: os.environ.get(name) for name in names}
+    result = RUNNER.invoke(app, [
+        "workbench", "workflow", "submit", str(FANOUT), "--runtime", "--plan-only",
+        "--run-id", "environment-plan", "--var", "bucket=selected-bucket",
+        "--var", "prefix=selected/{{run.id}}",
+    ])
+    assert result.exit_code == 0, result.output
+    assert snapshots == []
+    driver.assert_not_called()
+    assert {name: os.environ.get(name) for name in names} == before

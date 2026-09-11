@@ -219,12 +219,18 @@ def test_same_path_mutated_kubeconfig_is_not_same_identity(local_runtime):
     api.stop_isolated_api(local_runtime["isolated_dir"])
 
 
-@pytest.mark.parametrize("setting", ["AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT"])
+@pytest.mark.parametrize("setting", [
+    "AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT",
+    "NPA_S3_PREFIX", "NPA_S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+])
 def test_all_effective_provider_settings_checked_on_adoption(local_runtime, setting):
     api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
     local_runtime["environment"][setting] = "different-fixture-setting"
     with pytest.raises(api.IsolatedApiError, match="different executing identity"):
         api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime) == original
+    assert api._process(original)["pid"] == original["pid"]
 
 
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(local_runtime):

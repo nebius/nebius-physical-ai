@@ -248,6 +248,12 @@ source staging, image routing, and required run preambles are renderer concerns.
 
 ## Durable State
 
+For runtime submission, API readiness and every wave use the same resolved
+storage bucket, run prefix, endpoint and selected credentials. Prefix templates
+such as `{{run.id}}` are resolved before API startup. An existing isolated API
+with a different executing configuration still rejects the submission; preserve
+its jobs and use a correctly configured isolated scope for recovery.
+
 The spec runtime can persist `npa-workflow/manifest.json`, `status.json`, and the
 runtime wave ledger under the run prefix. Use the generic workflow status/logs
 and artifact commands instead of adding per-spec log upload code:

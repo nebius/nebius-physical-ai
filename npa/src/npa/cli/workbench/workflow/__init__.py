@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 import hashlib
 import json
@@ -1771,14 +1772,23 @@ def submit_cmd(
             image_overrides["*"] = image_value
         image_overrides.update(specific_image_overrides)
 
+        render_endpoint = (
+            s3_endpoint or os.environ.get("AWS_ENDPOINT_URL")
+            or os.environ.get("NEBIUS_S3_ENDPOINT")
+            or "https://storage.eu-north1.nebius.cloud"
+        )
+        runtime_environment = (
+            _runtime_submit_environment(
+                merged_npa_spec, run_id=resolved_run_id,
+                secret_env_values=extra_env, endpoint=render_endpoint,
+            )
+            if runtime and not plan_only else None
+        )
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
             image_overrides=image_overrides,
             image_digest_pins=image_digest_pins,
-            aws_endpoint_url=s3_endpoint
-            or os.environ.get("AWS_ENDPOINT_URL")
-            or os.environ.get("NEBIUS_S3_ENDPOINT")
-            or "https://storage.eu-north1.nebius.cloud",
+            aws_endpoint_url=render_endpoint,
             gpu_target=gpu_target,
             image_variant=image_variant,
             # Never mint/print live registry tokens for --plan-only.
@@ -1791,6 +1801,7 @@ def submit_cmd(
                 sky_bin=sky_bin,
                 assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
+                environment=runtime_environment,
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
@@ -2501,6 +2512,39 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
     }
 
 
+def _runtime_submit_environment(
+    spec, *, run_id: str, secret_env_values: Mapping[str, str], endpoint: str,
+) -> dict[str, str]:
+    """Resolve the same private environment before API readiness and runtime."""
+    from npa.orchestration.npa_workflow.interpreter import _make_context
+    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+
+    environment = dict(secret_env_values)
+    resolved_config = _make_context(spec, run_id=run_id).config
+    for key in ("bucket", "prefix"):
+        if key in resolved_config:
+            environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
+    if endpoint:
+        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
+    return environment
+
+
+@contextmanager
+def _temporary_runtime_environment(environment: Mapping[str, str] | None):
+    """Restore the caller's environment after readiness, runtime, or failure."""
+    values = environment or {}
+    previous = {name: os.environ.get(name) for name in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def _run_npa_workflow_runtime(
     yaml_path: Path,
     *,
@@ -2611,27 +2655,17 @@ def _run_npa_workflow_runtime(
         preflight_evidence=preflight_evidence,
         pre_submit_hook=pre_submit_hook,
     )
-    runtime_env = dict(secret_env_values)
-    from npa.orchestration.npa_workflow.interpreter import _make_context
-
-    resolved_config = _make_context(spec, run_id=run_id).config
-    for key in ("bucket", "prefix"):
-        if key in resolved_config:
-            runtime_env[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
-    endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
-    if endpoint:
-        from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
-
-        runtime_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
-    previous_env = {name: os.environ.get(name) for name in runtime_env}
-    try:
+    runtime_env = _runtime_submit_environment(
+        spec, run_id=run_id, secret_env_values=secret_env_values,
+        endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+    )
+    with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
         # receipt has multiple job identities in S3, so no single job ID belongs here.
         update_submission_state(
             project or "default", run_id,
             {"launch": {"status": "launching", "kind": "runtime"}},
         )
-        os.environ.update(runtime_env)
         try:
             report = run_workflow_runtime(
                 spec,
@@ -2645,12 +2679,6 @@ def _run_npa_workflow_runtime(
         except NpaWorkflowError as exc:
             _fail(str(exc))
             return
-    finally:
-        for name, previous in previous_env.items():
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
     artifact_load: dict[str, object] | None = None
     if (
         report.status == "succeeded"
@@ -3217,6 +3245,7 @@ def _resolve_submit_accelerators(
     enabled: bool,
     config_path: Path | None = None,
     isolated_config_dir: Path | None = None,
+    environment: Mapping[str, str] | None = None,
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
@@ -3268,34 +3297,35 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    try:
-        ensure_local_api_daemon_health(
-            sky_bin=sky_bin or None,
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-        )
-    except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
-        _fail(f"SkyPilot API daemon preflight failed: {exc}")
-        return {}
+    with _temporary_runtime_environment(environment):
+        try:
+            ensure_local_api_daemon_health(
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+            )
+        except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
+            _fail(f"SkyPilot API daemon preflight failed: {exc}")
+            return {}
 
-    context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
-    try:
-        resolutions = wait_for_kubernetes_accelerators(
-            requested,
-            context=context,
-            sky_bin=sky_bin or None,
-            timeout=readiness_timeout,
-            poll_interval=readiness_poll_interval,
-            on_status=lambda message: typer.echo(message, err=True),
-        )
-    except (
-        KubernetesGpuCatalogError,
-        SkyPilotNotInstalledError,
-        UnsatisfiableAcceleratorError,
-        ValueError,
-    ) as exc:
-        _fail(f"accelerator readiness failed: {exc}")
-        return {}
+        context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
+        try:
+            resolutions = wait_for_kubernetes_accelerators(
+                requested,
+                context=context,
+                sky_bin=sky_bin or None,
+                timeout=readiness_timeout,
+                poll_interval=readiness_poll_interval,
+                on_status=lambda message: typer.echo(message, err=True),
+            )
+        except (
+            KubernetesGpuCatalogError,
+            SkyPilotNotInstalledError,
+            UnsatisfiableAcceleratorError,
+            ValueError,
+        ) as exc:
+            _fail(f"accelerator readiness failed: {exc}")
+            return {}
 
     overrides: dict[str, str] = {}
     for accelerator, resolution in resolutions.items():
