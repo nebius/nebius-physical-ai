@@ -31,6 +31,10 @@ SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 DATASET_REF = "f13aa24a3da8c43c7225569f28c562979fa0e35a"
 DATASET_SHA256 = "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
 BASE_IMAGE_SHA256 = "ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+LANGUAGE_MODEL_REF = "cd5ef92a9fb2f889e972770a36d4ed042daf221e"
+LANGUAGE_MODEL_MODEL_SHA256 = (
+    "d6992b8cd27d7a132eafce6a8210272329a371b1c762d453588795dd3835593e"
+)
 CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
 PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 
@@ -106,6 +110,8 @@ def test_libero_workflow_pins_reviewed_source_data_and_base_image() -> None:
 
     assert DATASET_REF not in build
     assert DATASET_SHA256 not in build
+    assert LANGUAGE_MODEL_REF not in build
+    assert LANGUAGE_MODEL_MODEL_SHA256 not in build
     assert "huggingface.co/datasets" not in build
     assert "download_libero_datasets" not in build
     assert "rm -rf libero/libero/assets" not in build
@@ -121,6 +127,12 @@ def test_libero_workflow_pins_reviewed_source_data_and_base_image() -> None:
     assert '"git_objects_removed": True' in smoke
     assert "observed_source_revision != SOURCE_REF" in smoke
     assert "build_metadata.get(\"build_command_sha256\") != BUILD_COMMAND_SHA256" in smoke
+    assert 'build_metadata.get("base_image_reference") != BASE_IMAGE_REFERENCE' in smoke
+    assert 'build_metadata.get("base_image_digest") != BASE_IMAGE_DIGEST' in smoke
+    assert 'build_metadata.get("base_image_digest_pinned") is not True' in smoke
+    assert '"base_image_reference": build_metadata["base_image_reference"]' in smoke
+    assert '"base_image_digest": build_metadata["base_image_digest"]' in smoke
+    assert "generated_build_metadata_and_oci_config_labels" in smoke
     build_sha256 = hashlib.sha256(build.encode()).hexdigest()
     assert f'BUILD_COMMAND_SHA256 = "{build_sha256}"' in smoke
 
@@ -158,6 +170,26 @@ def test_libero_smoke_uses_real_upstream_bc_training_and_heldout_evaluation() ->
     assert '"value_max": action_value_max' in smoke
 
 
+def test_libero_smoke_uses_pinned_upstream_task_language_conditioning() -> None:
+    smoke = _smoke_source()
+
+    assert 'LANGUAGE_MODEL_REPOSITORY = "google-bert/bert-base-cased"' in smoke
+    assert f'LANGUAGE_MODEL_REVISION = "{LANGUAGE_MODEL_REF}"' in smoke
+    assert LANGUAGE_MODEL_MODEL_SHA256 in smoke
+    assert 'LANGUAGE_MODEL_LICENSE = "Apache-2.0"' in smoke
+    assert "AutoTokenizer.from_pretrained" in smoke
+    assert "AutoModel.from_pretrained" in smoke
+    assert "local_files_only=True" in smoke
+    assert '"pooler_output"' in smoke
+    assert "cfg.data.max_word_len" in smoke
+    assert "upstream_LIBERO_bert_pooler_output" in smoke
+    assert "TASK_EMBEDDING_SOURCE_SHA256" in smoke
+    assert "observed_task_embedding_source_sha256" in smoke
+    assert "embedding_bytes" not in smoke
+    assert "np.resize" not in smoke
+    assert "deterministic_single_task_768d_sha256" not in smoke
+
+
 def test_libero_smoke_binds_exact_task_assets_and_real_sample_inventory() -> None:
     smoke = _smoke_source()
 
@@ -169,6 +201,7 @@ def test_libero_smoke_binds_exact_task_assets_and_real_sample_inventory() -> Non
     assert '"sample_count": sample_count' in smoke
     assert '"dataset_bddl_path": dataset_bddl' in smoke
     assert "libero_official_demo_sha256" in smoke
+    assert "libero_upstream_bert_task_conditioning" in smoke
     assert "libero_trajectory_disjoint_heldout_split" in smoke
 
 
@@ -218,6 +251,23 @@ def test_libero_smoke_requires_one_observed_b200_digest_and_never_renders() -> N
     assert "imageID" in smoke
     assert 'observed_digests = re.findall(r"sha256:[0-9a-f]{64}"' in smoke
     assert '"pod_observed_image_digest"' in smoke
+    assert 'service_account_name != "npa-byof-libero-payload"' in smoke
+    assert 'service_account_name in {"default", "skypilot-service-account"}' in smoke
+    assert "bound_service_account_claims(token)" in smoke
+    assert "NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256" in smoke
+    assert "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256" in smoke
+    assert "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256" in smoke
+    assert '"controller_service_account_separated": True' in smoke
+    for name in (
+        "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
+        "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256",
+        "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256",
+        "NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256",
+        "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256",
+    ):
+        assert name in profile_docs[1]["envs"]
     assert "evaluate_one_task_success" not in smoke
     assert "OffScreenRenderEnv" not in smoke
     assert '"rendering_invoked": False' in smoke

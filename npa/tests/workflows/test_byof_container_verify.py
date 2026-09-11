@@ -142,6 +142,268 @@ def test_render_workflow_materializes_libero_payload_account(monkeypatch) -> Non
     ] == "npa-byof-libero-payload"
 
 
+def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig.write_text("payload proof\n", encoding="utf-8")
+    kubeconfig.chmod(0o600)
+    execution_kubeconfig = tmp_path / "execution-kubeconfig"
+    execution_kubeconfig.write_text("execution proof\n", encoding="utf-8")
+    monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
+    monkeypatch.setattr(module, "_libero_payload_kubeconfig", lambda: kubeconfig)
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda path, **_kwargs: (
+            "payload-proof-context",
+            "isolated-namespace",
+            "6" * 64,
+        )
+        if path == kubeconfig
+        else ("execution-context", "", "6" * 64),
+    )
+    rbac = {
+        "service_account_uid_sha256": "1" * 64,
+        "role_uid_sha256": "2" * 64,
+        "role_binding_uid_sha256": "3" * 64,
+        "rbac_spec_sha256": "4" * 64,
+        "namespace_sha256": "5" * 64,
+    }
+    monkeypatch.setattr(module, "_libero_rbac_evidence", lambda *_a: dict(rbac))
+    args = SimpleNamespace(solution_name="libero", direct_launch=False)
+    documents = [{"execution": "serial"}, {"envs": {}}]
+    expected_evidence = {
+        **rbac,
+        "cluster_identity_sha256": "6" * 64,
+        "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest(),
+    }
+    for name, value in expected_evidence.items():
+        monkeypatch.setenv(f"NPA_LIBERO_EXPECTED_{name.upper()}", value)
+
+    evidence = module._bind_libero_runtime_contract(
+        args,
+        documents,
+        global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+        infra="k8s/execution-context",
+    )
+
+    assert evidence == expected_evidence
+    assert documents[1]["envs"] == {
+        f"NPA_LIBERO_EXPECTED_{key.upper()}": value
+        for key, value in evidence.items()
+    }
+
+    for direct, allowed in (
+        (True, {"names": ["worker"]}),
+        (False, None),
+        (False, {"names": ["worker-a", "worker-b"]}),
+    ):
+        args.direct_launch = direct
+        with pytest.raises(ValueError):
+            module._bind_libero_runtime_contract(
+                args,
+                [{"execution": "serial"}, {"envs": {}}],
+                global_config={"kubernetes": {"allowed_nodes": allowed}},
+                infra="k8s/execution-context",
+            )
+
+    args.direct_launch = False
+    missing_variable = "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256"
+    monkeypatch.delenv(missing_variable)
+    with pytest.raises(ValueError, match="owner-receipted hash"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    monkeypatch.setenv(missing_variable, expected_evidence["role_binding_uid_sha256"])
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", "f" * 64)
+    with pytest.raises(ValueError, match="differs for role_uid_sha256"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", expected_evidence["role_uid_sha256"]
+    )
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda path, **_kwargs: (
+            ("payload-proof-context", "isolated-namespace", "6" * 64)
+            if path == kubeconfig
+            else ("execution-context", "", "7" * 64)
+        ),
+    )
+    with pytest.raises(ValueError, match="different clusters"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda _path, **_kwargs: (
+            "execution-context",
+            "isolated-namespace",
+            "6" * 64,
+        ),
+    )
+    with pytest.raises(ValueError, match="explicitly separated"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+
+
+def test_libero_payload_kubeconfig_must_be_private_regular_file(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig.write_text("proof\n", encoding="utf-8")
+    kubeconfig.chmod(0o644)
+    monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(kubeconfig))
+
+    with pytest.raises(ValueError, match="mode-private regular file"):
+        module._libero_payload_kubeconfig()
+
+    kubeconfig.chmod(0o600)
+    assert module._libero_payload_kubeconfig() == kubeconfig.resolve()
+
+
+def test_libero_sky_config_uses_only_explicit_mode_private_owner_input(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    args = SimpleNamespace(config_path="")
+    config = tmp_path / "skypilot-config"
+    config.write_text("kubernetes: {}\n", encoding="utf-8")
+    config.chmod(0o644)
+    monkeypatch.setenv("NPA_LIBERO_SKYPILOT_CONFIG", str(config))
+
+    with pytest.raises(ValueError, match="mode-private regular file"):
+        module._libero_global_config_path(args)
+
+    config.chmod(0o600)
+    assert module._libero_global_config_path(args) == str(config.resolve())
+    monkeypatch.delenv("NPA_LIBERO_SKYPILOT_CONFIG")
+    with pytest.raises(ValueError, match="owner-supplied"):
+        module._libero_global_config_path(args)
+
+
+def test_libero_context_contract_binds_server_and_ca_without_exposing_them(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    config = {
+        "current-context": "payload-context",
+        "contexts": [
+            {
+                "name": "payload-context",
+                "context": {"cluster": "cluster", "namespace": "isolated"},
+            }
+        ],
+        "clusters": [
+            {
+                "name": "cluster",
+                "cluster": {
+                    "server": "https://cluster.example",
+                    "certificate-authority-data": "base64-ca",
+                },
+            }
+        ],
+    }
+    seen: dict[str, object] = {}
+
+    def kubectl_json(arguments, *, purpose, kubeconfig):
+        seen.update(arguments=arguments, purpose=purpose, kubeconfig=kubeconfig)
+        return config
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    path = Path("/private/payload-kubeconfig")
+    context, namespace, identity = module._libero_context_contract(
+        path, require_namespace=True
+    )
+
+    assert (context, namespace) == ("payload-context", "isolated")
+    assert identity == module._sha256_json(
+        {
+            "server": "https://cluster.example",
+            "certificate_authority_data": "base64-ca",
+        }
+    )
+    assert seen == {
+        "arguments": ["config", "view", "--minify", "--flatten", "--raw"],
+        "purpose": "selected-context",
+        "kubeconfig": path,
+    }
+
+    config["clusters"][0]["cluster"]["insecure-skip-tls-verify"] = True
+    with pytest.raises(RuntimeError, match="strict TLS identity"):
+        module._libero_context_contract(path, require_namespace=True)
+
+
+def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None:
+    module = _load_module()
+    namespace = "isolated-namespace"
+    objects = {
+        "serviceaccount": {
+            "metadata": {"uid": "account-uid"},
+        },
+        "role": {
+            "metadata": {"uid": "role-uid"},
+            "rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}],
+        },
+        "rolebinding": {
+            "metadata": {"uid": "binding-uid"},
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "npa-byof-libero-payload",
+                    "namespace": namespace,
+                }
+            ],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": "npa-byof-libero-pod-reader",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_libero_resource",
+        lambda _kubeconfig, _context, _namespace, kind, _name: objects[kind],
+    )
+
+    kubeconfig = Path("/private/payload-kubeconfig")
+    evidence = module._libero_rbac_evidence(
+        kubeconfig, "payload-context", namespace
+    )
+    assert evidence["service_account_uid_sha256"] == module.hashlib.sha256(
+        b"account-uid"
+    ).hexdigest()
+
+    objects["role"]["rules"][0]["verbs"] = ["get", "list"]
+    with pytest.raises(RuntimeError, match="broader"):
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
+    objects["role"]["rules"][0]["verbs"] = ["get"]
+    objects["rolebinding"]["subjects"][0]["name"] = "default"
+    with pytest.raises(RuntimeError, match="differs"):
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
+
+
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
