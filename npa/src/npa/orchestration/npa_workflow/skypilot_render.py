@@ -1744,6 +1744,14 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
+        if (
+            tool_ref == "workbench.byof.repo"
+            and "--runtime-context-env" in step.argv
+            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in step.argv
+            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" not in seen
+        ):
+            seen.add("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
+            hints.append("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
         if tool_ref == "workbench.byof.repo" and any(
             value == "openpi" or "pi05_droid_jointpos_polaris" in value
             for value in step.argv
@@ -1927,13 +1935,27 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_NAME": spec.name,
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
-        # Retain output roles for the shared raw/rendered SDK submission gate.
-        "NPA_EXECUTION_OUTPUTS": json.dumps([
-            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
-            for output in scheduler_task.get("outputs") or []
-            if str(output.get("uri") or "").startswith("s3://")
-        ], separators=(",", ":")),
     }
+    from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
+
+    if not recognize_contract(spec):
+        # Retain output roles for the shared raw/rendered SDK submission gate.
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [
+                {
+                    "uri": output["uri"],
+                    "kind": output.get("kind")
+                    or (
+                        "directory"
+                        if str(output["uri"]).endswith("/")
+                        else "file"
+                    ),
+                }
+                for output in scheduler_task.get("outputs") or []
+                if str(output.get("uri") or "").startswith("s3://")
+            ],
+            separators=(",", ":"),
+        )
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
         material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(

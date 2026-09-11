@@ -15,6 +15,9 @@ import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    RobotwinPreflightError,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.e2e import test_byof_onboarding_live_e2e as live_e2e  # noqa: E402
@@ -80,6 +83,11 @@ def test_robotwin_workflow_validates_and_plans_the_byof_toolref() -> None:
     assert plan.steps[0].tool_ref == "workbench.byof.repo"
     assert "--runtime-context-env" in plan.steps[0].argv
     assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in plan.steps[0].argv
+    assert spec.resources == {
+        "launcher": {"cloud": "kubernetes", "cpus": "4+", "memory": "8+"}
+    }
+    assert "accelerators" not in spec.resources["launcher"]
+    assert "image" not in spec.resources["launcher"]
     for private_field in (
         "nebius_profile",
         "kubeconfig",
@@ -223,6 +231,24 @@ def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> N
     assert 'exit "${SMOKE_EXIT_CODE}"' in run
 
 
+def test_robotwin_has_exactly_one_accelerator_request_across_both_layers() -> None:
+    outer = _payload()["resources"]
+    inner = _profile_task()["resources"]
+    accelerator_requests = [
+        profile["accelerators"]
+        for profile in outer.values()
+        if "accelerators" in profile
+    ]
+    accelerator_requests.extend(
+        [inner["accelerators"]] if "accelerators" in inner else []
+    )
+
+    assert accelerator_requests == [
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    ]
+    assert all("B200" not in request for request in accelerator_requests)
+
+
 def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> None:
     live_test = LIVE_E2E.read_text(encoding="utf-8")
 
@@ -231,15 +257,10 @@ def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> 
     ).parameters == {}
     for required in (
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
-        'payload.get("ownership_provenance")',
-        'reservation.get("policy") == "STRICT"',
-        'reservation.get("accelerator") == "RTXPRO-6000-BLACKWELL-SERVER-EDITION"',
-        'reservation.get("count") == 1',
-        '"nvidia_cuda_eula"',
-        '"nvidia_cudnn_sla"',
-        '"curobo_noncommercial_research_or_evaluation"',
-        '"robotwin2_aggregate_asset_and_output_terms"',
-        '"--runtime-context-env"',
+        "load_runtime_authorization",
+        '"workflow"',
+        '"submit"',
+        '"--secret-env"',
         'str(config["runtime_context_env"])',
         '"-m"',
         '"npa"',
@@ -250,6 +271,7 @@ def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> 
         '"--project"',
         '"--config-path"',
         'ROBOTWIN_IMAGE_SCANNER',
+        'str(BYOF_RUNNER)',
     ):
         assert forbidden not in inspect.getsource(
             live_e2e.test_live_robotwin_build_push_run_and_artifacts
@@ -267,7 +289,7 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
         lambda *_: pytest.fail("authorization refusal occurred too late"),
     )
 
-    with pytest.raises(AssertionError, match="RUNTIME_CONTEXT is required"):
+    with pytest.raises(RobotwinPreflightError, match="context-missing"):
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 
@@ -276,6 +298,16 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\n"
+        "contexts: [{name: private-context, context: {}}]\nusers: []\n",
+        encoding="utf-8",
+    )
+    skypilot = tmp_path / "skypilot.yaml"
+    skypilot.write_text("kubernetes: {}\n", encoding="utf-8")
+    kubeconfig.chmod(0o600)
+    skypilot.chmod(0o600)
     context = tmp_path / "runtime-context.json"
     context.write_text(
         json.dumps(
@@ -291,7 +323,17 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
                     "nvidia_cuda_eula": True,
                     "nvidia_cudnn_sla": True,
                     "curobo_noncommercial_research_or_evaluation": True,
+                    "robotwin2_aggregate_asset_and_output_terms": False,
                 },
+                "project": "private-project",
+                "nebius_profile": "private-profile",
+                "kubeconfig": str(kubeconfig),
+                "kubernetes_context": "private-context",
+                "skypilot_config_path": str(skypilot),
+                "registry": "registry.example/private/robotwin",
+                "bucket": "private-bucket",
+                "output_root": "s3://private-bucket/robotwin-output",
+                "run_id": "robotwin-private-run",
             }
         ),
         encoding="utf-8",
@@ -306,8 +348,8 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
     )
 
     with pytest.raises(
-        AssertionError,
-        match="robotwin2_aggregate_asset_and_output_terms",
+        RobotwinPreflightError,
+        match="license-decision-robotwin2_aggregate_asset_and_output_terms-missing",
     ):
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 

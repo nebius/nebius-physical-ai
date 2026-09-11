@@ -933,13 +933,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-robotwin.yaml",
         "multi",
-        plan_only=True,
-        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
+        secret_envs=(
+            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         notes=(
-            "Private/restricted RoboTwin 2.0 BYOF build and one-RTX-PRO-6000 "
-            "native beat_block_hammer seed-search/replay collection. A pass "
-            "requires SAPIEN/Vulkan, task success, HDF5 actions, decoded MP4 "
-            "frames, exact runtime asset revision, and pod image-digest evidence."
+            "Normal submit uses a CPU-only outer launcher and delegates the sole "
+            "accelerator request to one STRICT RTX PRO 6000 Blackwell inner job. "
+            "The private/restricted RoboTwin 2.0 beat_block_hammer pass requires "
+            "SAPIEN/Vulkan, task success, HDF5 actions, decoded MP4 frames, exact "
+            "runtime asset revision, and pod image-digest evidence."
         ),
     ),
     SubmitLiveCase(

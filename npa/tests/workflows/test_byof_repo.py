@@ -73,7 +73,17 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
         ("skypilot_config_path", "skypilot.yaml"),
     ):
         path = tmp_path / filename
-        path.write_text("{}\n", encoding="utf-8")
+        content = (
+            "apiVersion: v1\nkind: Config\n"
+            "clusters: [{name: robotwin-cluster, cluster: {server: "
+            "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
+            "contexts: [{name: private-context-canary, context: {cluster: "
+            "robotwin-cluster, user: robotwin-user}}]\n"
+            "users: [{name: robotwin-user, user: {token: portable-test-token}}]\n"
+            if field == "kubeconfig"
+            else "kubernetes: {}\n"
+        )
+        path.write_text(content, encoding="utf-8")
         path.chmod(0o600)
         payload[field] = str(path)
     context = tmp_path / "runtime-context.json"
@@ -129,9 +139,9 @@ def _robotwin_args(module, *extra: str) -> list[str]:
 @pytest.mark.parametrize(
     "context,error",
     [
-        (None, "is required"),
-        ("{", "not valid JSON"),
-        (json.dumps(_robotwin_context(solution="another")), "wrong solution"),
+        (None, "context-missing"),
+        ("{", "context-invalid-json"),
+        (json.dumps(_robotwin_context(solution="another")), "context-wrong-solution"),
         (
             json.dumps(
                 _robotwin_context(
@@ -142,11 +152,11 @@ def _robotwin_args(module, *extra: str) -> list[str]:
                     }
                 )
             ),
-            "robotwin2_aggregate_asset_and_output_terms",
+            "license-decision-schema-mismatch",
         ),
         (
             json.dumps(_robotwin_context(registry="docker.io/example/public")),
-            "operator-private registry",
+            "registry-not-private",
         ),
     ],
 )
@@ -198,13 +208,13 @@ def test_robotwin_inline_context_refuses_before_any_side_effect(
     )
 
     assert module.main(_robotwin_args(module)) == 1
-    assert "must name an owner-only file" in capsys.readouterr().out
+    assert "context-file-reference-required" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
     ("updates", "error"),
     [
-        ({"project": {"unexpected": "object"}}, "project must be a string"),
+        ({"project": {"unexpected": "object"}}, "context-project-invalid"),
         (
             {
                 "reservation": {
@@ -213,7 +223,7 @@ def test_robotwin_inline_context_refuses_before_any_side_effect(
                     "count": True,
                 }
             },
-            "exactly one reserved GPU",
+            "reservation-count-not-one",
         ),
     ],
 )
@@ -248,7 +258,8 @@ def test_robotwin_missing_runtime_config_refuses_before_any_side_effect(
     )
 
     assert module.main(_robotwin_args(module)) == 1
-    assert f"{field} is not readable" in capsys.readouterr().out
+    label = "kubeconfig" if field == "kubeconfig" else "skypilot-config"
+    assert f"{label}-unreadable" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("field", ["kubeconfig", "skypilot_config_path"])
@@ -265,7 +276,8 @@ def test_robotwin_runtime_config_must_be_owner_only_before_any_side_effect(
     )
 
     assert module.main(_robotwin_args(module)) == 1
-    assert f"{field} must be owner-only" in capsys.readouterr().out
+    label = "kubeconfig" if field == "kubeconfig" else "skypilot-config"
+    assert f"{label}-not-owner-only" in capsys.readouterr().out
 
 
 def test_robotwin_context_file_must_be_owner_only(
@@ -283,7 +295,7 @@ def test_robotwin_context_file_must_be_owner_only(
     )
 
     assert module.main(_robotwin_args(module)) == 1
-    assert "must be owner-only" in capsys.readouterr().out
+    assert "context-not-owner-only" in capsys.readouterr().out
 
     context.chmod(0o600)
     link = tmp_path / "context-link.json"
@@ -291,12 +303,12 @@ def test_robotwin_context_file_must_be_owner_only(
     monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(link))
     assert module.main(_robotwin_args(module)) == 1
     output = capsys.readouterr().out
-    assert "not readable" in output
+    assert "context-unreadable" in output
     assert str(link) not in output
 
 
-def test_robotwin_profile_failure_precedes_build_and_redacts_context(
-    monkeypatch, capsys, tmp_path
+def test_robotwin_authorized_profile_is_environment_only(
+    monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
     payload = _install_robotwin_context(module, monkeypatch, tmp_path)
@@ -309,32 +321,24 @@ def test_robotwin_profile_failure_precedes_build_and_redacts_context(
         lambda *_args, **_kwargs: pytest.fail("authorized registry was not applied"),
     )
 
-    def fail_activation(cmd, **_kwargs):
-        assert cmd[:3] == ["nebius", "profile", "activate"]
-        raise RuntimeError(f"profile activation failed for {payload['nebius_profile']}")
-
-    monkeypatch.setattr(module, "_run", fail_activation)
     monkeypatch.setattr(
         module,
-        "_scan_robotwin_image",
-        lambda *_args, **_kwargs: pytest.fail("image scan ran after failed profile"),
+        "_run_byof",
+        lambda _args, *, authorization, **_kwargs: (
+            0
+            if authorization.profile == payload["nebius_profile"]
+            else pytest.fail("validated profile was not retained in authorization")
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "private profile entered a subprocess argv before BYOF work"
+        ),
     )
 
-    assert module.main(_robotwin_args(module)) == 1
-    output = capsys.readouterr().out
-    assert "profile activation failed" in output
-    for field in (
-        "project",
-        "nebius_profile",
-        "kubeconfig",
-        "kubernetes_context",
-        "skypilot_config_path",
-        "registry",
-        "bucket",
-        "output_root",
-        "run_id",
-    ):
-        assert str(payload[field]) not in output
+    assert module.main(_robotwin_args(module)) == 0
 
 
 def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
@@ -369,9 +373,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         return {"MOCK_STORAGE": "yes"}
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["nebius", "profile", "activate"]:
-            events.append("profile")
-        elif cmd[:2] == ["docker", "build"]:
+        if cmd[:2] == ["docker", "build"]:
             events.append("build")
         elif cmd[:2] == ["docker", "push"]:
             events.append("push")
@@ -396,7 +398,6 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
 
     assert module.main(_robotwin_args(module)) == 0
     assert events == [
-        "profile",
         "build",
         "push",
         "inspect",
@@ -450,7 +451,7 @@ def test_robotwin_image_scan_failure_precedes_live_runner(
     assert "scan rejected runtime-only bytes" in output["error"]
 
 
-def test_robotwin_rejects_unscannable_build_modes_before_profile(
+def test_robotwin_rejects_unscannable_build_modes_before_commands(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
@@ -458,17 +459,17 @@ def test_robotwin_rejects_unscannable_build_modes_before_profile(
     monkeypatch.setattr(
         module,
         "_run",
-        lambda *_args, **_kwargs: pytest.fail("profile activated before refusal"),
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
     )
 
     assert module.main(_robotwin_args(module, "--skip-push")) == 1
-    assert "complete build, scan, and live smoke" in capsys.readouterr().out
+    assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
 
     assert module.main(_robotwin_args(module, "--skip-build")) == 1
-    assert "complete build, scan, and live smoke" in capsys.readouterr().out
+    assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
 
 
-def test_robotwin_rejects_modified_public_smoke_contract_before_profile(
+def test_robotwin_rejects_modified_public_smoke_contract_before_commands(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
@@ -476,18 +477,18 @@ def test_robotwin_rejects_modified_public_smoke_contract_before_profile(
     monkeypatch.setattr(
         module,
         "_run",
-        lambda *_args, **_kwargs: pytest.fail("profile activated before refusal"),
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
     )
     args = _robotwin_args(module)
     args[args.index("--repo-ref") + 1] = "main"
 
     assert module.main(args) == 1
-    assert "unexpected repo_ref" in capsys.readouterr().out
+    assert "invocation-repo_ref-mismatch" in capsys.readouterr().out
 
     assert module.main(
         _robotwin_args(module, "--registry", "registry.example/public-argv")
     ) == 1
-    assert "must come from authorization" in capsys.readouterr().out
+    assert "invocation-private-coordinate-override" in capsys.readouterr().out
 
 
 def test_runtime_authorization_is_removed_from_child_environment(monkeypatch) -> None:

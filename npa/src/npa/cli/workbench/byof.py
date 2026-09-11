@@ -6,9 +6,11 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import typer
 from rich.console import Console
@@ -77,6 +79,51 @@ def _load_runner():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@contextmanager
+def _robotwin_runtime_materialization(
+    runner: Any, argv: list[str]
+) -> Iterator[None]:
+    """Materialize a validated worker transport without changing direct BYOF."""
+
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CONTEXT_ENV_NAMES,
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        PUBLIC_CONTEXT_ENV,
+        TRANSPORT_CONTEXT_ENV,
+        materialize_transport,
+        validate_invocation,
+    )
+
+    parsed = runner._parse_args(argv)
+    transport = os.environ.get(TRANSPORT_CONTEXT_ENV, "")
+    if parsed.solution_name.strip().lower() != "robotwin" or not transport:
+        yield
+        return
+    validate_invocation(parsed)
+    if os.environ.get(PUBLIC_CONTEXT_ENV, "").strip():
+        raise ValueError("RoboTwin worker received conflicting context channels")
+    previous = {name: os.environ.get(name) for name in CONTEXT_ENV_NAMES}
+    with tempfile.TemporaryDirectory(prefix="npa-robotwin-runtime-") as raw_dir:
+        materialized = materialize_transport(transport, Path(raw_dir))
+        try:
+            os.environ.pop(TRANSPORT_CONTEXT_ENV, None)
+            os.environ[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
+            os.environ[MATERIALIZED_KUBECONFIG_ENV] = str(
+                materialized.kubeconfig_path
+            )
+            os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
+                materialized.skypilot_config_path
+            )
+            yield
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 
 def build_byof_argv(
@@ -342,7 +389,8 @@ def run_cmd(
         return
 
     runner = _load_runner()
-    code = int(runner.main(argv))
+    with _robotwin_runtime_materialization(runner, argv):
+        code = int(runner.main(argv))
     raise SystemExit(code)
 
 

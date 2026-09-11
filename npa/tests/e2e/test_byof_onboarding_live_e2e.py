@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,8 +19,10 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
-from npa.deploy.images import is_public_registry
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    load_runtime_authorization,
+)
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
     byof_validation_repo,
@@ -99,60 +101,10 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
 def _robotwin_runtime_context() -> tuple[dict[str, object], str]:
     """Load the manager-owned, owner-local authorization for this live run."""
 
-    raw_path = os.environ.get("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", "").strip()
-    assert raw_path, "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT is required for a live run"
-    path = Path(raw_path).expanduser()
-    metadata = path.lstat()
-    assert stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode), (
-        "RoboTwin runtime context must be a regular non-symlink file"
-    )
-    assert metadata.st_uid == os.geteuid() and not metadata.st_mode & 0o077, (
-        "RoboTwin runtime context must be owner-only"
-    )
-    assert path.resolve().parent == REPO_ROOT.parent.resolve(), (
-        "RoboTwin runtime context must be an owner-only file in the child root"
-    )
-    raw = path.read_bytes()
-    payload = json.loads(raw)
-    assert isinstance(payload, dict), "RoboTwin runtime context must be a JSON object"
-    assert payload.get("solution") == "robotwin", (
-        "runtime context has the wrong solution"
-    )
-    assert payload.get("ownership_provenance"), (
-        "runtime context lacks ownership provenance"
-    )
-    reservation = payload.get("reservation")
-    assert isinstance(reservation, dict), "runtime context lacks reservation evidence"
-    assert reservation.get("policy") == "STRICT", "reservation policy must be STRICT"
-    assert reservation.get("accelerator") == "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
-    assert reservation.get("count") == 1, "reservation must authorize exactly one GPU"
-    acceptance = payload.get("license_acceptance")
-    assert isinstance(acceptance, dict), (
-        "runtime context lacks operator license decisions"
-    )
-    for key in (
-        "nvidia_cuda_eula",
-        "nvidia_cudnn_sla",
-        "curobo_noncommercial_research_or_evaluation",
-        "robotwin2_aggregate_asset_and_output_terms",
-    ):
-        assert acceptance.get(key) is True, f"runtime context does not authorize {key}"
-    for key in (
-        "project",
-        "nebius_profile",
-        "kubeconfig",
-        "kubernetes_context",
-        "skypilot_config_path",
-        "registry",
-        "bucket",
-        "output_root",
-        "run_id",
-    ):
-        assert str(payload.get(key) or "").strip(), f"runtime context lacks {key}"
-    assert not is_public_registry(str(payload["registry"])), (
-        "RoboTwin runtime context must select an operator-private registry"
-    )
-    return payload, hashlib.sha256(raw).hexdigest()
+    authorization = load_runtime_authorization()
+    payload = json.loads(authorization.raw_context)
+    assert isinstance(payload, dict)
+    return payload, authorization.context_sha256
 
 
 @pytest.fixture(scope="module")
@@ -652,7 +604,7 @@ def _s3_object_sha256(client, *, bucket: str, key: str) -> tuple[int, str]:
     ),
 )
 def test_live_robotwin_build_push_run_and_artifacts() -> None:
-    """Run the exact BYOF toolRef path and verify remote native artifacts."""
+    """Run normal submit and verify its sole delegated RTX job and artifacts."""
 
     runtime, runtime_sha256 = _robotwin_runtime_context()
     project = str(runtime["project"])
@@ -664,49 +616,49 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
     parsed_output = urlparse(output_root)
     assert parsed_output.scheme == "s3" and parsed_output.netloc == bucket
     assert run_id.startswith("robotwin-"), "manager run ID must be solution-scoped"
+    outer_accelerators = [
+        profile["accelerators"]
+        for profile in workflow["resources"].values()
+        if "accelerators" in profile
+    ]
+    profile_path = (
+        REPO_ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "byof-solution-smoke-robotwin-rtxpro-gpu.yaml"
+    )
+    inner_task = [
+        document
+        for document in yaml.safe_load_all(profile_path.read_text(encoding="utf-8"))
+        if document
+    ][1]
+    assert outer_accelerators == []
+    assert inner_task["resources"]["accelerators"] == (
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
     base_cmd = [
         sys.executable,
         "-m",
         "npa",
         "workbench",
-        "byof",
-        "run",
-        "--repo-url",
-        str(config["repo_url"]),
-        "--repo-ref",
-        str(config["repo_ref"]),
-        "--base-profile",
-        str(config["base_profile"]),
-        "--base-image",
-        str(config["base_image"]),
-        "--build-command",
-        str(config["build_command"]),
-        "--workload",
-        str(config["workload"]),
-        "--smoke-command",
-        str(config["smoke_command"]),
-        "--solution-name",
-        str(config["solution_name"]),
-        "--capability-name",
-        str(config["capability_name"]),
-        "--smoke-artifact-name",
-        str(config["smoke_artifact_name"]),
-        "--runtime-context-env",
+        "workflow",
+        "submit",
+        str(ROBOTWIN_SPEC),
+        "--run-id",
+        f"robotwin-launcher-{os.getpid()}",
+        "--no-deploy-if-absent",
+        "--secret-env",
         str(config["runtime_context_env"]),
-        "--yaml",
-        str(config["resource_profile_yaml"]),
-        "--task",
-        str(config["task"]),
-        "--iterations",
-        str(config["iterations"]),
-        "--num-envs",
-        str(config["num_envs"]),
-        "--num-demos",
-        str(config["num_demos"]),
-        "--wait-timeout",
-        str(config["wait_timeout"]),
-        "--poll-interval",
-        str(config["poll_interval"]),
+        "--secret-env",
+        "AWS_ACCESS_KEY_ID",
+        "--secret-env",
+        "AWS_SECRET_ACCESS_KEY",
+        "--output-format",
+        "json",
     ]
     env = dict(os.environ)
     proc = subprocess.run(
@@ -742,23 +694,36 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
             "public BYOF output exposed private runtime or credential material"
         ) from None
     assert proc.returncode == 0, (
-        "RoboTwin BYOF command failed; inspect the owner-only command evidence"
+        "RoboTwin normal submit failed; inspect the owner-only command evidence"
     )
-    summary = _parse_last_json_blob(combined)
-    assert summary.get("status") == "ok", summary
-    build = summary.get("build", {})
-    assert build.get("ok") is True and build.get("pushed") is True
-    image_digest = str(build.get("digest") or "")
-    assert re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest)
-    scan_report = summary.get("robotwin_image_scan", {})
-    assert scan_report.get("format") == "npa_robotwin_image_byte_scan_v1"
-    assert scan_report.get("status") == "pass"
-    assert int(scan_report.get("archives_scanned", 0)) >= 2
-    scan_report_sha256 = str(scan_report.get("report_sha256") or "")
-    assert re.fullmatch(r"[0-9a-f]{64}", scan_report_sha256)
+    submitted = _parse_last_json_blob(combined)
+    assert submitted.get("status") == "SUBMITTED", submitted
 
     client = s3_client_for_project(project, allow_host_creds=True)
     prefix = parsed_output.path.strip("/") + f"/{run_id}/"
+    summary_key = prefix + "npa_byof_summary.json"
+    while True:
+        try:
+            summary = json.loads(
+                client.get_object(Bucket=bucket, Key=summary_key)["Body"].read()
+            )
+            break
+        except Exception as exc:
+            error = getattr(exc, "response", {}).get("Error", {})
+            if str(error.get("Code") or "") not in {
+                "404",
+                "NoSuchKey",
+                "NotFound",
+            }:
+                raise
+            time.sleep(60)
+    assert summary["status"] == "success"
+    assert summary["run_id"] == run_id
+    assert summary["smoke_task_success"] is True
+    assert summary["smoke_exit_code"] == 0
+    image_digest = str(summary.get("image_digest") or "")
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest)
+
     smoke_key = prefix + "robotwin-smoke.json"
     smoke = json.loads(client.get_object(Bucket=bucket, Key=smoke_key)["Body"].read())
     assert smoke["solution"] == "robotwin"
@@ -802,6 +767,12 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
         "policy": "STRICT",
         "manager_runtime_context_sha256": runtime_sha256,
     }
+    scan_report = smoke["built_image_payload_scan"]
+    assert scan_report["format"] == "npa_robotwin_image_byte_scan_v1"
+    assert scan_report["status"] == "pass"
+    assert int(scan_report["archives_scanned"]) >= 2
+    scan_report_sha256 = str(scan_report["report_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", scan_report_sha256)
     assert smoke["built_image_payload_scan"] == {
         "format": "npa_robotwin_image_byte_scan_v1",
         "report_sha256": scan_report_sha256,

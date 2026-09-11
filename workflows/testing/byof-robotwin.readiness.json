@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "f4d3b479f26cb1260c9061bf2e47baf55e52d8abe86a2840ef18e6d3d7a0ee81",
+  "workflow_sha256": "e130b4e23a21e0df057746a924474b80240bbae78a27f8b63496b5e702866967",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The checked-in workflow passes schema validation and renders one workbench.byof.repo step with the dedicated RTX PRO 6000 profile.",
+      "reason": "The checked-in workflow passes schema validation and renders one CPU-only workbench.byof.repo launcher; the delegated inner profile is the sole accelerator request and remains exactly one RTX PRO 6000 Blackwell.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-robotwin.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/byof-robotwin.yaml --run-id robotwin-local-plan --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused Python 3.12 contract tests verify the pinned task/config, exact 148-distribution CPython 3.10 image lock, missing-authorization refusal before work, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
+      "reason": "Focused Python 3.12 contract tests verify exact normal-submit recognition, pre-side-effect context refusal even with ordinary preflight skipped, value-only secret transport, owner-only worker materialization and cleanup, a CPU outer/one STRICT RTX inner topology, one derived output binding, the pinned task/config, exact 148-distribution CPython 3.10 image lock, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_robotwin.py npa/tests/workflows/test_byof_solution_smokes.py"
       ]
@@ -21,7 +21,7 @@
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The checked-in spec uses example-bucket; a live run must use a unique prefix in manager-authorized writable storage.",
+      "reason": "The checked-in spec and public plans retain example-bucket. Live normal submit derives exactly one summary destination from the manager-authorized output root and inner run ID, binds it only in execution preflight and owner-only state, and still requires live writable-storage proof.",
       "evidence": []
     },
     "worker_input": {
@@ -34,7 +34,7 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "A future live run needs an owner-only manager context with private-registry, S3, Kubernetes, SkyPilot, ownership, STRICT reservation, and authorized NVIDIA/CuRobo/aggregate-asset/output-use decisions. Credentials and a private registry are not permission. The upstream source and asset dataset are public and ungated.",
+      "reason": "A future live run needs an owner-only manager context with portable Kubernetes/SkyPilot configuration bytes, private-registry and S3 coordinates, ownership, STRICT reservation, and authorized NVIDIA/CuRobo/aggregate-asset/output-use decisions. The client now validates it before credentials or scheduling and transports only the validated bytes as a secret value. Credentials and a private registry are not permission. The upstream source and asset dataset are public and ungated.",
       "evidence": []
     },
     "source_image": {
@@ -46,7 +46,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No manager runtime-context file is available yet. Execution requires exactly one STRICT-reservation-backed RTX PRO 6000 Blackwell with healthy NVIDIA Vulkan mounts; B200 is not a valid target.",
+      "reason": "No manager runtime-context file is available yet, so the normal-submit live path remains unqualified. The outer launcher is CPU-only; its one delegated workload requires exactly one STRICT-reservation-backed RTX PRO 6000 Blackwell with healthy NVIDIA Vulkan mounts. B200 and fallback placement are invalid.",
       "evidence": []
     }
   }

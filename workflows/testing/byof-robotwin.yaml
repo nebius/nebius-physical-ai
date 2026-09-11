@@ -536,19 +536,19 @@ config:
   output_root: s3://{{config.bucket}}/oss-solutions/robotwin
   summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
 resources:
-  rtxpro:
+  launcher:
     cloud: kubernetes
-    image: "{{config.base_image}}"
-    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: "4+"
+    memory: "8+"
 initial: byof-run
 states:
   byof-run:
     description: >
-      Build and push the restricted RoboTwin source image, fetch pinned assets
-      in the pod, and require a successful beat_block_hammer seed search plus
-      replay with native HDF5 and MP4 output on exactly one RTX PRO 6000.
+      Use a CPU-only launcher to build and push the restricted RoboTwin source
+      image, then delegate the pinned-asset smoke to the sole accelerator task:
+      exactly one STRICT RTX PRO 6000 Blackwell with no fallback.
     toolRef: workbench.byof.repo
-    resources: rtxpro
+    resources: launcher
     outputs:
       - uri: "{{config.summary_uri}}"
         schema: npa.workbench.byof.summary.v1
