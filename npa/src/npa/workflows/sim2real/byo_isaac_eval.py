@@ -788,7 +788,7 @@ try:
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": _env_id(i),
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
@@ -813,6 +813,8 @@ try:
     termination = np.array(["max_steps"] * N, dtype=object)
     completed = np.zeros(N, dtype=bool)
     initial_obj_z = None
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(STEPS):
         # Isaac auto-resets done environments inside env.step(). Preserve the
         # last sample from the evaluated episode so the returned reset state can
@@ -838,6 +840,7 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
         except Exception as exc:

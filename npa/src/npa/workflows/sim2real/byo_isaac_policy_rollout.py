@@ -602,7 +602,7 @@ try:
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": rollout_ids[i],
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
@@ -611,6 +611,8 @@ try:
                     })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(HORIZON_STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -620,6 +622,7 @@ try:
             actions = actions.reshape(N, -1)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
         # TiledCamera annotators need the first rendered simulation step before
         # their initial read. Capture the post-action state, which also aligns
         # each image with the simulator ground truth recorded below.
@@ -679,6 +682,7 @@ try:
             actions_log[i].append({
                 "step": decision_step,
                 "sim_step": _step,
+                **simulation_clock.sample(),
                 "action": [round(float(x), 5) for x in a_np[i].tolist()],
                 "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
                 "simulator_ground_truth": {

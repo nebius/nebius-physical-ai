@@ -214,6 +214,23 @@ See the [Isaac Lab 3 migration guide](https://isaac-sim.github.io/IsaacLab/v3.0.
 If capture or primary task visibility is invalid, fix and rebuild the image and
 regenerate those rollouts before hosted evaluation or PPO.
 
+Native camera metadata and sampled action rows record physical
+`timestamp_seconds` using Isaac's actual `env.step_dt`, including physics
+substeps. `timestamp_timebase` is `simulation_elapsed_since_rollout_start`:
+zero is immediately before the first rollout `env.step`, and each post-action
+sample records `completed_simulation_steps * simulation_step_seconds`. The
+clock continues across environment auto-resets. Existing zero-based `sim_step`
+values still identify the action being observed. The final context image uses
+the horizon as its `sim_step` sentinel but does not advance physical time; it can
+share a timestamp with the last sampled action image.
+
+For example, a 0.02-second environment step produces times 0.02 and 0.42 seconds
+at action steps 0 and 20, regardless of capture FPS. Sparse decision samples do
+not establish continuous coverage between them. Rerun and MCAP currently use a
+separate presentation clock, `frame_index / capture.fps`; optional MP4 exports
+play at 2 FPS. These playback durations are not physical simulation durations
+and must not be used to establish a sustained grasp or placement.
+
 ## 5. Build/push once and prove the exact image pulls
 
 The workflow does not copy images between registries. Use the public GHCR
