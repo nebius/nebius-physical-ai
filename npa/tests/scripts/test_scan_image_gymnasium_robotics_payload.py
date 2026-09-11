@@ -102,20 +102,36 @@ MATERIAL = {
     "textures/test-hidden.png": b"texture-b",
 }
 NOTICE = b"Shadow notice"
-ANNEX = b"preferred source"
-ANNEX_SHA256 = hashlib.sha256(ANNEX).hexdigest()
+ANNEX_CONTENT = {
+    (component, role): f"{component}:{role}:exact-source".encode()
+    for component in (
+        "farama-gymnasium-robotics",
+        "shadow-hand-xml-mesh-texture-assets",
+        "ubuntu-runtime-closure",
+    )
+    for role in SCAN.DELIVERY_DIGEST_ROLES[component].values()
+}
+ANNEX_SHA256 = {
+    key: hashlib.sha256(content).hexdigest() for key, content in ANNEX_CONTENT.items()
+}
 TEST_SOURCE_FIELDS = {
     name: dict(fields) for name, fields in PRODUCTION_EXPECTED_SOURCE_FIELDS.items()
 }
-TEST_SOURCE_FIELDS["farama_gymnasium_robotics"]["archive_sha256"] = ANNEX_SHA256
+TEST_SOURCE_FIELDS["farama_gymnasium_robotics"]["archive_sha256"] = ANNEX_SHA256[
+    ("farama-gymnasium-robotics", "source_archive")
+]
 SOURCE_LOCK = {
     "status": "complete",
     "components": {name: dict(fields) for name, fields in TEST_SOURCE_FIELDS.items()},
 }
 SOURCE_LOCK["components"]["shadow_sr_common"].update(
     {
-        "preferred_form_sha256": ANNEX_SHA256,
-        "transformation_manifest_sha256": ANNEX_SHA256,
+        "preferred_form_sha256": ANNEX_SHA256[
+            ("shadow-hand-xml-mesh-texture-assets", "preferred_form_archive")
+        ],
+        "transformation_manifest_sha256": ANNEX_SHA256[
+            ("shadow-hand-xml-mesh-texture-assets", "transformation_manifest")
+        ],
     }
 )
 APT_LOCK = {
@@ -129,7 +145,10 @@ CORRESPONDING_LOCK = {
     "deliveries": [
         {
             "binary_component": component,
-            **{field: ANNEX_SHA256 for field in SCAN.DELIVERY_DIGEST_ROLES[component]},
+            **{
+                field: ANNEX_SHA256[(component, role)]
+                for field, role in SCAN.DELIVERY_DIGEST_ROLES[component].items()
+            },
             **(
                 {
                     "license": "MIT",
@@ -153,7 +172,7 @@ CORRESPONDING_LOCK = {
                 {
                     "role": role,
                     "path": f"{component}/{role}.bin",
-                    "sha256": ANNEX_SHA256,
+                    "sha256": ANNEX_SHA256[(component, role)],
                 }
                 for role in sorted(SCAN.DELIVERY_DIGEST_ROLES[component].values())
             ],
@@ -193,7 +212,9 @@ COMMON_FILES = {
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": b"notices\n",
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": b"public\n",
     **{
-        f"usr/share/source/npa-gymnasium-robotics/{artifact['path']}": ANNEX
+        f"usr/share/source/npa-gymnasium-robotics/{artifact['path']}": (
+            ANNEX_CONTENT[(delivery["binary_component"], artifact["role"])]
+        )
         for delivery in CORRESPONDING_LOCK["deliveries"]
         for artifact in delivery["artifacts"]
     },
@@ -307,18 +328,23 @@ def _docker_save(
     fifos: tuple[str, ...] = (),
     devices: tuple[str, ...] = (),
     app_suffix: bytes = b"",
+    app_layer: bytes | None = None,
     diff_ids: list[str] | None = None,
     base_layer: bytes = BASE_LAYER,
     config_name: str | None = None,
 ) -> None:
-    layer = _tar_bytes(
-        files,
-        file_modes=file_modes,
-        symlinks=symlinks,
-        hardlinks=hardlinks,
-        fifos=fifos,
-        devices=devices,
-        suffix=app_suffix,
+    layer = (
+        app_layer
+        if app_layer is not None
+        else _tar_bytes(
+            files,
+            file_modes=file_modes,
+            symlinks=symlinks,
+            hardlinks=hardlinks,
+            fifos=fifos,
+            devices=devices,
+            suffix=app_suffix,
+        )
     )
     runtime_config: dict[str, object] = {"User": user}
     if env is not None:
@@ -457,6 +483,23 @@ def test_corresponding_source_artifact_roles_are_exact(
             match="corresponding-source (?:artifact roles|role digest) changed",
         ):
             _scan_with_corresponding_lock(tmp_path, monkeypatch, name, lock)
+
+
+def test_corresponding_source_artifact_bytes_cannot_satisfy_multiple_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reused = copy.deepcopy(CORRESPONDING_LOCK)
+    first = reused["deliveries"][2]["artifacts"][0]
+    second = reused["deliveries"][2]["artifacts"][1]
+    digest_field = next(
+        field
+        for field, role in SCAN.DELIVERY_DIGEST_ROLES["ubuntu-runtime-closure"].items()
+        if role == second["role"]
+    )
+    second["sha256"] = first["sha256"]
+    reused["deliveries"][2][digest_field] = first["sha256"]
+    with pytest.raises(ValueError, match="artifact digest is reused"):
+        _scan_with_corresponding_lock(tmp_path, monkeypatch, "reused-digest", reused)
 
 
 def test_secret_in_raw_layer_and_eula_in_history_fail(tmp_path: Path) -> None:
@@ -786,6 +829,61 @@ def test_nonempty_whiteout_fails_and_empty_regular_whiteout_is_hashed(
     result = SCAN.scan(valid)
     assert result["whiteout_entry_count"] == 1
     assert len(result["whiteout_metadata_sha256"]) == 64
+
+
+def _opaque_layer(*, whiteout_first: bool) -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+
+        def add_whiteout() -> None:
+            marker = tarfile.TarInfo("opaque/.wh..wh..opq")
+            marker.size = 0
+            archive.addfile(marker, io.BytesIO(b""))
+
+        if whiteout_first:
+            add_whiteout()
+        current = tarfile.TarInfo("opaque/current.txt")
+        payload = b"current-layer"
+        current.size = len(payload)
+        archive.addfile(current, io.BytesIO(payload))
+        directory = tarfile.TarInfo("opaque/current-dir")
+        directory.type = tarfile.DIRTYPE
+        archive.addfile(directory)
+        symlink = tarfile.TarInfo("opaque/current-link")
+        symlink.type = tarfile.SYMTYPE
+        symlink.linkname = "current.txt"
+        archive.addfile(symlink)
+        hardlink = tarfile.TarInfo("opaque/current-hardlink")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "opaque/current.txt"
+        archive.addfile(hardlink)
+        if not whiteout_first:
+            add_whiteout()
+    return output.getvalue()
+
+
+def test_opaque_whiteout_only_hides_lower_layer_independent_of_member_order(
+    tmp_path: Path,
+) -> None:
+    snapshots: list[tuple[dict[str, bytes], dict[str, dict[str, object]]]] = []
+    base = _tar_bytes({"opaque/lower.txt": b"lower-layer"})
+    for whiteout_first in (True, False):
+        archive_path = tmp_path / f"opaque-{whiteout_first}.tar"
+        _docker_save(
+            archive_path,
+            {},
+            base_layer=base,
+            app_layer=_opaque_layer(whiteout_first=whiteout_first),
+        )
+        with tarfile.open(archive_path, mode="r:") as archive:
+            rootfs, entries, *_ = SCAN._layers(archive, ["base.tar", "layer.tar"])
+        assert "opaque/lower.txt" not in entries
+        assert rootfs["opaque/current.txt"] == b"current-layer"
+        assert entries["opaque/current-dir"]["kind"] == "directory"
+        assert entries["opaque/current-link"]["kind"] == "symlink"
+        assert entries["opaque/current-hardlink"]["kind"] == "hardlink"
+        snapshots.append((rootfs, entries))
+    assert snapshots[0] == snapshots[1]
 
 
 def test_raw_layer_trailing_bytes_are_scanned(tmp_path: Path) -> None:
