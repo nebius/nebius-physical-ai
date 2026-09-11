@@ -7,6 +7,9 @@ from statistics import pvariance
 from typing import Any
 
 from npa.workflows.sim2real.constants import CORRECTIVE_TARGETS, ERROR_SEVERITY
+from npa.workflows.sim2real.episode_boundaries import (
+    temporal_credit_valid, validate_episode_sequence,
+)
 
 
 class TemporalCreditError(ValueError):
@@ -117,6 +120,9 @@ def _fallback_grounded_rewards(steps: list[dict[str, Any]]) -> list[float]:
 
     rewards: list[float] = []
     for step in steps:
+        if not temporal_credit_valid(step):
+            rewards.append(0.0)
+            continue
         truth = dict(step.get("simulator_ground_truth") or {})
         distance = float(truth.get("object_goal_distance_m", 0.5))
         ee_distance = float(truth.get("end_effector_object_distance_m", 0.5))
@@ -134,6 +140,35 @@ def _fallback_grounded_rewards(steps: list[dict[str, Any]]) -> list[float]:
     return rewards
 
 
+def _complete_rewards(items: list[dict[str, Any]]) -> tuple[float, int, bool]:
+    valid = [item for item in items if temporal_credit_valid(item)]
+    rewards = [float(item["reward"]) for item in valid]
+    variance = pvariance(rewards) if len(rewards) > 1 else 0.0
+    fallback_used = False
+    if any(item["simulator_ground_truth"] for item in valid) and variance <= 1.0e-12:
+        fallback = _fallback_grounded_rewards(valid)
+        if len(fallback) > 1 and pvariance(fallback) > 1.0e-12:
+            rewards = fallback
+            fallback_used = True
+            for item, reward in zip(valid, rewards, strict=True):
+                item["reward"] = round(reward, 6)
+                item["reward_components"]["degenerate_fallback"] = round(reward, 6)
+            variance = pvariance(rewards)
+    baseline = sum(rewards) / len(rewards) if rewards else 0.0
+    nonzero = 0
+    for item in items:
+        eligible = temporal_credit_valid(item)
+        advantage = float(item["reward"]) - baseline if eligible else 0.0
+        item["advantage"] = round(advantage, 6)
+        nonzero += int(abs(advantage) > 1.0e-8)
+        item["action_credit"]["credit"] = [
+            round(abs(float(value)) * item["reward"], 6) if eligible else 0.0
+            for value in item["action_credit"]["source_action"]
+            if isinstance(value, int | float)
+        ]
+    return variance, nonzero, fallback_used
+
+
 def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     """Convert one VLM evaluation into calibrated dense temporal rewards.
 
@@ -147,9 +182,12 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     raw_steps = evaluation.get("per_step")
     if not isinstance(raw_steps, list) or not raw_steps:
         raise TemporalCreditError("evaluation must include a non-empty per_step list")
+    if evaluation.get("schema") == "npa.sim2real.vlm_eval.v5" or any(
+        isinstance(row, dict) and "episode_boundary" in row for row in raw_steps
+    ):
+        validate_episode_sequence(raw_steps)
 
     items: list[dict[str, Any]] = []
-    rewards: list[float] = []
     previous_truth: dict[str, Any] | None = None
     calibrated = 0
     rejected = 0
@@ -163,6 +201,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, dict) or "step" not in raw:
             raise TemporalCreditError("per_step entries must be objects with step")
         tags = _tags(raw)
+        credit_valid = temporal_credit_valid(raw)
         truth = dict(raw.get("simulator_ground_truth") or {})
         raw_confidence = raw.get("confidence")
         confidence = (
@@ -173,6 +212,11 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         source = str(raw.get("critique_source") or "model_per_step")
         reasons: set[str] = set()
         visual_supported = supported_visual_event(raw)
+        if not credit_valid:
+            visual_supported = False
+            previous_truth = None
+            tags = ["ok"]
+            reasons.add("episode_boundary")
         if not visual_supported:
             confidence = 0.0
             unobserved_visual += 1
@@ -203,7 +247,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         else:
             calibrated += 1
 
-        components = _grounded_components(truth, previous_truth) if truth else {}
+        components = _grounded_components(truth, previous_truth) if truth and credit_valid else {}
         grounded = sum(components.values()) if components else 0.0
         severity = max(ERROR_SEVERITY.get(tag, 0.5) for tag in tags)
         vlm_shape = 0.12 * confidence * _clip(1.0 - 2.0 * severity)
@@ -213,6 +257,8 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
             {
                 "step": int(raw["step"]),
                 "sim_step": raw.get("sim_step"),
+                **({"episode_boundary": dict(raw["episode_boundary"])}
+                   if "episode_boundary" in raw else {}),
                 "camera_observation": raw.get("camera_observation"),
                 "visual_grounding": dict(raw.get("visual_grounding") or {}),
                 "reward": round(reward, 6),
@@ -241,30 +287,13 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
                 },
             }
         )
-        rewards.append(reward)
         previous_truth = truth or previous_truth
 
-    grounded_present = any(item["simulator_ground_truth"] for item in items)
-    variance = pvariance(rewards) if len(rewards) > 1 else 0.0
-    fallback_used = False
-    if grounded_present and variance <= 1.0e-12:
-        fallback = _fallback_grounded_rewards(items)
-        if len(fallback) > 1 and pvariance(fallback) > 1.0e-12:
-            rewards = fallback
-            fallback_used = True
-            for item, reward in zip(items, rewards, strict=True):
-                item["reward"] = round(reward, 6)
-                item["reward_components"]["degenerate_fallback"] = round(reward, 6)
-            variance = pvariance(rewards)
-
-    baseline = sum(rewards) / len(rewards)
-    nonzero = 0
-    for item in items:
-        advantage = float(item["reward"]) - baseline
-        item["advantage"] = round(advantage, 6)
-        nonzero += int(abs(advantage) > 1.0e-8)
+    variance, nonzero, fallback_used = _complete_rewards(items)
     calibration = {
         "step_count": len(items),
+        "episode_boundary_excluded_steps": sum(not temporal_credit_valid(item) for item in items),
+        "credit_eligible_steps": sum(temporal_credit_valid(item) for item in items),
         "simulator_grounded_steps": sum(
             bool(item["simulator_ground_truth"]) for item in items
         ),
@@ -294,7 +323,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         "mapping_rules": {
             "authority": "Isaac simulator ground truth",
             "vlm_role": "bounded auxiliary shaping (absolute contribution <= 0.12)",
-            "advantage": "per-step calibrated reward minus trajectory mean",
+            "advantage": "eligible reward minus eligible trajectory mean; reset intervals excluded",
             "reward_bounds": [-1.0, 1.0],
         },
     }

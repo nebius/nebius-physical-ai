@@ -58,12 +58,28 @@ def test_camera_rotation_preserves_world_optical_axis(version: str, name: str) -
         w, x, y, z = converted
     forward = (1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y))
     expected = {
-        "primary": (0, math.cos(math.radians(12)), -math.sin(math.radians(12))),
+        "primary": (0, math.cos(math.radians(25)), -math.sin(math.radians(25))),
         "side": (math.cos(math.radians(12)), 0, -math.sin(math.radians(12))),
         "overhead": (0, 0, -1),
     }
     assert forward == pytest.approx(expected[name], abs=1e-12)
     assert serialized == CAMERA_VIEW_SPECS[name].rotation
+
+
+@pytest.mark.parametrize("point", [(0.3, -0.4, -0.2), (0.65, -0.4, -0.2), (0.5, 0, 0.02), (0, 0, 0.7)])
+def test_primary_frames_front_edge_manipulation_and_observed_arm_height(point):
+    spec = CAMERA_VIEW_SPECS["primary"]
+    w, x, y, z = spec.rotation
+    forward = (1 - 2 * (y*y + z*z), 2 * (x*y + w*z), 2 * (x*z - w*y))
+    left = (2 * (x*y - w*z), 1 - 2 * (x*x + z*z), 2 * (y*z + w*x))
+    up = (2 * (x*z + w*y), 2 * (y*z - w*x), 1 - 2 * (x*x + y*y))
+    delta = tuple(value - origin for value, origin in zip(point, spec.position, strict=True))
+    camera = [sum(a*b for a, b in zip(delta, axis, strict=True)) for axis in (forward, left, up)]
+    intrinsics = camera_metadata("primary", width=640, height=480)[0]["intrinsics_px"]
+    horizontal = 320 - intrinsics["fx"] * camera[1] / camera[0]
+    vertical = 240 - intrinsics["fy"] * camera[2] / camera[0]
+    assert camera[0] > 0
+    assert 10 <= horizontal <= 630 and 10 <= vertical <= 470
 
 
 def test_camera_rotation_resolves_installed_distribution_not_environment(

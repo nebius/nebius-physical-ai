@@ -56,6 +56,11 @@ or spawn sibling Jobs.
   validation only; Stage 10 reads gold only and preserves exact render lineage.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
   stable placement within 5 cm. Pipeline success and policy quality are distinct.
+- Native rollout actions preserve every reset between sparse samples using
+  `episode_boundary`; cameras separately identify the physical simulator episode.
+  Hosted v5 evaluations reject missing or contradictory boundaries. Reset-crossing
+  intervals remain archived but are excluded from rewards, advantages, fallback,
+  action credit, and trainer statistics. Never relabel an archived v4 run as v5.
 - Final RRD/MCAP use configured capture FPS and contain non-empty multi-camera,
   progress, policy, and evaluation evidence.
 

@@ -49,7 +49,7 @@ policy rollouts.
 | `config.robot_spec_uri` | Customer (optional) | Exact S3 object containing `npa.sim2real.robot_spec.v1`; empty is stock Franka | 2 |
 | `train_envs_uri` / `validation_envs_uri` / `gold_heldout_envs_uri` | **Workflow** | Curated, disjoint, stratified NPA scenario JSONL with task/config digests | 4–6 |
 | `actions/train/…` | Workflow / policy job | Rollout dirs + `npa.sim2real.action_rollout.v1` | 7 |
-| `vlm_eval/…` | Workflow / configured hosted evaluator | `npa.sim2real.vlm_eval.v4` | 8 |
+| `vlm_eval/…` | Workflow / configured hosted evaluator | `npa.sim2real.vlm_eval.v5` | 8 |
 | `training_signal/…` | Workflow | `npa.sim2real.rl_signal.v1` | 9 |
 | `eval/validation/outer-XX/iter-YY/report.json` | Workflow / eval job | Validation-only checkpoint comparison | 9 |
 | `eval/gold-heldout/outer-XX/report.json` | Workflow / eval job | Final untouched gold evaluation, `npa.sim2real.heldout_eval.v1` | 10 |
@@ -108,11 +108,11 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.reference_actions.v1` | policy job output | 7 | Reference policy contract |
 | `npa.sim2real.actions_summary.v1` | policy job summary | 7 | |
 | `npa.sim2real.policy_image_contract.v1` | policy job metadata | 7 | |
-| `npa.sim2real.vlm_eval.v4` | `vlm_eval/…/*.json` | 8 | Per-rollout hosted critique with exact action/frame time bindings, selected primary-frame metadata, provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; older schemas remain available only to archived/legacy readers |
+| `npa.sim2real.vlm_eval.v5` | `vlm_eval/…/*.json` | 8 | Per-rollout hosted critique with exact action/frame time and simulator-episode bindings, selected primary-frame metadata, provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; older schemas remain available only to archived/legacy readers |
 | `npa.sim2real.rl_signal.v1` | `training_signal/…/*.json` | 9 | Converted RL training signal |
 | `npa.sim2real.inner_loop_evidence.v1` | `inner_loop/outer-XX/evidence.json` | 9 | Reward trend, trainer deltas |
 
-Hosted v4 evaluations retain `selected_frame_metadata` and a `visual_grounding`
+Hosted v5 evaluations retain `selected_frame_metadata` and a `visual_grounding`
 record for every action. The binding joins the action and primary frame by exact
 recorded `sim_step`; frame list positions and nearby timestamps are insufficient.
 An unsampled action has `camera_observation: null`, `confidence: 0`, `error_tags:
@@ -122,6 +122,34 @@ actions, and PPO tag counts are disabled. A final frame can inform the rollout
 score without being assigned to the final action. Stage 9 validates the bindings
 again before training. Old or misassociated evaluator outputs require a fresh
 run and must not be relabeled in place.
+
+Each native action also contains an `episode_boundary` record with schema
+`npa.sim2real.episode_boundary.v1`. `simulator_episode_id` identifies the returned
+state's physical episode, starting at zero after the rollout's initial reset;
+`action_episode_id` identifies the episode in which the action was submitted.
+Camera metadata retains the logical rollout's `episode_id` and separately records
+`simulator_episode_id`. On a reset step this camera ID is null: Isaac may retain
+pixels from before its automatic reset, so the rendered episode is unproven.
+The final context image retains that null when the last step reset. These
+identifiers and reset markers are included in the
+hosted prompt; simulator measurements and success labels remain excluded.
+
+`reset_events` retains every termination or truncation since the previous sampled
+action, including its simulator step and consecutive old/new episode IDs. It is
+updated on every environment step, so sparse sampling cannot discard a timeout.
+`reset_on_current_step` distinguishes an immediate autoreset: its returned state
+cannot establish that action's terminal outcome, and `action_outcome_valid` is
+false. `temporal_credit_valid` is false for the entire first sampled interval
+after any reset. Its row and raw measurements remain archived, but reward,
+advantage, visual shaping, and action credit are zero. The interval is excluded
+from reward fallback, advantage baselines, and Isaac trainer statistics. Distance
+and lift baselines and stability counters restart independently for each
+environment. A later valid action in the new episode can receive its own grounded
+and single-frame visual credit; motion across episode IDs cannot justify credit.
+
+Stage 8 and Stage 9 reject missing, contradictory, repeated, or out-of-interval
+reset evidence. This contract requires a new run and new source-attested images;
+existing v4 evaluations cannot be upgraded by filling in unknown reset events.
 
 The hosted response schema encodes each input action at its own `per_step`
 array position using JSON Schema `prefixItems`. Its action index and camera

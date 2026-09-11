@@ -278,6 +278,7 @@ def merge_reason_evaluations(
                 "critique_text": " | ".join(critique_parts),
                 "error_tags": _normalize_error_tags(tags),
                 "action": left.get("action") or right.get("action") or [],
+                **_merge_episode_evidence(left, right),
                 "simulator_ground_truth": simulator_ground_truth,
                 "scenario_config_digest": next(iter(scenario_digests), ""),
                 "camera_observation": str(
@@ -548,6 +549,9 @@ def run_token_factory_rollout_vlm(
                 frame_names=frame_names,
                 include_all_actions=True,
                 visual_bindings=bindings,
+                selected_frame_metadata=[
+                    frame for frame in frame_metadata if frame["path"] in frame_names
+                ],
             ),
         }
     ]
@@ -744,6 +748,9 @@ def _parse_hosted_rollout_output(
     action_times = {action["step"]: action.get("sim_step") for action in actions}
     if any(visual_bindings[step]["action_sim_step"] != action_times[step] for step in expected):
         raise invalid("visual grounding time differs from the original action")
+    if any(visual_bindings[action["step"]]["episode_boundary"] != action.get("episode_boundary")
+           for action in actions):
+        raise invalid("visual grounding episode differs from the original action")
     events = decoded.get("per_step")
     if not isinstance(events, list) or len(events) != len(expected):
         raise invalid("per_step must cover every input action exactly once")
@@ -785,6 +792,21 @@ def _parse_hosted_rollout_output(
         event["sim_step"] = action_times[event["step"]]
         event["visual_grounding"] = dict(visual_bindings[event["step"]])
     return result
+
+
+def _merge_episode_evidence(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    if "episode_boundary" not in left and "episode_boundary" not in right:
+        return {}
+    from npa.workflows.sim2real.episode_boundaries import validate_episode_boundary
+
+    try:
+        first = validate_episode_boundary(left)
+        second = validate_episode_boundary(right)
+    except ValueError as error:
+        raise CosmosReasonError("Reason lanes lack consistent episode boundaries") from error
+    if first != second or left["sim_step"] != right["sim_step"]:
+        raise CosmosReasonError("Reason lanes disagree on episode boundaries")
+    return {"sim_step": left["sim_step"], "episode_boundary": dict(first)}
 
 
 def _reason_model_class(family: str, fallback: Any) -> Any:
@@ -832,6 +854,7 @@ def _cosmos_reason_prompt(
     frame_names: list[str],
     include_all_actions: bool = False,
     visual_bindings: dict[int, dict[str, Any]] | None = None,
+    selected_frame_metadata: list[dict[str, Any]] | None = None,
 ) -> str:
     # Simulator ground truth is deliberately excluded: Cosmos labels are
     # calibrated *against* those measurements after inference and must not see
@@ -846,6 +869,8 @@ def _cosmos_reason_prompt(
                 "step": int(action.get("step", index)),
                 "sim_step": int(action.get("sim_step", action.get("step", index))),
                 "action": list(action.get("action") or []),
+                **({"episode_boundary": action["episode_boundary"]}
+                   if "episode_boundary" in action else {}),
             }
             for index, action in enumerate(prompt_actions)
         ],
@@ -874,11 +899,15 @@ def _cosmos_reason_prompt(
             "return camera_observation=null, confidence=0, error_tags=[\"ok\"], and critique_text exactly "
             "'Insufficient visual evidence for step N.' with N replaced by that action's step. "
             "For supported=true, judge only the bound frame and use confidence=0 if it is unclear.\n"
+            "Simulator episode identifiers mark resets, not successful motion. Never infer motion "
+            "or task progress between different simulator episodes. Reset transitions are context "
+            "only and cannot justify a critique of the preceding action.\n"
         )
     return (
         identity
         + f"Task description: {task_description}\n"
         f"Frame order: {frame_names}\n"
+        f"Frame episode identities: {_frame_episode_identities(selected_frame_metadata)}\n"
         f"Actions by step: {action_excerpt}\n"
         f"Required per_step indices: {expected_steps}\n"
         f"{grounding}"
@@ -897,6 +926,13 @@ def _cosmos_reason_prompt(
         "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
         "Judge actual visual rollout behavior, not metadata or requested actions."
     )
+
+
+def _frame_episode_identities(metadata: list[dict[str, Any]] | None) -> str:
+    return json.dumps([
+        {key: frame[key] for key in ("path", "sim_step", "simulator_episode_id")}
+        for frame in metadata or []
+    ], sort_keys=True)
 
 
 def _parse_cosmos_reason_output(
@@ -980,6 +1016,10 @@ def _parse_cosmos_reason_output(
                 "critique_text": critique,
                 "error_tags": normalized_tags,
                 "action": expected_actions[step].get("action", []),
+                **({"sim_step": expected_actions[step]["sim_step"]}
+                   if "sim_step" in expected_actions[step] else {}),
+                **({"episode_boundary": dict(expected_actions[step]["episode_boundary"])}
+                   if "episode_boundary" in expected_actions[step] else {}),
                 # Ground truth is deliberately excluded from the model prompt, then
                 # reattached from the authoritative rollout row for calibration.
                 # Without this post-inference join, temporal credit had no grounded

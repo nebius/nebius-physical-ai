@@ -113,6 +113,7 @@ def _capture_settings():
 
 def _capture_namespace(tmp_path, duration, fps):
     return {
+        "episode_boundaries": SimpleNamespace(frame_episode=lambda index: 0),
         "np": np,
         "os": os,
         "env": SimpleNamespace(
@@ -214,6 +215,12 @@ def _action_namespace():
 
 def test_generated_action_row_uses_the_same_post_step_clock(tmp_path):
     namespace = _action_namespace()
+    namespace["boundary"] = {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0, "reset_events": [],
+        "reset_on_current_step": False, "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
     append = next(
         node
         for node in ast.walk(ast.parse(ISAAC_ROLLOUT_SCRIPT))

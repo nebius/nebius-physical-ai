@@ -5,8 +5,12 @@ from pathlib import PurePosixPath
 import math
 from typing import Any
 
-VISUAL_GROUNDING_SCHEMA = "npa.sim2real.visual_grounding.v1"
-HOSTED_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v4"
+from npa.workflows.sim2real.episode_boundaries import (
+    validate_episode_boundary, validate_episode_sequence,
+)
+
+VISUAL_GROUNDING_SCHEMA = "npa.sim2real.visual_grounding.v2"
+HOSTED_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v5"
 
 
 def _index(value: Any) -> bool:
@@ -15,6 +19,23 @@ def _index(value: Any) -> bool:
 
 def insufficient_visual_evidence(step: int) -> str:
     return f"Insufficient visual evidence for step {step}."
+
+
+def _validate_frame_episodes(actions: list[dict[str, Any]], frames: list[dict[str, Any]]) -> None:
+    by_step = {action["sim_step"]: action["episode_boundary"] for action in actions}
+    if not by_step:
+        raise ValueError("visual grounding requires at least one action")
+    last_step = max(by_step)
+    for frame in frames:
+        step = frame["sim_step"]
+        boundary = by_step.get(step)
+        if step == last_step + 1:
+            boundary = by_step[last_step]
+        if boundary is None:
+            raise ValueError("visual frame lacks a recorded simulator episode")
+        generation = None if boundary["reset_on_current_step"] else boundary["simulator_episode_id"]
+        if frame["simulator_episode_id"] != generation:
+            raise ValueError("visual frame belongs to a different simulator episode")
 
 
 def bind_action_frames(
@@ -30,6 +51,7 @@ def bind_action_frames(
     if (not isinstance(rollout_id, str) or not rollout_id.strip()
             or not isinstance(frame_metadata, list) or not frame_metadata):
         raise ValueError("visual grounding requires recorded frame metadata")
+    validate_episode_sequence(actions)
     by_name: dict[str, dict[str, Any]] = {}
     times: set[int] = set()
     for frame in frame_metadata:
@@ -41,6 +63,8 @@ def bind_action_frames(
                 or name in by_name or not _index(frame.get("sim_step"))
                 or frame["sim_step"] in times
                 or frame.get("view_name") != "primary"
+                or "simulator_episode_id" not in frame
+                or frame["simulator_episode_id"] is not None and not _index(frame["simulator_episode_id"])
                 or frame.get("episode_id") != rollout_id):
             raise ValueError("visual frame metadata has an ambiguous identity or time")
         by_name[name] = frame
@@ -49,6 +73,8 @@ def bind_action_frames(
             or any(name not in by_name for name in frame_names)):
         raise ValueError("selected visual frames lack unique recorded metadata")
     selected = {by_name[name]["sim_step"]: name for name in frame_names}
+    _validate_frame_episodes(actions, frame_metadata)
+    by_time = {frame["sim_step"]: frame for frame in frame_metadata}
     bindings: dict[int, dict[str, Any]] = {}
     action_times: set[int] = set()
     for action in actions:
@@ -57,12 +83,18 @@ def bind_action_frames(
                 or action["step"] in bindings or action["sim_step"] in action_times):
             raise ValueError("visual grounding requires unique action indices and times")
         step, sim_step = action["step"], action["sim_step"]
+        boundary = action["episode_boundary"]
+        frame = by_time.get(sim_step)
         name = selected.get(sim_step)
+        if not boundary["temporal_credit_valid"]:
+            name = None
         bindings[step] = {
             "schema": VISUAL_GROUNDING_SCHEMA,
             "action_step": step, "action_sim_step": sim_step,
             "camera_observation": name,
             "frame_sim_step": sim_step if name is not None else None,
+            "episode_boundary": boundary,
+            "frame_simulator_episode_id": frame["simulator_episode_id"] if name else None,
             "supported": name is not None,
         }
         action_times.add(sim_step)
@@ -79,10 +111,22 @@ def valid_visual_binding(binding: Any, *, step: Any) -> bool:
             or not _index(binding.get("action_step"))
             or not _index(binding.get("action_sim_step"))):
         return False
+    try:
+        boundary = validate_episode_boundary({
+            "sim_step": binding["action_sim_step"],
+            "episode_boundary": binding.get("episode_boundary"),
+        })
+    except ValueError:
+        return False
     if binding.get("supported") is False:
-        return binding.get("camera_observation") is None and binding.get("frame_sim_step") is None
+        return (binding.get("camera_observation") is None
+                and binding.get("frame_sim_step") is None
+                and binding.get("frame_simulator_episode_id") is None)
     name = binding.get("camera_observation")
     return (binding.get("supported") is True and isinstance(name, str) and bool(name)
+            and boundary["temporal_credit_valid"]
+            and type(binding.get("frame_simulator_episode_id")) is int
+            and binding["frame_simulator_episode_id"] == boundary["simulator_episode_id"]
             and PurePosixPath(name).name == name and name not in {".", ".."}
             and _index(binding.get("frame_sim_step"))
             and binding["frame_sim_step"] == binding["action_sim_step"])
@@ -92,6 +136,7 @@ def supported_visual_event(event: dict[str, Any]) -> bool:
     binding = event.get("visual_grounding")
     return (valid_visual_binding(binding, step=event.get("step"))
             and binding["supported"] is True
+            and event.get("episode_boundary") == binding["episode_boundary"]
             and _index(event.get("sim_step")) and event["sim_step"] == binding["action_sim_step"]
             and event.get("camera_observation") == binding["camera_observation"])
 

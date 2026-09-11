@@ -277,6 +277,9 @@ prepared input, credentials, and resources. Use `submit --runtime` for parallel
 groups and decisions evaluated during the run. The canonical
 [14-stage Sim2Real workflow](docs/workbench/guides/sim2real-workflow.md) uses
 this standard runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml).
+Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
+simulator episode resets across sparse samples and exclude reset intervals from
+training credit.
 The older `sim2real/runbook.yaml` is a legacy path. See the
 [workflow guide](docs/workbench/npa-workflow-guide.md) for supported graph
 structures and limitations.

@@ -47,9 +47,10 @@ def test_zero_confidence_visual_tags_are_excluded_from_trainer_statistics(tmp_pa
 def _capture():
     times = [index * 299 // 31 for index in range(32)] + [300]
     metadata = [{"path": f"camera-{index:03d}.png", "sim_step": sim_step,
-                 "view_name": "primary", "episode_id": "rollout-0000"}
+                 "view_name": "primary", "episode_id": "rollout-0000", "simulator_episode_id": 0}
                 for index, sim_step in enumerate(times)]
     actions = [{"step": index, "sim_step": sim_step, "action": [index / 100],
+                "episode_boundary": _no_reset_boundary(),
                 "simulator_ground_truth": {"object_goal_distance_m": 0.4 - index / 100,
                                            "scenario_config_digest": "original-config"}}
                for index, sim_step in enumerate(times[:-1])]
@@ -183,7 +184,7 @@ def test_unobserved_events_keep_ground_truth_without_visual_training_effects(tmp
     result.update(frame_count=8, selected_frames=selected,
                   selected_frame_metadata=[row for row in metadata if row["path"] in selected])
     validate_stored_visual_grounding(result)
-    assert result["schema"] == "npa.sim2real.vlm_eval.v4"
+    assert result["schema"] == "npa.sim2real.vlm_eval.v5"
     signal = convert_evaluation(result)
     for original, event, step in zip(actions, result["per_step"], signal["per_step"], strict=True):
         assert event["action"] == original["action"]
@@ -207,3 +208,12 @@ def test_unobserved_events_keep_ground_truth_without_visual_training_effects(tmp
     result["per_step"][1]["camera_observation"] = "camera-004.png"
     with pytest.raises(ValueError, match="binding"):
         validate_stored_visual_grounding(result)
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0,
+        "reset_events": [], "reset_on_current_step": False,
+        "action_outcome_valid": True, "temporal_credit_valid": True,
+    }

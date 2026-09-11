@@ -129,9 +129,9 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
                             "rollout_id": f"rollout-{index:04d}",
                             "task_description": "strict cube grasp",
                             "camera_observations": ["camera-000.png"],
-                            "actions": [{"step": 0, "sim_step": 0, "action": [0.0]}],
+                            "actions": [{"step": 0, "sim_step": 0, "action": [0.0], "episode_boundary": _no_reset_boundary()}],
                             "camera_frame_metadata": {"primary": [{"path": "camera-000.png", "sim_step": 0,
-                                                                    "view_name": "primary", "episode_id": f"rollout-{index:04d}"}]},
+                                                                    "view_name": "primary", "episode_id": f"rollout-{index:04d}", "simulator_episode_id": 0}]},
                         }
                     )
                 )
@@ -142,7 +142,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
         calls.append(kwargs["rollout_id"])
         assert kwargs["frame_metadata"][0]["episode_id"] == kwargs["rollout_id"]
         return {
-            "schema": "npa.sim2real.vlm_eval.v4",
+            "schema": "npa.sim2real.vlm_eval.v5",
             "rollout_id": kwargs["rollout_id"],
             "model": kwargs["model_id"],
             "provider": "nebius",
@@ -486,7 +486,7 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "validation_report": validation,
     }
     sample_eval = {
-        "schema": "npa.sim2real.vlm_eval.v4",
+        "schema": "npa.sim2real.vlm_eval.v5",
         "rollout_id": "rollout-1",
         "score": 0.8,
         "threshold": 0.5,
@@ -506,12 +506,14 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "frame_count": 1,
         "selected_frames": ["camera-000.png"],
         "selected_frame_metadata": [{"path": "camera-000.png", "sim_step": 0,
-                                     "view_name": "primary", "episode_id": "rollout-1"}],
+                                     "view_name": "primary", "episode_id": "rollout-1", "simulator_episode_id": 0}],
         "per_step": [{"step": 0, "sim_step": 0, "camera_observation": "camera-000.png",
+                      "episode_boundary": _no_reset_boundary(),
                       "confidence": 0.8, "error_tags": ["ok"], "critique_text": "Cube held stably.",
-                      "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v1", "action_step": 0,
+                      "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v2", "action_step": 0,
                                            "action_sim_step": 0, "frame_sim_step": 0,
-                                           "camera_observation": "camera-000.png", "supported": True}}],
+                                           "camera_observation": "camera-000.png", "supported": True,
+                                           "episode_boundary": _no_reset_boundary(), "frame_simulator_episode_id": 0}}],
     }
     sample_signal = {"rollout_id": "rollout-1", "weight": 1.0}
     iteration = {
@@ -1091,3 +1093,12 @@ def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
     for stage in ("stage-08-cosmos3", "stage-09-ppo"):
         argv = payload["states"][stage]["run"]["argv"]
         assert argv[argv.index("--reason-model") + 1] == "{{config.cosmos3_model}}"
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0,
+        "reset_events": [], "reset_on_current_step": False,
+        "action_outcome_valid": True, "temporal_credit_valid": True,
+    }

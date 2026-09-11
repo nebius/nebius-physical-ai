@@ -205,7 +205,9 @@ object and end effector must be visible enough to assess the task. Stage 8 sees
 only primary images, so a clear secondary view cannot compensate for an
 occluded primary view. The default primary pose looks across the table from -Y;
 the orthogonal rear pose remains the secondary `side` stream. A valid image or
-matching action timestamp alone does not establish task visibility.
+matching action timestamp alone does not establish task visibility. The primary
+camera aims 25 degrees downward to retain the observed front-edge manipulation
+area; verify this framing again for each robot and scenario set.
 
 The serialized camera poses
 use WXYZ quaternions. Isaac Lab 3 changed sensor offsets to XYZW, so the rollout
@@ -223,6 +225,14 @@ clock continues across environment auto-resets. Existing zero-based `sim_step`
 values still identify the action being observed. The final context image uses
 the horizon as its `sim_step` sentinel but does not advance physical time; it can
 share a timestamp with the last sampled action image.
+
+Physical episode IDs also continue independently for each parallel environment.
+Every reset is retained even when it occurs between sampled actions. The first
+sampled interval after a reset is archived with zero training credit, and an
+immediate autoreset cannot supply the preceding action's outcome. Hosted v5
+evaluation checks this boundary evidence again before PPO. See the
+[episode and temporal-credit contract](sim2real-data-contracts.md#inner-loop-stages-79).
+Changing to this contract requires a new run with rebuilt images.
 
 For example, a 0.02-second environment step produces times 0.02 and 0.42 seconds
 at action steps 0 and 20, regardless of capture FPS. Sparse decision samples do

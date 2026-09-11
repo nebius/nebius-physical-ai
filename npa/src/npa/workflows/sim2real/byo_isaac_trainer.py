@@ -300,6 +300,7 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     """
 
     from npa.workbench.cosmos.visual_grounding import supported_visual_event
+    from npa.workflows.sim2real.episode_boundaries import temporal_credit_valid
 
     mean_reward = 0.0
     mean_advantage = 0.0
@@ -315,6 +316,8 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     visual_step_count = 0
     for signal in signals or []:
         for step in (signal or {}).get("per_step", []) or []:
+            if not temporal_credit_valid(step):
+                continue
             if "reward" in step:
                 rewards.append(float(step["reward"]))
             if step.get("advantage") is not None:

@@ -79,11 +79,12 @@ def _camera_quaternion(
 
 CAMERA_VIEW_SPECS = {
     # Stage 8 sees only primary frames. View across the table so the arm's base
-    # does not hide the manipulation object and end effector behind its links.
+    # does not hide the manipulation object behind its links. Aim down far enough
+    # to retain the gripper near the front table edge instead of framing the sky.
     "primary": CameraViewSpec(
         "primary",
         (0.0, -2.0, 1.0),
-        _camera_quaternion(yaw_degrees=90.0, pitch_degrees=12.0),
+        _camera_quaternion(yaw_degrees=90.0, pitch_degrees=25.0),
     ),
     # Retain the orthogonal rear view as context alongside the primary stream.
     "side": CameraViewSpec(
