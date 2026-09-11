@@ -9,6 +9,10 @@ metadata:
     reloads the saved checkpoint, and infers one held-out action without a
     simulator or renderer.
 config:
+  # Normal workflow submission is deliberately plan-only. The dedicated live
+  # gate consumes this immutable configuration only after validating the
+  # manager-issued target and owning its temporary RBAC lifecycle.
+  execution_policy: dedicated-live-gate-only
   bucket: example-bucket
   repo_url: "https://github.com/ARISE-Initiative/robomimic.git"
   repo_ref: "d309eaecc18acf4152a830a895a6984b8ac71b05"
