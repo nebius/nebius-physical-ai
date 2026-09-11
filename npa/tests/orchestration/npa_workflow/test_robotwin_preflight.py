@@ -11,6 +11,12 @@ import stat
 import pytest
 
 from npa.orchestration.npa_workflow.robotwin_preflight import (
+    CHILD_BUCKET_ENV,
+    CHILD_CONFIG_PATH_ENV,
+    CHILD_IMAGE_ENV,
+    CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_OUTPUT_ROOT_ENV,
+    CHILD_RUN_ID_ENV,
     MAX_CONTEXT_BYTES,
     MAX_TRANSPORT_BYTES,
     PUBLIC_CONTEXT_ENV,
@@ -20,6 +26,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     encode_transport,
     load_runtime_authorization,
     materialize_transport,
+    prepare_inner_submit,
     prepare_live_submit,
     read_owner_context,
     recognize_contract,
@@ -39,6 +46,7 @@ def _config_files(tmp_path: Path, context_name: str = "robotwin-context") -> tup
             (
                 "apiVersion: v1",
                 "kind: Config",
+                f"current-context: {context_name}",
                 "clusters:",
                 "  - name: robotwin-cluster",
                 "    cluster:",
@@ -181,6 +189,7 @@ def test_owner_context_read_is_byte_exact_bounded_owner_only_and_no_follow(
             "reservation-count-not-one",
         ),
         ({"registry": "docker.io/public/example"}, "registry-not-private"),
+        ({"registry": "private-namespace/example"}, "registry-not-private"),
         ({"output_root": "s3://other-bucket/output"}, "output-root-bucket"),
         ({"run_id": "unscoped-run"}, "run-id-invalid"),
     ],
@@ -225,6 +234,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
             (
                 "apiVersion: v1",
                 "kind: Config",
+                "current-context: robotwin-context",
                 "clusters:",
                 "  - name: robotwin-cluster",
                 "    cluster:",
@@ -261,6 +271,39 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="user-not-portable"):
+        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+
+    payload = _context_payload(tmp_path)
+    Path(str(payload["kubeconfig"])).write_text(
+        Path(str(payload["kubeconfig"])).read_text(encoding="utf-8").replace(
+            "token: portable-test-token",
+            "token: portable-test-token\n      tokenFile: relative-token",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RobotwinPreflightError, match="user-not-portable"):
+        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+
+
+@pytest.mark.parametrize(
+    "extra",
+    (
+        "jobs:\n  controller:\n    resources:\n      accelerators: B200:1\n",
+        "jobs:\n  controller:\n    resources:\n      image_id: docker:example.invalid/controller\n",
+        "nebius:\n  project_id: unreviewed\n",
+        "kubernetes:\n  allowed_contexts: [robotwin-context]\n  pod_config: {}\n",
+    ),
+)
+def test_skypilot_config_rejects_topology_and_provider_extensions(
+    tmp_path: Path, extra: str
+) -> None:
+    payload = _context_payload(tmp_path)
+    Path(str(payload["skypilot_config_path"])).write_text(
+        "kubernetes:\n  allowed_contexts: [robotwin-context]\n" + extra,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RobotwinPreflightError, match="skypilot-config"):
         validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
 
 
@@ -309,6 +352,48 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
     for child in directory.iterdir():
         assert child.is_file() and not child.is_symlink()
         assert stat.S_IMODE(child.stat().st_mode) == 0o600
+
+
+def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy(
+    tmp_path: Path,
+) -> None:
+    context_path, _ = _context_file(tmp_path)
+    authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(context_path)})
+    image = authorization.registry + "/npa-byof@sha256:" + "a" * 64
+    environment = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        "KUBECONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_PROJECT": authorization.project,
+        "NPA_NEBIUS_PROFILE": authorization.profile,
+        "NEBIUS_PROFILE": authorization.profile,
+        CHILD_BUCKET_ENV: authorization.bucket,
+        CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_source,
+        CHILD_IMAGE_ENV: image,
+        CHILD_OUTPUT_PREFIX_ENV: (
+            f"{authorization.output_root}/{authorization.run_id}/"
+        ),
+        CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+        CHILD_RUN_ID_ENV: authorization.run_id,
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
+            authorization.context_sha256
+        ),
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "NEBIUS_S3_ENDPOINT": "https://storage.eu-north1.nebius.cloud",
+    }
+
+    context = prepare_inner_submit(authorization, environment)
+
+    assert context.layer == "inner"
+    assert context.transport_value == ""
+    assert image not in repr(context)
+    with pytest.raises(RobotwinPreflightError, match="inner-environment-mismatch"):
+        prepare_inner_submit(
+            authorization,
+            {**environment, CHILD_OUTPUT_PREFIX_ENV: "s3://wrong/output/"},
+        )
 
 
 def test_live_submit_requires_public_secret_name_and_binds_coordinates(

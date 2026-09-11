@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused Python 3.12 contract tests verify exact normal-submit recognition, pre-side-effect context refusal even with ordinary preflight skipped, value-only secret transport, owner-only worker materialization and cleanup, a CPU outer/one STRICT RTX inner topology, one derived output binding, the pinned task/config, exact 148-distribution CPython 3.10 image lock, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
+      "reason": "Focused Python 3.12 contract tests verify exact normal-submit recognition, pre-side-effect context refusal even with ordinary preflight skipped, value-only secret transport, strict portable configuration schemas, owner-only worker materialization and cleanup, hostile-ambient isolation, neutral scheduler arguments, a CPU outer/one STRICT RTX inner topology, one derived output binding, the pinned task/config, exact 148-distribution CPython 3.10 image lock, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_robotwin.py npa/tests/workflows/test_byof_solution_smokes.py"
       ]
