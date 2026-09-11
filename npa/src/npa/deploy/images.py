@@ -804,8 +804,9 @@ def container_image_for_tool(
         and tool in PUBLICATION_QUARANTINE_TOOLS
         and not tag
     ):
+        display_tool = "NCore" if tool == "ncore" else tool
         raise ValueError(
-            f"{tool} has no accepted release image. Supply the validated immutable "
+            f"{display_tool} has no accepted release image. Supply the validated immutable "
             "private image with --image-override TOOL_REF=IMAGE@sha256:DIGEST or "
             "explicitly select a dev-<full-source-sha> tag for validation."
         )
