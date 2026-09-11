@@ -79,7 +79,11 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     ) -> subprocess.CompletedProcess[str]:
         calls.append((args, stdin))
         if args[:2] == ("get", "pods"):
-            payload = {"items": [_pod(image_id=f"containerd://{DIGEST}")]}
+            pod = _pod(image_id=f"containerd://{DIGEST}")
+            pod["spec"]["containers"].append(
+                {"name": "same-image-helper", "image": IMAGE, "resources": {}}
+            )
+            payload = {"items": [pod]}
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
         assert args[0] == "exec"
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -269,7 +273,7 @@ def test_owner_receipt_scopes_gpu_request_to_matching_task_container(
         return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
-    with pytest.raises(AssertionError, match="request and limit one GPU"):
+    with pytest.raises(AssertionError, match="one immutable one-GPU task container"):
         live._gymnasium_pod_image_receipt(
             _RunningProcess(),
             env=env,

@@ -119,6 +119,8 @@ def test_gymnasium_robotics_smoke_is_real_physics_touch_and_egl() -> None:
         '"nonzero_reading_count"',
         '"distinct_rgb_frame_sha256"',
         '"loaded_gl_egl_libraries"',
+        'rglob("libmujoco.so*")',
+        "expected exactly one MuJoCo shared library",
         '"pod_observed_image_digest"',
         '"exit_status": 0',
         '"media_type": "application/json"',

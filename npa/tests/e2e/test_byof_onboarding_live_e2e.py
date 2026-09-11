@@ -962,27 +962,31 @@ def _gymnasium_pod_image_receipt(
         metadata = pod.get("metadata", {})
         assert pod.get("status", {}).get("phase") in {"Pending", "Running"}
         containers = pod.get("spec", {}).get("containers", [])
+
+        def gpu_quantity(container: dict[str, object], kind: str) -> int:
+            return int(
+                container.get("resources", {}).get(kind, {}).get("nvidia.com/gpu", 0)
+            )
+
         matching_containers = [
             container
             for container in containers
             if str(container.get("image", "")).removeprefix("docker:") == expected_image
+            and gpu_quantity(container, "requests") == 1
+            and gpu_quantity(container, "limits") == 1
         ]
         assert len(matching_containers) == 1, (
-            "the exact run Pod must contain one immutable task image"
+            "the exact run Pod must contain one immutable one-GPU task container"
         )
         container = matching_containers[0]
-        gpu_requests = int(
-            container.get("resources", {}).get("requests", {}).get("nvidia.com/gpu", 0)
-        )
-        gpu_limits = int(
-            container.get("resources", {}).get("limits", {}).get("nvidia.com/gpu", 0)
-        )
+        gpu_requests = gpu_quantity(container, "requests")
+        gpu_limits = gpu_quantity(container, "limits")
         assert gpu_requests == gpu_limits == 1, (
             "the exact run Pod must request and limit one GPU"
         )
         other_containers = [item for item in containers if item is not container]
         assert all(
-            int(item.get("resources", {}).get(kind, {}).get("nvidia.com/gpu", 0)) == 0
+            gpu_quantity(item, kind) == 0
             for item in other_containers
             for kind in ("requests", "limits")
         ), "only the exact task container may request the one GPU"
