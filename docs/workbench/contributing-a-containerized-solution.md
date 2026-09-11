@@ -70,6 +70,10 @@ database in the same clone layer, then records the observed commit and prune
 receipt in `npa_source_metadata.json`. Deleting files later in `--build-command`
 does not remove their bytes from an earlier image layer.
 
+For a private source, that receipt preserves only placeholders, SHA-256 values,
+and removal booleans; it never copies the private repository URL, ref, observed
+commit, or prune path into reusable metadata.
+
 For a first-class image, add or update:
 
 - `npa/docker/workbench/<tool>/Dockerfile` and preferably `build.sh`;

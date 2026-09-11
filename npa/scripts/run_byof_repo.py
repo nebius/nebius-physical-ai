@@ -384,6 +384,7 @@ def _dockerfile_text() -> str:
         f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
         f'    observed_commit="$(git -C {BYOF_REPO_MOUNT} rev-parse HEAD)"; \\\n'
         '    git_objects_removed=false; \\\n'
+        '    source_pruned=false; \\\n'
         '    if [ -n "${BYOF_SOURCE_PRUNE_PATH}" ]; then \\\n'
         '      case "${BYOF_SOURCE_PRUNE_PATH}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
         f'      test -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
@@ -391,14 +392,19 @@ def _dockerfile_text() -> str:
         f'      test ! -e "{BYOF_REPO_MOUNT}/${{BYOF_SOURCE_PRUNE_PATH}}"; \\\n'
         f'      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n'
         '      git_objects_removed=true; \\\n'
+        '      source_pruned=true; \\\n'
         "    fi; \\\n"
         f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        "      commit_sha=\"$(printf '%s' \"$observed_commit\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        "      prune_sha=\"$(printf '%s' \"${BYOF_SOURCE_PRUNE_PATH}\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        '      if [ -n "${BYOF_SOURCE_PRUNE_PATH}" ]; then prune_label="<private-source-prune-path>"; else prune_label=""; fi; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
+        f"      test ! -e {BYOF_REPO_MOUNT}/.git; git_objects_removed=true; \\\n"
+        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\",\"commit\":\"<private-commit>\",\"commit_sha256\":\"%s\",\"source_prune_path\":\"%s\",\"source_prune_path_sha256\":\"%s\",\"source_pruned\":%s,\"git_objects_removed\":%s}}\\n' \"$repo_sha\" \"$ref_sha\" \"$commit_sha\" \"$prune_label\" \"$prune_sha\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"${{BYOF_SOURCE_PRUNE_PATH}}\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"source_pruned\": %s,\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"${{BYOF_SOURCE_PRUNE_PATH}}\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
