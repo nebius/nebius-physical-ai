@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "c7b83c8561d32d19ff46fe7834b78710ffd9b8a902fcbaedd91199f12c3afe73",
+  "workflow_sha256": "942b49a8a72330fd81143f8eaa5574333ec00aa6be2e859a79a0f1c24a64fe4a",
   "planning": {
     "validation": {
       "status": "verified",
@@ -40,7 +40,7 @@
       "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may be selected only after this child is explicitly authorized and receives a manager-published runtime context. An authorized operator must make the applicable NVIDIA CUDA Toolkit and cuDNN runtime-use decision before the private build and run; neither agreement exposes a vendor entitlement probe or documented environment acceptance mechanism.",
       "evidence": [
         "Public source and dataset require no token",
-        "The production runner refuses missing manager-issued project, private-registry visibility, kubeconfig, context, namespace, bucket, STRICT-capacity, or live-suite selectors before base resolution or Docker build",
+        "The production runner refuses missing manager-issued project, private-registry visibility, kubeconfig, context, namespace, bucket, STRICT-capacity, or live-suite selectors and any immutable-input, skip-mode, cleanup, or attested-profile mismatch before base resolution or Docker build",
         "NPA does not use a local consent proxy because a boolean, credential, runtime fetch, or private registry cannot prove the operator's legal decision",
         "docs/workbench/byof-robomimic.md: six separate boundaries, official NVIDIA terms links, private-build decision, and run-owned Pod-read RBAC lifecycle",
         "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
@@ -58,10 +58,10 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Exactly one STRICT-bound B200 and a run-scoped service account with get-only Pod access are required. The global manager runtime is deployed and verified, but this child has no authorization or published project, cluster, namespace, registry, output, or network binding.",
+      "reason": "Exactly one STRICT-bound B200 and a run-scoped service account with get-only Pod access are required. The gate verifies the selected context namespace and complete resource permissions before launch; the workload observes its effective namespace and service account. The global manager runtime is deployed and verified, but this child has no authorization or published project, cluster, namespace, registry, output, or network binding.",
       "evidence": [
         "byof-solution-smoke-robomimic-b200-gpu resources.accelerators=B200:1",
-        "The checked-in observer name is inert; the dedicated live gate creates a run-scoped ServiceAccount/Role/RoleBinding, verifies get-only Pod access, and proves deletion after the run",
+        "The checked-in observer name is inert; the dedicated live gate creates a run-scoped ServiceAccount/Role/RoleBinding, verifies its complete resource-rule allowlist, deletes only with matching token/UID/resource-version preconditions, and proves absence after the run",
         "child state.md: manager status deployed-and-verified; robomimic child authorization=false; no child runtime context"
       ]
     }
