@@ -81,8 +81,16 @@ source-archive, cache, credential, CUDA/NVIDIA, FFmpeg, and gated-data paths or
 hashes. It also hashes the embedded runtime locks, notices, and smoke module;
 reconciles installed apt and Python distributions to those locks; checks every
 projected source byte against its immutable inventory; binds native venv ELF
-files to wheel `RECORD` hashes; and requires the OCI revision label to equal the
-reviewed full Git SHA. The independent complete-byte scanner, Trivy, SBOM,
+files to wheel `RECORD` hashes; parses every ELF `DT_NEEDED` entry and requires
+an owned, same-architecture runtime target; and requires the OCI revision label
+to equal the reviewed full Git SHA. The verifier also binds the selected Ubuntu
+base diff ID and requires operator-reviewed SHA-256 values for the complete dpkg
+inventory and native closure. The dpkg inventory includes every installed
+binary version, architecture, source package/version, and resolved copyright
+path/hash. The native inventory includes every ELF hash, owner, architecture,
+SONAME, and resolved `DT_NEEDED` edge. Its first fail-closed scan may expose
+those two public inventories for review, but cannot pass until both expected
+hashes are supplied explicitly. The independent complete-byte scanner, Trivy, SBOM,
 provenance, license, secret, vulnerability, native-library, and exact payload
 checks remain mandatory on actual candidate bytes.
 
