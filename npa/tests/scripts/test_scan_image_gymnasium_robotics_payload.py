@@ -36,6 +36,7 @@ def _tar_bytes(
     symlinks: dict[str, str] | None = None,
     hardlinks: dict[str, str] | None = None,
     fifos: tuple[str, ...] = (),
+    devices: tuple[str, ...] = (),
     suffix: bytes = b"",
 ) -> bytes:
     output = io.BytesIO()
@@ -59,6 +60,12 @@ def _tar_bytes(
         for name in fifos:
             info = tarfile.TarInfo(name)
             info.type = tarfile.FIFOTYPE
+            archive.addfile(info)
+        for name in devices:
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.CHRTYPE
+            info.devmajor = 0
+            info.devminor = 0
             archive.addfile(info)
     return output.getvalue() + suffix
 
@@ -299,6 +306,7 @@ def _docker_save(
     symlinks: dict[str, str] | None = None,
     hardlinks: dict[str, str] | None = None,
     fifos: tuple[str, ...] = (),
+    devices: tuple[str, ...] = (),
     app_suffix: bytes = b"",
     diff_ids: list[str] | None = None,
     base_layer: bytes = BASE_LAYER,
@@ -310,6 +318,7 @@ def _docker_save(
         symlinks=symlinks,
         hardlinks=hardlinks,
         fifos=fifos,
+        devices=devices,
         suffix=app_suffix,
     )
     runtime_config: dict[str, object] = {"User": user}
@@ -578,12 +587,24 @@ def test_forbidden_link_target_and_unsupported_member_fail(tmp_path: Path) -> No
         SCAN.scan(fifo_archive)
 
 
+@pytest.mark.parametrize("kind", ("fifo", "device", "symlink", "hardlink"))
 @pytest.mark.parametrize("name", (".wh.hidden", "opt/.wh..wh..opq"))
 def test_typed_whiteout_entries_fail_before_semantics(
-    tmp_path: Path, name: str
+    tmp_path: Path, kind: str, name: str
 ) -> None:
-    archive = tmp_path / (name.replace("/", "-") + ".tar")
-    _docker_save(archive, REQUIRED, fifos=(name,))
+    archive = tmp_path / f"{kind}-{name.replace('/', '-')}.tar"
+    if kind == "fifo":
+        _docker_save(archive, REQUIRED, fifos=(name,))
+    elif kind == "device":
+        _docker_save(archive, REQUIRED, devices=(name,))
+    elif kind == "symlink":
+        _docker_save(archive, REQUIRED, symlinks={name: "absent"})
+    else:
+        _docker_save(
+            archive,
+            REQUIRED,
+            hardlinks={name: "etc/npa-synthetic-base"},
+        )
     with pytest.raises(ValueError, match="invalid whiteout entry"):
         SCAN.scan(archive)
 
@@ -591,10 +612,11 @@ def test_typed_whiteout_entries_fail_before_semantics(
 def test_nonempty_whiteout_fails_and_empty_regular_whiteout_is_hashed(
     tmp_path: Path,
 ) -> None:
-    nonempty = tmp_path / "nonempty-whiteout.tar"
-    _docker_save(nonempty, {**REQUIRED, ".wh.absent": b"not-empty"})
-    with pytest.raises(ValueError, match="invalid whiteout entry"):
-        SCAN.scan(nonempty)
+    for name in (".wh.absent", "opt/.wh..wh..opq"):
+        nonempty = tmp_path / ("nonempty-" + name.replace("/", "-") + ".tar")
+        _docker_save(nonempty, {**REQUIRED, name: b"not-empty"})
+        with pytest.raises(ValueError, match="invalid whiteout entry"):
+            SCAN.scan(nonempty)
 
     valid = tmp_path / "valid-whiteout.tar"
     _docker_save(valid, {**REQUIRED, ".wh.absent": b""})
