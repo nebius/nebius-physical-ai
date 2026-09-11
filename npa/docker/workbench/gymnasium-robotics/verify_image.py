@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 LOCK_ROOT = Path("/opt/npa/gymnasium-robotics")
@@ -21,6 +22,14 @@ FORBIDDEN = (
 )
 EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb4133d65568"
+# Filled only after independent review of exact completed lock bytes. These
+# Phase A sentinels make a local status edit insufficient to authorize use.
+EXPECTED_COMPLETE_LOCK_SHA256: dict[str, str | None] = {
+    "source-lock.json": None,
+    "apt-runtime.lock.json": None,
+    "corresponding-source.lock.json": None,
+    "requirements.lock": None,
+}
 
 
 def _missing(value: object) -> bool:
@@ -44,6 +53,11 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
     def at(path: Path) -> Path:
         return root / path.relative_to("/")
 
+    for name, expected in EXPECTED_COMPLETE_LOCK_SHA256.items():
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(f"reviewed complete lock digest is not configured: {name}")
+        if _sha256(at(LOCK_ROOT / name)) != expected:
+            raise ValueError(f"reviewed complete lock bytes changed: {name}")
     locks = {}
     for name in (
         "source-lock.json",

@@ -14,6 +14,7 @@ import io
 import json
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import sys
 import tarfile
 from typing import Any
@@ -40,7 +41,8 @@ FORBIDDEN_PATH = re.compile(
     re.IGNORECASE,
 )
 SECRET_TEXT = re.compile(
-    rb"BEGIN (?:RSA |OPENSSH )?PRIVATE" rb" KEY|"
+    rb"BEGIN (?:RSA |OPENSSH )?PRIVATE"
+    rb" KEY|"
     rb"(?i:(?:api[_-]?key|secret[_-]?key|password)\s*[=:]\s*[^\s]{8,})"
 )
 VENDOR_TEXT = re.compile(
@@ -55,6 +57,19 @@ EXPECTED_BASE = {
     "image": "ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
     "config_digest": "sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c",
     "layer_digest": "sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58",
+    # Filled only by a separately authorized transaction over the exact base
+    # layer. Docker-save archives retain this uncompressed digest (diff ID),
+    # not the registry's compressed layer digest.
+    "uncompressed_layer_digest": None,
+}
+# A complete lock is trusted only after its exact bytes are independently
+# reviewed and pinned here. Phase A deliberately has no such approved bytes,
+# so changing a lock's status locally can never turn the scanner green.
+EXPECTED_COMPLETE_LOCK_SHA256: dict[str, str | None] = {
+    "source-lock.json": None,
+    "apt-runtime.lock.json": None,
+    "corresponding-source.lock.json": None,
+    "requirements.lock": None,
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -82,32 +97,32 @@ EXPECTED_SOURCE_FIELDS = {
     },
 }
 EXPECTED_PYTHON_DISTRIBUTIONS = {
-    "absl-py",
-    "boto3",
-    "botocore",
-    "cloudpickle",
-    "etils",
-    "farama-notifications",
-    "fsspec",
-    "glfw",
-    "gymnasium",
-    "imageio",
-    "jinja2",
-    "jmespath",
-    "markupsafe",
-    "mujoco",
-    "numpy",
-    "packaging",
-    "pettingzoo",
-    "pillow",
-    "pyopengl",
-    "python-dateutil",
-    "s3transfer",
-    "setuptools",
-    "six",
-    "typing-extensions",
-    "urllib3",
-    "zipp",
+    "absl-py": "2.5.0",
+    "boto3": "1.43.91",
+    "botocore": "1.43.91",
+    "cloudpickle": "3.1.2",
+    "etils": "1.14.0",
+    "farama-notifications": "0.0.6",
+    "fsspec": "2026.7.0",
+    "glfw": "2.10.2",
+    "gymnasium": "1.3.0",
+    "imageio": "2.37.4",
+    "jinja2": "3.1.6",
+    "jmespath": "1.1.0",
+    "markupsafe": "3.0.3",
+    "mujoco": "3.12.0",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pettingzoo": "1.27.0",
+    "pillow": "12.3.0",
+    "pyopengl": "3.1.10",
+    "python-dateutil": "2.9.0.post0",
+    "s3transfer": "0.19.2",
+    "setuptools": "84.0.0",
+    "six": "1.17.0",
+    "typing-extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0",
 }
 ROOTFS_MANIFEST = "usr/share/source/npa-gymnasium-robotics/final-rootfs-manifest.json"
 ROOTFS_MANIFEST_EXEMPT = {
@@ -136,34 +151,78 @@ def _safe(name: str) -> str:
     return str(path)
 
 
-def _json_member(archive: tarfile.TarFile, name: str) -> Any:
+def _raw_member(archive: tarfile.TarFile, name: str) -> bytes:
     member = archive.getmember(name)
+    if not member.isfile():
+        raise ValueError(f"archive member is not a regular file: {name}")
     stream = archive.extractfile(member)
     if stream is None:
         raise ValueError(f"missing archive member: {name}")
-    return json.loads(stream.read())
+    return stream.read()
 
 
-def _nested_archive_members(path: str, content: bytes) -> int:
+def _scan_policy_bytes(label: str, content: bytes) -> None:
+    if SECRET_TEXT.search(content):
+        raise ValueError(f"forbidden secret signature: {label}")
+    if VENDOR_TEXT.search(content):
+        raise ValueError(f"forbidden vendor payload signature: {label}")
+
+
+def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int:
     """Inspect every named member of retained tar/zip Python/source archives."""
 
+    if depth > 8:
+        raise ValueError(f"nested archive depth exceeds scan bound: {path}")
+    if len(content) > MAX_NESTED_ARCHIVE:
+        raise ValueError(f"nested archive exceeds scan bound: {path}")
+    _scan_policy_bytes(f"nested archive bytes: {path}", content)
     lowered = path.lower()
     if lowered.endswith((".whl", ".zip")):
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                names = archive.namelist()
-                for name in names:
-                    safe = _safe(name)
-                    nested_content = archive.read(name)
-                    if (
-                        FORBIDDEN_PATH.search(safe)
-                        or SECRET_TEXT.search(nested_content)
-                        or VENDOR_TEXT.search(nested_content)
-                    ):
+                members = archive.infolist()
+                count = 0
+                for member in members:
+                    safe = _safe(member.filename)
+                    count += 1
+                    if FORBIDDEN_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
-                return len(names)
+                    if member.is_dir():
+                        continue
+                    if member.file_size > MAX_NESTED_ARCHIVE:
+                        raise ValueError(
+                            f"nested archive member exceeds scan bound: {path}:{safe}"
+                        )
+                    nested_content = archive.read(member)
+                    mode = member.external_attr >> 16
+                    if stat.S_ISLNK(mode):
+                        target = nested_content.decode(
+                            "utf-8", errors="surrogateescape"
+                        )
+                        resolved = _resolved_link_target(safe, target, relative=True)
+                        if FORBIDDEN_PATH.search(
+                            target.lstrip("/")
+                        ) or FORBIDDEN_PATH.search(resolved):
+                            raise ValueError(
+                                f"forbidden nested archive link: {path}:{safe}"
+                            )
+                        _scan_policy_bytes(
+                            f"nested archive link: {path}:{safe}", nested_content
+                        )
+                        continue
+                    if stat.S_IFMT(mode) not in (0, stat.S_IFREG):
+                        raise ValueError(
+                            f"unsupported nested archive member type: {path}:{safe}"
+                        )
+                    _scan_policy_bytes(
+                        f"nested archive member: {path}:{safe}", nested_content
+                    )
+                    count += _nested_archive_members(
+                        f"{path}:{safe}", nested_content, depth=depth + 1
+                    )
+                return count
         except zipfile.BadZipFile as error:
             raise ValueError(f"unreadable nested zip archive: {path}") from error
     if lowered.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz")):
@@ -178,34 +237,110 @@ def _nested_archive_members(path: str, content: bytes) -> int:
                             f"forbidden nested archive member: {path}:{safe}"
                         )
                     if member.isfile():
+                        if member.size > MAX_NESTED_ARCHIVE:
+                            raise ValueError(
+                                f"nested archive member exceeds scan bound: {path}:{safe}"
+                            )
                         stream = archive.extractfile(member)
                         nested_content = stream.read() if stream is not None else b""
-                        if (
-                            stream is None
-                            or SECRET_TEXT.search(nested_content)
-                            or VENDOR_TEXT.search(nested_content)
-                        ):
+                        if stream is None:
                             raise ValueError(
                                 f"forbidden nested archive bytes: {path}:{safe}"
                             )
+                        _scan_policy_bytes(
+                            f"nested archive member: {path}:{safe}", nested_content
+                        )
+                        count += _nested_archive_members(
+                            f"{path}:{safe}", nested_content, depth=depth + 1
+                        )
+                    elif member.issym() or member.islnk():
+                        target_text = member.linkname
+                        target = target_text.encode("utf-8", errors="surrogateescape")
+                        _scan_policy_bytes(
+                            f"nested archive link: {path}:{safe}", target
+                        )
+                        resolved = _resolved_link_target(
+                            safe, target_text, relative=member.issym()
+                        )
+                        if FORBIDDEN_PATH.search(
+                            target_text.lstrip("/")
+                        ) or FORBIDDEN_PATH.search(resolved):
+                            raise ValueError(
+                                f"forbidden nested archive link: {path}:{safe}"
+                            )
+                    elif not member.isdir():
+                        raise ValueError(
+                            f"unsupported nested archive member type: {path}:{safe}"
+                        )
                 return count
         except tarfile.TarError as error:
             raise ValueError(f"unreadable nested tar archive: {path}") from error
     return 0
 
 
+def _resolved_link_target(path: str, target: str, *, relative: bool) -> str:
+    candidate = PurePosixPath(target)
+    parts = (
+        list(PurePosixPath(path).parent.parts)
+        if relative and not candidate.is_absolute()
+        else []
+    )
+    for part in candidate.parts:
+        if part in ("", ".", "/"):
+            continue
+        if part == "..":
+            if not parts:
+                raise ValueError(
+                    f"archive link escapes the image root: {path} -> {target}"
+                )
+            parts.pop()
+        else:
+            parts.append(part)
+    if not parts:
+        raise ValueError(f"archive link has an empty root target: {path} -> {target}")
+    return str(PurePosixPath(*parts))
+
+
+def _remove_path(
+    rootfs: dict[str, bytes], entries: dict[str, dict[str, Any]], target: str
+) -> None:
+    for key in tuple(entries):
+        if key == target or key.startswith(target + "/"):
+            entries.pop(key, None)
+            rootfs.pop(key, None)
+
+
+def _entry_metadata(item: tarfile.TarInfo, kind: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "mode": item.mode,
+        "uid": item.uid,
+        "gid": item.gid,
+        "mtime": item.mtime,
+        "uname": item.uname or "",
+        "gname": item.gname or "",
+        "pax_headers": dict(sorted(item.pax_headers.items())),
+    }
+
+
 def _layers(
     archive: tarfile.TarFile, names: list[str]
-) -> tuple[dict[str, bytes], int, int]:
+) -> tuple[
+    dict[str, bytes],
+    dict[str, dict[str, Any]],
+    int,
+    int,
+    list[str],
+]:
     rootfs: dict[str, bytes] = {}
+    entries: dict[str, dict[str, Any]] = {}
     total = 0
     nested = 0
+    diff_ids: list[str] = []
     for layer_name in names:
-        member = archive.getmember(layer_name)
-        stream = archive.extractfile(member)
-        if stream is None:
-            raise ValueError(f"unreadable layer: {layer_name}")
-        raw = stream.read()
+        raw = _raw_member(archive, layer_name)
+        _scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)
+        diff_ids.append("sha256:" + hashlib.sha256(raw).hexdigest())
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:*") as layer:
             for item in layer:
                 path = _safe(item.name)
@@ -213,21 +348,20 @@ def _layers(
                 leaf = PurePosixPath(path).name
                 if leaf == ".wh..wh..opq":
                     parent = str(PurePosixPath(path).parent)
-                    rootfs = {
-                        key: value
-                        for key, value in rootfs.items()
-                        if not key.startswith(parent + "/")
-                    }
+                    if parent == ".":
+                        rootfs.clear()
+                        entries.clear()
+                    else:
+                        for key in tuple(entries):
+                            if key.startswith(parent + "/"):
+                                entries.pop(key, None)
+                                rootfs.pop(key, None)
                     continue
                 if leaf.startswith(".wh."):
                     target = str(
                         PurePosixPath(path).with_name(leaf.removeprefix(".wh."))
                     )
-                    rootfs = {
-                        key: value
-                        for key, value in rootfs.items()
-                        if key != target and not key.startswith(target + "/")
-                    }
+                    _remove_path(rootfs, entries, target)
                     continue
                 if FORBIDDEN_PATH.search(path):
                     raise ValueError(f"forbidden image path: {path}")
@@ -236,12 +370,7 @@ def _layers(
                     if payload is None:
                         raise ValueError(f"unreadable layer file: {path}")
                     content = payload.read()
-                    if SECRET_TEXT.search(content):
-                        raise ValueError(f"forbidden secret signature: {path}")
-                    if VENDOR_TEXT.search(content):
-                        raise ValueError(
-                            f"forbidden vendor payload signature: {path}"
-                        )
+                    _scan_policy_bytes(path, content)
                     if path.lower().endswith(
                         (".whl", ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz")
                     ):
@@ -250,8 +379,46 @@ def _layers(
                                 f"nested archive exceeds scan bound: {path}"
                             )
                         nested += _nested_archive_members(path, content)
+                    _remove_path(rootfs, entries, path)
                     rootfs[path] = content
-    return rootfs, total, nested
+                    entries[path] = {
+                        **_entry_metadata(item, "regular"),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                elif item.isdir():
+                    rootfs.pop(path, None)
+                    entries[path] = _entry_metadata(item, "directory")
+                elif item.issym() or item.islnk():
+                    target = item.linkname
+                    target_bytes = target.encode("utf-8", errors="surrogateescape")
+                    _scan_policy_bytes(f"link target: {path}", target_bytes)
+                    resolved = _resolved_link_target(
+                        path, target, relative=item.issym()
+                    )
+                    if FORBIDDEN_PATH.search(
+                        target.lstrip("/")
+                    ) or FORBIDDEN_PATH.search(resolved):
+                        raise ValueError(
+                            f"forbidden image link target: {path} -> {target}"
+                        )
+                    _remove_path(rootfs, entries, path)
+                    rootfs.pop(path, None)
+                    kind = "symlink" if item.issym() else "hardlink"
+                    entries[path] = {
+                        **_entry_metadata(item, kind),
+                        "link_target": target,
+                        "resolved_link_target": resolved,
+                    }
+                else:
+                    raise ValueError(f"unsupported image member type: {path}")
+    for path, record in entries.items():
+        if record["kind"] == "hardlink":
+            target = record["resolved_link_target"]
+            if target not in entries or entries[target]["kind"] != "regular":
+                raise ValueError(
+                    f"hardlink target is not a retained regular file: {path}"
+                )
+    return rootfs, entries, total, nested, diff_ids
 
 
 def _missing(value: object) -> bool:
@@ -270,7 +437,7 @@ def _normalize_distribution(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def _locked_python_distributions(raw: bytes) -> set[str]:
+def _locked_python_distributions(raw: bytes) -> dict[str, str]:
     text = raw.decode("utf-8")
     if "# status: complete" not in text:
         raise ValueError("Python lock is incomplete")
@@ -288,9 +455,10 @@ def _locked_python_distributions(raw: bytes) -> set[str]:
         pending = ""
     if pending:
         raise ValueError("Python lock ends with an incomplete continuation")
-    distributions: set[str] = set()
+    distributions: dict[str, str] = {}
     pattern = re.compile(
-        r"(?P<name>[A-Za-z0-9_.-]+)(?:\[[A-Za-z0-9_,.-]+\])?==[^\s]+"
+        r"(?P<name>[A-Za-z0-9_.-]+)(?:\[[A-Za-z0-9_,.-]+\])?"
+        r"==(?P<version>[^\s]+)"
         r"(?:\s+--hash=sha256:[0-9a-f]{64})+"
     )
     for requirement in logical:
@@ -300,30 +468,52 @@ def _locked_python_distributions(raw: bytes) -> set[str]:
         name = _normalize_distribution(match.group("name"))
         if name in distributions:
             raise ValueError(f"duplicate Python lock distribution: {name}")
-        distributions.add(name)
+        distributions[name] = match.group("version")
     return distributions
 
 
-def _classified_rootfs(rootfs: dict[str, bytes], expected_digest: str) -> None:
+def _classified_rootfs(
+    rootfs: dict[str, bytes],
+    entries: dict[str, dict[str, Any]],
+    expected_digest: str,
+) -> None:
     raw = rootfs[ROOTFS_MANIFEST]
     if hashlib.sha256(raw).hexdigest() != expected_digest:
         raise ValueError("final rootfs classification manifest changed")
     manifest = json.loads(raw)
-    if manifest.get("schema") != "npa.gymnasium-robotics.rootfs-manifest.v1":
+    if manifest.get("schema") != "npa.gymnasium-robotics.rootfs-manifest.v2":
         raise ValueError("final rootfs classification manifest schema changed")
-    files = manifest.get("files")
-    if not isinstance(files, dict):
-        raise ValueError("final rootfs classification manifest has no file map")
-    expected_paths = set(rootfs) - ROOTFS_MANIFEST_EXEMPT
-    if set(files) != expected_paths:
-        raise ValueError("final rootfs contains missing or unclassified regular files")
-    for path, record in files.items():
+    classified = manifest.get("entries")
+    if not isinstance(classified, dict):
+        raise ValueError("final rootfs classification manifest has no entry map")
+    expected_paths = set(entries)
+    if set(classified) != expected_paths:
+        raise ValueError("final rootfs contains missing or unclassified entries")
+    for exempt in ROOTFS_MANIFEST_EXEMPT:
+        if exempt not in rootfs or entries.get(exempt, {}).get("kind") != "regular":
+            raise ValueError(
+                f"rootfs classification trust file is not regular: {exempt}"
+            )
+    for path, record in classified.items():
         if not isinstance(record, dict):
             raise ValueError(f"invalid rootfs classification: {path}")
-        if record.get("class") not in ROOTFS_CLASSES or not record.get("source"):
+        source = record.get("source")
+        if (
+            record.get("class") not in ROOTFS_CLASSES
+            or not isinstance(source, str)
+            or not source
+        ):
             raise ValueError(f"invalid rootfs classification: {path}")
-        if hashlib.sha256(rootfs[path]).hexdigest() != record.get("sha256"):
-            raise ValueError(f"classified rootfs file hash changed: {path}")
+        expected_entry = dict(entries[path])
+        if path in ROOTFS_MANIFEST_EXEMPT:
+            # The exact contents are independently pinned: the corresponding
+            # lock by EXPECTED_COMPLETE_LOCK_SHA256, and this manifest by that
+            # lock. Omitting only their content hashes avoids a digest cycle;
+            # every other retained attribute remains classified.
+            expected_entry.pop("sha256", None)
+        expected = {**expected_entry, "class": record["class"], "source": source}
+        if record != expected:
+            raise ValueError(f"classified rootfs entry metadata changed: {path}")
 
 
 def _locked_assets(rootfs: dict[str, bytes]) -> None:
@@ -353,13 +543,27 @@ def _locked_assets(rootfs: dict[str, bytes]) -> None:
         raise ValueError("installed Shadow Hand asset notice changed")
 
 
-def _complete_locks(rootfs: dict[str, bytes]) -> None:
+def _complete_locks(
+    rootfs: dict[str, bytes],
+    entries: dict[str, dict[str, Any]],
+    layer_diff_ids: list[str],
+) -> None:
     parsed: dict[str, dict[str, Any]] = {}
-    for name in (
+    json_locks = (
         "source-lock.json",
         "apt-runtime.lock.json",
         "corresponding-source.lock.json",
-    ):
+    )
+    for name in (*json_locks, "requirements.lock"):
+        path = f"opt/npa/gymnasium-robotics/{name}"
+        expected_lock = EXPECTED_COMPLETE_LOCK_SHA256[name]
+        if not isinstance(expected_lock, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", expected_lock
+        ):
+            raise ValueError(f"reviewed complete lock digest is not configured: {name}")
+        if hashlib.sha256(rootfs[path]).hexdigest() != expected_lock:
+            raise ValueError(f"reviewed complete lock bytes changed: {name}")
+    for name in json_locks:
         path = f"opt/npa/gymnasium-robotics/{name}"
         payload = json.loads(rootfs[path])
         parsed[name] = payload
@@ -374,8 +578,17 @@ def _complete_locks(rootfs: dict[str, bytes]) -> None:
         if any(components[name].get(key) != value for key, value in expected.items()):
             raise ValueError(f"source lock identity changed: {name}")
     apt = parsed["apt-runtime.lock.json"]
+    if _missing(EXPECTED_BASE):
+        raise ValueError("reviewed Ubuntu base diff ID is not configured")
     if apt.get("base") != EXPECTED_BASE:
         raise ValueError("Ubuntu base identity changed")
+    if (
+        not layer_diff_ids
+        or layer_diff_ids[0] != EXPECTED_BASE["uncompressed_layer_digest"]
+    ):
+        raise ValueError(
+            "saved image does not begin with the reviewed Ubuntu base layer"
+        )
     if not apt.get("resolved_binary_packages") or not apt.get(
         "resolved_source_packages"
     ):
@@ -397,15 +610,18 @@ def _complete_locks(rootfs: dict[str, bytes]) -> None:
         "shadow-hand-xml-mesh-texture-assets",
         "ubuntu-runtime-closure",
     }
-    if {delivery.get("binary_component") for delivery in deliveries} != expected_deliveries:
+    if {
+        delivery.get("binary_component") for delivery in deliveries
+    } != expected_deliveries:
         raise ValueError("corresponding-source delivery closure changed")
     delivery_map = {delivery["binary_component"]: delivery for delivery in deliveries}
     farama_delivery = delivery_map["farama-gymnasium-robotics"]
     shadow_delivery = delivery_map["shadow-hand-xml-mesh-texture-assets"]
     ubuntu_delivery = delivery_map["ubuntu-runtime-closure"]
-    if farama_delivery.get("archive_sha256") != source_lock["components"][
-        "farama_gymnasium_robotics"
-    ]["archive_sha256"]:
+    if (
+        farama_delivery.get("archive_sha256")
+        != source_lock["components"]["farama_gymnasium_robotics"]["archive_sha256"]
+    ):
         raise ValueError("conveyed Farama source archive identity changed")
     shadow_fields = {
         "build_instructions_sha256": None,
@@ -426,7 +642,9 @@ def _complete_locks(rootfs: dict[str, bytes]) -> None:
         "source_manifest_sha256",
     ):
         if not re.fullmatch(r"[0-9a-f]{64}", str(ubuntu_delivery.get(field) or "")):
-            raise ValueError(f"Ubuntu corresponding-source closure is incomplete: {field}")
+            raise ValueError(
+                f"Ubuntu corresponding-source closure is incomplete: {field}"
+            )
     for delivery in deliveries:
         artifacts = delivery.get("artifacts")
         if not artifacts:
@@ -450,20 +668,37 @@ def _complete_locks(rootfs: dict[str, bytes]) -> None:
     manifest_digest = parsed["corresponding-source.lock.json"].get(
         "final_rootfs_manifest_sha256"
     )
-    _classified_rootfs(rootfs, manifest_digest)
+    _classified_rootfs(rootfs, entries, manifest_digest)
     _locked_assets(rootfs)
 
 
 def scan(path: Path) -> dict[str, Any]:
+    with path.open("rb") as stream:
+        archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    _scan_policy_bytes("complete Docker-save archive", path.read_bytes())
     with tarfile.open(path, mode="r:*") as archive:
-        manifest = _json_member(archive, "manifest.json")
+        outer_members = archive.getmembers()
+        outer_by_name = {_safe(member.name): member for member in outer_members}
+        if len(outer_by_name) != len(outer_members):
+            raise ValueError("Docker save contains duplicate normalized member paths")
+        outer_names = set(outer_by_name)
+        manifest_raw = _raw_member(archive, "manifest.json")
+        _scan_policy_bytes("Docker-save manifest", manifest_raw)
+        manifest = json.loads(manifest_raw)
         if not isinstance(manifest, list) or len(manifest) != 1:
             raise ValueError("Docker save must contain exactly one image")
         entry = manifest[0]
         if not isinstance(entry, dict):
             raise ValueError("Docker save manifest entry must be an object")
         config_name = _safe(str(entry["Config"]))
-        config = _json_member(archive, config_name)
+        config_raw = _raw_member(archive, config_name)
+        config_digest = hashlib.sha256(config_raw).hexdigest()
+        if config_name != f"{config_digest}.json":
+            raise ValueError(
+                "Docker save config filename does not bind its exact bytes"
+            )
+        _scan_policy_bytes("exact image config", config_raw)
+        config = json.loads(config_raw)
         if not isinstance(config, dict):
             raise ValueError("Docker save config must be an object")
         runtime_config = config.get("config")
@@ -472,27 +707,56 @@ def scan(path: Path) -> dict[str, Any]:
             or runtime_config.get("User") != "ubuntu"
         ):
             raise ValueError("final image must declare the non-root ubuntu user")
-        history = json.dumps(config.get("history", []), sort_keys=True).encode()
-        if SECRET_TEXT.search(history) or VENDOR_TEXT.search(history):
-            raise ValueError("forbidden payload signature in image history")
         layers = [_safe(str(name)) for name in entry.get("Layers", [])]
         if not layers:
             raise ValueError("Docker save contains no layers")
-        rootfs, layer_members, nested_members = _layers(archive, layers)
+        if len(layers) != len(set(layers)):
+            raise ValueError("Docker save repeats an ordered layer")
+        allowed_outer = {"manifest.json", config_name, *layers, "repositories"}
+        allowed_directories = {
+            str(parent)
+            for name in allowed_outer
+            for parent in PurePosixPath(name).parents
+            if str(parent) != "."
+        }
+        unexpected = sorted(outer_names - allowed_outer - allowed_directories)
+        if unexpected:
+            raise ValueError(f"unexpected Docker-save members: {unexpected}")
+        for directory in outer_names & allowed_directories:
+            if not outer_by_name[directory].isdir():
+                raise ValueError(
+                    f"Docker-save parent member is not a directory: {directory}"
+                )
+        if "repositories" in outer_names:
+            _scan_policy_bytes(
+                "Docker-save repositories", _raw_member(archive, "repositories")
+            )
+        rootfs, entries, layer_members, nested_members, layer_diff_ids = _layers(
+            archive, layers
+        )
+    config_rootfs = config.get("rootfs")
+    if (
+        not isinstance(config_rootfs, dict)
+        or config_rootfs.get("type") != "layers"
+        or config_rootfs.get("diff_ids") != layer_diff_ids
+    ):
+        raise ValueError(
+            "image config rootfs diff IDs do not match ordered layer bytes"
+        )
     missing = sorted(REQUIRED - rootfs.keys())
     if missing:
         raise ValueError(f"required image files absent: {missing}")
-    _complete_locks(rootfs)
+    _complete_locks(rootfs, entries, layer_diff_ids)
     return {
         "schema": "npa.gymnasium-robotics.payload-scan.v1",
         "status": "passed",
-        "archive_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "config_sha256": hashlib.sha256(
-            json.dumps(config, sort_keys=True).encode()
-        ).hexdigest(),
+        "archive_sha256": archive_sha256,
+        "config_sha256": config_digest,
         "layer_count": len(layers),
         "layer_member_count": layer_members,
         "nested_archive_member_count": nested_members,
+        "ordered_layer_diff_ids": layer_diff_ids,
+        "final_entry_count": len(entries),
         "final_regular_file_count": len(rootfs),
         "unresolved_findings": 0,
         "accepted_manifest_present": False,
