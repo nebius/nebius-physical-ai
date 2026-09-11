@@ -10,6 +10,10 @@ For PAIDF with Cosmos 3 on Nebius, follow the
 credentials, current CLI installation, runtime submission, monitoring recovery,
 and output inspection, including full-video structural conditioning, aligned
 evaluation, configurable quality acceptance and per-variant caption coverage.
+Its [LeRobot instructions](guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera)
+include a pinned public v3 example, S3 staging, explicit episode/camera selection,
+and the full submission command. One run augments one selected video; it does
+not produce a reconstructed LeRobot action/state dataset.
 
 Agent skills: [author a workflow](../skills/workflows/author-npa-workflow/SKILL.md)
 and [design a new pipeline](../skills/workflows/generate-npa-workflow/SKILL.md).
