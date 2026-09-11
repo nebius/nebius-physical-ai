@@ -17,12 +17,14 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_PREFIX_ENV,
     CHILD_OUTPUT_ROOT_ENV,
     CHILD_RUN_ID_ENV,
+    CHILD_RUNTIME_AUTH_ENV,
     MAX_CONTEXT_BYTES,
     MAX_TRANSPORT_BYTES,
     PUBLIC_CONTEXT_ENV,
     RobotwinPreflightError,
     bind_submit_coordinates,
     decode_transport,
+    encode_runtime_authorization,
     encode_transport,
     load_runtime_authorization,
     materialize_transport,
@@ -81,6 +83,12 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+        "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -97,7 +105,6 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
         "kubeconfig": str(kubeconfig),
         "kubernetes_context": "robotwin-context",
         "skypilot_config_path": str(skypilot),
-        "registry": "registry.example/robotwin-private",
         "bucket": "robotwin-bucket-canary",
         "output_root": "s3://robotwin-bucket-canary/robotwin-output",
         "run_id": "robotwin-private-run-canary",
@@ -188,8 +195,8 @@ def test_owner_context_read_is_byte_exact_bounded_owner_only_and_no_follow(
             },
             "reservation-count-not-one",
         ),
-        ({"registry": "docker.io/public/example"}, "registry-not-private"),
-        ({"registry": "private-namespace/example"}, "registry-not-private"),
+        ({"bootstrap_image": "docker.io/public/example:latest"}, "bootstrap-image-not-immutable"),
+        ({"bootstrap_image": "private-namespace/example"}, "bootstrap-image-not-immutable"),
         ({"output_root": "s3://other-bucket/output"}, "output-root-bucket"),
         ({"run_id": "unscoped-run"}, "run-id-invalid"),
     ],
@@ -359,7 +366,7 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
 ) -> None:
     context_path, _ = _context_file(tmp_path)
     authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(context_path)})
-    image = authorization.registry + "/npa-byof@sha256:" + "a" * 64
+    image = authorization.bootstrap_image
     environment = {
         "KUBECONFIG": authorization.kubeconfig_source,
         "KUBECONTEXT": authorization.kubernetes_context,
@@ -375,6 +382,7 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
         ),
         CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
         CHILD_RUN_ID_ENV: authorization.run_id,
+        CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
         "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
             authorization.context_sha256
         ),
@@ -397,8 +405,12 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
 
 
 def test_live_submit_requires_public_secret_name_and_binds_coordinates(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
+        "complete",
+    )
     context_path, _ = _context_file(tmp_path)
     spec = load_spec(ROBOTWIN_SPEC)
     environment = {PUBLIC_CONTEXT_ENV: str(context_path)}
@@ -438,3 +450,80 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
             outer_override_requested=False,
             runtime_requested=False,
         )
+
+
+def test_live_submit_refuses_incomplete_lock_after_context_validation(
+    tmp_path: Path,
+) -> None:
+    context_path, _ = _context_file(tmp_path)
+    with pytest.raises(RobotwinPreflightError, match="runtime-lock-incomplete"):
+        prepare_live_submit(
+            load_spec(ROBOTWIN_SPEC),
+            requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
+            environ={PUBLIC_CONTEXT_ENV: str(context_path)},
+        )
+
+
+def test_parser_refusal_has_no_cause_or_context_graph(tmp_path: Path) -> None:
+    context = tmp_path / "private-context-canary.json"
+    context.write_bytes(b"{private-document-canary")
+    context.chmod(0o600)
+
+    with pytest.raises(RobotwinPreflightError) as caught:
+        load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(context)})
+
+    error: BaseException | None = caught.value
+    while error is not None:
+        rendered = str(error)
+        assert str(context) not in rendered
+        assert "private-document-canary" not in rendered
+        assert error.__cause__ is None
+        error = error.__context__
+
+
+def test_all_confidential_parser_refusals_discard_private_exception_graphs(
+    tmp_path: Path,
+) -> None:
+    def assert_clean(error: BaseException, *private_values: str) -> None:
+        current: BaseException | None = error
+        while current is not None:
+            rendered = str(current)
+            for value in private_values:
+                assert value not in rendered
+            assert current.__cause__ is None
+            current = current.__context__
+
+    missing = tmp_path / "private-missing-context-canary.json"
+    with pytest.raises(RobotwinPreflightError) as caught:
+        load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(missing)})
+    assert_clean(caught.value, str(missing))
+
+    context, _ = _context_file(tmp_path)
+    link = tmp_path / "private-context-link-canary.json"
+    link.symlink_to(context)
+    with pytest.raises(RobotwinPreflightError) as caught:
+        load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(link)})
+    assert_clean(caught.value, str(link), str(context))
+
+    for field, private_document in (
+        ("kubeconfig", "{private-kubeconfig-document-canary"),
+        ("skypilot_config_path", "{private-skypilot-document-canary"),
+    ):
+        payload = _context_payload(tmp_path)
+        private_path = Path(str(payload[field]))
+        private_path.write_text(private_document, encoding="utf-8")
+        raw = json.dumps(payload, sort_keys=True).encode()
+        with pytest.raises(RobotwinPreflightError) as caught:
+            validate_context_bytes(raw)
+        assert_clean(
+            caught.value,
+            str(private_path),
+            private_document,
+            "robotwin-project-canary",
+            "portable-test-token",
+        )
+
+    private_transport = "{private-transport-document-canary"
+    with pytest.raises(RobotwinPreflightError) as caught:
+        decode_transport(private_transport)
+    assert_clean(caught.value, private_transport)

@@ -17,7 +17,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NoReturn, Sequence
 from urllib.parse import urlsplit
 
 import yaml
@@ -803,13 +803,30 @@ def _redact_private_text(value: object, redactions: Sequence[str]) -> str:
     return redact_text(text)
 
 
+def _raise_sanitized_submit_error(
+    message: str, *, transaction: LaunchTransactionResult | None = None
+) -> NoReturn:
+    """Raise without retaining the exception currently handled by the caller."""
+
+    try:
+        raise SkyPilotSubmitError(message, transaction=transaction) from None
+    except SkyPilotSubmitError as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
+
+
 def _load_validated_robotwin_config(raw: bytes) -> dict[str, Any]:
     """Load the already validated SkyPilot bytes without reopening their source."""
 
+    config: Any = None
+    invalid = False
     try:
         config = yaml.safe_load(raw.decode("utf-8")) or {}
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise ValueError("validated RoboTwin SkyPilot config is unreadable") from exc
+    except (UnicodeDecodeError, yaml.YAMLError):
+        invalid = True
+    if invalid:
+        raise ValueError("validated RoboTwin SkyPilot config is unreadable")
     if not isinstance(config, dict):
         raise ValueError("validated RoboTwin SkyPilot config is not a mapping")
     config.pop("name", None)
@@ -1102,6 +1119,7 @@ def submit_workflow(
     yaml_path = Path(yaml_path)
     robotwin_authorization = None
     robotwin_documents: list[dict[str, Any]] | None = None
+    robotwin_bridge_error = ""
     if robotwin_submit_context is not None:
         from npa.orchestration.npa_workflow.robotwin_preflight import (
             validate_confidential_submit_bridge,
@@ -1129,9 +1147,9 @@ def submit_workflow(
                     )
                 )
             )
-            raise SkyPilotSubmitError(
-                _redact_private_text(exc, redactions)
-            ) from None
+            robotwin_bridge_error = _redact_private_text(exc, redactions)
+    if robotwin_bridge_error:
+        raise SkyPilotSubmitError(robotwin_bridge_error)
     submission_dir: Path | None = None
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
@@ -1565,10 +1583,10 @@ def submit_workflow(
     except SkyPilotSubmitError as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         if robotwin_authorization is not None:
-            raise SkyPilotSubmitError(
+            _raise_sanitized_submit_error(
                 _redact_private_text(str(exc), private_redactions),
                 transaction=exc.transaction,
-            ) from None
+            )
         raise
     except (
         OSError,
@@ -1582,7 +1600,7 @@ def submit_workflow(
         message = f"SkyPilot workflow submission failed: {exc}"
         if robotwin_authorization is not None:
             message = _redact_private_text(message, private_redactions)
-            raise SkyPilotSubmitError(message) from None
+            _raise_sanitized_submit_error(message)
         raise SkyPilotSubmitError(message) from exc
 
 

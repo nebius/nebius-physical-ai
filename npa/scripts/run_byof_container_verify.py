@@ -42,6 +42,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_IMAGE_ENV,
     CHILD_OUTPUT_PREFIX_ENV,
     CHILD_RUN_ID_ENV,
+    CHILD_RUNTIME_AUTH_ENV,
     CONTEXT_ENV_NAMES,
     RobotwinAuthorization,
     RobotwinSubmitContext,
@@ -85,6 +86,7 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         CHILD_IMAGE_ENV,
         CHILD_OUTPUT_PREFIX_ENV,
         CHILD_RUN_ID_ENV,
+        CHILD_RUNTIME_AUTH_ENV,
         "AWS_ENDPOINT_URL",
         "NEBIUS_S3_ENDPOINT",
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
@@ -205,6 +207,8 @@ def render_workflow(
         envs["BYOF_SOLUTION_NAME"] = solution_name
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
+        if robotwin:
+            envs[CHILD_RUNTIME_AUTH_ENV] = f"${{{CHILD_RUNTIME_AUTH_ENV}}}"
         normalized_root = _normalize_output_root(output_root)
         envs["S3_OUTPUT_PREFIX"] = (
             f"${{{CHILD_OUTPUT_PREFIX_ENV}}}"

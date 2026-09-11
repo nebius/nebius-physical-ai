@@ -79,6 +79,16 @@ pattern detection. Whole-record regexes can also require substantial memory or
 CPU. An interrupted or exhausted scan is incomplete, with no truncation fallback.
 Functional GPU workloads and artifact inspection remain separate release gates.
 
+RoboTwin adds a separate solution scanner,
+`npa/scripts/scan_image_robotwin_payload.py`. For the public-bootstrap design it
+must reject RoboTwin/CuRobo source, CUDA/cuDNN/NVIDIA/PyTorch/SAPIEN/MPLib/Warp
+runtime bytes, asset archives and extracted trees, download/runtime caches,
+credentials or manager context, and HDF5/video/frame outputs across flattened
+rootfs, every layer, nested archives, ELF dependencies, and build history. Its
+Phase A public-native policy intentionally carries unresolved detector identities
+and therefore cannot authorize a scan or publication. A later transaction must
+bind it to reviewed exact built bytes; scanning never grants runtime-use rights.
+
 ## Review specific findings locally
 
 An exact match may be a public cryptographic self-test or an inert source

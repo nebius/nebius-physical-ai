@@ -113,6 +113,10 @@ def _submit_robotwin(*args: str):
 def _install_robotwin_submit_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[dict[str, object], Path]:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
+        "complete",
+    )
     kubeconfig = tmp_path / "kubeconfig.yaml"
     kubeconfig.write_text(
         "apiVersion: v1\nkind: Config\n"
@@ -134,6 +138,12 @@ def _install_robotwin_submit_context(
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+        "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -150,7 +160,6 @@ def _install_robotwin_submit_context(
         "kubeconfig": str(kubeconfig),
         "kubernetes_context": "robotwin-context",
         "skypilot_config_path": str(skypilot),
-        "registry": "registry.example/robotwin-private-canary",
         "bucket": "robotwin-private-bucket-canary",
         "output_root": "s3://robotwin-private-bucket-canary/output",
         "run_id": "robotwin-private-run-canary",
@@ -354,7 +363,7 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "kubeconfig",
         "kubernetes_context",
         "skypilot_config_path",
-        "registry",
+        "bootstrap_image",
         "bucket",
         "output_root",
         "run_id",
@@ -437,6 +446,62 @@ def test_robotwin_authorized_output_replaces_the_public_declared_destination(
     )
 
 
+def test_robotwin_source_staging_is_not_a_workload_output_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import load_spec
+
+    summary = "s3://manager-bucket/output/robotwin-run/npa_byof_summary.json"
+    source = "s3://control-bucket/npa-source/exact-head"
+    resolved: list[dict[str, object]] = []
+
+    def resolve_execution_target(**kwargs):
+        resolved.append(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    def verify_execution_target(target, **_kwargs):
+        return {
+            "presence": "pass",
+            "access": "pass",
+            "destination_count": len(target.output_uris),
+        }
+
+    monkeypatch.setattr(
+        "npa.execution_preflight.resolve_execution_target", resolve_execution_target
+    )
+    monkeypatch.setattr(
+        "npa.execution_preflight.verify_execution_target", verify_execution_target
+    )
+
+    target, report = _REAL_EXECUTION_TARGET_PREFLIGHT(
+        load_spec(ROBOTWIN_SPEC),
+        project="manager-project",
+        context="manager-context",
+        region="",
+        run_id="robotwin-public-launcher",
+        assume_decision="",
+        credentials=SimpleNamespace(),
+        source_uri=source,
+        authorized_output_uri=summary,
+        verify_cluster=False,
+    )
+
+    assert target.output_uris == [summary]
+    assert report["destination_count"] == 1
+    assert resolved[0]["output_uris"] == [summary]
+    assert resolved[1]["output_uris"] == [source + "/"]
+    assert resolved[1]["provenance"] == {
+        "outputs": "control-plane-source-staging"
+    }
+    assert report["control_plane_source_staging"] == {
+        "presence": "pass",
+        "access": "pass",
+        "destination_count": 1,
+    }
+
+
 def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> None:
     output = StringIO()
     monkeypatch.setattr(
@@ -452,6 +517,25 @@ def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> Non
     assert output.getvalue() == (
         "Error: invalid target [H100:1] after closing tag [/:]\n"
     )
+
+
+def test_fail_discards_the_handled_exception_graph(monkeypatch) -> None:
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+
+    try:
+        raise ValueError("private-context-document-canary")
+    except ValueError:
+        with pytest.raises(typer.Exit) as exc_info:
+            workflow_cli._fail("sanitized refusal")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert "private-context-document-canary" not in output.getvalue()
 
 
 def test_robotwin_private_submit_values_are_redacted_from_errors_and_results(

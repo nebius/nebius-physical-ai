@@ -28,6 +28,7 @@ WAN_RUNTIME_SCRIPT_PATH = (
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
+ROBOTWIN_PHASE_A_SMOKE = "/opt/npa/robotwin/robotwin-runtime run"
 
 # Primary capability contracts for onboarded and pending-live solution candidates
 # (solution-specific ids; catalog status remains authoritative).
@@ -171,6 +172,9 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
         artifact = str(config.get("smoke_artifact_name") or "").strip()
         smoke = str(config.get("smoke_command") or "")
         assert artifact.endswith(".json"), path.name
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert "NPA_SMOKE_OUTPUT_DIR" in smoke, path.name
         assert artifact in smoke, path.name
 
@@ -178,6 +182,9 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
 def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
         smoke = str(_load_config(path).get("smoke_command") or "")
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert ".write_text(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
@@ -196,18 +203,11 @@ def test_robotwin_solution_smoke_is_the_native_success_gate() -> None:
     )
     assert config["task"] == "beat_block_hammer"
     assert config["wait_timeout"] == -1
-    assert "TORCH_CUDA_ARCH_LIST=12.0" in build
-    assert "TianxingChen/RoboTwin2.0" not in build
-    assert "785feb15aa4a4f532395ad2b1d2be5f28cb561ad" in smoke
-    assert 'TASK_CONFIG = "demo_clean"' in smoke
-    assert '"scripts/collect_data.py", TASK, TASK_CONFIG' in smoke
-    assert '"task_success": True' in smoke
-    assert 'decoded_frames != action_count + 1' in smoke
-    assert '"RTX PRO 6000" not in gpu_name.upper()' in smoke
-    assert 'torch_capability != (12, 0)' in smoke
-    assert 'vulkan.returncode != 0' in smoke
-    assert 'pod_observed_immutable_image_digest' in smoke
-    assert 'if payload["exit_status"] != 0' in smoke
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://robotwin"
+    assert config["runtime_context_env"] == "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
+    assert build == ""
+    assert smoke == ROBOTWIN_PHASE_A_SMOKE
 
 
 def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
@@ -305,6 +305,9 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert config.get("capability_name") == expected["capability_name"]
         assert config.get("smoke_artifact_name") == expected["smoke_artifact_name"]
         smoke = str(config.get("smoke_command") or "")
+        if solution == "robotwin":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:

@@ -1,4 +1,4 @@
-"""Mutation tests for the RoboTwin runtime-only image-byte boundary."""
+"""Mutation tests for the RoboTwin zero-vendor-payload image boundary."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _kinds(findings) -> set[str]:
     return {finding.kind for finding in findings}
 
 
-def test_private_runtime_and_source_are_allowed(tmp_path: Path) -> None:
+def test_source_vendor_runtime_and_cuda_are_all_refused(tmp_path: Path) -> None:
     rootfs = _tar(
         tmp_path / "rootfs.tar",
         {
@@ -63,7 +63,13 @@ def test_private_runtime_and_source_are_allowed(tmp_path: Path) -> None:
             {"created_by": "RUN pip install -r /tmp/robotwin-requirements.lock"},
         ]
     }
-    assert scanner.scan(rootfs, config) == []
+    kinds = _kinds(scanner.scan(rootfs, config))
+    assert {
+        "robotwin_source",
+        "curobo_source_or_runtime",
+        "cuda_or_cudnn_runtime",
+        "nvidia_or_pytorch_base",
+    } <= kinds
 
 
 def test_asset_archives_and_extracted_assets_fail(tmp_path: Path) -> None:
@@ -118,7 +124,10 @@ def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
 
 
 def test_cli_report_records_a_clean_offline_scan(tmp_path: Path) -> None:
-    rootfs = _tar(tmp_path / "rootfs.tar", {"opt/robotwin/LICENSE": b"MIT"})
+    rootfs = _tar(
+        tmp_path / "rootfs.tar",
+        {"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA bootstrap notice"},
+    )
     output = tmp_path / "report.json"
     assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 0
     report = json.loads(output.read_text(encoding="utf-8"))

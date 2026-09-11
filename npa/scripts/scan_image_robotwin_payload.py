@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when a built RoboTwin image contains runtime-only bytes.
-
-RoboTwin source and the authorized CUDA/cuDNN/CuRobo runtime are deliberately
-baked into an operator-private image. The official RoboTwin asset archives,
-their extracted trees, download caches, and generated episodes are not. This
-scanner verifies that narrower byte-boundary claim against the flattened
-rootfs, every image layer, and OCI build history.
-"""
+"""Fail closed when a RoboTwin bootstrap contains any runtime/vendor payload."""
 
 from __future__ import annotations
 
@@ -26,6 +19,33 @@ import scan_image_wan_payload as walker  # noqa: E402
 
 FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "robotwin_source",
+        re.compile(
+            r"(?:^|/)(?:opt|workspace|src)/(?:RoboTwin|robotwin-source)(?:/|$)",
+            re.I,
+        ),
+    ),
+    (
+        "curobo_source_or_runtime",
+        re.compile(r"(?:^|/)(?:opt/)?curobo(?:/|$)", re.I),
+    ),
+    (
+        "vendor_python_runtime",
+        re.compile(
+            r"(?:^|/)site-packages/(?:curobo|sapien|mplib|warp|torch|torchvision|"
+            r"nvidia|cv2|h5py)(?:[./_-]|/|$)",
+            re.I,
+        ),
+    ),
+    (
+        "cuda_or_cudnn_runtime",
+        re.compile(
+            r"(?:^|/)(?:usr/local/cuda(?:/|$)|[^/]*(?:lib)?cu(?:da|dnn|blas|fft|"
+            r"rand|solver|sparse|pti|rtc)[^/]*\.so(?:[./0-9]*|$))",
+            re.I,
+        ),
+    ),
+    (
         "robotwin_asset_archive",
         re.compile(r"(?:^|/)(?:embodiments|objects|background_texture)\.zip$", re.I),
     ),
@@ -44,10 +64,26 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "robotwin_runtime_cache",
+        re.compile(
+            r"(?:^|/)(?:\.cache/(?:huggingface|torch|warp)|robotwin-runtime-cache|"
+            r"runtime-ready\.json)(?:/|$)",
+            re.I,
+        ),
+    ),
+    (
         "robotwin_generated_output",
         re.compile(
             r"(?:^|/)(?:robotwin-native(?:/|$)|robotwin-smoke\.json$|"
-            r"episode_[0-9]+\.(?:hdf5|mp4)$)",
+            r"episode_[0-9]+\.(?:hdf5|mp4)$|[^/]+\.(?:hdf5|mp4)$|frames?(?:/|$))",
+            re.I,
+        ),
+    ),
+    (
+        "credential_or_manager_context",
+        re.compile(
+            r"(?:^|/)(?:runtime-context\.json|kubeconfig(?:\.ya?ml)?|"
+            r"docker/config\.json|\.aws/credentials)$",
             re.I,
         ),
     ),
@@ -63,6 +99,31 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I | re.S,
         ),
     ),
+    (
+        "vendor_runtime_installed_at_build",
+        re.compile(
+            r"\bRUN\b[^\n]*(?:pip|uv)\s+(?:install|sync)[^\n]*"
+            r"(?:curobo|sapien|mplib|warp-lang|torch|nvidia-cuda|nvidia-cudnn)",
+            re.I | re.S,
+        ),
+    ),
+    (
+        "vendor_source_fetched_at_build",
+        re.compile(
+            r"\bRUN\b[^\n]*(?:git\s+clone|curl|wget)[^\n]*"
+            r"(?:RoboTwin-Platform/RoboTwin|NVlabs/curobo)",
+            re.I | re.S,
+        ),
+    ),
+    (
+        "nvidia_or_pytorch_base",
+        re.compile(r"\bFROM\s+(?:nvidia/cuda|nvcr\.io/|pytorch/)", re.I),
+    ),
+)
+
+FORBIDDEN_ELF_DEPENDENCY = re.compile(
+    rb"(?:libcuda|libcudnn|libcublas|libcudart|libnvrtc|libtorch)[^\x00]*\.so",
+    re.I,
 )
 
 
@@ -81,7 +142,7 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         audited_secret_files={},
         audited_libraries={},
         secret_content=(),
-        forbidden_elf_dependency=re.compile(rb"(?!)"),
+        forbidden_elf_dependency=FORBIDDEN_ELF_DEPENDENCY,
     ):
         return walker.scan_tars(tars, config)
 

@@ -1,0 +1,3 @@
+# Phase A intentionally resolves no Python runtime artifacts.
+# CUDA, cuDNN, torch, CuRobo 0.7.8, SAPIEN, MPLib, Warp, and the remaining
+# RoboTwin closure stay runtime-only and require a separately approved lock.

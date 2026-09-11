@@ -62,17 +62,16 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
-## Restricted BYOF candidates excluded from publication
+## Unbuilt BYOF bootstrap candidates excluded from publication
 
 RoboTwin 2.0 is intentionally absent from the public image table. Its
-`byof-robotwin.yaml` candidate compiles pinned CuRobo v0.7.8, whose NVIDIA
-license permits noncommercial research/evaluation only, into an operator-owned
-private image. Official RoboTwin assets remain an exact-revision runtime fetch
-and are not baked. The guarded live harness includes a pre-launch exact-digest
-rootfs/layer scan, but no built-image scan result exists until the manager
-authorizes that private build. No public tag, anonymous-pull result, or public
-release status is claimed. The workflow, license boundary, and pending
-exact-digest RTX PRO 6000 acceptance gate are documented in
+`npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` candidate is a planned public
+zero-vendor-payload bootstrap, not a published image. Phase A leaves the Ubuntu
+base, apt closure, and runtime lock incomplete and refuses builds/runs. RoboTwin,
+CuRobo, CUDA/cuDNN, simulator packages, assets, caches, credentials, and outputs
+remain outside the image. No exact image, byte scan, SBOM, provenance,
+anonymous-pull result, or RTX result exists. The independent runtime-use and
+output-rights decisions and the exact-digest RTX PRO 6000 gate are documented in
 [`byof-robotwin.md`](byof-robotwin.md).
 
 ## Pending NCore conversion image

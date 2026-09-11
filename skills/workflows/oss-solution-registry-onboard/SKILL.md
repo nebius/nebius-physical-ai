@@ -244,8 +244,10 @@ emits native RoboTwin HDF5 plus decoded MP4 evidence with hashes, sizes, action
 and frame counts, observed GPU/image identity, task success, and exit status.
 Renderer startup or task registration alone is not evidence.
 
-The image is private and restricted because its pinned CuRobo v0.7.8 build is
-licensed for noncommercial research/evaluation. Official assets remain a
+The Phase A image is a zero-vendor-payload public-bootstrap candidate and remains
+unbuilt/publication-quarantined. CuRobo v0.7.8 stays runtime-only and its
+noncommercial research/evaluation field-of-use restriction remains binding on
+use and service claims. Official assets remain a
 runtime fetch. The guarded live harness must refuse before building when the
 manager-owned runtime-use decision is absent, scan the pushed exact digest's
 rootfs and every layer for asset/cache/output bytes, and launch only that

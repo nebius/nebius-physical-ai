@@ -64,6 +64,12 @@ def _robotwin_bridge_fixture(
     payload = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+        "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -80,7 +86,6 @@ def _robotwin_bridge_fixture(
         "kubeconfig": "/owner-only/robotwin-kubeconfig-canary",
         "kubernetes_context": context_name,
         "skypilot_config_path": "/owner-only/robotwin-skypilot-canary",
-        "registry": "registry.example/robotwin-private-canary",
         "bucket": "robotwin-private-bucket-canary",
         "output_root": output_root,
         "run_id": run_id,
@@ -1524,6 +1529,8 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         CHILD_OUTPUT_PREFIX_ENV,
         CHILD_OUTPUT_ROOT_ENV,
         CHILD_RUN_ID_ENV,
+        CHILD_RUNTIME_AUTH_ENV,
+        encode_runtime_authorization,
         prepare_inner_submit,
     )
     from npa.orchestration.skypilot import k8s_gpu_catalog
@@ -1533,7 +1540,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     )
     authorization = outer_context.authorization
     endpoint = "https://storage.eu-north1.nebius.cloud"
-    image = authorization.registry + "/npa-byof@sha256:" + "a" * 64
+    image = authorization.bootstrap_image
     environment = {
         "KUBECONFIG": authorization.kubeconfig_source,
         "KUBECONTEXT": authorization.kubernetes_context,
@@ -1553,6 +1560,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         ),
         CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
         CHILD_RUN_ID_ENV: authorization.run_id,
+        CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
         "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
             authorization.context_sha256
         ),
@@ -1740,8 +1748,9 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
             execution_target=target,
             execution_preflight_report={},
             robotwin_submit_context=submit_context,
-        )
+    )
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 def test_confidential_bridge_cannot_select_a_generic_workflow(
