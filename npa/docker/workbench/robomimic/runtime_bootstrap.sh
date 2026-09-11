@@ -3,21 +3,42 @@ set -euo pipefail
 
 readonly runtime_root="${NPA_ROBOMIMIC_RUNTIME_ROOT:-/opt/npa-runtime/robomimic}"
 readonly verifier="/opt/npa/robomimic/verify_image.py"
+readonly expected_inventory_sha256="${NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256:-}"
+
+verify_runtime() {
+  if [[ ! "${expected_inventory_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: manager-approved runtime inventory digest is required" >&2
+    return 78
+  fi
+  /usr/local/bin/python3 "${verifier}" runtime \
+    --runtime-root "${runtime_root}" \
+    --expected-inventory-sha256 "${expected_inventory_sha256}"
+}
 
 case "${1:-}" in
   verify)
-    exec /usr/local/bin/python3 "${verifier}" runtime --runtime-root "${runtime_root}"
+    verify_runtime
     ;;
   exec)
     shift
-    /usr/local/bin/python3 "${verifier}" runtime --runtime-root "${runtime_root}" >/dev/null
-    exec "${runtime_root}/payload/bin/python" "$@"
+    snapshot_parent="$(mktemp -d)"
+    snapshot_root="${snapshot_parent}/runtime"
+    trap 'rm -rf -- "${snapshot_parent}"' EXIT
+    /usr/local/bin/python3 "${verifier}" snapshot \
+      --runtime-root "${runtime_root}" \
+      --expected-inventory-sha256 "${expected_inventory_sha256}" \
+      --destination "${snapshot_root}" >/dev/null
+    trap - EXIT
+    export NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"
+    exec "${snapshot_root}/payload/bin/python" "$@"
     ;;
   assert-refusal)
     empty_root="$(mktemp -d)"
     trap 'rm -rf -- "${empty_root}"' EXIT
     set +e
-    /usr/local/bin/python3 "${verifier}" runtime --runtime-root "${empty_root}" \
+    NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256="${expected_inventory_sha256}" \
+      /usr/local/bin/python3 "${verifier}" runtime --runtime-root "${empty_root}" \
+      --expected-inventory-sha256 "${expected_inventory_sha256}" \
       >"${empty_root}.stdout" 2>"${empty_root}.stderr"
     status=$?
     set -e

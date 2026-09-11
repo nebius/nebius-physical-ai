@@ -18,7 +18,7 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 48 hash-locked non-CUDA Python distributions. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
 | Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
-| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. |
+| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the manager-approved `inventory.json` SHA-256 plus the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the consumed bytes. |
 | Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
 Runtime fetching changes delivery, not permission. A credential, environment
@@ -44,9 +44,26 @@ SkyPilot Kubernetes bootstrap contract.
 `runtime-requirements.lock` records the compatibility target used by the
 deferred gate. It is not a downloader and its version list is not an artifact
 hash closure. The external runtime inventory must supply that closure for every
-installed file before consumption. `runtime_bootstrap.sh` exposes only
+installed file before consumption, and its exact document hash must be selected
+by the manager outside the runtime volume. That digest is identity, never terms
+acceptance. `runtime_bootstrap.sh` exposes only
 `verify`, `exec`, and `assert-refusal`; it has no ensure, fetch, install, sync,
-warm, or network path.
+warm, or network path. `exec` verifies the read-only source, constructs a
+run-private snapshot from only declared objects, independently verifies the
+snapshot, atomically publishes it, and executes its interpreter. The ephemeral
+snapshot is a separate runtime-consumption boundary and is removed with the pod;
+it is neither baked into the image nor uploaded as output.
+
+The checked-in `npa.workflow` remains a valid plan and immutable configuration
+source for the dedicated live harness. Ordinary `workflow submit` is
+intentionally refused in Phase A: it would put the generic BYOF controller in a
+workload pod without the manager-owned Kubernetes context and run-owned RBAC
+that the nested launch requires. The authorized live path is the dedicated E2E
+harness, which reads this exact spec on the operator host, resolves the private
+image and target from manager context, materializes the reviewed run-local
+profile, creates least-privilege observer RBAC, and invokes the same BYOF runner.
+No future change should lift ordinary workflow submission without separately
+closing that controller identity and RBAC design.
 
 `scan_image_robomimic_payload.py` is designed to inspect every layer and image history entry
 plus OCI config, so deleting a prohibited object in a later layer cannot conceal
@@ -98,8 +115,10 @@ After legal and transaction authorization, a future manager-approved stage must:
 3. Push only to authorized private staging, re-pull by exact digest, and repeat
    byte/security verification.
 4. Prepare the CUDA runtime independently, record every file and symlink, hash
-   its inventory, mount it read-only, and prove missing/corrupt/extra inventory
-   refusal independently.
+   its inventory, have the manager select that hash outside the volume, mount it
+   read-only, and prove missing/corrupt/extra inventory refusal independently.
+   Before execution, atomically publish and reverify a run-private snapshot of
+   only the declared objects.
 5. Bind the workload to exactly one STRICT-reserved B200; create a run-owned
    service account with only `get pods`; verify the executing pod's exact image
    digest, service account, one B200 model, and `sm_100` architecture before the

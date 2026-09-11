@@ -12,7 +12,10 @@ metadata:
 config:
   # Ordinary submission remains plan-only. The dedicated runner first requires
   # a manager-accepted private image digest, immutable target selectors, and the
-  # name of a pre-populated read-only runtime PVC. None grants runtime-use rights.
+  # name of a pre-populated read-only runtime PVC. The operator-host harness
+  # consumes this exact config; do not lift ordinary nested-controller execution
+  # without separately authorizing its Kubernetes identity and RBAC. None of
+  # these selectors grants runtime-use rights.
   execution_policy: dedicated-live-gate-only
   bucket: example-bucket
   repo_url: "https://github.com/ARISE-Initiative/robomimic.git"

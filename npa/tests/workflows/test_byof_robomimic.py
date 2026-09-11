@@ -43,8 +43,12 @@ SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
 DATASET_SHA256 = "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
 BASE_DIGEST = "sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84"
-BUILD_COMMAND_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-DEPENDENCY_LOCK_SHA256 = "910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71"
+BUILD_COMMAND_SHA256 = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+DEPENDENCY_LOCK_SHA256 = (
+    "910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71"
+)
 
 
 def _workflow_config() -> dict[str, object]:
@@ -65,9 +69,7 @@ def _live_e2e_module():
     tests_root = str(ROOT / "npa")
     sys.path.insert(0, tests_root)
     try:
-        return importlib.import_module(
-            "tests.e2e.test_byof_onboarding_live_e2e"
-        )
+        return importlib.import_module("tests.e2e.test_byof_onboarding_live_e2e")
     finally:
         sys.path.remove(tests_root)
 
@@ -147,17 +149,15 @@ def _fake_robomimic_kubectl(
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if "create" in command:
             manifest = yaml.safe_load(str(kwargs.get("input") or ""))
-            resource = (
-                f"{str(manifest['kind']).lower()}/{manifest['metadata']['name']}"
-            )
+            resource = f"{str(manifest['kind']).lower()}/{manifest['metadata']['name']}"
             manifest["metadata"]["uid"] = f"uid-{len(objects)}"
             manifest["metadata"]["resourceVersion"] = f"rv-{len(objects)}"
             objects[resource] = manifest
             if create_failure:
                 if foreign_owner_after_create:
-                    manifest["metadata"]["annotations"][
-                        "npa.nebius.ai/owner-token"
-                    ] = "another-invocation"
+                    manifest["metadata"]["annotations"]["npa.nebius.ai/owner-token"] = (
+                        "another-invocation"
+                    )
                 return subprocess.CompletedProcess(command, 1, "", "response lost")
             return subprocess.CompletedProcess(command, 0, "", "")
         if "delete" in command:
@@ -185,9 +185,9 @@ def _fake_robomimic_kubectl(
                 replacement_done = True
                 manifest["metadata"]["uid"] = "foreign-uid"
                 manifest["metadata"]["resourceVersion"] = "foreign-rv"
-                manifest["metadata"]["annotations"][
-                    "npa.nebius.ai/owner-token"
-                ] = "another-invocation"
+                manifest["metadata"]["annotations"]["npa.nebius.ai/owner-token"] = (
+                    "another-invocation"
+                )
             delete_options = json.loads(str(kwargs.get("input") or "{}"))
             preconditions = delete_options.get("preconditions", {})
             if manifest is not None and (
@@ -206,9 +206,7 @@ def _fake_robomimic_kubectl(
             output_format = command[command.index("-o") + 1]
             if output_format == "json":
                 cleanup_started = True
-                if ownership_get_oserror and resource.startswith(
-                    ownership_get_oserror
-                ):
+                if ownership_get_oserror and resource.startswith(ownership_get_oserror):
                     raise FileNotFoundError("simulated ownership lookup failure")
             elif (
                 cleanup_started
@@ -218,7 +216,9 @@ def _fake_robomimic_kubectl(
                 raise FileNotFoundError("simulated absence lookup failure")
             if manifest is None:
                 return subprocess.CompletedProcess(command, 0, "", "")
-            stdout = json.dumps(manifest) if output_format == "json" else f"{resource}\n"
+            stdout = (
+                json.dumps(manifest) if output_format == "json" else f"{resource}\n"
+            )
             return subprocess.CompletedProcess(command, 0, stdout, "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -239,6 +239,7 @@ def _fake_robomimic_kubectl(
         "NPA_BYOF_LIVE_GPU",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256",
     ),
 )
 def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
@@ -260,6 +261,7 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
         "NPA_BYOF_LIVE_GPU": "1",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
     }
     for variable, value in selectors.items():
         monkeypatch.setenv(variable, value)
@@ -279,6 +281,7 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
         namespace="robomimic-validation",
         service_account="npa-robomimic-run-scoped",
         runtime_pvc="robomimic-runtime-exact",
+        runtime_inventory_sha256="a" * 64,
     )
 
     source_task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
@@ -293,9 +296,15 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
         rendered_task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"]
         == "npa-robomimic-run-scoped"
     )
+    assert rendered_task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] == "a" * 64
     volumes = rendered_task["config"]["kubernetes"]["pod_config"]["spec"]["volumes"]
-    runtime_volume = next(item for item in volumes if item["name"] == "robomimic-runtime")
-    assert runtime_volume["persistentVolumeClaim"]["claimName"] == "robomimic-runtime-exact"
+    runtime_volume = next(
+        item for item in volumes if item["name"] == "robomimic-runtime"
+    )
+    assert (
+        runtime_volume["persistentVolumeClaim"]["claimName"]
+        == "robomimic-runtime-exact"
+    )
     assert (
         rendered_task["config"]["kubernetes"]["pod_config"]["spec"][
             "serviceAccountName"
@@ -562,9 +571,7 @@ def test_robomimic_observer_delete_uses_object_identity_preconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _live_e2e_module()
-    calls, fake_run = _fake_robomimic_kubectl(
-        replace_before_delete="rolebinding/"
-    )
+    calls, fake_run = _fake_robomimic_kubectl(replace_before_delete="rolebinding/")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     selectors = {
         "kubeconfig": "/owner-only/kubeconfig",
@@ -730,6 +737,7 @@ def test_robomimic_runner_cannot_disguise_registered_base_image(
         "NPA_BYOF_LIVE_GPU",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256",
     ):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr(
@@ -761,6 +769,31 @@ def test_robomimic_runner_cannot_disguise_registered_base_image(
     assert payload["build_started"] is False
     assert payload["push_started"] is False
     assert payload["run_started"] is False
+
+
+@pytest.mark.parametrize(
+    ("option", "image_ref"),
+    (
+        ("--base-image", "registry.invalid/team/npa-robomimic@sha256:" + "a" * 64),
+        ("--image", "registry.invalid/team/robomimic:candidate"),
+        ("--base-image", "docker:registry.invalid/team/npa-robomimic:candidate"),
+    ),
+)
+def test_robomimic_runner_recognizes_direct_image_references(
+    option: str, image_ref: str
+) -> None:
+    runner = _byof_runner_module()
+    args = runner._parse_args(
+        [
+            "--repo-url",
+            "https://github.com/example/unrelated.git",
+            "--solution-name",
+            "unrelated",
+            option,
+            image_ref,
+        ]
+    )
+    assert runner._is_robomimic_request(args) is True
 
 
 @pytest.mark.parametrize(
@@ -855,6 +888,7 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
         "NPA_BYOF_LIVE_GPU": "1",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
     }
     accepted_image = f"{manager_registry.rstrip('/')}/npa-robomimic@sha256:{'a' * 64}"
     env["NPA_BYOF_ROBOMIMIC_IMAGE"] = accepted_image
@@ -913,6 +947,7 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
         "NPA_BYOF_LIVE_GPU": "1",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
         "NPA_BYOF_ROBOMIMIC_IMAGE": accepted_image,
     }
     for variable, value in selectors.items():
@@ -927,6 +962,9 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
         namespace=selectors["NPA_BYOF_K8S_NAMESPACE"],
         service_account=live_module._robomimic_observer_name(run_id),
         runtime_pvc=selectors["NPA_BYOF_ROBOMIMIC_RUNTIME_PVC"],
+        runtime_inventory_sha256=selectors[
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
+        ],
     )
     config = _workflow_config()
     runner = _byof_runner_module()
@@ -978,12 +1016,14 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
             image=accepted_image,
             base_profile=args.base_profile,
         )
-    assert runner.ROBOMIMIC_BUILD_COMMAND_SHA256 == hashlib.sha256(
-        str(config["build_command"]).encode()
-    ).hexdigest()
-    assert runner.ROBOMIMIC_SMOKE_COMMAND_SHA256 == hashlib.sha256(
-        str(config["smoke_command"]).encode()
-    ).hexdigest()
+    assert (
+        runner.ROBOMIMIC_BUILD_COMMAND_SHA256
+        == hashlib.sha256(str(config["build_command"]).encode()).hexdigest()
+    )
+    assert (
+        runner.ROBOMIMIC_SMOKE_COMMAND_SHA256
+        == hashlib.sha256(str(config["smoke_command"]).encode()).hexdigest()
+    )
     wrong_image = "private.invalid/robomimic/npa-robomimic@sha256:" + "b" * 64
     with pytest.raises(ValueError, match="immutable inputs"):
         runner._require_robomimic_manager_context(
@@ -992,9 +1032,7 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
             image=wrong_image,
             base_profile=args.base_profile,
         )
-    malformed_image = (
-        "private.invalid/robomimic/unreviewed@sha256:" + "c" * 64
-    )
+    malformed_image = "private.invalid/robomimic/unreviewed@sha256:" + "c" * 64
     monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_IMAGE", malformed_image)
     args.image = malformed_image
     with pytest.raises(ValueError, match="exact private npa-robomimic digest"):
@@ -1042,6 +1080,7 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         "NPA_BYOF_LIVE_GPU": "1",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
         "NPA_BYOF_ROBOMIMIC_IMAGE": accepted_image,
     }
     Path(monkeypatch_env["NPA_BYOF_KUBECONFIG"]).write_text(
@@ -1055,6 +1094,9 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         namespace="robomimic-validation",
         service_account=module._robomimic_observer_name(run_id),
         runtime_pvc=monkeypatch_env["NPA_BYOF_ROBOMIMIC_RUNTIME_PVC"],
+        runtime_inventory_sha256=monkeypatch_env[
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
+        ],
     )
     config = _workflow_config()
     options = {
@@ -1069,11 +1111,16 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         "smoke-artifact": ("--smoke-artifact-name", "renamed.json"),
         "image": ("--image", "private.invalid/robomimic/other:tag"),
     }
-    flag = (f"--{mutation}",) if mutation in {
-        "skip-push",
-        "skip-run",
-        "no-cleanup",
-    } else options.get(mutation, ())
+    flag = (
+        (f"--{mutation}",)
+        if mutation
+        in {
+            "skip-push",
+            "skip-run",
+            "no-cleanup",
+        }
+        else options.get(mutation, ())
+    )
     if mutation == "profile":
         profile.write_text("name: unrelated\n", encoding="utf-8")
     command = [
@@ -1153,7 +1200,10 @@ def test_robomimic_workflow_direct_submit_refuses_before_preflight() -> None:
 
         assert result.exit_code != 0
         assert "dedicated live gate" in result.output
-        assert "before any image/runtime pull, data fetch, or GPU submission" in result.output
+        assert (
+            "before any image/runtime pull, data fetch, or GPU submission"
+            in result.output
+        )
 
 
 def test_robomimic_run_spec_execute_refuses_all_mutable_overrides() -> None:
@@ -1176,7 +1226,9 @@ def test_robomimic_run_spec_execute_refuses_all_mutable_overrides() -> None:
 
     assert result.exit_code != 0
     assert "dedicated live gate" in result.output
-    assert "before any image/runtime pull, data fetch, or GPU submission" in result.output
+    assert (
+        "before any image/runtime pull, data fetch, or GPU submission" in result.output
+    )
 
 
 def test_robomimic_workflow_validates_and_plans_real_byof_stage() -> None:
@@ -1229,7 +1281,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'config.train.hdf5_validation_filter_key = "valid"',
         'source_metadata.get("observed_head") != SOURCE_REVISION',
         f'BAKED_LOCK_SHA256 = "{DEPENDENCY_LOCK_SHA256}"',
-        'models/model_epoch_1.pth',
+        "models/model_epoch_1.pth",
         "policy_from_checkpoint(",
         "optimizer_step_count != TRAIN_STEPS",
         "action.shape != (7,)",
@@ -1237,7 +1289,15 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'architecture != "sm_100"',
         'os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1"',
         'os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()',
+        'os.environ["NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT"]',
+        "runtime_root == runtime_mount_root",
+        "snapshot_parent.stat().st_mode & 0o077",
         'pod_status.get("spec", {}).get("serviceAccountName", "")',
+        'status.get("name") == "ray-node"',
+        'containers[0].get("image") != runtime_image',
+        'runtime_mounts[0].get("readOnly") is True',
+        '.get("readOnly")',
+        "os.statvfs(runtime_root).f_flag & os.ST_RDONLY",
         '"architecture": architecture',
         '"strict_reserved_capacity_attested": True',
         '"observed_head": source_metadata["observed_head"]',
@@ -1260,6 +1320,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"workload_identity"',
         '"pretrained_weights": False',
         '"runtime_cache": "external-read-only-prepopulated"',
+        '"manager_inventory_digest_matched": True',
+        '"atomic_execution_snapshot": True',
+        '"snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0',
         '"exit_status": 0',
     ):
         assert required in smoke
@@ -1284,6 +1347,7 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
     assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] == ""
     assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] == ""
     assert 'export PATH="/opt/conda/bin:${PATH}"' not in task["run"]
     pod_spec = task["config"]["kubernetes"]["pod_config"]["spec"]
     mounts = pod_spec["containers"][0]["volumeMounts"]

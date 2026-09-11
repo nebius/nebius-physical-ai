@@ -45,7 +45,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _pod_identity(runtime_image: str, expected_digest: str) -> dict[str, object]:
+def _pod_identity(
+    runtime_image: str, expected_digest: str, runtime_root: Path
+) -> dict[str, object]:
     service_account_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
     pod_name = os.environ.get("HOSTNAME", "").strip()
     namespace = (service_account_root / "namespace").read_text(encoding="utf-8").strip()
@@ -81,13 +83,43 @@ def _pod_identity(runtime_image: str, expected_digest: str) -> dict[str, object]
     matching_statuses = [
         status
         for status in pod_status.get("status", {}).get("containerStatuses", [])
-        if expected_digest in str(status.get("imageID", ""))
+        if status.get("name") == "ray-node"
+        and expected_digest in str(status.get("imageID", ""))
     ]
     if len(matching_statuses) != 1:
         raise RuntimeError(
             "Pod status did not prove exactly one executing immutable image"
         )
     status = matching_statuses[0]
+    containers = [
+        container
+        for container in pod_status.get("spec", {}).get("containers", [])
+        if container.get("name") == "ray-node"
+    ]
+    if len(containers) != 1 or containers[0].get("image") != runtime_image:
+        raise RuntimeError(
+            "executing ray-node container does not use the expected immutable image"
+        )
+    runtime_mounts = [
+        mount
+        for mount in containers[0].get("volumeMounts", [])
+        if mount.get("name") == "robomimic-runtime"
+        and mount.get("mountPath") == str(runtime_root)
+    ]
+    runtime_volumes = [
+        volume
+        for volume in pod_status.get("spec", {}).get("volumes", [])
+        if volume.get("name") == "robomimic-runtime"
+    ]
+    mount_read_only = (
+        len(runtime_mounts) == 1
+        and runtime_mounts[0].get("readOnly") is True
+        and len(runtime_volumes) == 1
+        and runtime_volumes[0].get("persistentVolumeClaim", {}).get("readOnly") is True
+        and bool(os.statvfs(runtime_root).f_flag & os.ST_RDONLY)
+    )
+    if not mount_read_only:
+        raise RuntimeError("runtime volume is not observed as read-only")
     return {
         "pod_image": {
             "runtime_ref": runtime_image,
@@ -95,6 +127,14 @@ def _pod_identity(runtime_image: str, expected_digest: str) -> dict[str, object]
             "image_id": str(status["imageID"]),
             "container_name": status.get("name", ""),
             "observation_source": "Kubernetes Pod status.containerStatuses[].imageID",
+        },
+        "runtime_mount": {
+            "name": "robomimic-runtime",
+            "path": str(runtime_root),
+            "read_only": True,
+            "observation_source": (
+                "Kubernetes Pod spec volumeMount plus statvfs ST_RDONLY"
+            ),
         },
         "workload_identity": {
             "namespace": namespace,
@@ -213,12 +253,35 @@ def main() -> None:
     ):
         raise RuntimeError("neutral baked dependency lock mismatch")
     runtime_lock = component_root / "runtime-requirements.lock"
-    runtime_root = Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ROOT"])
+    runtime_mount_root = Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ROOT"])
+    runtime_root = Path(os.environ["NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT"])
+    snapshot_parent = runtime_root.parent
+    if (
+        runtime_root == runtime_mount_root
+        or snapshot_parent.stat().st_uid != os.getuid()
+        or snapshot_parent.stat().st_mode & 0o077
+        or runtime_root.stat().st_mode & 0o222
+    ):
+        raise RuntimeError("runtime execution snapshot is not private and read-only")
     runtime_inventory = json.loads(
         (runtime_root / "inventory.json").read_text(encoding="utf-8")
     )
 
-    pod = _pod_identity(runtime_image, match.group(1))
+    expected_runtime_inventory = os.environ.get(
+        "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
+    ).strip()
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", expected_runtime_inventory) is None
+        or _sha256(runtime_root / "inventory.json") != expected_runtime_inventory
+    ):
+        raise RuntimeError(
+            "runtime inventory does not match the manager-approved digest"
+        )
+
+    pod = _pod_identity(runtime_image, match.group(1), runtime_mount_root)
+    runtime_mount_proof = pod.get("runtime_mount")
+    if not isinstance(runtime_mount_proof, dict):
+        raise RuntimeError("runtime mount observation is absent")
     hardware = _hardware()
     dataset, demo_keys, sample_counts, action_min, action_max = _download_dataset(
         Path("/workspace/byof-inputs") / output_dir.name
@@ -394,7 +457,10 @@ def main() -> None:
             "inventory_sha256": _sha256(runtime_root / "inventory.json"),
             "runtime_id": runtime_inventory["runtime_id"],
             "prepopulated": True,
-            "read_only": True,
+            "manager_inventory_digest_matched": True,
+            "read_only": runtime_mount_proof.get("read_only") is True,
+            "atomic_execution_snapshot": True,
+            "snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0,
         },
         "dataset": {
             "repository": "robomimic/robomimic_datasets",

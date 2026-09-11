@@ -19,3 +19,11 @@ CUDA/cuDNN distribution, use, and service-rights decision is recorded by an
 authorized Nebius/operator representative, with NVIDIA guidance when needed. A
 runtime fetch, credential, private registry, image selector, or environment flag
 does not grant that permission.
+
+The runtime volume's own inventory is not self-attestation. The manager must
+select its exact inventory SHA-256 independently, and the bootstrap must match
+that hash while observing the mount read-only. Execution copies only declared
+objects into a private staging tree, verifies the copy again, removes write
+bits, and atomically publishes that run-local snapshot before invoking its
+interpreter. This is byte identity and race resistance only; it grants no
+license, entitlement, redistribution, or service right.

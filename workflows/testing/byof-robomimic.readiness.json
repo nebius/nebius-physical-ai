@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "234311bbbcfec85f6dba30a3aaaa1d6cbb0e7f15a5ec1908db09fb005c714b58",
+  "workflow_sha256": "38c9a06d6fe632a8eebd4a5e1ab720c2e455a551aee23e1c10d6f0b323a04541",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The Python 3.12 planner produced one B200 workbench.byof.repo step with both declared outputs; static tests preserve the real four-step held-out checkpoint-reload contract. No image, external CUDA runtime, dataset, workflow execution, or GPU was used.",
+      "reason": "The Python 3.12 planner produced one B200 workbench.byof.repo step with both declared outputs; static tests preserve the real four-step held-out checkpoint-reload contract. The exact spec is consumed by the dedicated operator-host harness; ordinary workflow submission remains refused because its nested controller identity/RBAC path is not authorized. No image, external CUDA runtime, dataset, workflow execution, or GPU was used.",
       "evidence": [
         "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, tool://robomimic, two outputs",
         "npa/docker/workbench/robomimic/smoke.py",
@@ -59,7 +59,8 @@
       "reason": "The exact-inventory read-only runtime contract exists only as code. No runtime bytes or cache were populated, and the applicable runtime-use decision and B200 authorization remain absent.",
       "evidence": [
         "profile requires one B200 and a read-only external runtime PVC",
-        "missing or mismatched runtime inventory exits 78 before workload execution",
+        "missing or mismatched manager-selected runtime inventory exits 78 before workload execution",
+        "execution uses an atomically published independently reverified run-private snapshot",
         "no B200 or live capability claim is made"
       ]
     }
