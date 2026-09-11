@@ -102,6 +102,7 @@ run: |
       "pod_name",
       "pod_namespace",
       "pod_uid",
+      "node_name",
       "container_name",
       "spec_image",
       "image_id",
@@ -126,7 +127,13 @@ run: |
   image_id = str(payload["image_id"])
   if expected_digest not in image_id:
       raise SystemExit("Kubernetes imageID differs from BYOF_IMAGE")
-  for key in ("pod_name", "pod_namespace", "pod_uid", "container_name"):
+  for key in (
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "node_name",
+      "container_name",
+  ):
       if not isinstance(payload[key], str) or not payload[key]:
           raise SystemExit(f"Pod image receipt is missing {key}")
   print(image_id)
