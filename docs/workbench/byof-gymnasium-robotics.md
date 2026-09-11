@@ -5,6 +5,24 @@ Gymnasium-Robotics. It is not a first-class NPA tool and does not claim policy
 training, expert performance, other environment families, or physical-robot
 transfer.
 
+## Phase A public-image quarantine
+
+The repository now contains a direct-public packaging design, not a built
+image. `npa-gymnasium-robotics` remains in **pre-registration quarantine**: it
+has no supported tag, accepted manifest, SM120 compatibility record, registry
+object, or anonymous-pull evidence. The Dockerfile's first executable gate
+fails before network access because the immutable APT/Python closure, actual
+corresponding source for retained reciprocal binaries, and the Shadow Hand
+preferred-form/transformation chain are not yet complete. Do not bypass that
+refusal with a URL, private registry, credential, runtime fetch, or consent
+proxy.
+
+The accepted private result at repository head `c308945a` is historical proof
+for its exact private digest and workflow bytes only. It is not evidence for
+this Phase A source, a redesigned executable image, the current head, or a
+future public digest. Fresh private and anonymous-public exact-digest RTX runs
+remain required after a manager-authorized evidence closure and build.
+
 ## Pinned inputs and licensing
 
 The official source is
@@ -51,11 +69,11 @@ no upstream asset bytes are republished as an output.
 
 | Artifact class | Delivery and decision |
 | --- | --- |
-| Source | Exact official commit, retained with its MIT root license inside the operator-private BYOF image. It is not copied into the NPA repository or promoted publicly. |
-| Baked runtime | Exact Ubuntu amd64 base plus the pinned MuJoCo wheel and version-pinned apt/Python closure. Notices are retained; the resulting image is authorized only for operator-private validation. |
+| Source | Exact official commit and MIT grant are reviewed inputs. A future image would convey the archive and license; Phase A fetches and bakes nothing. |
+| Baked runtime | Exact base and MuJoCo identities are reviewed, but the full APT/Python binary, license, and corresponding-source closure is incomplete. No Phase A image exists. |
 | Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
-| Data/assets | No external dataset. The directly loaded Shadow Hand XML, STL, and PNG files are part of the pinned upstream source, hash-verified, retained with `assets/LICENSE.md`, and used only in the private image. |
-| Cache | No model/data cache or credential is baked. Package-manager download caches are disabled or removed during the build. |
+| Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded, but public baking is blocked until preferred-form and transformation-source delivery is proven. |
+| Cache | No cache is required. Phase A performs no build or fetch; future layer scans must reject package caches, credentials, runtime state, and prior outputs. |
 | Outputs | Operator-generated factual JSON telemetry and execution logs. RGB frames are transient; only hashes and measurements are durable. No upstream asset byte is republished. |
 
 Runtime fetch is unnecessary for this capability because there is no separately
@@ -149,16 +167,13 @@ npa/.venv/bin/npa workbench workflow plan-spec \
   --run-id gymnasium-robotics-review --json
 ```
 
-For qualification, first use the BYOF runner's `--skip-run` path to build and
-push into the manager-assigned private registry. Resolve and pull that image by
-digest, then complete the SBOM, vulnerability, secret, license, payload, and
-container-contract checks. Set `NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE` to that
-reviewed immutable reference before enabling the dedicated live E2E gate; the
-test requires it, passes `--skip-build`, and cannot silently replace the scanned
-bytes. It submits through NPA/SkyPilot/Kubernetes, uploads evidence, and cancels
-the run-owned workload after terminal evidence. Exact registry, storage,
-cluster, capacity-block, pod, and run identifiers belong only in owner-only
-evidence.
+The Phase A workflow uses `base_profile: prebuilt`, an intentionally
+non-resolving placeholder, an empty build command, and the fixed in-image
+capability script. A later qualification transaction must inject an already
+scanned immutable digest; no workflow-side package installation is permitted.
+Set `NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE` only to that reviewed reference before
+enabling the dedicated live E2E gate. Exact registry, storage, cluster, reservation,
+pod, and run identifiers belong only in owner-only evidence.
 
 ## Deferred scope
 
