@@ -414,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _wait_for_terminal(
-    run_id: str,
+    scheduler_job_id: str,
     *,
     sky_bin: str,
     wait_timeout: int,
@@ -431,7 +431,7 @@ def _wait_for_terminal(
     )
     deadline = None if wait_timeout == -1 else time.time() + wait_timeout
     statuses: list[str] = []
-    final = workflow_status(run_id, sky_bin=sky_bin)
+    final = workflow_status(scheduler_job_id, sky_bin=sky_bin)
     statuses.append(final.status)
     polls = 1
     while (
@@ -440,7 +440,7 @@ def _wait_for_terminal(
         and (deadline is None or time.time() < deadline)
     ):
         time.sleep(max(poll_interval, 1))
-        final = workflow_status(run_id, sky_bin=sky_bin)
+        final = workflow_status(scheduler_job_id, sky_bin=sky_bin)
         statuses.append(final.status)
         polls += 1
     diagnostics = {
@@ -560,6 +560,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     ),
                     timeout=args.submit_timeout,
                 )
+                scheduler_job_id = str(result.job_id or "").strip()
+                if not scheduler_job_id:
+                    raise RuntimeError(
+                        "workflow submission returned no scheduler job ID"
+                    )
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
@@ -572,7 +577,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "outputs": outputs,
                 }
                 final, wait_diagnostics = _wait_for_terminal(
-                    run_id,
+                    scheduler_job_id,
                     sky_bin=sky_bin,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
