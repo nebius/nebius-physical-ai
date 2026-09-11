@@ -898,6 +898,8 @@ preflights passed against live services. S5's new-cluster command was validated
 with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
+### Starter MP4
+
 The full runtime completed all 15 stages at revision `1fb58217` on September 11,
 2026, using the starter input and the shipped generation and quality settings.
 Its 169-frame source
@@ -937,12 +939,39 @@ colored borders in one variant. These exploratory acceptance settings do not
 certify physical fidelity or suitability for training. Review your own outputs
 against the task's visual and motion requirements before using them as data.
 
+### LeRobot v3 episode and multiple generation windows
+
+R3a's pinned simulated ALOHA example was exercised at revision `4b09042f` on
+September 11, 2026, with the shipped settings. Episode 1 occupies seconds 8–16
+of the selected camera's shared `file-000.mp4`. The staged original contains
+400 frames at 50 fps; independently comparing every decoded frame with that
+upstream interval confirmed the correct episode was selected. Preparation
+produced 192 frames at 24 fps, retaining the eight-second duration.
+
+Each of the two generated variants used three native generation windows. Both
+published videos fully decode to the reference's 192 frames, dimensions, and
+eight-second timeline, with zero timestamp error. Native control readback and
+text/video guardrails passed. The evaluator accepted both on the first pass:
+aggregate score `0.675465` against `0.2`, and attribute scores `0.5` each against
+`0.25`. All eight attribute answers were complete; four attributes matched.
+The thresholds were unchanged for this run.
+
+Matched-time inspection, including generation-window boundaries, showed the
+recognizable cube-transfer action with altered gripper details and lighting
+artifacts. One variant visibly changes lighting at a window boundary. Matching
+timestamps and passing these exploratory criteria do not establish physical
+fidelity or make the outputs a trainable LeRobot dataset.
+
+### Automated checks and remaining scope
+
 Automated checks cover media corruption and alignment failures, native control
 pixels and guardrail processing, incomplete evaluator responses, runtime
 routing, every accepted variant's captions, and final artifact validation.
-Concurrent two-GPU variants, longer videos requiring multiple native chunks,
-fresh-cluster provisioning, a fresh macOS installation, and the desktop Rerun UI
-have not been validated by this run. Rejection-route adapter checks passed
+Concurrent two-GPU variants, fresh-cluster provisioning, a fresh macOS
+installation, and the desktop Rerun UI have not been validated by these runs.
+LeRobot v2 and metadata in a different chunk are covered by real-video
+regression tests; the live example uses v3 metadata in chunk zero.
+Rejection-route adapter checks passed
 against retained live reports; a full rejected runtime replay was not completed.
 
 ## Inspect the outputs
