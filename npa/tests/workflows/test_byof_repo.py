@@ -1215,6 +1215,82 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
 
 
+def test_dockerfile_bootstraps_only_ca_certificates_before_https_packages() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    http_source = (
+        '"URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"'
+    )
+    ca_bootstrap = (
+        "apt-get install -y --no-install-recommends ca-certificates;"
+    )
+    https_switch = (
+        'sed -i "s|^URIs: http://snapshot.ubuntu.com/ubuntu/'
+        '${BYOF_APT_SNAPSHOT}/$|URIs: https://snapshot.ubuntu.com/ubuntu/'
+        '${BYOF_APT_SNAPSHOT}/|"'
+    )
+    remaining_packages = (
+        "apt-get update && apt-get install -y --no-install-recommends \\\n"
+        "      git python3 python3-pip sudo rsync"
+    )
+
+    assert text.index(http_source) < text.index(ca_bootstrap)
+    assert text.index(ca_bootstrap) < text.index(https_switch)
+    assert text.index(https_switch) < text.index(remaining_packages)
+    bootstrap = text[text.index(ca_bootstrap) : text.index(https_switch)]
+    assert all(
+        package not in bootstrap
+        for package in ("git ", "python3", "sudo", "rsync", "openssh-server")
+    )
+
+
+def test_dockerfile_bootstrap_and_https_source_share_snapshot_binding() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    snapshot_path = "snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"
+
+    assert text.count(snapshot_path) == 4
+    assert "snapshot.ubuntu.com/ubuntu/latest" not in text
+    assert 'case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64' in text
+
+
+def test_dockerfile_http_bootstrap_enforces_ubuntu_archive_signature() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    snapshot_source = text[
+        text.index("'Types: deb'") : text.index(
+            "> /etc/apt/sources.list.d/npa-snapshot.sources"
+        )
+    ]
+
+    assert "test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg" in text
+    assert (
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
+        in snapshot_source
+    )
+    assert "--allow-unauthenticated" not in text
+    assert "AllowInsecureRepositories" not in text
+    assert "Trusted: yes" not in text
+
+
+def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    https_verification = (
+        'grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/'
+        '${BYOF_APT_SNAPSHOT}/"'
+    )
+    http_refusal = "! grep -F 'URIs: http://'"
+
+    assert text.index(https_verification) < text.index(http_refusal)
+    assert text.index(http_refusal) < text.index(
+        "apt-get update && apt-get install -y --no-install-recommends"
+    )
+    assert "Acquire::https::Verify-Peer" not in text
+    assert "Acquire::https::Verify-Host" not in text
+    assert "Acquire::AllowInsecureRepositories" not in text
+
+
 def test_compat_shim_delegates_to_run_byof_repo() -> None:
     shim_path = ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
     spec = importlib.util.spec_from_file_location(

@@ -329,17 +329,26 @@ def _dockerfile_text() -> str:
         '    suite="$(. /etc/os-release; printf \'%s\' "${VERSION_CODENAME:-}")"; \\\n'
         '    case "${suite}" in jammy|noble) ;; *) exit 65;; esac; \\\n'
         "    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \\\n"
+        "    test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg; \\\n"
         "    printf '%s\\n' \\\n"
         "      'Types: deb' \\\n"
-        '      "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
+        '      "URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
         '      "Suites: ${suite} ${suite}-updates ${suite}-security" \\\n'
         "      'Components: main universe restricted multiverse' \\\n"
         "      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \\\n"
         "      > /etc/apt/sources.list.d/npa-snapshot.sources; \\\n"
         "    printf '%s\\n' 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99snapshot; \\\n"
         "  fi; \\\n"
+        "  apt-get update; \\\n"
+        "  apt-get install -y --no-install-recommends ca-certificates; \\\n"
+        "  rm -rf /var/lib/apt/lists/*; \\\n"
+        '  if [ -n "${BYOF_APT_SNAPSHOT}" ]; then \\\n'
+        '    sed -i "s|^URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/$|URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/|" /etc/apt/sources.list.d/npa-snapshot.sources; \\\n'
+        '    grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n'
+        "    ! grep -F 'URIs: http://' /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n"
+        "  fi; \\\n"
         "  apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git ca-certificates python3 python3-pip sudo rsync \\\n"
+        "      git python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
