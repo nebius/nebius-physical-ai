@@ -16,6 +16,7 @@ It remains a private BYOF candidate; there is no public `npa-libero` image.
 |---|---|---|
 | LIBERO source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` | MIT. The private image retains the source, BDDL, and initial-state files but prunes `libero/libero/assets` and removes the Git object database in the source clone layer because this qualification does not render. |
 | CUDA base | `nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85` | NVIDIA Deep Learning Container License; pulling and using the image is NVIDIA's documented acceptance mechanism. Used only as the base of the operator-controlled private image. |
+| SkyPilot bootstrap packages | Ubuntu packages resolved during the operator-private build and bound by the resulting image digest | Distribution packages are baked runtime, not runtime-fetched task data. The build verifies every required package capability before recording its bootstrap attestation; the resulting image remains private and receives a fresh byte/license scan. |
 | Demonstration | `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, `libero_spatial/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate_demo.hdf5` | LIBERO's pinned README declares datasets CC BY 4.0. Runtime fetch only; never baked into the image. Expected size `508779600`, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`. |
 | Task BDDL | `libero/libero/bddl_files/libero_spatial/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate.bddl` | Part of the pinned MIT checkout. SHA-256 `9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b`. |
 | Initial states | matching `.init` file in the pinned task folder | Part of the pinned MIT checkout. SHA-256 `c3a6a01fdc53ae1914fe24c8935088d723baee8f6ee3cd5f8d68e86aea3e2f1c`. |
@@ -68,6 +69,16 @@ runner. The checked-in B200 resource profile is
 enabled. Never substitute an on-demand GPU or a public GHCR destination for the
 manager-owned runtime binding.
 
+Build the image from the current BYOF generator. Its SkyPilot 0.12.2 bootstrap
+contract installs and verifies the complete synchronous package capability set,
+including `curl`, `wget`, and the Ubuntu `fuse3` provider for `fuse`. The
+image-resident guard bypasses SkyPilot's redundant package-index and `fuse`
+installation only after that complete set verifies. A missing package fails the
+contract, and a bootstrap command that exceeds its deadline receives TERM and a
+kill-after escalation for its process group plus an explicit failure marker.
+An older private digest that predates this guard is not eligible for another
+attempt; it must be rebuilt and byte/scanner qualified before use.
+
 The workflow config is the source of truth for `repo_url`, `repo_ref`,
 `base_image`, `source_prune_path`, `build_command`, and `smoke_command`. A live
 operator passes those values to `npa/scripts/run_byof_repo.py` with:
@@ -87,6 +98,12 @@ Use a unique run id and S3 prefix. Do not reuse a tag: after push, run only the
 resolved immutable digest. The workload itself queries its Kubernetes Pod and
 requires the matching `status.containerStatuses[].imageID`; merely echoing the
 requested image is not accepted as runtime evidence.
+
+Immediately before a future submit, separately prove workload-network access to
+the pinned LIBERO GitHub source and the exact Hugging Face demonstration URL.
+Bootstrap-package readiness does not establish access to either official
+runtime-fetch endpoint. Refuse submission if either endpoint or its immutable
+identity cannot be verified.
 
 That Pod query requires `get` access to its own Pod. The payload therefore uses
 the deterministic `npa-byof-libero-payload` service account declared in the
