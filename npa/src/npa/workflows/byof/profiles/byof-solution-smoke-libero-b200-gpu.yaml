@@ -28,6 +28,8 @@ envs:
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
   set -euo pipefail
+  test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
+  /usr/local/sbin/npa-skypilot-bootstrap-guard verify
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
   test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"

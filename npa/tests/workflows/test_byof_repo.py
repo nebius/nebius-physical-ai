@@ -4,8 +4,12 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1225,12 +1229,254 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "mkdir -p /workspace" in text
     assert "openssh-server" in text
     assert "rsync" in text
+    assert "curl" in text
+    assert "wget" in text
+    assert "gcc" in text
+    assert "patch" in text
+    assert "pciutils" in text
+    assert "fuse3" in text
     assert "netcat-openbsd" in text
+    assert "npa-skypilot-bootstrap-guard verify" in text
+    assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" in text
+    assert "--kill-after=5s" in text
     assert "ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+    assert (
+        'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"' in text
+    )
+
+
+def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state = tmp_path / "bootstrap-apt.state"
+    contract_failure = tmp_path / "bootstrap-contract.failed"
+    sky_failure = tmp_path / "apt-ssh-setup.failed"
+    apt_complete = tmp_path / "apt-ssh-setup.complete"
+    apt_calls = tmp_path / "real-apt.calls"
+    real_apt = tmp_path / "real-apt-get"
+    real_apt.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$NPA_TEST_APT_CALLS\"\n",
+        encoding="utf-8",
+    )
+    real_apt.chmod(0o755)
+
+    dpkg_query = bin_dir / "dpkg-query"
+    dpkg_query.write_text(
+        """#!/bin/sh
+format=
+package=
+for argument in "$@"; do
+    case "$argument" in -f=*) format=${argument#-f=} ;; esac
+    package=$argument
+done
+if [ "${NPA_TEST_MISSING:-}" = netcat ]; then
+    case "$package" in netcat|netcat-openbsd|netcat-traditional) exit 1 ;; esac
+elif [ "$package" = "${NPA_TEST_MISSING:-}" ]; then
+    exit 1
+fi
+case "$format" in
+    '${Status}') printf '%s' 'install ok installed' ;;
+    '${Provides}')
+        if [ "${NPA_TEST_MISSING:-}" != fuse ]; then
+            printf '%s' 'fuse (= 3.10.5)'
+        fi
+        ;;
+    *) exit 2 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    dpkg_query.chmod(0o755)
+
+    for command_name in (
+        "sudo",
+        "sshd",
+        "rsync",
+        "service",
+        "curl",
+        "wget",
+        "nc",
+        "gcc",
+        "patch",
+        "lspci",
+        "fusermount",
+        "fusermount3",
+    ):
+        (bin_dir / command_name).symlink_to("/bin/true")
+
+    guard_text = module._skypilot_bootstrap_guard_script()
+    replacements = {
+        "/usr/bin/apt-get": str(real_apt),
+        "/usr/bin/timeout": shutil.which("timeout") or "/usr/bin/timeout",
+        "/tmp/npa-skypilot-bootstrap-apt.state": str(state),
+        "/tmp/npa-skypilot-bootstrap-contract.failed": str(contract_failure),
+        "/tmp/apt-ssh-setup.failed": str(sky_failure),
+        "/tmp/apt_ssh_setup_complete": str(apt_complete),
+    }
+    for source, target in replacements.items():
+        guard_text = guard_text.replace(source, target)
+
+    guard = bin_dir / "npa-skypilot-bootstrap-guard"
+    guard.write_text(guard_text, encoding="utf-8")
+    guard.chmod(0o755)
+    (bin_dir / "apt-get").symlink_to(guard)
+    (bin_dir / "timeout").symlink_to(guard)
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "NPA_TEST_APT_CALLS": str(apt_calls),
+        "NPA_TEST_MISSING": missing,
+        "SKYPILOT_POD_NODE_TYPE": "head",
+    }
+    return {
+        "apt_calls": apt_calls,
+        "bin_dir": bin_dir,
+        "contract_failure": contract_failure,
+        "env": env,
+        "guard": guard,
+        "sky_failure": sky_failure,
+        "state": state,
+    }
+
+
+@pytest.mark.parametrize(
+    "missing",
+    (
+        "rsync",
+        "curl",
+        "wget",
+        "netcat",
+        "gcc",
+        "patch",
+        "pciutils",
+        "fuse",
+        "fuse3",
+        "openssh-server",
+    ),
+)
+def test_bootstrap_guard_rejects_every_missing_skypilot_package(
+    tmp_path, missing
+) -> None:
+    module = _load_module()
+    assert module.SKYPILOT_BOOTSTRAP_PACKAGE_CAPABILITIES == (
+        "rsync",
+        "curl",
+        "wget",
+        "netcat",
+        "gcc",
+        "patch",
+        "pciutils",
+        "fuse",
+        "fuse3",
+        "openssh-server",
+    )
+    fixture = _bootstrap_guard_fixture(tmp_path, module, missing=missing)
+
+    result = subprocess.run(
+        [fixture["guard"], "verify"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 86
+    assert "NPA_SKYPILOT_BOOTSTRAP_FAILED status=86" in result.stderr
+    assert fixture["contract_failure"].is_file()
+    assert fixture["sky_failure"].is_file()
+
+
+def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    apt_get = fixture["bin_dir"] / "apt-get"
+
+    update = subprocess.run(
+        [apt_get, "update", "-o", "Acquire::Retries=0"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    install = subprocess.run(
+        [apt_get, "install", "-o", "Dpkg::Options::=--force-confold", "-y", "fuse"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert update.returncode == 0
+    assert install.returncode == 0
+    assert "operation=update" in update.stdout
+    assert "operation=install package=fuse provider=fuse3" in install.stdout
+    assert fixture["state"].read_text(encoding="utf-8") == "complete\n"
+    assert not fixture["apt_calls"].exists()
+
+    ordinary_apt = subprocess.run(
+        [apt_get, "update"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ordinary_apt.returncode == 0
+    assert fixture["apt_calls"].read_text(encoding="utf-8") == "update\n"
+
+
+def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    timeout_guard = fixture["bin_dir"] / "timeout"
+    guard_text = timeout_guard.resolve().read_text(encoding="utf-8")
+    timeout_guard.resolve().write_text(
+        guard_text.replace("--kill-after=5s", "--kill-after=0.2s"),
+        encoding="utf-8",
+    )
+    descendant_pid_path = tmp_path / "descendant.pid"
+    command = (
+        "trap '' TERM; "
+        "/bin/bash --noprofile --norc -c "
+        "'trap \"\" TERM; printf \"%s\\n\" \"$$\" > \"$1\"; while :; do :; done' "
+        f"descendant {descendant_pid_path} & wait"
+    )
+
+    result = subprocess.run(
+        [timeout_guard, "0.1s", "/bin/bash", "--noprofile", "--norc", "-c", command],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode in {124, 137}
+    assert "NPA_SKYPILOT_BOOTSTRAP_FAILED" in result.stderr
+    assert "detail=deadline-exceeded" in result.stderr
+    assert fixture["contract_failure"].is_file()
+    assert fixture["sky_failure"].is_file()
+    descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and Path(f"/proc/{descendant_pid}").exists():
+            state = Path(f"/proc/{descendant_pid}/stat").read_text().split()[2]
+            if state == "Z":
+                break
+            time.sleep(0.02)
+        if Path(f"/proc/{descendant_pid}").exists():
+            assert Path(f"/proc/{descendant_pid}/stat").read_text().split()[2] == "Z"
+    finally:
+        try:
+            os.kill(descendant_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 @pytest.mark.parametrize(
