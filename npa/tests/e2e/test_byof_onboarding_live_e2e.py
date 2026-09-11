@@ -59,6 +59,9 @@ HABITAT_SIM_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-habitat-sim.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 RUNNER = CliRunner()
 HABITAT_SOURCE_REVISION = "57ee4941dc4765240f0f91f70b2c97a919bf9038"
+HABITAT_ARCHIVE_SHA256 = (
+    "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06"
+)
 HABITAT_SCENE_SHA256 = (
     "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56"
 )
@@ -906,7 +909,21 @@ def _assert_habitat_runtime_proof(proof: dict[str, object], image: str) -> None:
     assert proof["scene_id"] == "habitat_test_scenes/skokloster-castle.glb"
     assert proof["scene_sha256"] == HABITAT_SCENE_SHA256
     assert proof["scene"]["navmesh_sha256"] == HABITAT_NAVMESH_SHA256
+    assert proof["scene"]["archive"]["sha256"] == HABITAT_ARCHIVE_SHA256
+    assert proof["scene"]["archive"]["zip_integrity"] == "pass"
+    assert proof["scene"]["archive"]["ephemeral_copy_removed"] is True
+    assert proof["scene"]["archive"]["unrelated_members_extracted"] is False
+    assert proof["scene"]["archive_member"]["sha256"] == HABITAT_SCENE_SHA256
+    assert (
+        proof["scene"]["navmesh_archive_member"]["sha256"]
+        == HABITAT_NAVMESH_SHA256
+    )
     assert proof["scene_license"] == "CC BY 4.0"
+    assert proof["scene"]["license_url"] == (
+        "https://creativecommons.org/licenses/by/4.0/legalcode.en"
+    )
+    assert proof["scene"]["original_asset"]["creator"] == "Skokloster Castle"
+    assert "byte-for-byte" in proof["scene"]["modification_notice"]
     assert proof["agent_displacement"] > 0.1
     assert len(proof["agent_start"]) == len(proof["agent_end"]) == 3
     assert proof["bullet"]["built_with_bullet"] is True
@@ -958,6 +975,7 @@ def _write_habitat_live_validation(
             ),
             "proof_sha256": proof_sha256,
             "source_revision": proof["source_revision"],
+            "scene_archive_sha256": proof["scene"]["archive"]["sha256"],
             "scene_sha256": proof["scene_sha256"],
             "pushed_image_digest": pushed_image.rsplit("@", 1)[1],
             "kubernetes_image_id": kubernetes_image_id,
