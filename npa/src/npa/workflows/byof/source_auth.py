@@ -30,8 +30,10 @@ class RepositorySecretFiles:
     token: Path
     repo_url: Path
     repo_ref: Path
+    source_prune_path: Path
     repository_sha256: str
     ref_sha256: str
+    source_prune_path_sha256: str
     _redaction_values: tuple[str, ...] = field(repr=False)
 
     @property
@@ -246,6 +248,7 @@ def private_repository_secrets(
     repo_url: str,
     repo_ref: str,
     *,
+    source_prune_path: str = "",
     token_env: str = "",
     environ: Mapping[str, str] | None = None,
     preflight: bool = True,
@@ -269,15 +272,25 @@ def private_repository_secrets(
         )
         repo_url_path = directory / "repo-url"
         repo_ref_path = directory / "repo-ref"
+        source_prune_path_file = directory / "source-prune-path"
         _write_secret(repo_url_path, clean_url)
         _write_secret(repo_ref_path, clean_ref)
+        _write_secret(source_prune_path_file, source_prune_path)
         if preflight:
             _preflight_access(clean_url, clean_ref, token_path)
         yield RepositorySecretFiles(
             token=token_path,
             repo_url=repo_url_path,
             repo_ref=repo_ref_path,
+            source_prune_path=source_prune_path_file,
             repository_sha256=hashlib.sha256(clean_url.encode("utf-8")).hexdigest(),
             ref_sha256=hashlib.sha256(clean_ref.encode("utf-8")).hexdigest(),
-            _redaction_values=(token, clean_url, clean_ref),
+            source_prune_path_sha256=hashlib.sha256(
+                source_prune_path.encode("utf-8")
+            ).hexdigest(),
+            _redaction_values=tuple(
+                value
+                for value in (token, clean_url, clean_ref, source_prune_path)
+                if value
+            ),
         )

@@ -72,7 +72,10 @@ does not remove their bytes from an earlier image layer.
 
 For a private source, that receipt preserves only placeholders, SHA-256 values,
 and removal booleans; it never copies the private repository URL, ref, observed
-commit, or prune path into reusable metadata.
+commit, or prune path into reusable metadata. The prune path travels to
+BuildKit through an owner-only secret mount, is part of command-output
+redaction, and appears in the CLI summary only as a placeholder plus SHA-256;
+it is never a plain build argument or image-history value.
 
 For a first-class image, add or update:
 
