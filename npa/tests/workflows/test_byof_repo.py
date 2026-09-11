@@ -1215,46 +1215,61 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
 
 
-def test_dockerfile_bootstraps_only_ca_certificates_before_https_packages() -> None:
+def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
     module = _load_module()
     text = module._dockerfile_text()
-    http_source = (
-        '"URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"'
+    pinned_add = (
+        f"ADD --checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256} "
+        f"{module.BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb"
     )
-    ca_bootstrap = (
-        "apt-get install -y --no-install-recommends ca-certificates;"
+    read_only_mount = (
+        "RUN --mount=type=bind,from=npa-ca-bootstrap,"
+        "source=/npa-ca-certificates.deb,"
+        "target=/tmp/npa-ca-certificates.deb,readonly"
     )
-    https_switch = (
-        'sed -i "s|^URIs: http://snapshot.ubuntu.com/ubuntu/'
-        '${BYOF_APT_SNAPSHOT}/$|URIs: https://snapshot.ubuntu.com/ubuntu/'
-        '${BYOF_APT_SNAPSHOT}/|"'
+    ca_extract = "dpkg-deb -x /tmp/npa-ca-certificates.deb /;"
+    ca_bundle = (
+        "find /usr/share/ca-certificates -type f -name '*.crt' -exec cat '{}' +"
+    )
+    https_source = (
+        '"URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"'
     )
     remaining_packages = (
-        "apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git python3 python3-pip sudo rsync"
+        "apt-get install -y --no-install-recommends \\\n"
+        "      ca-certificates git python3 python3-pip sudo rsync"
     )
 
-    assert text.index(http_source) < text.index(ca_bootstrap)
-    assert text.index(ca_bootstrap) < text.index(https_switch)
-    assert text.index(https_switch) < text.index(remaining_packages)
-    bootstrap = text[text.index(ca_bootstrap) : text.index(https_switch)]
+    assert text.index(pinned_add) < text.index(ca_extract)
+    assert text.index(pinned_add) < text.index(read_only_mount)
+    assert text.index(read_only_mount) < text.index(ca_extract)
+    assert text.index(ca_extract) < text.index(ca_bundle)
+    assert text.index(ca_bundle) < text.index(https_source)
+    assert text.index(https_source) < text.index(remaining_packages)
+    bootstrap = text[text.index(ca_extract) : text.index(https_source)]
     assert all(
         package not in bootstrap
         for package in ("git ", "python3", "sudo", "rsync", "openssh-server")
     )
 
 
-def test_dockerfile_bootstrap_and_https_source_share_snapshot_binding() -> None:
+def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     snapshot_path = "snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"
 
-    assert text.count(snapshot_path) == 4
+    assert text.count(snapshot_path) == 2
+    assert module.BYOF_CA_BOOTSTRAP_URL.startswith(
+        "https://snapshot.ubuntu.com/ubuntu/20260801T053000Z/"
+    )
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 == (
+        "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245"
+    )
+    assert f"--checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256}" in text
     assert "snapshot.ubuntu.com/ubuntu/latest" not in text
     assert 'case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64' in text
 
 
-def test_dockerfile_http_bootstrap_enforces_ubuntu_archive_signature() -> None:
+def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     snapshot_source = text[
@@ -1283,12 +1298,26 @@ def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> Non
     http_refusal = "! grep -F 'URIs: http://'"
 
     assert text.index(https_verification) < text.index(http_refusal)
-    assert text.index(http_refusal) < text.index(
-        "apt-get update && apt-get install -y --no-install-recommends"
-    )
+    assert text.index(http_refusal) < text.index("apt-get install -y")
+    assert "URIs: http://snapshot.ubuntu.com" not in text
     assert "Acquire::https::Verify-Peer" not in text
     assert "Acquire::https::Verify-Host" not in text
     assert "Acquire::AllowInsecureRepositories" not in text
+
+
+def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    add = text.index("ADD --checksum=sha256:")
+    final_stage = text.index("FROM ${BYOF_BASE_IMAGE}", add)
+    mount = text.index("RUN --mount=type=bind,from=npa-ca-bootstrap", final_stage)
+    extract = text.index("dpkg-deb -x /tmp/npa-ca-certificates.deb /")
+    apt_update = text.index("apt-get update", extract)
+
+    assert add < final_stage < mount < extract < apt_update
+    assert "COPY --from=npa-ca-bootstrap" not in text
+    assert "ADD --checksum=sha256:" not in text[final_stage:]
+    assert "test -s /etc/ssl/certs/ca-certificates.crt" in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

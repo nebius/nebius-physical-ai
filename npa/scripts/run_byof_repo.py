@@ -40,6 +40,13 @@ ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
+BYOF_CA_BOOTSTRAP_URL = (
+    "https://snapshot.ubuntu.com/ubuntu/20260801T053000Z/pool/main/"
+    "c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb"
+)
+BYOF_CA_BOOTSTRAP_SHA256 = (
+    "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245"
+)
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -313,6 +320,9 @@ def _dockerfile_text() -> str:
     return (
         "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
+        "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap\n"
+        f"ADD --checksum=sha256:{BYOF_CA_BOOTSTRAP_SHA256} "
+        f"{BYOF_CA_BOOTSTRAP_URL} /npa-ca-certificates.deb\n"
         "FROM ${BYOF_BASE_IMAGE}\n"
         'ARG OSS_REPO_URL=""\n'
         'ARG OSS_REPO_REF=""\n'
@@ -323,16 +333,23 @@ def _dockerfile_text() -> str:
         "ARG BYOF_BUILD_COMMAND\n"
         'ARG BYOF_APT_SNAPSHOT=""\n'
         "USER root\n"
-        "RUN set -eu; \\\n"
+        "RUN --mount=type=bind,from=npa-ca-bootstrap,"
+        "source=/npa-ca-certificates.deb,"
+        "target=/tmp/npa-ca-certificates.deb,readonly \\\n"
+        "  set -eu; \\\n"
         '  if [ -n "${BYOF_APT_SNAPSHOT}" ]; then \\\n'
         '    case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64;; esac; \\\n'
         '    suite="$(. /etc/os-release; printf \'%s\' "${VERSION_CODENAME:-}")"; \\\n'
         '    case "${suite}" in jammy|noble) ;; *) exit 65;; esac; \\\n'
         "    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \\\n"
         "    test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg; \\\n"
+        "    dpkg-deb -x /tmp/npa-ca-certificates.deb /; \\\n"
+        "    find /usr/share/ca-certificates -type f -name '*.crt' -exec cat '{}' + \\\n"
+        "      > /etc/ssl/certs/ca-certificates.crt; \\\n"
+        "    test -s /etc/ssl/certs/ca-certificates.crt; \\\n"
         "    printf '%s\\n' \\\n"
         "      'Types: deb' \\\n"
-        '      "URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
+        '      "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" \\\n'
         '      "Suites: ${suite} ${suite}-updates ${suite}-security" \\\n'
         "      'Components: main universe restricted multiverse' \\\n"
         "      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \\\n"
@@ -340,15 +357,12 @@ def _dockerfile_text() -> str:
         "    printf '%s\\n' 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99snapshot; \\\n"
         "  fi; \\\n"
         "  apt-get update; \\\n"
-        "  apt-get install -y --no-install-recommends ca-certificates; \\\n"
-        "  rm -rf /var/lib/apt/lists/*; \\\n"
         '  if [ -n "${BYOF_APT_SNAPSHOT}" ]; then \\\n'
-        '    sed -i "s|^URIs: http://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/$|URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/|" /etc/apt/sources.list.d/npa-snapshot.sources; \\\n'
         '    grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/" /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n'
         "    ! grep -F 'URIs: http://' /etc/apt/sources.list.d/npa-snapshot.sources >/dev/null; \\\n"
         "  fi; \\\n"
-        "  apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git python3 python3-pip sudo rsync \\\n"
+        "  apt-get install -y --no-install-recommends \\\n"
+        "      ca-certificates git python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
