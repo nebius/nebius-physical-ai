@@ -994,6 +994,17 @@ def development_image_for_tool(
     )
 
 
+def _normalized_registry(registry: str) -> str:
+    candidate = str(registry or "").strip().rstrip("/")
+    host, separator, path = candidate.partition("/")
+    if not host.startswith("[") and ":" in host:
+        hostname, port = host.rsplit(":", 1)
+        if port.isdigit():
+            host = hostname
+    host = host.rstrip(".")
+    return f"{host}{separator}{path}".lower()
+
+
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
@@ -1001,23 +1012,16 @@ def is_public_registry(registry: str) -> bool:
     namespace, and the configured public release namespace. GHCR is package-
     scoped, so an arbitrary operator GHCR namespace is not assumed public.
     """
-    candidate = registry.strip().rstrip("/")
+    candidate = _normalized_registry(registry)
     if not candidate:
         return False
-    host, separator, path = candidate.partition("/")
-    if not host.startswith("[") and ":" in host:
-        hostname, port = host.rsplit(":", 1)
-        if port.isdigit():
-            host = hostname
-    host = host.rstrip(".")
-    candidate = f"{host}{separator}{path}"
-    host = host.lower()
+    host = candidate.split("/", 1)[0]
     if host in PUBLIC_REGISTRY_HOSTS:
         return True
-    if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():
+    if candidate == _normalized_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY):
         return True
-    mirror = public_container_registry().strip().rstrip("/")
-    return bool(mirror) and candidate.lower() == mirror.lower()
+    mirror = _normalized_registry(public_container_registry())
+    return bool(mirror) and candidate == mirror
 
 
 def is_official_container_registry(registry: str) -> bool:
