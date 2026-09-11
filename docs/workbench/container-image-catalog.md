@@ -254,6 +254,47 @@ The Cosmos3 serving bootstrap also uses a patched Python base and verified
 runtime installation tools. These source changes do not republish or qualify
 the existing supported image digests listed above.
 
+## GPU coverage of the published set
+
+Publication is not GPU support. Nebius offers six x86_64 GPU platforms — L40S
+(`sm_89`), H100 and H200 (both `sm_90`), RTX PRO 6000 Blackwell (`sm_120`), B200
+(`sm_100`), and B300 (`sm_103`) — plus aarch64 `gpu-gb300`. Per-image verdicts and
+the run-level evidence behind them are in
+[Image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md);
+this chart is generated from that table and the publishing plan:
+
+![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
+
+All 32 accepted release references resolved anonymously to their recorded
+digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to
+an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
+groups the current publishing plan three ways:
+
+- **17 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+  `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
+  `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
+  `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
+  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
+  `npa-wan2-2`. This band does not mean every cell has a current-release run:
+  the matrix distinguishes verified, historical, supported, and unverified
+  cells.
+- **7 public images are blocked on at least one platform**:
+  `npa-content-agents`, `npa-cosmos`, `npa-cosmos2-transfer`,
+  `npa-cosmos3-serving`, `npa-isaac-lab`, `npa-leisaac`, and `npa-sonic`.
+  Their constraints are not interchangeable. They include missing RT cores,
+  vendor-stack or extension allowlists, a CUDA 12.8 NVRTC `sm_103` gap, and an
+  8-GPU memory floor; `npa-leisaac` is also not routed to L40S by its launcher.
+- **8 are CPU-only and GPU-agnostic**: `npa-cosmos-curate`,
+  `npa-cosmos-evaluator`, `npa-fiftyone`, `npa-foxglove-embed`, `npa-lichtblick`,
+  `npa-rerun-viewer`, `npa-retargeting`, and `npa-sim2real-control`. Only
+  node-pool scheduling matters.
+
+Two gaps sit outside that split. No published image runs on `gpu-gb300`: its
+host is aarch64, while every current public runtime variant is `linux/amd64`.
+And no published image has a recorded L40S capability run; those cells are
+supported, blocked, not routed, unverified, or CPU-only rather than verified or
+historical evidence.
+
 ## Intentionally not published as separate images
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
@@ -299,8 +340,10 @@ Maintainers should use `skills/atomic/audit-container-docs/SKILL.md` to repeat
 the repository-inventory and anonymous-registry audit after container changes.
 
 This catalog does not imply that every image supports every GPU. Use the
-[B300 validation matrix](../b300-validation-matrix.md) when choosing a
-hardware-specific variant, and use the
+[image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md) when
+choosing a hardware-specific variant, the
+[B300 validation matrix](../b300-validation-matrix.md) for the earlier B300-only
+run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.
 
