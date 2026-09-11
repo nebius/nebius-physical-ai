@@ -14,6 +14,20 @@ resources:
   memory: 64+
   disk_size: 100
   image_id: "docker:<your-private-registry>/<namespace>/npa-byof:<your-run-id>"
+  kubernetes:
+    pod_config:
+      spec:
+        containers:
+          - name: ray-node
+            env:
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+              - name: POD_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
@@ -72,6 +86,7 @@ run: |
   metadata = json.loads((root / "npa_source_metadata.json").read_text(encoding="utf-8"))
   smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "1"))
   image = os.environ.get("BYOF_IMAGE", "")
+  image_digest = image.rsplit("@", 1)[-1] if "@" in image else ""
   smoke_artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
   smoke_artifact = root / smoke_artifact_name
   smoke_payload = (
@@ -84,7 +99,7 @@ run: |
       "tool": "byof",
       "workload": "solution-smoke-robotwin-rtxpro",
       "run_id": run_id,
-      "image": image,
+      "image_digest": image_digest,
       "repo_root": os.environ["BYOF_REPO_ROOT"],
       "metadata": metadata,
       "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),

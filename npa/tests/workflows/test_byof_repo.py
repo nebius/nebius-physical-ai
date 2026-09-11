@@ -9,10 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+ROBOTWIN_WORKFLOW = ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
 
 
 def _load_module():
@@ -32,6 +34,375 @@ def _accepted_wan_base_args(module) -> list[str]:
         "--base-image",
         f"registry.example/project/npa-wan2-2@{digest}",
     ]
+
+
+def _robotwin_context(**updates: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "solution": "robotwin",
+        "ownership_provenance": "manager-issued",
+        "reservation": {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        },
+        "license_acceptance": {
+            "nvidia_cuda_eula": True,
+            "nvidia_cudnn_sla": True,
+            "curobo_noncommercial_research_or_evaluation": True,
+            "robotwin2_aggregate_asset_and_output_terms": True,
+        },
+        "project": "private-project-canary",
+        "nebius_profile": "private-profile-canary",
+        "kubeconfig": "/private/kubeconfig-canary",
+        "kubernetes_context": "private-context-canary",
+        "skypilot_config_path": "/private/skypilot-canary.yaml",
+        "registry": "registry.example/private-namespace-canary",
+        "bucket": "private-bucket-canary",
+        "output_root": "s3://private-bucket-canary/robotwin-output",
+        "run_id": "robotwin-private-run-canary",
+    }
+    payload.update(updates)
+    return payload
+
+
+def _robotwin_args(module, *extra: str) -> list[str]:
+    config = yaml.safe_load(ROBOTWIN_WORKFLOW.read_text(encoding="utf-8"))["config"]
+    return [
+        "--repo-url",
+        str(config["repo_url"]),
+        "--repo-ref",
+        str(config["repo_ref"]),
+        "--base-profile",
+        str(config["base_profile"]),
+        "--base-image",
+        str(config["base_image"]),
+        "--build-command",
+        str(config["build_command"]),
+        "--workload",
+        str(config["workload"]),
+        "--smoke-command",
+        str(config["smoke_command"]),
+        "--solution-name",
+        "robotwin",
+        "--capability-name",
+        str(config["capability_name"]),
+        "--smoke-artifact-name",
+        str(config["smoke_artifact_name"]),
+        "--yaml",
+        str(config["resource_profile_yaml"]),
+        "--task",
+        str(config["task"]),
+        "--iterations",
+        str(config["iterations"]),
+        "--num-envs",
+        str(config["num_envs"]),
+        "--num-demos",
+        str(config["num_demos"]),
+        "--wait-timeout",
+        str(config["wait_timeout"]),
+        "--poll-interval",
+        str(config["poll_interval"]),
+        "--runtime-context-env",
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV,
+        *extra,
+    ]
+
+
+@pytest.mark.parametrize(
+    "context,error",
+    [
+        (None, "is required"),
+        ("{", "not valid JSON"),
+        (json.dumps(_robotwin_context(solution="another")), "wrong solution"),
+        (
+            json.dumps(
+                _robotwin_context(
+                    license_acceptance={
+                        "nvidia_cuda_eula": True,
+                        "nvidia_cudnn_sla": True,
+                        "curobo_noncommercial_research_or_evaluation": True,
+                    }
+                )
+            ),
+            "robotwin2_aggregate_asset_and_output_terms",
+        ),
+        (
+            json.dumps(_robotwin_context(registry="docker.io/example/public")),
+            "operator-private registry",
+        ),
+    ],
+)
+def test_robotwin_authorization_refuses_before_any_side_effect(
+    monkeypatch, capsys, context: str | None, error: str
+) -> None:
+    module = _load_module()
+    if context is None:
+        monkeypatch.delenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, raising=False)
+    else:
+        monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, context)
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail("source validation ran before refusal"),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry resolved before refusal"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert error in output["error"]
+
+
+def test_robotwin_context_file_must_be_owner_only(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    context = tmp_path / "context.json"
+    context.write_text(json.dumps(_robotwin_context()), encoding="utf-8")
+    context.chmod(0o644)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context))
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail("source validation ran before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    assert "must be owner-only" in capsys.readouterr().out
+
+    context.chmod(0o600)
+    link = tmp_path / "context-link.json"
+    link.symlink_to(context)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(link))
+    assert module.main(_robotwin_args(module)) == 1
+    output = capsys.readouterr().out
+    assert "not readable" in output
+    assert str(link) not in output
+
+
+def test_robotwin_profile_failure_precedes_build_and_redacts_context(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    payload = _robotwin_context()
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(payload))
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("authorized registry was not applied"),
+    )
+
+    def fail_activation(cmd, **_kwargs):
+        assert cmd[:3] == ["nebius", "profile", "activate"]
+        raise RuntimeError(f"profile activation failed for {payload['nebius_profile']}")
+
+    monkeypatch.setattr(module, "_run", fail_activation)
+    monkeypatch.setattr(
+        module,
+        "_scan_robotwin_image",
+        lambda *_args, **_kwargs: pytest.fail("image scan ran after failed profile"),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    output = capsys.readouterr().out
+    assert "profile activation failed" in output
+    for field in (
+        "project",
+        "nebius_profile",
+        "kubeconfig",
+        "kubernetes_context",
+        "skypilot_config_path",
+        "registry",
+        "bucket",
+        "output_root",
+        "run_id",
+    ):
+        assert str(payload[field]) not in output
+
+
+def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    payload = _robotwin_context()
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(payload))
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("authorized registry was not applied"),
+    )
+    events: list[str] = []
+    seen_env: dict[str, str] = {}
+
+    def fake_scan(image: str, **_kwargs):
+        events.append("scan")
+        assert image.endswith("@sha256:" + "a" * 64)
+        return {
+            "format": "npa_robotwin_image_byte_scan_v1",
+            "report_sha256": "b" * 64,
+            "archives_scanned": 3,
+            "status": "pass",
+        }
+
+    def fake_live_env(project: str, **_kwargs):
+        events.append("live-env")
+        assert project == payload["project"]
+        return {"MOCK_STORAGE": "yes"}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["nebius", "profile", "activate"]:
+            events.append("profile")
+        elif cmd[:2] == ["docker", "build"]:
+            events.append("build")
+        elif cmd[:2] == ["docker", "push"]:
+            events.append("push")
+        elif cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            events.append("inspect")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Digest: sha256:" + "a" * 64 + "\n", stderr=""
+            )
+        elif str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            events.append("runner")
+            seen_env.update(kwargs["env"])
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"success"}\n', stderr=""
+            )
+        else:
+            pytest.fail(f"unexpected external command: {cmd[0]}")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_scan_robotwin_image", fake_scan)
+    monkeypatch.setattr(module, "_live_runner_env", fake_live_env)
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    assert module.main(_robotwin_args(module)) == 0
+    assert events == [
+        "profile",
+        "build",
+        "push",
+        "inspect",
+        "scan",
+        "live-env",
+        "runner",
+    ]
+    assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] == "b" * 64
+    assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] == "3"
+    assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in seen_env
+    output = capsys.readouterr().out
+    for field in (
+        "project",
+        "nebius_profile",
+        "kubeconfig",
+        "kubernetes_context",
+        "skypilot_config_path",
+        "registry",
+        "bucket",
+        "output_root",
+        "run_id",
+    ):
+        assert str(payload[field]) not in output
+
+
+def test_robotwin_image_scan_failure_precedes_live_runner(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.setenv(
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
+    )
+    monkeypatch.setattr(module, "validate_repository_url", lambda *_args, **_kwargs: None)
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Digest: sha256:" + "a" * 64 + "\n", stderr=""
+            )
+        if str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            pytest.fail("live runner started after image scan failure")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    def fail_scan(*_args, **_kwargs):
+        raise RuntimeError("exact-image scan rejected runtime-only bytes")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_scan_robotwin_image", fail_scan)
+
+    assert module.main(_robotwin_args(module)) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "scan rejected runtime-only bytes" in output["error"]
+
+
+def test_robotwin_rejects_unscannable_build_modes_before_profile(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setenv(
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("profile activated before refusal"),
+    )
+
+    assert module.main(_robotwin_args(module, "--skip-push")) == 1
+    assert "complete build, scan, and live smoke" in capsys.readouterr().out
+
+    assert module.main(_robotwin_args(module, "--skip-build")) == 1
+    assert "complete build, scan, and live smoke" in capsys.readouterr().out
+
+
+def test_robotwin_rejects_modified_public_smoke_contract_before_profile(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setenv(
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("profile activated before refusal"),
+    )
+    args = _robotwin_args(module)
+    args[args.index("--repo-ref") + 1] = "main"
+
+    assert module.main(args) == 1
+    assert "unexpected repo_ref" in capsys.readouterr().out
+
+    assert module.main(
+        _robotwin_args(module, "--registry", "registry.example/public-argv")
+    ) == 1
+    assert "must come from authorization" in capsys.readouterr().out
+
+
+def test_runtime_authorization_is_removed_from_child_environment(monkeypatch) -> None:
+    module = _load_module()
+    captured: dict[str, str] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, "secret-context-canary")
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+    module._run(["true"])
+    assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in captured
 
 
 def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:

@@ -93,6 +93,7 @@ def build_byof_argv(
     solution_name: str = "",
     capability_name: str = "",
     smoke_artifact_name: str = "",
+    runtime_context_env: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -152,6 +153,8 @@ def build_byof_argv(
         argv.extend(["--capability-name", capability_name])
     if smoke_artifact_name:
         argv.extend(["--smoke-artifact-name", smoke_artifact_name])
+    if runtime_context_env:
+        argv.extend(["--runtime-context-env", runtime_context_env])
     if project:
         argv.extend(["--project", project])
     if registry:
@@ -233,6 +236,14 @@ def run_cmd(
         "--smoke-artifact-name",
         help="Expected JSON artifact filename for solution-smoke.",
     ),
+    runtime_context_env: str = typer.Option(
+        "",
+        "--runtime-context-env",
+        help=(
+            "Environment-variable name containing owner-only runtime authorization; "
+            "the secret value is never placed in argv."
+        ),
+    ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
     ),
@@ -297,6 +308,7 @@ def run_cmd(
         solution_name=solution_name,
         capability_name=capability_name,
         smoke_artifact_name=smoke_artifact_name,
+        runtime_context_env=runtime_context_env,
         project=project,
         registry=registry,
         image=image,

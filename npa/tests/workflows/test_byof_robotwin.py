@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import base64
 import hashlib
+import inspect
 import json
 import re
 import sys
@@ -77,6 +78,16 @@ def test_robotwin_workflow_validates_and_plans_the_byof_toolref() -> None:
     assert spec.metadata["name"] == "byof-robotwin"
     assert len(plan.steps) == 1
     assert plan.steps[0].tool_ref == "workbench.byof.repo"
+    assert "--runtime-context-env" in plan.steps[0].argv
+    assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in plan.steps[0].argv
+    for private_field in (
+        "nebius_profile",
+        "kubeconfig",
+        "kubernetes_context",
+        "skypilot_config_path",
+        "registry",
+    ):
+        assert private_field not in " ".join(plan.steps[0].argv)
 
 
 def test_robotwin_pins_source_assets_build_inputs_and_private_runtime() -> None:
@@ -106,6 +117,16 @@ def test_robotwin_pins_source_assets_build_inputs_and_private_runtime() -> None:
     assert "TianxingChen/RoboTwin2.0" not in build
     assert ASSET_REVISION not in build
     assert "ghcr.io/nebius" not in workflow_text
+
+    sys.path.insert(0, str(ROOT / "npa" / "scripts"))
+    import run_byof_repo as runner
+
+    assert runner.ROBOTWIN_BUILD_COMMAND_SHA256 == hashlib.sha256(
+        build.encode()
+    ).hexdigest()
+    assert runner.ROBOTWIN_SMOKE_COMMAND_SHA256 == hashlib.sha256(
+        str(config["smoke_command"]).encode()
+    ).hexdigest()
 
 
 def test_robotwin_smoke_is_a_real_successful_seed_search_replay_and_collection() -> None:
@@ -166,6 +187,9 @@ def test_robotwin_smoke_hard_fails_closed_on_gpu_vulkan_image_and_artifacts() ->
     assert '"RTX PRO 6000" not in vulkan_text.upper()' in smoke
     assert 'sapien.render.get_device_summary()' in smoke
     assert re.search(r"sha256:\[0-9a-f\]\{64\}", smoke)
+    assert "Kubernetes status.containerStatuses[].imageID" in smoke
+    assert "kubernetes.default.svc" in smoke
+    assert 'item.get("name") == "ray-node"' in smoke
     assert 'if not hdf5_path.is_file() or not video_path.is_file()' in smoke
     assert 'if payload["exit_status"] != 0' in smoke
 
@@ -181,6 +205,14 @@ def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> N
     assert resources["accelerators"] == (
         "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     )
+    pod_env = resources["kubernetes"]["pod_config"]["spec"]["containers"][0][
+        "env"
+    ]
+    assert {item["name"] for item in pod_env} == {"POD_NAME", "POD_NAMESPACE"}
+    assert {item["valueFrom"]["fieldRef"]["fieldPath"] for item in pod_env} == {
+        "metadata.name",
+        "metadata.namespace",
+    }
     assert isinstance(envs, dict)
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     assert envs["VK_ICD_FILENAMES"] == "/usr/share/vulkan/icd.d/nvidia_icd.json"
@@ -194,6 +226,9 @@ def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> N
 def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> None:
     live_test = LIVE_E2E.read_text(encoding="utf-8")
 
+    assert inspect.signature(
+        live_e2e.test_live_robotwin_build_push_run_and_artifacts
+    ).parameters == {}
     for required in (
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
         'payload.get("ownership_provenance")',
@@ -204,13 +239,21 @@ def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> 
         '"nvidia_cudnn_sla"',
         '"curobo_noncommercial_research_or_evaluation"',
         '"robotwin2_aggregate_asset_and_output_terms"',
-        'ROBOTWIN_IMAGE_SCANNER',
-        '"--skip-run"',
-        '"--skip-build"',
-        'env["NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256"] = runtime_sha256',
-        'env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] = scan_report_sha256',
+        '"--runtime-context-env"',
+        'str(config["runtime_context_env"])',
+        '"-m"',
+        '"npa"',
     ):
         assert required in live_test
+    for forbidden in (
+        '"--registry"',
+        '"--project"',
+        '"--config-path"',
+        'ROBOTWIN_IMAGE_SCANNER',
+    ):
+        assert forbidden not in inspect.getsource(
+            live_e2e.test_live_robotwin_build_push_run_and_artifacts
+        )
     assert "NPA_BYOF_ROBOTWIN_STRICT_CAPACITY" not in live_test
 
 
@@ -219,13 +262,13 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
 ) -> None:
     monkeypatch.delenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", raising=False)
     monkeypatch.setattr(
-        live_e2e,
-        "_activate_nebius_profile",
+        live_e2e.subprocess,
+        "run",
         lambda *_: pytest.fail("authorization refusal occurred too late"),
     )
 
     with pytest.raises(AssertionError, match="RUNTIME_CONTEXT is required"):
-        live_e2e.test_live_robotwin_build_push_run_and_artifacts(None)
+        live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 
 def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
@@ -253,11 +296,12 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
         ),
         encoding="utf-8",
     )
+    context.chmod(0o600)
     monkeypatch.setattr(live_e2e, "REPO_ROOT", repo)
     monkeypatch.setenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", str(context))
     monkeypatch.setattr(
-        live_e2e,
-        "_activate_nebius_profile",
+        live_e2e.subprocess,
+        "run",
         lambda *_: pytest.fail("license refusal occurred too late"),
     )
 
@@ -265,7 +309,7 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
         AssertionError,
         match="robotwin2_aggregate_asset_and_output_terms",
     ):
-        live_e2e.test_live_robotwin_build_push_run_and_artifacts(None)
+        live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 
 def test_robotwin_readiness_hash_matches_workflow() -> None:
