@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -12,7 +13,7 @@ import re
 import ssl
 import subprocess
 import sys
-import urllib.request
+import urllib.parse
 
 import h5py
 import numpy as np
@@ -26,8 +27,8 @@ DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
 DATASET_PATH = "v1.5/lift/ph/low_dim_v15.hdf5"
 DATASET_SHA256 = "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
 DATASET_BYTES = 21_084_088
-BAKED_LOCK_SHA256 = "910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71"
-BAKED_ARTIFACT_COUNT = 48
+BAKED_LOCK_SHA256 = "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
+BAKED_ARTIFACT_COUNT = 34
 TRAIN_STEPS = 4
 VALIDATION_STEPS = 2
 CAPABILITIES = [
@@ -35,6 +36,65 @@ CAPABILITIES = [
     "lift_ph_lowdim_heldout_validate",
     "lift_ph_lowdim_checkpoint_reload_action",
 ]
+
+_HTTPS_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+
+def _open_allowed_https(
+    url: str,
+    *,
+    headers: dict[str, str],
+    allowed_hosts: tuple[str, ...],
+    allow_subdomains: bool = False,
+    context: ssl.SSLContext | None = None,
+) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
+    """Open a tightly scoped HTTPS GET without urllib's multi-scheme opener."""
+    current_url = url
+    for _ in range(6):
+        parsed = urllib.parse.urlsplit(current_url)
+        hostname = (parsed.hostname or "").lower()
+        allowed = any(
+            hostname == allowed_host
+            or (allow_subdomains and hostname.endswith(f".{allowed_host}"))
+            for allowed_host in allowed_hosts
+        )
+        if (
+            parsed.scheme != "https"
+            or not allowed
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in {None, 443}
+            or parsed.fragment
+        ):
+            raise RuntimeError("refusing URL outside the approved HTTPS origins")
+        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        connection = http.client.HTTPSConnection(
+            hostname,
+            port=parsed.port,
+            context=context,
+            timeout=120,
+        )
+        try:
+            connection.request("GET", target, headers=headers)
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException):
+            connection.close()
+            raise
+        if response.status in _HTTPS_REDIRECT_STATUSES:
+            location = response.getheader("Location")
+            response.close()
+            connection.close()
+            if not location:
+                raise RuntimeError("HTTPS redirect omitted its destination")
+            current_url = urllib.parse.urljoin(current_url, location)
+            continue
+        if response.status != 200:
+            status = response.status
+            response.close()
+            connection.close()
+            raise RuntimeError(f"approved HTTPS origin returned status {status}")
+        return connection, response
+    raise RuntimeError("too many HTTPS redirects")
 
 
 def _sha256(path: Path) -> str:
@@ -62,13 +122,18 @@ def _pod_identity(
             f"service_account_set={bool(expected_service_account)}"
         )
     token = (service_account_root / "token").read_text(encoding="utf-8").strip()
-    request = urllib.request.Request(
+    context = ssl.create_default_context(cafile=str(service_account_root / "ca.crt"))
+    connection, response = _open_allowed_https(
         f"https://kubernetes.default.svc/api/v1/namespaces/{namespace}/pods/{pod_name}",
         headers={"Authorization": f"Bearer {token}"},
+        allowed_hosts=("kubernetes.default.svc",),
+        context=context,
     )
-    context = ssl.create_default_context(cafile=str(service_account_root / "ca.crt"))
-    with urllib.request.urlopen(request, context=context) as response:
+    try:
         pod_status = json.load(response)
+    finally:
+        response.close()
+        connection.close()
     observed_service_account = str(
         pod_status.get("spec", {}).get("serviceAccountName", "")
     )
@@ -190,17 +255,28 @@ def _download_dataset(
         "https://huggingface.co/datasets/robomimic/robomimic_datasets/resolve/"
         f"{DATASET_REVISION}/{DATASET_PATH}?download=true"
     )
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "npa-robomimic-smoke/1"}
-    )
     digest = hashlib.sha256()
     byte_count = 0
     try:
-        with urllib.request.urlopen(request) as response, partial.open("xb") as handle:
-            for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                handle.write(chunk)
-                digest.update(chunk)
-                byte_count += len(chunk)
+        connection, response = _open_allowed_https(
+            url,
+            headers={"User-Agent": "npa-robomimic-smoke/1"},
+            allowed_hosts=(
+                "huggingface.co",
+                "hf.co",
+                "amazonaws.com",
+                "cloudfront.net",
+            ),
+            allow_subdomains=True,
+        )
+        try:
+            with response, partial.open("xb") as handle:
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    byte_count += len(chunk)
+        finally:
+            connection.close()
         if digest.hexdigest() != DATASET_SHA256 or byte_count != DATASET_BYTES:
             raise RuntimeError(
                 f"dataset identity mismatch: sha256={digest.hexdigest()} bytes={byte_count}"
@@ -249,7 +325,11 @@ def main() -> None:
     baked_lock = component_root / "baked-requirements.lock"
     if (
         _sha256(baked_lock) != BAKED_LOCK_SHA256
-        or len(baked_lock.read_bytes().splitlines()) != BAKED_ARTIFACT_COUNT
+        or sum(
+            bool(re.match(rb"^[A-Za-z0-9_.-]+==", line))
+            for line in baked_lock.read_bytes().splitlines()
+        )
+        != BAKED_ARTIFACT_COUNT
     ):
         raise RuntimeError("neutral baked dependency lock mismatch")
     runtime_lock = component_root / "runtime-requirements.lock"

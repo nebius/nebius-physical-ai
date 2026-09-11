@@ -448,7 +448,7 @@ build hook.
 ### Neutral robomimic candidate
 
 `npa-robomimic` is a quarantined example of a split runtime boundary. The
-intended image bakes pinned MIT robomimic source and a 48-entry hash-locked
+intended image bakes pinned MIT robomimic source and a 34-entry hash-locked
 non-CUDA dependency closure on a digest-pinned Python base. It must contain no
 torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
 credential, or output. `scan_image_robomimic_payload.py` must inspect every

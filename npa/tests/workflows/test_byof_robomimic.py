@@ -8,6 +8,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -47,7 +48,7 @@ BUILD_COMMAND_SHA256 = (
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 DEPENDENCY_LOCK_SHA256 = (
-    "910b762eb9fa6bb31bfb05d339845d8c68c81f0b3e85ab95ec3eefbca29cad71"
+    "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
 )
 
 
@@ -1264,7 +1265,13 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert smoke == "robomimic-entrypoint smoke"
     assert hashlib.sha256(build.encode()).hexdigest() == BUILD_COMMAND_SHA256
     lock_bytes = BAKED_LOCK.read_bytes()
-    assert len(lock_bytes.splitlines()) == 48
+    assert (
+        sum(
+            bool(re.match(rb"^[A-Za-z0-9_.-]+==", line))
+            for line in lock_bytes.splitlines()
+        )
+        == 34
+    )
     assert hashlib.sha256(lock_bytes).hexdigest() == DEPENDENCY_LOCK_SHA256
     smoke = _smoke_python()
 
