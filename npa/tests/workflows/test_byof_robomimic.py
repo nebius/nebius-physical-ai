@@ -90,6 +90,8 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         DATASET_REVISION,
         DATASET_SHA256,
         '"split_train_val.py"',
+        "np.random.seed(0)",
+        "len(train_keys) + len(valid_keys) != len(demo_keys)",
         '"train.py"',
         "TRAIN_STEPS = 4",
         "VALIDATION_STEPS = 2",
@@ -107,7 +109,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         "action.shape != (7,)",
         '"B200" not in gpu_name.upper()',
         'architecture != "sm_100"',
+        'os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1"',
         '"architecture": architecture',
+        '"strict_reserved_capacity_attested": True',
         '"observed_head": source_head',
         '"trajectory_count": len(demo_keys)',
         '"sample_count": sum(sample_counts.values())',
@@ -145,6 +149,10 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     )
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert task["envs"]["BYOF_IMAGE"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == (
+        "${NPA_E2E_MK8S_RESERVED_CAPACITY}"
+    )
+    assert "pip install --quiet boto3" not in PROFILE.read_text(encoding="utf-8")
     assert 'smoke_artifact["exit_status"] = smoke_exit_code' in PROFILE.read_text(
         encoding="utf-8"
     )

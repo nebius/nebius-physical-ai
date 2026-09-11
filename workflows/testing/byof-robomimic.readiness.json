@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "354f476ab4abb69c7375bd146e44a41a07dad663ccb1eae73183ac76ffaa2bcf",
+  "workflow_sha256": "65b142000a127ff5de86b2a1b1f7dba5fd659b5ff8df60bf63b86c7091345e42",
   "planning": {
     "validation": {
       "status": "verified",
@@ -37,10 +37,11 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may only be selected after the prepared manager runtime plan is deployed and this child is explicitly authorized. The operator must also explicitly accept the NVIDIA Deep Learning Container terms for the private build and one-run validation scope.",
+      "reason": "No model entitlement is required, but storage, private-registry, Nebius, and Kubernetes credentials may only be selected after the prepared manager runtime plan is deployed and this child is explicitly authorized. An authorized operator must review the NVIDIA CUDA Toolkit EULA and cuDNN Software License Agreement before the private build and run; neither agreement exposes a vendor entitlement probe or documented environment acceptance mechanism.",
       "evidence": [
         "Public source and dataset require no token",
-        "docs/workbench/byof-robomimic.md: NVIDIA terms acceptance and temporary Pod-read RBAC preflight",
+        "NPA does not use a local consent proxy because a boolean cannot prove the operator's legal decision",
+        "docs/workbench/byof-robomimic.md: exact NVIDIA terms links, private-build boundary, and temporary Pod-read RBAC preflight",
         "child state.md: prepared-not-deployed; child_cloud_authorization=false"
       ]
     },
@@ -59,7 +60,7 @@
       "reason": "Exactly one STRICT-bound B200 and a temporary service account with get-only Pod access are required. Capacity is preflighted, but the manager plan is undeployed and this child has no authorized project, cluster, namespace, or network binding.",
       "evidence": [
         "byof-solution-smoke-robomimic-b200-gpu resources.accelerators=B200:1",
-        "profile serviceAccountName=npa-robomimic-observer; smoke requires status.containerStatuses[].imageID",
+        "profile serviceAccountName=npa-robomimic-observer; smoke requires STRICT-capacity attestation and status.containerStatuses[].imageID",
         "child state.md: prepared-not-deployed; child_cloud_authorization=false"
       ]
     }

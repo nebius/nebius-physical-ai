@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +15,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
+from npa.clients.project_credentials import s3_client_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -47,8 +50,19 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_SPEC = REPO_ROOT / "workflows" / "testing" / "byof.yaml"
+ROBOMIMIC_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-robomimic.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 RUNNER = CliRunner()
+ROBOMIMIC_SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
+ROBOMIMIC_DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
+ROBOMIMIC_DATASET_SHA256 = (
+    "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
+)
+ROBOMIMIC_CAPABILITIES = {
+    "lift_ph_lowdim_bc_train",
+    "lift_ph_lowdim_heldout_validate",
+    "lift_ph_lowdim_checkpoint_reload_action",
+}
 
 
 def _activate_nebius_profile() -> None:
@@ -305,6 +319,227 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
     assert summary.get("status") == "ok", summary
     assert summary["registry"] == registry
     assert registry in summary["image"]
+
+
+def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
+    selectors = {
+        "project": os.environ.get("NPA_E2E_PROJECT", "").strip(),
+        "registry": os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip(),
+        "kubeconfig": os.environ.get("NPA_BYOF_KUBECONFIG", "").strip(),
+        "context": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
+        "namespace": os.environ.get("NPA_BYOF_K8S_NAMESPACE", "").strip(),
+        "bucket": os.environ.get("NPA_E2E_S3_BUCKET", "").strip(),
+    }
+    assert selectors["project"] and e2e_project == selectors["project"]
+    assert selectors["registry"], "a manager-issued private registry is required"
+    assert selectors["kubeconfig"] and Path(selectors["kubeconfig"]).is_file()
+    assert selectors["context"], "a manager-issued Kubernetes context is required"
+    assert selectors["namespace"] and selectors["namespace"] != "default"
+    assert selectors["bucket"], "a manager-issued output bucket is required"
+    return selectors
+
+
+def _robomimic_runner_command(
+    config: dict[str, object],
+    registry: str,
+    project: str,
+    output_root: str,
+    run_id: str,
+) -> list[str]:
+    options = (
+        ("--registry", registry),
+        ("--project", project),
+        ("--repo-url", str(config["repo_url"])),
+        ("--repo-ref", str(config["repo_ref"])),
+        ("--base-profile", str(config["base_profile"])),
+        ("--base-image", str(config["base_image"])),
+        ("--build-command", str(config["build_command"])),
+        ("--workload", "solution-smoke"),
+        ("--smoke-command", str(config["smoke_command"])),
+        ("--solution-name", "robomimic"),
+        ("--capability-name", str(config["capability_name"])),
+        ("--smoke-artifact-name", "robomimic-smoke.json"),
+        ("--yaml", str(config["resource_profile_yaml"])),
+        ("--output-root", output_root),
+        ("--wait-timeout", "-1"),
+        ("--run-id", run_id),
+    )
+    return [
+        sys.executable,
+        str(BYOF_RUNNER),
+        *(item for pair in options for item in pair),
+    ]
+
+
+def _robomimic_target_env(
+    e2e_project: str, selectors: dict[str, str], cmd: list[str]
+) -> dict[str, str]:
+    config_path = skypilot_config_for_project(e2e_project)
+    if config_path:
+        cmd.extend(["--config-path", config_path])
+    target = resolve_byof_kubernetes_target(e2e_project)
+    assert target.kubeconfig == selectors["kubeconfig"]
+    assert target.context == selectors["context"]
+    assert target.namespace == selectors["namespace"]
+    env = dict(os.environ)
+    env["KUBECONFIG"] = target.kubeconfig
+    env["NPA_BYOF_KUBECONFIG"] = target.kubeconfig
+    env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    skypilot_bin = resolve_skypilot_bin()
+    if skypilot_bin:
+        env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
+    return env
+
+
+def _invoke_robomimic_gate(
+    e2e_project: str | None,
+) -> tuple[dict[str, object], str, str]:
+    selectors = _robomimic_live_selectors(e2e_project)
+    _activate_nebius_profile()
+    config = load_spec(ROBOMIMIC_SPEC).config
+    registry = resolve_container_registry(e2e_project)
+    assert registry == selectors["registry"].rstrip("/")
+    assert registry.split("/", 1)[0].lower() not in {"docker.io", "ghcr.io", "nvcr.io"}
+    bucket = live_bucket(e2e_project)
+    assert bucket == selectors["bucket"].removeprefix("s3://").split("/", 1)[0]
+    run_id = (
+        os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID")
+        or f"robomimic-live-{os.getpid()}"
+    )
+    cmd = _robomimic_runner_command(
+        config,
+        registry,
+        selectors["project"],
+        f"s3://{bucket}/oss-solutions/robomimic",
+        run_id,
+    )
+    accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+    if accepted_image:
+        assert "@sha256:" in accepted_image and accepted_image.startswith(
+            f"{registry}/"
+        )
+        cmd.extend(["--image", accepted_image, "--skip-build"])
+    env = _robomimic_target_env(selectors["project"], selectors, cmd)
+    proc = subprocess.run(
+        cmd, check=False, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    assert summary.get("status") == "ok", summary
+    summary_image = str(summary.get("image", ""))
+    assert summary_image.startswith(f"{registry}/") and "@sha256:" in summary_image
+    return summary, bucket, run_id
+
+
+def _robomimic_artifact(
+    e2e_project: str | None, bucket: str, run_id: str
+) -> dict[str, object]:
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    key = f"oss-solutions/robomimic/{run_id}/robomimic-smoke.json"
+    return json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+
+
+def _assert_robomimic_inputs(artifact: dict[str, object]) -> None:
+    source = artifact["source"]
+    assert source["repository"] == "ARISE-Initiative/robomimic"
+    assert source["revision"] == ROBOMIMIC_SOURCE_REVISION
+    assert source["observed_head"] == ROBOMIMIC_SOURCE_REVISION
+    assert source["byof_metadata"]["ref"] == ROBOMIMIC_SOURCE_REVISION
+    dataset = artifact["dataset"]
+    assert dataset["repository"] == "robomimic/robomimic_datasets"
+    assert dataset["revision"] == ROBOMIMIC_DATASET_REVISION
+    assert dataset["path"] == "v1.5/lift/ph/low_dim_v15.hdf5"
+    assert dataset["sha256"] == ROBOMIMIC_DATASET_SHA256
+    assert dataset["size_bytes"] == 21_084_088
+    assert dataset["trajectory_count"] == 200 and dataset["sample_count"] > 0
+
+
+def _assert_robomimic_split(artifact: dict[str, object]) -> None:
+    dataset, split = artifact["dataset"], artifact["split"]
+    assert split["overlap_count"] == 0
+    assert split["train_trajectory_count"] > 0
+    assert split["validation_trajectory_count"] > 0
+    assert split["train_trajectory_count"] + split["validation_trajectory_count"] == 200
+    assert split["train_sample_count"] > 0 and split["validation_sample_count"] > 0
+    assert split["train_sample_count"] + split["validation_sample_count"] == dataset[
+        "sample_count"
+    ]
+    assert re.fullmatch(r"[0-9a-f]{64}", split["train_keys_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", split["validation_keys_sha256"])
+
+
+def _assert_robomimic_training(artifact: dict[str, object]) -> None:
+    training = artifact["training"]
+    assert training["entrypoint"] == "robomimic/scripts/train.py"
+    assert training["algorithm"] == "bc" and training["optimizer"] == "adam"
+    assert training["optimizer_step_count"] == 4
+    assert training["configured_optimizer_steps"] == 4
+    assert training["validation_forward_steps"] == 2
+    assert math.isfinite(training["train_loss"])
+    assert math.isfinite(training["validation_loss"])
+    assert artifact["checkpoint"]["reloaded"] is True
+    assert re.fullmatch(r"[0-9a-f]{64}", artifact["checkpoint"]["sha256"])
+
+
+def _assert_robomimic_action(artifact: dict[str, object]) -> None:
+    action, split = artifact["heldout_action"], artifact["split"]
+    assert action["demo"] == split["heldout_demo"]
+    assert action["shape"] == [7] and action["finite"] is True
+    assert action["within_allowed_range"] is True
+    assert action["allowed_range"] == [-1.0, 1.0]
+    assert -1.0 <= action["observed_min"] <= action["observed_max"] <= 1.0
+    assert math.isfinite(action["observed_min"])
+    assert math.isfinite(action["observed_max"])
+
+
+def _assert_robomimic_runtime(artifact: dict[str, object], summary_image: str) -> None:
+    hardware = artifact["hardware"]
+    assert hardware["accelerator_count"] == 1 and "B200" in hardware["model"].upper()
+    assert hardware["architecture"] == "sm_100"
+    assert hardware["compute_capability"] == [10, 0]
+    assert len(hardware["nvidia_smi_rows"]) == 1
+    assert "B200" in hardware["nvidia_smi_rows"][0].upper()
+    assert hardware["strict_reserved_capacity_attested"] is True
+    pod_image = artifact["pod_image"]
+    assert pod_image["runtime_ref"] == summary_image
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", pod_image["digest"])
+    assert pod_image["digest"] in pod_image["image_id"]
+    assert pod_image["observation_source"] == (
+        "Kubernetes Pod status.containerStatuses[].imageID"
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_LIVE_GPU") != "1"
+    or os.environ.get("BYOF_ROBOMIMIC_LIVE") != "1"
+    or os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") != "1",
+    reason=(
+        "Set NPA_BYOF_LIVE_GPU=1, BYOF_ROBOMIMIC_LIVE=1, and "
+        "NPA_E2E_MK8S_RESERVED_CAPACITY=1 only with the assigned STRICT "
+        "one-B200 runtime context to execute the robomimic gate."
+    ),
+)
+def test_live_robomimic_b200_train_reload_gate(e2e_project: str | None) -> None:
+    """Build the private candidate and require its complete run-derived artifact."""
+
+    summary, bucket, run_id = _invoke_robomimic_gate(e2e_project)
+    summary_image = str(summary.get("image", ""))
+    artifact = _robomimic_artifact(e2e_project, bucket, run_id)
+    assert artifact["schema"] == "npa.workbench.robomimic.smoke.v1"
+    assert artifact["solution"] == "robomimic"
+    assert artifact["capability"] == "lift_ph_lowdim_checkpoint_reload_action"
+    assert set(artifact["capabilities_exercised"]) == ROBOMIMIC_CAPABILITIES
+    _assert_robomimic_inputs(artifact)
+    _assert_robomimic_split(artifact)
+    _assert_robomimic_training(artifact)
+    _assert_robomimic_action(artifact)
+    _assert_robomimic_runtime(artifact, summary_image)
+    assert set(artifact["deferred"]) == {
+        "image_policy_sweeps",
+        "simulator_rollouts",
+        "full_algorithm_matrix",
+    }
+    assert artifact["exit_status"] == 0
 
 
 @pytest.mark.skipif(
