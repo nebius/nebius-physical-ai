@@ -1152,6 +1152,37 @@ def _cleanup_gymnasium_run(
     )
 
 
+def _cleanup_gymnasium_run_after_success(
+    env: dict[str, str],
+    *,
+    namespace: str,
+    run_id: str,
+    config_path: str | None,
+) -> None:
+    try:
+        _cleanup_gymnasium_run(
+            env,
+            namespace=namespace,
+            run_id=run_id,
+            config_path=config_path,
+            issue_down=False,
+        )
+    except AssertionError as passive_error:
+        try:
+            _cleanup_gymnasium_run(
+                env,
+                namespace=namespace,
+                run_id=run_id,
+                config_path=config_path,
+                issue_down=True,
+            )
+        except BaseException as active_error:
+            passive_error.add_note(
+                f"active exact-run cleanup also failed: {active_error}"
+            )
+            raise passive_error from active_error
+
+
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
     image = str(summary["image"])
     expected_digest = _immutable_image_digest(image)
@@ -1263,14 +1294,20 @@ def test_live_gymnasium_robotics_exact_digest_capability(
             raise
     stdout = stdout_path.read_text(encoding="utf-8")
     stderr = stderr_path.read_text(encoding="utf-8")
-    _cleanup_gymnasium_run(
+    _cleanup_gymnasium_run_after_success(
         env,
         namespace=namespace,
         run_id=run_id,
         config_path=config_path,
-        issue_down=False,
+    )
+    credential_markers = live_credential_markers()
+    assert_no_credential_leakage(
+        stdout + "\n" + stderr, extra_forbidden=credential_markers
     )
     summary = _parse_last_json_blob(stdout + "\n" + stderr)
+    assert_no_credential_leakage(
+        json.dumps(summary, sort_keys=True), extra_forbidden=credential_markers
+    )
     assert summary["status"] == "ok", summary
     expected_digest = _gymnasium_expected_digest(summary)
     assert receipt["expected_digest"] == expected_digest
@@ -1278,6 +1315,13 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     artifact_bytes, remote_summary = _gymnasium_remote_evidence(
         e2e_project,
         root_uri=output_root.rstrip("/") + f"/{run_id}/",
+    )
+    assert_no_credential_leakage(
+        artifact_bytes.decode("utf-8"), extra_forbidden=credential_markers
+    )
+    assert_no_credential_leakage(
+        json.dumps(remote_summary, sort_keys=True),
+        extra_forbidden=credential_markers,
     )
     _assert_gymnasium_robotics_artifact(artifact_bytes, expected_digest=expected_digest)
     assert remote_summary["smoke_exit_code"] == 0

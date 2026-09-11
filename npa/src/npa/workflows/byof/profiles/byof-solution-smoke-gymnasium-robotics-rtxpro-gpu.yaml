@@ -47,10 +47,10 @@ run: |
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   cp "${BYOF_REPO_ROOT}/npa_build_metadata.json" "${OUTPUT_DIR}/npa_build_metadata.json"
   test -n "${BYOF_IMAGE}"
-  case "${BYOF_IMAGE}" in
-    *@sha256:????????????????????????????????????????????????????????????????) ;;
-    *) echo "BYOF_IMAGE must be an immutable sha256 reference" >&2; exit 65 ;;
-  esac
+  if ! printf '%s\n' "${BYOF_IMAGE}" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
+    echo "BYOF_IMAGE must be an immutable sha256 reference" >&2
+    exit 65
+  fi
   nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
   nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
   test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 1

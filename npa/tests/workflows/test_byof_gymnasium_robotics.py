@@ -210,6 +210,7 @@ def test_gymnasium_robotics_profile_is_one_strict_rtxpro_shape() -> None:
     assert "npa_pod_image_receipt.json" in run
     assert "owner-side-kubernetes-status" in run
     assert "NPA_BYOF_POD_IMAGE_ID" in run
+    assert "grep -Eq '@sha256:[0-9a-f]{64}$'" in run
     assert "RECEIPT_DEADLINE" in run
     assert "timed out waiting for the owner-side Pod image receipt" in run
     assert "serviceaccount" not in run
@@ -305,9 +306,12 @@ def test_gymnasium_robotics_live_gate_requires_authorized_output_root() -> None:
     assert "stdout=stdout_stream" in source
     assert "stderr=stderr_stream" in source
     assert "_cleanup_gymnasium_run(" in source
+    assert "_cleanup_gymnasium_run_after_success(" in source
     assert 'command.extend(["--yes", run_id])' in source
     assert "exact-run cleanup also failed" in source
+    assert "active exact-run cleanup also failed" in source
     assert "include_terminating=True" in source
+    assert "assert_no_credential_leakage(" in source
     assert "GYMNASIUM_KUBECTL_TIMEOUT_SECONDS" in source
     assert "GYMNASIUM_RECEIPT_TIMEOUT_SECONDS" in source
     assert "GYMNASIUM_CLEANUP_TIMEOUT_SECONDS" in source

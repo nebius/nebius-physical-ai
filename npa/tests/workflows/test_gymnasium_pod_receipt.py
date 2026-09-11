@@ -484,3 +484,21 @@ def test_runner_termination_escalates_to_sigkill(
     live._terminate_gymnasium_runner(process)
     assert signals == [signal.SIGTERM, signal.SIGKILL]
     assert process.waits == 2
+
+
+def test_success_cleanup_escalates_to_active_sky_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[bool] = []
+
+    def fake_cleanup(*args: object, issue_down: bool, **kwargs: object) -> None:
+        del args, kwargs
+        attempts.append(issue_down)
+        if not issue_down:
+            raise AssertionError("passive cleanup timed out")
+
+    monkeypatch.setattr(live, "_cleanup_gymnasium_run", fake_cleanup)
+    live._cleanup_gymnasium_run_after_success(
+        {}, namespace=NAMESPACE, run_id=RUN_ID, config_path="/operator/sky.yaml"
+    )
+    assert attempts == [False, True]
