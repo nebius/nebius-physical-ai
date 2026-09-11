@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Phase A source only. This Dockerfile MUST fail before network access while
-# any evidence lock is incomplete; it is not an image-build authorization.
+# Phase A source only. After retrieval of the separately reviewed pinned base,
+# this Dockerfile MUST fail before package/source network access while any
+# evidence lock is incomplete; it is not an image-build authorization.
 ARG BASE_IMAGE=ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
 FROM ${BASE_IMAGE} AS evidence-gate
 

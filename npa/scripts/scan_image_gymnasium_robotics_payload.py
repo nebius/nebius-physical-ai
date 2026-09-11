@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import bz2
-import gzip
 import hashlib
 import io
 import json
@@ -23,6 +22,7 @@ import sys
 import tarfile
 from typing import Any
 import zipfile
+import zlib
 
 REQUIRED = {
     "opt/npa/gymnasium-robotics/source-lock.json",
@@ -39,7 +39,7 @@ FORBIDDEN_PATH = re.compile(
     r"(^|/)(\.git|\.cache|pip-cache|apt/lists|apt/archives|\.aws|\.docker|\.ssh)(/|$)|"
     r"(^|/)(workspace/byof-runs|root/\.cache)(/|$)|"
     r"(^|/)(usr/local/cuda|opt/nvidia)(/|$)|"
-    r"(^|/)[^/]*nvidia[^/]*$|"
+    r"(^|/)[^/]*(?:nvidia|isaac|omniverse|ngc)[^/]*(/|$)|"
     r"(^|/)(libcuda[^/]*|libnvcuvid[^/]*|libnvoptix[^/]*)$|"
     r"\.(pt|pth|ckpt|safetensors|onnx|engine)$",
     re.IGNORECASE,
@@ -349,8 +349,14 @@ def _decompress(path: str, content: bytes, kind: str) -> bytes:
 
     try:
         if kind == "gzip":
-            with gzip.GzipFile(fileobj=io.BytesIO(content)) as stream:
-                expanded = stream.read(MAX_NESTED_ARCHIVE + 1)
+            decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            expanded = decompressor.decompress(content, MAX_NESTED_ARCHIVE + 1)
+            if (
+                not decompressor.eof
+                or decompressor.unconsumed_tail
+                or decompressor.unused_data
+            ):
+                raise ValueError(f"ambiguous compressed stream: {path}")
         elif kind == "bzip2":
             decompressor = bz2.BZ2Decompressor()
             expanded = decompressor.decompress(
@@ -365,7 +371,7 @@ def _decompress(path: str, content: bytes, kind: str) -> bytes:
             )
             if not decompressor.eof or decompressor.unused_data:
                 raise ValueError(f"ambiguous compressed stream: {path}")
-    except (EOFError, OSError, lzma.LZMAError) as error:
+    except (EOFError, OSError, lzma.LZMAError, zlib.error) as error:
         raise ValueError(f"unreadable compressed stream: {path}") from error
     if len(expanded) > MAX_NESTED_ARCHIVE:
         raise ValueError(f"expanded stream exceeds scan bound: {path}")
@@ -381,6 +387,7 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
     lowered = path.lower()
     declared_zip = lowered.endswith((".whl", ".zip"))
     declared_tar = lowered.endswith((".tar", *COMPRESSED_TAR_SUFFIXES))
+    declared_plain_tar = lowered.endswith(".tar")
     declared_compression = _declared_compression(path)
     is_tar = _looks_like_tar(content)
     is_zip = not is_tar and zipfile.is_zipfile(io.BytesIO(content))
@@ -394,6 +401,10 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
     )
     if declared_compression is not None and compression_kind != declared_compression:
         raise ValueError(f"declared compression does not match bytes: {path}")
+    if declared_zip and not is_zip:
+        raise ValueError(f"declared ZIP does not match bytes: {path}")
+    if declared_plain_tar and not is_tar:
+        raise ValueError(f"declared tar does not match bytes: {path}")
     archive_like = (
         is_zip
         or compression_kind is not None
