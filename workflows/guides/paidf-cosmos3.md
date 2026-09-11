@@ -441,6 +441,7 @@ secret is needed for that mirror. Use the repository's selected image pins.
 
 ```bash
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS")"
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/workflow-runs/$RUN_ID/skypilot"
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" --assume-decision promote_checkpoint \
@@ -453,6 +454,14 @@ Stop and resolve any failed check. The assumed decision previews the accepted
 path and checks its downstream images; the runtime submit below follows actual
 evaluator decisions. Leave image preflight enabled so incompatible images fail
 before a stage starts.
+
+Keep this SkyPilot directory for this run's submission, monitoring, resume, and
+cleanup. An isolated API binds the concrete storage prefix, including the run
+ID. Rerun R2 for a new experiment so it gets a fresh run ID and API directory;
+reusing the previous run's API can fail before launch with `different executing
+identity`. After a run finishes, follow the [controller cleanup
+procedure](../../docs/teardown.md) in its original environment before moving on.
+Keep the run's state and artifacts available for inspection.
 
 ### R3. Submit
 
@@ -508,15 +517,16 @@ generation contract, see the [Cosmos 3 workflow guide](../../docs/workbench/guid
 
 ### R4. Monitor and recover
 
-In another terminal with the same project and run ID, run these commands
+In another terminal, restore the same project, run ID, and other R1 variables,
+then select that run's SkyPilot directory. Run these commands
 separately. Stop the status watch with Ctrl-C before requesting a log tail, or
 use another terminal:
 
 ```bash
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/workflow-runs/$RUN_ID/skypilot"
 npa workbench workflow status "$RUN_ID" --project "$PROJECT_ALIAS" --watch
 npa workbench workflow logs "$RUN_ID" --project "$PROJECT_ALIAS" \
   --stage generate-variants --no-follow
-npa skypilot status --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
 
 The runtime may submit several managed jobs or attempts. Use NPA's stage records
@@ -538,11 +548,12 @@ Each wave reports whether it is running or succeeded. A missing stage row or
 `manifest_pending` in the summary does not establish that no job launched;
 check this record and the stage logs before deciding to resume or submit again.
 
-On a host with several SkyPilot API/controller contexts, live log lookup can
-select older controller state even when the S3 run is found correctly. If logs
-report an identity mismatch, use the durable record above and have the operator
-connect to that run's exact API/controller. Do not reset shared state or cancel
-a running GPU job solely because its live logs are unavailable.
+Live log lookup uses the selected SkyPilot directory and verifies its API
+identity. Keep that directory tied to the run ID; finding the run in S3 does not
+select its API automatically. If logs report an identity mismatch, check the
+selected directory and use the durable record above while the operator
+reconciles the exact controller. Do not reset shared state or cancel a running
+GPU job solely because its live logs are unavailable.
 
 An isolated API also verifies the project configuration it started with.
 Staging a different checkout revision can update the project's saved source URI
@@ -561,8 +572,8 @@ For an interrupted launch, follow the recovery command reported by NPA. Replace
 `--run-id "$RUN_ID"` with `--resume-run "$RUN_ID"` in the same submit command,
 retaining the project, runtime, inputs, configuration, and secret names.
 `--run-id` and `--resume-run` are mutually exclusive. Resume reconciles recorded
-work; it does not turn a rejected result into an accepted one. Use `prepare-run`
-to create a fresh run after changing the experiment. See the
+work; it does not turn a rejected result into an accepted one. Repeat R2 to
+reserve a fresh run and API directory after changing the experiment. See the
 [run lifecycle](../../docs/run-lifecycle.md).
 
 ### R5. Find and change generation and evaluation settings
