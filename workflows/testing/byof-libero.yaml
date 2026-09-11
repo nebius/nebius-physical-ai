@@ -227,6 +227,7 @@ config:
             "ref": SOURCE_REF,
             "commit": SOURCE_REF,
             "source_prune_path": SOURCE_PRUNE_PATH,
+            "source_pruned": True,
             "git_objects_removed": True,
         }:
             raise RuntimeError(f"unexpected built source metadata: {source_metadata}")
