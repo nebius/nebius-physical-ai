@@ -14,7 +14,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused static tests prove that the rendered BYOF operation pins one official LIBERO-Spatial demonstration, prunes unused third-party render assets and Git objects in the source clone layer, runtime-fetches and hash-verifies upstream-equivalent BERT task conditioning, invokes upstream Sequential.observe with BCRNNPolicy for nonzero steps, reloads a checkpoint, evaluates trajectory-disjoint held-out data, binds actual payload Pod/RBAC/allowed-node evidence, requires one B200, and never invokes rendering.",
+      "reason": "Focused static tests verify that the rendered BYOF operation is designed to pin one official LIBERO-Spatial demonstration, prune unused third-party render assets and Git objects in the source clone layer, runtime-fetch and hash-verify upstream-equivalent BERT task conditioning, invoke upstream Sequential.observe with BCRNNPolicy for nonzero steps, reload a checkpoint, evaluate trajectory-disjoint held-out data, bind actual payload Pod/RBAC/allowed-node evidence, require one B200, and never invoke rendering. Execution remains a separate live gate.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (8 passed)",
         "docs/workbench/byof-libero.md#acceptance-artifact"
