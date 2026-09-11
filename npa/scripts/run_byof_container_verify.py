@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -36,7 +37,11 @@ from npa.orchestration.skypilot._bin import (
     resolve_isolated_config_dir,
     resolve_sky_bin,
 )
-from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
+from npa.orchestration.skypilot.cleanup import (
+    CleanupResult,
+    cluster_name_patterns_for_run,
+    sky_environment,
+)
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
@@ -160,6 +165,7 @@ TERMINAL_STATUSES = {
     "FAILED_NO_RESOURCE",
     "FAILED_CONTROLLER",
 }
+VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
 
 
 def _is_libero_invocation(
@@ -801,7 +807,7 @@ def _cancel_then_teardown_managed_job(
         "poll_interval": poll_interval,
     }
     final, _ = _wait_for_terminal(scheduler_job_id, wait_timeout=0, **status_kwargs)
-    if final.status not in TERMINAL_STATUSES:
+    if final.status not in VERIFIED_DRAIN_STATUSES:
         cleanup.extend(
             _cancel_exact_managed_job(
                 scheduler_job_id,
@@ -816,13 +822,96 @@ def _cancel_then_teardown_managed_job(
             wait_timeout=max(int(teardown_guard.timeout), 1),
             **status_kwargs,
         )
-    if final.status not in TERMINAL_STATUSES:
+    if final.status not in VERIFIED_DRAIN_STATUSES:
         cleanup.errors.append(
             "managed job did not reach a verified terminal or absent state; "
             "preserving its clusters"
         )
         return cleanup
     cleanup.extend(teardown_guard.teardown())
+    if cleanup.ok:
+        cleanup.extend(
+            _verify_managed_clusters_absent(
+                run_id=teardown_guard.run_id,
+                sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                timeout=max(int(teardown_guard.timeout), 1),
+            )
+        )
+    return cleanup
+
+
+def _strict_cluster_names(output: str) -> list[str]:
+    """Return names from one exact SkyPilot cluster inventory document."""
+
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError("inventory was not exact JSON") from exc
+    if isinstance(payload, list):
+        clusters = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("clusters"), list):
+        clusters = payload["clusters"]
+    else:
+        raise ValueError("inventory had an invalid schema")
+    names: list[str] = []
+    for cluster in clusters:
+        name = (
+            (cluster.get("name") or cluster.get("cluster"))
+            if isinstance(cluster, dict)
+            else None
+        )
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("inventory contained an invalid row")
+        names.append(name)
+    return names
+
+
+def _verify_managed_clusters_absent(
+    *,
+    run_id: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    timeout: int,
+) -> CleanupResult:
+    """Fail closed unless a fresh structured inventory proves run absence."""
+
+    cmd = [sky_bin, "status", "--refresh", "--output", "json"]
+    if config_path is not None:
+        cmd[2:2] = ["--config", str(config_path)]
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    cleanup = CleanupResult(commands=[cmd])
+    if result.returncode != 0:
+        cleanup.errors.append("post-teardown SkyPilot cluster inventory command failed")
+        return cleanup
+    try:
+        names = _strict_cluster_names(result.stdout)
+    except ValueError as exc:
+        cleanup.errors.append(f"post-teardown SkyPilot cluster {exc}")
+        return cleanup
+    patterns = cluster_name_patterns_for_run(run_id)
+    matches = [
+        name
+        for name in names
+        if any(fnmatchcase(name, pattern) for pattern in patterns)
+    ]
+    if matches:
+        cleanup.errors.append(
+            "post-teardown inventory still contains run-owned SkyPilot clusters"
+        )
+        return cleanup
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
     return cleanup
 
 
@@ -841,7 +930,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         smoke_artifact_name=args.smoke_artifact_name,
     )
     is_libero = _is_libero_invocation(args, docs)
-    if is_libero and args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+    if is_libero and args.solution_name != LIBERO_SOLUTION_NAME:
         raise ValueError("the LIBERO profile requires --solution-name libero")
     outputs = {
         "root": output_root.rstrip("/") + f"/{run_id}/",
