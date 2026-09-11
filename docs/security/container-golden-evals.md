@@ -86,6 +86,7 @@ flowchart TB
     vlm["lerobot-vlm-rl: VLM signal RL step"]
     genesis["genesis: scene build + step"]
     isaac["isaac-lab: headless env + RTX render"]
+    habitat["habitat-sim: Skokloster RGB-D + Bullet + EGL traversal"]
     content["content-agents: rigid physics + OVRTX validation"]
     cosmos["cosmos: model load + infer"]
     transfer["cosmos2-transfer: real 4-step transfer"]
@@ -110,6 +111,7 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
+| `habitat-sim` | `0.3.3-public-unbuilt` | container-smoke | runtime-hashed official Skokloster scene; distinct RGB/depth frames; Bullet time and displacement; NVIDIA EGL; exact digest and storage readback | exactly one RTX PRO 6000 Blackwell; never B200 | publication-quarantined / unbuilt |
 | `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
@@ -130,6 +132,12 @@ flowchart TB
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
+
+The Habitat-Sim definition is a candidate contract, not a pass record. It keeps
+the pinned MIT simulator source in the image and fetches only the attributed CC
+BY 4.0 Skokloster test scene at runtime behind archive and member SHA-256
+checks. Publication stays quarantined until a rebuilt exact digest passes the
+complete byte scan and the genuine one-RTX renderer workflow.
 
 ## Golden-eval kinds
 

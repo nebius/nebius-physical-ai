@@ -136,3 +136,10 @@ def test_excluded_noncommercial_and_gui_gitlinks_are_never_fetched() -> None:
     assert not excluded & selected
     assert "git submodule" not in script and "--recursive" not in script
     assert "data/scene_datasets" in MANIFEST["forbidden_paths"]
+
+
+def test_final_source_projection_preserves_the_manifest_directory_layout() -> None:
+    dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+    assert "/opt/habitat-sim/src/esp /opt/source-projection/src/" in dockerfile
+    assert "/opt/habitat-sim/src_python /opt/source-projection/" in dockerfile
+    assert "/opt/habitat-sim/src/esp /opt/habitat-sim/src_python" not in dockerfile

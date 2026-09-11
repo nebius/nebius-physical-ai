@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import gzip
 import hashlib
@@ -29,6 +30,7 @@ LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
 INTOTO = "application/vnd.in-toto+json"
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 CONTRACT = json.loads((PACKAGE / "runtime-payload.json").read_text())
+SOURCE_REVISION = "a" * 40
 
 
 def _digest(data: bytes) -> str:
@@ -41,6 +43,7 @@ def _oci(
     *,
     user: str = "ubuntu",
     diff_ids: list[str] | None = None,
+    source_revision: str = SOURCE_REVISION,
 ) -> tuple[Path, str]:
     blobs: dict[str, bytes] = {}
 
@@ -52,6 +55,7 @@ def _oci(
     raw_layers = [tar_data(rows) for rows in layers]
     packed_layers = [blob(gzip.compress(raw, mtime=0), LAYER) for raw in raw_layers]
     labels = copy.deepcopy(CONTRACT["required_labels"])
+    labels["org.opencontainers.image.revision"] = source_revision
     config = blob(
         js(
             {
@@ -130,24 +134,110 @@ def _oci(
     return archive, expected
 
 
+def _json(payload: dict[str, object]) -> bytes:
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _record_hash(payload: bytes) -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+    return "sha256=" + digest.decode().rstrip("=")
+
+
+def _fixture() -> tuple[dict[str, object], list[tuple]]:
+    contract = copy.deepcopy(CONTRACT)
+    contract["expected_missing_python_record_count"] = 0
+    source_files = {
+        "LICENSE": b"source-license",
+        "data/default.physics_config.json": b"{}\n",
+    }
+    projection = {
+        "schema_version": "npa.habitat-sim.source-projection.v1",
+        "file_count": len(source_files),
+        "files": [
+            {"path": path, "bytes": len(payload), "sha256": _digest(payload)}
+            for path, payload in sorted(source_files.items())
+        ],
+    }
+    projection_bytes = _json(projection)
+    manifest = {
+        "expected_projection": {
+            "file_count": len(source_files),
+            "inventory_sha256": _digest(projection_bytes),
+        }
+    }
+    apt_lock = (
+        "schema_version: npa.habitat-sim.apt-lock.v1\npackages:\n"
+        "  - {binary: python3, version: 3.10.6-1~22.04.1, "
+        "source: python3-defaults, sha256: " + "1" * 64 + "}\n"
+    ).encode()
+    python_lock = ("fixture==1.0 --hash=sha256:" + "2" * 64 + "\n").encode()
+    native = b"\x7fELFfixture-native"
+    controls = {
+        "opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": b"smoke\n",
+        "usr/share/doc/npa-habitat-sim/source-manifest.json": _json(manifest),
+        "usr/share/doc/npa-habitat-sim/source-projection.json": projection_bytes,
+        "usr/share/doc/npa-habitat-sim/licenses.json": b"{}\n",
+        "usr/share/doc/npa-habitat-sim/apt-runtime.lock": apt_lock,
+        "usr/share/doc/npa-habitat-sim/requirements-runtime.lock": python_lock,
+        "usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": b"redistribution\n",
+    }
+    contract["required_final_file_sha256"] = {
+        "/" + path: _digest(payload)
+        for path, payload in controls.items()
+        if not path.endswith("source-projection.json")
+    }
+    entries = [file(path, payload) for path, payload in controls.items()]
+    entries.extend(
+        file("usr/src/habitat-sim/" + path, payload)
+        for path, payload in source_files.items()
+    )
+    entries.extend(
+        [
+            file(
+                "var/lib/dpkg/status",
+                b"Package: python3\nStatus: install ok installed\n"
+                b"Version: 3.10.6-1~22.04.1\nSource: python3-defaults\n\n",
+            ),
+            file("usr/share/doc/python3/copyright", b"python license\n"),
+            file("opt/venv/lib/python3.10/site-packages/fixture/native.so", native),
+        ]
+    )
+    distributions = {
+        "fixture": "1.0",
+        "habitat_sim": "0.3.3",
+        "pip": "22.0.2",
+        "setuptools": "59.6.0",
+    }
+    for dist, version in distributions.items():
+        root = f"opt/venv/lib/python3.10/site-packages/{dist}-{version}.dist-info"
+        entries.append(
+            file(f"{root}/METADATA", f"Name: {dist}\nVersion: {version}\n".encode())
+        )
+        record = (
+            f"{dist}/native.so,{_record_hash(native)},{len(native)}\n"
+            if dist == "fixture"
+            else ""
+        )
+        entries.append(
+            file(
+                f"{root}/RECORD",
+                (record + f"{dist}-{version}.dist-info/RECORD,,\n").encode(),
+            )
+        )
+    return contract, entries
+
+
 def _required_entries() -> list[tuple]:
-    paths = [
-        "opt/venv/bin/python3",
-        "opt/npa-runtime/npa/workflows/habitat_sim_smoke.py",
-        "var/lib/dpkg/status",
-        "usr/src/habitat-sim/LICENSE",
-        "usr/src/habitat-sim/data/default.physics_config.json",
-        "usr/share/doc/npa-habitat-sim/source-manifest.json",
-        "usr/share/doc/npa-habitat-sim/licenses.json",
-        "usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md",
-    ]
-    return [
-        file(path, b"Package: python3\n" if path.endswith("dpkg/status") else b"exact")
-        for path in paths
-    ]
+    return _fixture()[1]
 
 
-def _verify(tmp_path: Path, layers: list[list[tuple]], **kwargs) -> dict[str, object]:
+def _verify(
+    tmp_path: Path,
+    layers: list[list[tuple]],
+    *,
+    contract: dict[str, object] | None = None,
+    **kwargs,
+) -> dict[str, object]:
     archive, expected = _oci(tmp_path, layers, **kwargs)
     fd = os.open(archive, os.O_RDONLY)
     try:
@@ -155,8 +245,9 @@ def _verify(tmp_path: Path, layers: list[list[tuple]], **kwargs) -> dict[str, ob
             fd,
             archive.stat().st_size,
             expected,
-            CONTRACT,
+            contract or _fixture()[0],
             _digest(archive.read_bytes()),
+            SOURCE_REVISION,
         )
     finally:
         os.close(fd)
@@ -170,13 +261,18 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 8
+    assert report["regular_files_read"] == 20
     assert report["installed_package_count"] == 1
+    assert report["projected_source_file_count"] == 2
+    assert report["python_distribution_count"] == 4
+    assert report["python_record_files_verified"] == 1
+    assert report["native_elf_count"] == 1
+    assert report["expected_source_revision"] == SOURCE_REVISION
     assert report["oci_graph"]["attestation_manifest_count"] == 1
 
 
 def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> None:
-    contract = copy.deepcopy(CONTRACT)
+    contract = _fixture()[0]
     contract["forbidden_content_sha256"].append(_digest(b"scene payload"))
     archive, expected = _oci(
         tmp_path,
@@ -195,6 +291,7 @@ def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> N
             expected,
             contract,
             _digest(archive.read_bytes()),
+            SOURCE_REVISION,
         )
     finally:
         os.close(fd)
@@ -221,7 +318,12 @@ def test_final_runtime_refuses_builder_package_and_root_user(tmp_path) -> None:
     status = next(
         index for index, row in enumerate(entries) if row[0].endswith("dpkg/status")
     )
-    entries[status] = file("var/lib/dpkg/status", b"Package: cmake\nPackage: python3\n")
+    entries[status] = file(
+        "var/lib/dpkg/status",
+        b"Package: cmake\nStatus: install ok installed\nVersion: 1\n\n"
+        b"Package: python3\nStatus: install ok installed\n"
+        b"Version: 3.10.6-1~22.04.1\nSource: python3-defaults\n\n",
+    )
     report = _verify(tmp_path, [entries], user="root")
     assert {"forbidden_runtime_package", "final_user_not_ubuntu"} <= _codes(report)
 
@@ -255,3 +357,53 @@ def test_duplicate_canonical_layer_path_fails_closed(tmp_path) -> None:
     entries.append(file("./" + entries[0][0], b"duplicate"))
     with pytest.raises(Exception, match="habitat_oci_duplicate_layer_path"):
         _verify(tmp_path, [entries])
+
+
+def test_lock_source_record_and_reviewed_revision_mismatches_fail(tmp_path) -> None:
+    entries = _required_entries()
+    metadata = next(
+        index
+        for index, row in enumerate(entries)
+        if row[0].endswith("fixture-1.0.dist-info/METADATA")
+    )
+    entries[metadata] = file(entries[metadata][0], b"Name: fixture\nVersion: 2.0\n")
+    report = _verify(tmp_path, [entries], source_revision="b" * 40)
+    assert {
+        "python_distribution_lock_mismatch",
+        "source_revision_label_mismatch",
+    } <= _codes(report)
+
+
+def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> None:
+    expected = CONTRACT["required_final_file_sha256"]
+    mappings = {
+        "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": ROOT
+        / "npa/src/npa/workflows/habitat_sim_smoke.py",
+        "/usr/share/doc/npa-habitat-sim/source-manifest.json": PACKAGE
+        / "source-manifest.json",
+        "/usr/share/doc/npa-habitat-sim/licenses.json": PACKAGE / "licenses.json",
+        "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": PACKAGE / "apt-runtime.lock",
+        "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": PACKAGE
+        / "requirements-runtime.lock",
+        "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": PACKAGE
+        / "REDISTRIBUTION.md",
+    }
+    assert set(expected) == set(mappings)
+    for image_path, source_path in mappings.items():
+        assert expected[image_path] == _digest(source_path.read_bytes())
+
+
+def test_runtime_copyright_resolution_accepts_only_a_resolved_package_link() -> None:
+    paths = {
+        "usr/share/doc/python3": "symlink",
+        "usr/share/doc/python3-minimal/copyright": "file",
+    }
+    links = {"usr/share/doc/python3": ("symlink", "python3-minimal")}
+    assert (
+        H._resolve_final_path("usr/share/doc/python3/copyright", paths, links)
+        == "usr/share/doc/python3-minimal/copyright"
+    )
+    links["usr/share/doc/python3"] = ("symlink", "../../../../outside")
+    assert (
+        H._resolve_final_path("usr/share/doc/python3/copyright", paths, links) is None
+    )
