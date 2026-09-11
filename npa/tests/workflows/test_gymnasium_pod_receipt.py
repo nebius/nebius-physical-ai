@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 from pathlib import Path
 import signal
@@ -39,6 +40,7 @@ def _pod(*, image_id: str) -> dict[str, object]:
             "annotations": {"skypilot-cluster-name": RUN_ID},
         },
         "spec": {
+            "nodeName": NODE_NAME,
             "containers": [
                 {
                     "name": "task",
@@ -63,12 +65,19 @@ def _pod(*, image_id: str) -> dict[str, object]:
     }
 
 
+def _receipt_env(evidence: Path) -> dict[str, str]:
+    return {
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence),
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME": NODE_NAME,
+    }
+
+
 def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
-    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    env = _receipt_env(evidence)
     calls: list[tuple[tuple[str, ...], str | None]] = []
 
     def fake_kubectl(
@@ -99,6 +108,7 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
 
     assert receipt["expected_digest"] == DIGEST
     assert receipt["observed_digest"] == DIGEST
+    assert receipt["node_name"] == NODE_NAME
     assert calls[1][0][0] == "exec"
     assert json.loads(calls[1][1] or "{}") == receipt
     receipt_path = evidence / f"{RUN_ID}-pod-image-receipt.json"
@@ -111,7 +121,7 @@ def test_owner_receipt_refuses_a_different_runtime_digest(
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
-    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    env = _receipt_env(evidence)
 
     def fake_kubectl(
         _env: dict[str, str],
@@ -127,6 +137,38 @@ def test_owner_receipt_refuses_a_different_runtime_digest(
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
     with pytest.raises(AssertionError, match="imageID differs"):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+    assert not list(evidence.iterdir())
+
+
+@pytest.mark.parametrize("observed_node", ["", "another-rtx-node"])
+def test_owner_receipt_refuses_missing_or_mismatched_node_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, observed_node: str
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = _receipt_env(evidence)
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["spec"]["nodeName"] = observed_node
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        assert args[:2] == ("get", "pods")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    with pytest.raises(AssertionError, match="manager-assigned node"):
         live._gymnasium_pod_image_receipt(
             _RunningProcess(),
             env=env,
@@ -245,7 +287,7 @@ def test_owner_receipt_scopes_gpu_request_to_matching_task_container(
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
-    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    env = _receipt_env(evidence)
     pod = _pod(image_id=f"containerd://{DIGEST}")
     pod["spec"]["containers"][0]["resources"] = {
         "requests": {"nvidia.com/gpu": "0"},
@@ -288,7 +330,7 @@ def test_owner_receipt_rejects_gpu_request_from_an_extra_container(
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
-    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    env = _receipt_env(evidence)
     pod = _pod(image_id=f"containerd://{DIGEST}")
     pod["spec"]["containers"].append(
         {
@@ -327,7 +369,7 @@ def test_owner_receipt_poll_has_an_overall_deadline(
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
-    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    env = _receipt_env(evidence)
     monkeypatch.setattr(live, "GYMNASIUM_RECEIPT_TIMEOUT_SECONDS", 0)
     with pytest.raises(AssertionError, match="timed out waiting"):
         live._gymnasium_pod_image_receipt(
@@ -506,3 +548,12 @@ def test_success_cleanup_escalates_to_active_sky_down(
         {}, namespace=NAMESPACE, run_id=RUN_ID, config_path="/operator/sky.yaml"
     )
     assert attempts == [False, True]
+
+
+def test_success_cleanup_precedes_runner_log_decoding() -> None:
+    source = inspect.getsource(live.test_live_gymnasium_robotics_exact_digest_capability)
+    cleanup = source.index("_cleanup_gymnasium_run_after_success(")
+    stdout_decode = source.index("stdout_path.read_text(")
+    stderr_decode = source.index("stderr_path.read_text(")
+    assert cleanup < stdout_decode < stderr_decode
+    assert 'errors="replace"' in source[stdout_decode:]
