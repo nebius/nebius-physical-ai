@@ -76,17 +76,6 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
-    "habitat-sim": {
-        "capability_name": "skokloster_castle_rgb_depth_bullet_traversal",
-        "smoke_artifact_name": "habitat-sim-smoke.json",
-        "spec": "byof-habitat-sim.yaml",
-        "must_exercise": [
-            "skokloster_castle_rgb_depth_bullet_traversal",
-            "headless_nvidia_egl_rgb_depth_render",
-            "bullet_physics_world_step",
-            "greedy_geodesic_agent_traversal",
-        ],
-    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",

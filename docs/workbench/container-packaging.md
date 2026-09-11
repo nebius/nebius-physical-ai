@@ -10,6 +10,13 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
+Habitat-Sim follows the same evidence separation with a dedicated source-built
+image: its static closure is public-eligible, but the candidate is unbuilt and in
+`UNVALIDATED_PUBLICATION_TOOLS`. The official CC BY Skokloster scene is runtime
+data, never an image input. A trusted public full-SHA rebuild cannot inherit a
+private build's digest or capability evidence; scan and run the rebuilt digest
+again before publication or a catalog claim.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
