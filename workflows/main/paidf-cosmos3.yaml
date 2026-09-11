@@ -3,6 +3,8 @@ kind: Workflow
 
 metadata:
   name: paidf-cosmos3
+  # Data-dependent refinement and terminal routing require the runtime driver.
+  executionMode: runtime
   description: >-
     Independent Physical AI Data Factory variant: select a generic direct video
     or LeRobot v2/v3 episode/camera, understand it with a hosted VLM, generate
@@ -14,7 +16,6 @@ config:
   prefix: "paidf-cosmos3/{{run.id}}"
   # Use the submitted checkout's NPA adapters with pinned vendor images.
   source_overlay: true
-  require_runtime: true
 
   # Input selector. The live matrix seeds this run-scoped fixture URI; operators
   # can point video at another generic MP4, or select a LeRobot v2/v3 dataset.
@@ -39,9 +40,8 @@ config:
   steps: "24"
   variant_count: "2"
   variant_parallelism: "1"
-  # Optional stable seed for appearance-profile sampling. Leave empty to retain
-  # run-ID sampling; set it for reproducible quality comparisons.
-  augmentation_seed: ""
+  # Stable starter profiles across run IDs; change for appearance experiments.
+  augmentation_seed: "30"
   parallelism_preset: latency
   refinement_iterations: "2"
   retry_seed_stride: "1000"
@@ -52,7 +52,7 @@ config:
   source_motion_weight: "0.0"
   # Exploratory acceptance: retain measured failures in reports. Production
   # datasets should set thresholds for their own task and visual review policy.
-  grade_threshold: "0.5"
+  grade_threshold: "0.3"
   attribute_threshold: "0.5"
   alignment_mode: required
   # Cosmos Evaluator defaults to the ranking observation policy. Workflows that
@@ -290,7 +290,7 @@ states:
         goto: reject-quality
 
   require-accepted-quality:
-    description: Require a complete accepted evaluator disposition before annotation.
+    description: Revalidate the durable accepted disposition before annotation.
     needs: [quality-route]
     resources: cpu
     run:

@@ -12,6 +12,7 @@ from npa.workflows.paidf_cosmos3 import (
     _download_source,
     _extract_frames,
     _read_json,
+    _validated_quality_status,
     _write_json,
     validate_committed_augment_manifest,
 )
@@ -23,9 +24,9 @@ def _accepted_variants(root: str, storage: Any) -> list[dict[str, Any]]:
     variants = validate_committed_augment_manifest(manifest, root + "cosmos_augmented/")
     report = _read_json(root + "grade/cosmos_evaluator.json", storage=storage)
     disposition = _read_json(root + "grade/quality_disposition.json", storage=storage)
-    if (report.get("status") != "completed" or report.get("passed") is not True
-            or disposition.get("quality_status") != "accepted"
-            or disposition.get("hard_checks_passed") is not True):
+    if (_validated_quality_status(disposition) != "accepted"
+            or not isinstance(report, dict) or report.get("status") != "completed"
+            or report.get("passed") is not True):
         raise PaidfCosmos3Error("annotation requires complete accepted evaluation")
     clips = {item["clip_id"]: item for item in report["clips"]}
     if len(clips) != len(variants) or report.get("alignment_mode") != "required":

@@ -11,12 +11,10 @@ on your GPU, and evaluates them with Cosmos Evaluator. Accepted variants pass
 through captioning, Cosmos Curator, and FiftyOne Brain before a final report.
 Rejected variants produce Rerun quality evidence and stop before curation.
 
-> **Validation scope:** The existing-cluster setup and workflow execution were
-> tested on September 9, 2026, on RTX PRO 6000 Blackwell. The new-cluster path
-> in S5 is a provisioning example; these live runs did not create a new cluster.
-> Successful generation does not establish accepted augmentation data.
-> See the [current live checks](#september-9-live-validation) and separately
-> labeled [historical results](#historical-validation-results).
+> **Validation scope:** Setup commands were exercised on Linux with Python 3.12
+> and an existing RTX PRO 6000 Blackwell cluster. Full live validation of the
+> structural-transfer workflow is in progress. See [validation](#validation)
+> for completed checks and remaining limits.
 
 ## Before you start
 
@@ -461,8 +459,8 @@ a new managed job and may repeat worker setup; inspect the stage logs to
 distinguish setup progress from inference progress.
 
 `--runtime` lets the orchestrator read evaluator decisions and execute real
-refinement loops. The default one-shot path flattens the plan using
-`--assume-decision` and is not equivalent to runtime retries. Keep assumed
+refinement loops. This workflow declares `metadata.executionMode: runtime`, so
+submission also selects this mode automatically when the flag is omitted. Keep assumed
 decisions in the R2 planning command only; omit them from runtime submission
 so a missing decision cannot fall back to assumed promotion. The command keeps
 the workflow's configured variant count and refinement settings. A preview with
@@ -544,10 +542,10 @@ Use a fresh run ID after changing inputs or settings.
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |
-| `augmentation_seed` | Empty | Appearance sampling uses the run ID by default; set a fixed value to compare experiments with the same sampled profiles. |
+| `augmentation_seed` | `30` | Fixed appearance profiles across fresh run IDs; change it for new appearance experiments. An empty value restores run-ID sampling. |
 | `refinement_iterations` | `2` | Maximum total generation/evaluation passes, including the initial pass. |
 | `retry_seed_stride`, `retry_guidance_delta`, `retry_steps_delta` | `1000`, `-0.5`, `4` | Changes per retry. The second pass starts at seed `1017`, guidance `4.5`, and `28` steps. |
-| `grade_threshold` | `0.5` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
+| `grade_threshold` | `0.3` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
 | `attribute_threshold` | `0.5` | Minimum fraction of requested appearance attributes correctly recognized per variant. Every question must have a valid answer. |
 | `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
 | `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
@@ -564,7 +562,7 @@ Reducing a quality threshold changes the acceptance criteria; it does not repair
 the generated video. Model guardrails, complete evaluator responses, media
 integrity and timeline alignment remain required.
 
-The shipped `0.5`/`0.5` criteria are for exploratory pipeline runs. To require
+The shipped `0.3`/`0.5` criteria are for exploratory pipeline runs. To require
 the earlier stricter criteria, add `--var grade_threshold=0.75
 --var attribute_threshold=1.0` to both plan and submit. Choose production
 criteria using representative videos and human review of the resulting data.
@@ -598,8 +596,9 @@ compilation incompatibility for structural-control shapes.
 
 `annotation requires a complete accepted evaluator disposition` means
 `require-accepted-quality` refused to send unaccepted data to annotation.
-A one-shot submission with `--assume-decision promote_checkpoint` can reach that
-guard even after the evaluator rejected the videos. Use the R3 runtime command
+Older clients could reach that guard after rejection when submitted with
+`--assume-decision promote_checkpoint`. Current clients reject this execution
+flag before staging or provisioning. Use the R3 runtime command
 with a fresh run ID for the next experiment. With real runtime routing, a final
 rejection writes quality evidence and terminates at `reject-quality`.
 Changing the submit mode corrects routing; it does not improve generated videos.
@@ -714,7 +713,7 @@ appears.
 | Symptom | What to check | Action |
 | --- | --- | --- |
 | `No such command 'submit'` | Executable, active environment, and installed checkout | Follow [installation recovery](#if-submit-is-missing); verify `.venv/bin/npa workbench workflow submit --help` before setup. |
-| `This workflow requires --runtime without --assume-decision` | Execution is using a planned decision | Use the full R3 runtime command; assumed decisions belong only in offline plans. |
+| `Runtime-required workflows reject --assume-decision for execution` | Execution is using a planned decision | Use the full R3 runtime command; assumed decisions belong only in offline plans. |
 | Workflow YAML does not exist | Path copied from a previous repository layout | Run from the repository root and use `workflows/main/paidf-cosmos3.yaml`. |
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
 | `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
@@ -742,90 +741,28 @@ appears.
 For pod-level and artifact triage, see
 [known Workbench issues](../../docs/workbench/troubleshooting/known-footguns.md).
 
-## September 9 live validation
+## Validation
 
-The portable bootstrap command in S6 was separately exercised on September 10
-with Python 3.12.14 on Linux: a fresh SkyPilot 0.12.2 install and a second run
-that reused it both exited successfully, and NPA resolved the saved executable.
-The new-cluster command in S5 returned a ready topology in a live `--dry-run`
-preview. That preview did not create a cluster; the execution below used an
-existing cluster.
+The portable bootstrap in S6 was exercised with Python 3.12.14 on Linux: a
+fresh SkyPilot 0.12.2 installation and a second invocation that reused it both
+succeeded. Credential, model-access, storage, image, source-staging, and input
+preflights passed against live services. S5's new-cluster command was validated
+with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
+cluster and did not create a cluster.
 
-On September 10, the R6 download, report-inspection, and media-check commands
-were exercised against the retained terminal run in live S3. They retrieved
-the staged source and both latest variants, and all three videos fully decoded.
-The final-report check correctly failed because this rejected run has no
-`reports/final.json`. This was an artifact-validation pass, not a new GPU run
-or a successful execution of the accepted downstream stages.
+The current structural-transfer validation has completed real input preparation,
+configuration generation, and hosted source captioning. Its 169-frame source
+at 50 fps and 640×480 becomes an 81-frame reference at 24 fps and 832×480.
+Duration changes from 3.38 to 3.375 seconds through frame-rate sampling;
+letterboxing preserves aspect ratio and does not stretch time. Native GPU
+generation and the accepted downstream path are still being validated.
 
-The updated setup was exercised from a fresh Python 3.12 environment on Linux
-against an existing cluster with two RTX PRO 6000 Blackwell GPU nodes and two
-CPU nodes. The workflow requested one GPU. Authentication, project storage,
-the AWS profile, model access, image preflight, source/input staging, submission,
-and hosted captioning were checked against live services.
-
-An initial run exposed an older Token Factory client in the pinned image:
-attribute checks received reasoning without visible answers and the evaluator
-report was degraded. Enabling S8's source overlay selected the current client
-inside the GPU and evaluator containers. The corrected run's first generation
-pass produced two H.264 videos, each 1280×720 with 189 frames and a duration of
-7.875 seconds. Both fully decoded and matched their published hashes. The
-starter input was 640×480 and 3.38 seconds; the generated duration does not
-establish preservation of the source episode.
-
-The corrected evaluator returned eight attribute answers with no check errors.
-Its first-pass aggregate score was 0.20995 against the unchanged 0.75 threshold,
-so both variants were rejected and runtime refinement was required. This report
-is a quality verdict; the earlier degraded report was not. The generation and
-refinement settings in the workflow were retained.
-
-The refinement pass changed the seed, used 28 steps and guidance 4.5, and
-produced two new videos that fully decoded and matched their published hashes.
-Its evaluator again completed all eight attribute checks without errors, with
-a score of 0.21255 and zero accepted clips. These checks establish execution of
-generation, evaluation, and refinement; they do not validate accepted
-augmentation data or downstream curation/finalization.
-
-The quality-evidence recording passed `rerun rrd verify` and verbose decoding.
-Independent inspection confirmed the run identity, three source thumbnails,
-both final videos byte for byte, all 189 frame timestamps per video against
-the decoded MP4s, and rejected dispositions for both variants. The recording
-was downloaded from S3 and checked headlessly; this was not a desktop UI test.
-
-The run completed 12 runtime waves, then ended with a nonzero exit at
-`reject-quality`: `quality rejected after bounded refinement; evidence was
-preserved`. This is the workflow's rejected-data outcome, not an accepted-data
-or curation success. The artifact command still returned an empty index after
-termination, so the direct S3 lookup in [Inspect the outputs](#inspect-the-outputs)
-was used to retrieve and verify the recording.
-
-Live stage logs were verified after connecting to the run's exact SkyPilot API.
-Default live log lookup selected unrelated controller state on the shared test
-host; the S3 runtime record remained readable with the documented AWS profile.
-Keep this monitoring limitation in mind when operating several controller
-contexts on one machine.
-
-## Historical validation results
-
-August 28–September 3, 2026 validation recorded eight runs. The first nine tasks
-of the then-rendered 15-task plan, through quality evidence, completed in three
-consecutive runs. Those runs did not validate downstream curation/finalization.
-
-The following timings were recorded on September 3, 2026, over
-three runs whose tasks through quality evidence succeeded. These measurements
-describe that hardware, image set, model, and configuration; they are not a
-deadline or a current performance guarantee.
-
-| Stage | Reported duration |
-| --- | --- |
-| `prepare-input` | About 10 seconds |
-| `generate-configs` | About 45 seconds |
-| `annotate-original` (hosted VLM) | About 1 minute |
-| `generate-variants` (RTX PRO 6000; two variants, 24 steps) | About 18 minutes; no restarts |
-| `evaluate` (Cosmos Evaluator) | 2–11 minutes |
-| Quality gate, disposition, and route | About 45 seconds each |
-| `visualize-quality-evidence` (Rerun) | About 2.5 minutes |
-| Submit through quality verdict | About 40 minutes |
+Automated checks cover media corruption and alignment failures, native control
+pixels and guardrail processing, incomplete evaluator responses, runtime
+routing, every accepted variant's captions, and final artifact validation.
+These checks do not substitute for a completed live run. Concurrent two-GPU
+variants, fresh-cluster provisioning, and the desktop Rerun UI have not been
+validated by this run.
 
 ## Inspect the outputs
 
@@ -868,10 +805,9 @@ Only after the runtime reports successful finalization, check the final report:
 )
 ```
 
-A rejected run is expected to lack this final report. The live validation in
-this guide reached rejection; it has not demonstrated successful execution of
-the accepted downstream stages. These checks describe the completion contract,
-not an additional claim of live success.
+A rejected run is expected to lack this final report. Check the runtime and
+artifacts from your own run against every row above before treating its data as
+accepted.
 
 ### Open the recording
 

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -16,7 +18,7 @@ SPEC = ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 runner = CliRunner()
 
 
-@pytest.mark.parametrize("flags", [[], ["--assume-decision", "promote_checkpoint"],
+@pytest.mark.parametrize("flags", [["--assume-decision", "promote_checkpoint"],
                                     ["--runtime", "--assume-decision", "promote_checkpoint"]])
 def test_submit_requires_actual_runtime_decisions_before_side_effects(monkeypatch, flags):
     def unexpected(**kwargs):
@@ -26,7 +28,7 @@ def test_submit_requires_actual_runtime_decisions_before_side_effects(monkeypatc
     result = runner.invoke(app, ["workbench", "workflow", "submit", str(SPEC),
                                 "--run-id", "runtime-contract", *flags])
     assert result.exit_code == 1
-    assert "requires --runtime without --assume-decision" in result.output
+    assert "reject --assume-decision for execution" in result.output
 
 
 def test_source_overlay_is_selected_by_the_spec(monkeypatch):
@@ -67,6 +69,7 @@ def _doc() -> dict:
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"
+    assert doc["metadata"]["executionMode"] == "runtime"
     states = doc["states"]
     assert states["prepare-input"]["toolRef"] == "workbench.cosmos3.prepare_video_input"
     assert (
@@ -81,6 +84,16 @@ def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     assert argv[:4] == ["npa", "workbench", "cosmos3", "generate-variants"]
     assert "--input-path" in argv and "--guardrails" in argv
     assert "echo" not in argv
+
+
+def test_paidf_cosmos3_cannot_be_prepared_as_a_one_shot_submit() -> None:
+    with pytest.raises(NpaWorkflowError, match="requires runtime execution"):
+        prepare_npa_workflow_for_submit(
+            SPEC,
+            run_id="paidf-one-shot",
+            assume_decision="promote_checkpoint",
+            config_overrides={"bucket": "example-bucket"},
+        )
 
 
 def test_general_cosmos3_toolref_forwards_conditioning_and_sampling() -> None:
@@ -135,9 +148,9 @@ def test_configuration_surface_and_privacy_defaults() -> None:
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
     assert float(config["source_motion_weight"]) == 0.0
-    assert float(config["grade_threshold"]) == 0.5
+    assert float(config["grade_threshold"]) == 0.3
     assert float(config["attribute_threshold"]) == 0.5
-    assert config["augmentation_seed"] == ""
+    assert config["augmentation_seed"] == "30"
     assert (
         doc["states"]["generate-configs"]["run"]["argv"][-1]
         == "{{config.augmentation_seed}}"

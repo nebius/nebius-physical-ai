@@ -49,10 +49,11 @@ npa workbench workflow plan-spec '<spec.yaml>' --waves    # offline wave preview
 See the [workflow guide](../docs/workbench/npa-workflow-guide.md)
 (Runtime orchestrator) and [design reference](../DESIGN.md).
 
-`config.require_runtime: true` requires `submit --runtime` and rejects
+`metadata.executionMode: runtime` automatically selects the runtime orchestrator
+and rejects `--no-runtime`. Runtime-required workflows also reject
 `--assume-decision` for execution before staging or provisioning. Offline plans
-may still use assumed decisions to inspect each route. PAIDF Cosmos 3 enables
-this setting so actual evaluator reports control refinement and downstream work.
+may use assumed decisions to inspect each route. PAIDF Cosmos 3 declares this
+mode so actual evaluator reports control refinement and downstream work.
 
 `config.source_overlay: true` selects the automatically staged checkout's NPA
 code in pinned workbench images while keeping their installed dependencies.
@@ -164,7 +165,6 @@ of every stage. Consult each guide and spec for prerequisites and evidence.
 | [`insights-smoke.yaml`](testing/insights-smoke.yaml) | CPU fixture-run ingestion → comparison and dashboard artifacts |
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
-| [`living-lab-nurec-fanout.yaml`](testing/living-lab-nurec-fanout.yaml) | Parallel NuRec reconstructions → joined digital-twin report and panorama ([guide](../docs/workbench/guides/living-lab-nurec-fanout.md)) |
 | [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
 | [`multi-node-probe.yaml`](testing/multi-node-probe.yaml) | Gang-scheduled multi-node stage with evidence from every rank |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |

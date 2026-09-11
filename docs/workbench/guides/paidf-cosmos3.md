@@ -32,6 +32,13 @@ first write the available input, generated-video, evaluator, decision, and
 quality-disposition evidence to `reports/quality-evidence.rrd`, then terminate with a
 failure. Missing or incomplete evaluator reports also reject.
 
+This workflow declares `metadata.executionMode: runtime`. The generic submit
+command therefore selects the runtime orchestrator even when `--runtime` is
+omitted, so every failed evaluation reaches the next bounded refinement pass and
+the terminal disposition controls the final branch. An explicit `--no-runtime`
+is rejected before staging or submission. `--assume-decision` is allowed only
+for planning previews; execution requires actual evaluator decisions.
+
 ## Inputs and configuration
 
 Choose `input_kind: video` and set `input_video_uri` to one MP4, or choose
@@ -51,9 +58,9 @@ dataset, episode, camera, bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` optionally
-decouples appearance-profile sampling from the run ID for reproducible quality
-comparisons. Quality and retries use
+`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` defaults to
+`30`, keeping appearance profiles consistent across fresh run IDs; change it for
+new appearance experiments. Quality and retries use
 `grade_threshold`, `attribute_threshold`, `refinement_iterations`, `retry_seed_stride`,
 `retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
 compatibility setting that must be `0.0` (the default). Nonzero values fail
@@ -75,8 +82,8 @@ partial interval. The adapter verifies lossless edge-control readback, checks
 every effective prompt, and saves the video guardrail's postprocessed output.
 `alignment_mode: required` independently verifies complete decoding, frame
 counts, timestamps and the generated/source hashes before quality scoring.
-The workflow's exploratory `grade_threshold` and `attribute_threshold` both
-default to `0.5`; the reports retain individual failed attribute checks. For
+The workflow's exploratory `grade_threshold` and `attribute_threshold`
+default to `0.3` and `0.5`; reports retain individual failed attribute checks. For
 stricter acceptance, explicitly set `0.75` and `1.0` respectively. These quality
 settings do not weaken complete decoding, alignment or model guardrails.
 These controls apply to this workflow's prepare/generate-variants commands;
@@ -165,22 +172,20 @@ runtime decisions and automatically enables the submitted NPA source overlay.
 
 ## Live validation scope
 
-The publication regression can reuse retained real GPU output without generating
-again. Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
-`NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded
-variant directories, `NPA_PAIDF_REPAIR_URI` set to a fresh S3 augment prefix, and
-`NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It requires
-saved raw-output hashes, uploads through the real publisher, and verifies exact
-bytes after S3 readback. This proves publication fidelity, not generation quality
-or training acceptance.
+See the setup guide's [validation record](../../../workflows/guides/paidf-cosmos3.md#validation)
+for the current implementation's measured checks and limitations, and its
+[full-pipeline checks](../../../workflows/guides/paidf-cosmos3.md#check-every-stage-and-full-pipeline-completion)
+to validate a new run. Full accepted execution of the structural-transfer
+workflow is still being validated. Generation alone does not establish quality,
+accepted curation, or final artifact completeness.
 
-The complete synthetic workflow has succeeded on reserved RTX PRO 6000, and
-real source-conditioned Cosmos 3 inference plus refinement semantics have
-succeeded on reserved B200. The preserved reserved topology exposes one
-requestable GPU per node on both paths. Because SkyPilot requires a two-GPU task
-to fit on one node, `variant_count=2` with `variant_parallelism=2` remains
-unit-tested rather than live-proven concurrently. No on-demand capacity was used;
-a sequential two-variant run must not be described as concurrent evidence.
+The publication regression can separately reuse retained real GPU output.
+Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
+`NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded
+variant directories, `NPA_PAIDF_REPAIR_URI` set to a fresh S3 augment prefix,
+and `NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It requires
+saved raw-output hashes, uploads through the real publisher, and verifies exact
+bytes after S3 readback. This proves publication fidelity only.
 
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 

@@ -25,8 +25,9 @@ URIs, and records declared outputs.
 ## Reference Spec
 
 For a complete source-video data factory, use `workflows/main/paidf-cosmos3.yaml`
-and `workflows/guides/paidf-cosmos3.md`. It requires `--runtime` without assumed
-decisions and enables `source_overlay` so pinned images use the submitted NPA
+and `workflows/guides/paidf-cosmos3.md`. Its metadata selects runtime execution
+automatically, rejects assumed execution decisions, and enables `source_overlay`
+so pinned images use the submitted NPA
 adapters. Its `structural_control=edge` path prepares a complete 832×480 source
 at `conditioning_fps=24`, drives native transfer in `transfer_chunk_frames=93`
 windows with `control_guidance=1.5`, and verifies source/output timing and hashes

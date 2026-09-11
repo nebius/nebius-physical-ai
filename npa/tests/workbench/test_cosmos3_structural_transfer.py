@@ -272,3 +272,30 @@ def test_final_caption_coverage_rejects_incomplete_or_stale_evidence(failure):
         report["variants"][0]["video_sha256"] = "c" * 64
     with pytest.raises(PaidfCosmos3Error):
         _validate_caption_coverage(report, expected)
+
+
+@pytest.mark.parametrize("failure", ["missing-schema", "missing-score", "wrong-decision", "low-score", "rejection-reasons"])
+def test_annotation_rejects_invalid_disposition_before_captioning(monkeypatch, failure):
+    from npa.workflows import paidf_cosmos3_annotation as annotation
+    from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, QUALITY_DISPOSITION_SCHEMA
+
+    disposition = {"schema": QUALITY_DISPOSITION_SCHEMA, "quality_status": "accepted",
+                   "decision": "promote_checkpoint", "evaluator_status": "completed",
+                   "score": 0.8, "threshold": 0.5, "hard_checks_passed": True, "reasons": []}
+    if failure.startswith("missing-"):
+        del disposition[failure.removeprefix("missing-")]
+    elif failure == "wrong-decision":
+        disposition["decision"] = "loop_back"
+    elif failure == "low-score":
+        disposition["score"] = 0.2
+    else:
+        disposition["reasons"] = ["required check failed"]
+    documents = {"manifest.json": {}, "cosmos_evaluator.json": {"status": "completed", "passed": True},
+                 "quality_disposition.json": disposition}
+    monkeypatch.setattr(annotation, "_read_json", lambda uri, **kwargs: documents[uri.rsplit("/", 1)[-1]])
+    monkeypatch.setattr(annotation, "validate_committed_augment_manifest", lambda *args: [{"clip": "variant"}])
+    calls = []
+    with pytest.raises(PaidfCosmos3Error, match="quality disposition"):
+        annotation.annotate_accepted("s3://example-bucket/run/", "unused/", "model",
+                                     captioner=lambda **kwargs: calls.append(kwargs))
+    assert calls == []

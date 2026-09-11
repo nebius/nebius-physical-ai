@@ -321,7 +321,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
     submitted = RUNNER.invoke(app, submit_args)
     if case.spec == "paidf-cosmos3.yaml":
         assert submitted.exit_code != 0
-        assert "requires --runtime without --assume-decision" in submitted.output
+        assert "reject --assume-decision for execution" in submitted.output
         # Real full-pipeline execution is covered by the runtime test below.
         return
     submit_payload = parse_json_payload(submitted, forbidden_markers)
