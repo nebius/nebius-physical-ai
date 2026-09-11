@@ -64,6 +64,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "kitchen_egl_env_reset",
         ],
     },
+    "robotwin": {
+        "capability_name": "beat_block_hammer_successful_seed_replay_collection",
+        "smoke_artifact_name": "robotwin-smoke.json",
+        "spec": "byof-robotwin.yaml",
+        "must_exercise": [
+            "sapien_vulkan_rt_renderer",
+            "pinned_official_runtime_assets",
+            "beat_block_hammer_successful_seed_search",
+            "beat_block_hammer_successful_seed_replay",
+            "robotwin_native_hdf5_collection",
+            "robotwin_rendered_mp4",
+        ],
+    },
     "openpi": {
         "capability_name": "pi05_droid_jointpos_polaris_served_infer",
         "smoke_artifact_name": "openpi_pi05_droid_jointpos_polaris_inference.json",
@@ -170,6 +183,31 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
         assert "capabilities_exercised" in smoke, path.name
+
+
+def test_robotwin_solution_smoke_is_the_native_success_gate() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-robotwin.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "96c1feab536306b50c26af200044fcdf126e8904"
+    assert config["resource_profile_yaml"] == (
+        "byof-solution-smoke-robotwin-rtxpro-gpu"
+    )
+    assert config["task"] == "beat_block_hammer"
+    assert config["wait_timeout"] == -1
+    assert "TORCH_CUDA_ARCH_LIST=12.0" in build
+    assert "TianxingChen/RoboTwin2.0" not in build
+    assert "785feb15aa4a4f532395ad2b1d2be5f28cb561ad" in smoke
+    assert 'TASK_CONFIG = "demo_clean"' in smoke
+    assert '"scripts/collect_data.py", TASK, TASK_CONFIG' in smoke
+    assert '"task_success": True' in smoke
+    assert 'decoded_frames != action_count + 1' in smoke
+    assert '"RTX PRO 6000" not in gpu_name.upper()' in smoke
+    assert 'torch_capability != (12, 0)' in smoke
+    assert 'vulkan.returncode != 0' in smoke
+    assert 'pod_observed_immutable_image_digest' in smoke
+    assert 'if payload["exit_status"] != 0' in smoke
 
 
 def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
