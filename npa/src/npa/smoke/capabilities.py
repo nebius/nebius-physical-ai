@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "ncore": [
+        "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
+        "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
+        "source inventory hashes match; no functional capture validation claimed",
+    ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",

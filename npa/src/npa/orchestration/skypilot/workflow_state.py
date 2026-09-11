@@ -533,36 +533,33 @@ def _task_selection_failed(
 
 
 def tail_live_job_logs(
-    *,
-    sky_bin: str,
-    job_id: str,
-    stage: str = "",
-    follow: bool = False,
+    *, sky_bin: str, job_id: str, stage: str = "", follow: bool = False,
     timeout: int = 300,
 ) -> subprocess.CompletedProcess[str]:
-    """Read the exact managed job through its configured SkyPilot connection.
+    """Read managed-job logs through the selected, verified SkyPilot runtime.
 
     Args:
-        sky_bin: Selected SkyPilot executable.
-        job_id: Immutable managed-job identity.
-        stage: Optional provider task identity within the managed job.
-        follow: Whether to stream subsequent output.
-        timeout: Maximum time for this log request.
+        sky_bin: Configured SkyPilot executable.
+        job_id: Exact managed-job ID from the run record.
+        stage: Optional task ID or stage name.
+        follow: Whether to follow the live log stream.
+        timeout: Subprocess timeout in seconds.
     Returns:
-        Captured output and exit status from the selected controller.
+        Captured SkyPilot log process result.
     Raises:
-        RuntimeError: The isolated API connection cannot be verified.
-        OSError: The executable or isolated state cannot be accessed.
+        ValueError: Runtime configuration or API ownership cannot be verified.
+        RuntimeError: The pinned SkyPilot executable is unavailable or incompatible.
+        OSError: The configured executable or runtime cannot be accessed.
         subprocess.TimeoutExpired: The log request exceeds its timeout.
     """
-    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot._bin import ensure_skypilot_version, resolve_config
     from npa.orchestration.skypilot.cleanup import sky_environment
 
     runtime = resolve_config(sky_bin=sky_bin)
     env = sky_environment(runtime.isolated_config_dir)
     if runtime.global_config_path is not None:
         env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
-    cmd = [str(runtime.sky_bin), "jobs", "logs", str(job_id)]
+    cmd = [str(ensure_skypilot_version(runtime.sky_bin)), "jobs", "logs", str(job_id)]
     if stage:
         cmd.append(stage)
     cmd.append("--follow" if follow else "--no-follow")

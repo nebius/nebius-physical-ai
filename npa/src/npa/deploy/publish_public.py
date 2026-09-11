@@ -965,6 +965,370 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
         return False, str(exc)
 
 
+def _scan_ncore_payload_exact_digest(image_ref: str) -> dict[str, int]:
+    """Repeat the general payload/history check; complete-byte proof is separate."""
+
+    script = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "scan_image_omniverse_payload.py"
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-ncore-publication-scan-") as tmp:
+        report = Path(tmp) / "payload.json"
+        result = subprocess.run(
+            [sys.executable, str(script), image_ref, "--json", str(report)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError("NCore exact-digest payload scan failed")
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        if (
+            payload.get("format") != "npa_restricted_payload_scan_v2"
+            or payload.get("digest") != image_ref.split("@", 1)[1]
+            or payload.get("scan_complete") is not True
+            or payload.get("history_only") is not False
+            or payload.get("verdict") != "clean"
+            or type(payload.get("entries_scanned")) is not int
+            or payload["entries_scanned"] <= 0
+        ):
+            raise RuntimeError(
+                "NCore exact-digest payload scan is incomplete or unbound"
+            )
+        counts = {"entries_scanned": payload["entries_scanned"]}
+        for field in ("payload_hits", "history_hits", "weight_shaped_paths"):
+            if not isinstance(payload.get(field), list) or (
+                field != "weight_shaped_paths" and payload[field]
+            ):
+                raise RuntimeError(
+                    f"NCore exact-digest payload scan has unresolved {field}"
+                )
+            counts[field] = len(payload[field])
+        return counts
+
+
+def _scan_ncore_selected_base_exact_digest(
+    image_ref: str,
+    *,
+    platform_digest: str,
+    config_digest: str,
+) -> dict[str, Any]:
+    """Verify shipped selected bytes and repeat their supplemental package scan."""
+    from npa.deploy import ncore_selected_sbom as selected
+
+    if not re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", image_ref):
+        raise RuntimeError("NCore selected-base scan requires an exact digest")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", platform_digest):
+        raise RuntimeError(
+            "NCore selected-base export requires an exact platform digest"
+        )
+    with tempfile.TemporaryDirectory(prefix="npa-ncore-selected-base-") as temporary:
+        directory = Path(temporary)
+        archive = directory / "rootfs.tar"
+        # The caller has already checked this sole child against the accepted
+        # index and config. Export that exact child, with no tag resolution.
+        platform_ref = f"{_repository(image_ref)}@{platform_digest}"
+        _export_ncore_selected_base(platform_ref, archive)
+        return selected.scan_archive(
+            archive,
+            directory / "scan",
+            image_digest=image_ref.split("@", 1)[1],
+            platform_digest=platform_digest,
+            config_digest=config_digest,
+            trivy_command=_trivy_command(),
+        )
+
+
+def _export_ncore_selected_base(platform_ref: str, archive: Path) -> None:
+    exported = subprocess.run(
+        ["crane", "export", "--platform", "linux/amd64", platform_ref, str(archive)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if exported.returncode:
+        raise RuntimeError("NCore selected-base exact-digest export failed")
+
+
+def _validate_ncore_selected_live_scan(accepted, live):
+    fields = (
+        "format",
+        "status",
+        "image_digest",
+        "platform_digest",
+        "config_digest",
+        "lock_sha256",
+        "packages_sha256",
+        "files_verified",
+        "symlinks_verified",
+        "packages_evaluated",
+        "critical_total",
+        "critical_with_fix",
+        "critical_unfixed",
+        "secrets",
+    )
+    for field in fields:
+        expected = accepted["selected_base_scan"][field]
+        if type(live.get(field)) is not type(expected) or live.get(field) != expected:
+            raise RuntimeError(
+                f"NCore live selected-base {field} differs from acceptance"
+            )
+
+
+def verify_ncore_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Recheck accepted NCore bytes, source-bound buildx evidence and live scans.
+
+    The immutable index is the release identity. The CPU conversion observation
+    may be that index or its sole linux/amd64 child; NRE runs in a separate image.
+    Both legacy buildx and OCI-artifact attestations, and SLSA v0.2/v1, are valid.
+    This gate never removes the independent publication quarantine.
+    """
+
+    if item.tool != "ncore":
+        return True, "not applicable"
+
+    def require(ok: bool, detail: str) -> None:
+        if not ok:
+            raise RuntimeError(f"NCore {detail}")
+
+    try:
+        accepted = images.validate_ncore_accepted_image_manifest(
+            images.ncore_accepted_image_manifest()
+        )
+        digest = accepted["oci_digest"]
+        platform = accepted["amd64_manifest"]
+        repository = f"{images.public_container_registry()}/npa-ncore"
+        require(
+            item.source_ref == f"{repository}@{digest}",
+            "source is not the exact accepted digest",
+        )
+        require(
+            item.target_ref == f"{repository}:{accepted['tag']}",
+            "target is not the accepted release",
+        )
+        ok, observed = _crane_digest(item.source_ref)
+        require(ok and observed == digest, "registry digest differs from acceptance")
+        index = _crane_json(["manifest", item.source_ref])
+        manifests = index.get("manifests")
+        require(
+            isinstance(manifests, list) and len(manifests) >= 2,
+            "source requires an attested OCI index",
+        )
+        platforms = [
+            m
+            for m in manifests
+            if isinstance(m, dict)
+            and m.get("platform", {}).get("os") == "linux"
+            and m.get("platform", {}).get("architecture") == "amd64"
+        ]
+        require(
+            len(platforms) == 1 and platforms[0].get("digest") == platform,
+            "index must contain only the accepted linux/amd64 platform",
+        )
+        platform_manifest = _crane_json(["manifest", f"{repository}@{platform}"])
+        require(
+            platform_manifest.get("config", {}).get("digest")
+            == accepted["config_digest"]
+            and isinstance(platform_manifest.get("layers"), list)
+            and bool(platform_manifest["layers"]),
+            "platform config/layers differ from acceptance",
+        )
+        config = _crane_json(["config", f"{repository}@{platform}"])
+        require(
+            config.get("os") == "linux" and config.get("architecture") == "amd64",
+            "config platform differs from acceptance",
+        )
+        runtime = config.get("config") or {}
+        user = runtime.get("User")
+        uid = user.split(":", 1)[0] if isinstance(user, str) else ""
+        require(
+            bool(uid) and uid != "root" and not (uid.isdecimal() and int(uid) == 0),
+            "runtime must be non-root",
+        )
+        labels = runtime.get("Labels") or {}
+        require(
+            labels.get("org.opencontainers.image.revision")
+            == accepted["development_sha"]
+            and labels.get("npa.ncore.revision")
+            == accepted["source"]["ncore_revision"],
+            "config source revision differs from acceptance",
+        )
+
+        statements: dict[str, dict[str, Any]] = {}
+        seen = {platform}
+        for descriptor in manifests:
+            if descriptor is platforms[0]:
+                continue
+            annotations = descriptor.get("annotations") or {}
+            attestation_digest = descriptor.get("digest")
+            require(
+                isinstance(attestation_digest, str)
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", attestation_digest) is not None
+                and attestation_digest not in seen
+                and descriptor.get("platform")
+                == {"os": "unknown", "architecture": "unknown"}
+                and annotations.get("vnd.docker.reference.type")
+                == "attestation-manifest"
+                and annotations.get("vnd.docker.reference.digest") == platform,
+                "index contains an extra or unbound manifest",
+            )
+            seen.add(attestation_digest)
+            attestation = _crane_json(
+                ["manifest", f"{repository}@{attestation_digest}"]
+            )
+            if "subject" in attestation:
+                require(
+                    attestation["subject"].get("digest") == platform,
+                    "OCI artifact subject differs from accepted platform",
+                )
+            layers = attestation.get("layers")
+            require(
+                isinstance(layers, list) and bool(layers),
+                "attestation has no statements",
+            )
+            for layer in layers:
+                predicate_type = (layer.get("annotations") or {}).get(
+                    "in-toto.io/predicate-type"
+                )
+                require(
+                    predicate_type
+                    in {
+                        "https://spdx.dev/Document",
+                        "https://slsa.dev/provenance/v0.2",
+                        "https://slsa.dev/provenance/v1",
+                    }
+                    and predicate_type not in statements,
+                    "unknown or duplicate attestation predicate",
+                )
+                require(
+                    re.fullmatch(r"sha256:[0-9a-f]{64}", str(layer.get("digest")))
+                    is not None,
+                    "invalid attestation blob digest",
+                )
+                statement = _crane_blob_json(repository, layer["digest"])
+                require(
+                    statement.get("_type")
+                    in {
+                        "https://in-toto.io/Statement/v0.1",
+                        "https://in-toto.io/Statement/v1",
+                    }
+                    and statement.get("predicateType") == predicate_type,
+                    "invalid in-toto statement",
+                )
+                subjects = statement.get("subject")
+                require(
+                    isinstance(subjects, list)
+                    and bool(subjects)
+                    and all(
+                        s.get("digest", {}).get("sha256") == platform[7:]
+                        for s in subjects
+                    ),
+                    "attestation subject differs from accepted platform",
+                )
+                predicate = statement.get("predicate")
+                require(isinstance(predicate, dict), "invalid attestation predicate")
+                statements[predicate_type] = predicate
+        sbom = statements.pop("https://spdx.dev/Document", {})
+        require(
+            isinstance(sbom.get("packages"), list) and bool(sbom["packages"]),
+            "SBOM has no packages",
+        )
+        require(bool(statements), "missing SLSA provenance")
+        for kind, provenance in statements.items():
+            if kind.endswith("/v0.2"):
+                definition = provenance
+                parameters = (provenance.get("invocation") or {}).get(
+                    "parameters"
+                ) or {}
+                dependencies = provenance.get("materials")
+            else:
+                definition = provenance.get("buildDefinition") or {}
+                parameters = (definition.get("externalParameters") or {}).get(
+                    "request"
+                ) or {}
+                dependencies = definition.get("resolvedDependencies")
+            require(
+                bool(definition.get("buildType"))
+                and isinstance(dependencies, list)
+                and bool(dependencies)
+                and all(
+                    isinstance(dependency.get("uri"), str)
+                    and bool(dependency["uri"])
+                    and any(
+                        re.fullmatch(
+                            pattern,
+                            str((dependency.get("digest") or {}).get(algorithm)),
+                        )
+                        for algorithm, pattern in (
+                            ("sha256", r"[0-9a-f]{64}"),
+                            ("sha1", r"[0-9a-f]{40}"),
+                        )
+                    )
+                    for dependency in dependencies
+                ),
+                "provenance has no build type/dependencies",
+            )
+            args = parameters.get("args") or {}
+            source_args = [
+                args[key]
+                for key in ("build-arg:SOURCE_SHA", "build-arg:NPA_SOURCE_SHA")
+                if key in args
+            ]
+            require(
+                bool(source_args)
+                and all(value == accepted["development_sha"] for value in source_args),
+                "provenance must bind the exact SOURCE_SHA (build with mode=max)",
+            )
+
+        live_payload = _scan_ncore_payload_exact_digest(item.source_ref)
+        require(
+            live_payload
+            == {
+                k: accepted["payload_scan"][k]
+                for k in (
+                    "entries_scanned",
+                    "payload_hits",
+                    "history_hits",
+                    "weight_shaped_paths",
+                )
+            },
+            "live payload counts differ from acceptance",
+        )
+        live_vulnerability = _scan_trivy_exact_digest(item.source_ref, subject="NCore")
+        require(
+            live_vulnerability
+            == {
+                k: accepted["vulnerability_scan"][k]
+                for k in (
+                    "critical_total",
+                    "critical_with_fix",
+                    "critical_unfixed",
+                    "secrets",
+                )
+            },
+            "live vulnerability counts differ from acceptance",
+        )
+        selected_scan = _scan_ncore_selected_base_exact_digest(
+            item.source_ref, platform_digest=platform,
+            config_digest=accepted["config_digest"],
+        )
+        _validate_ncore_selected_live_scan(accepted, selected_scan)
+        return (
+            True,
+            f"exact accepted digest {digest}; full COLMAP conversion and NRE RTX scene/render proof",
+        )
+    except (
+        OSError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        return False, str(exc)
+
+
 def verify_bootstrap_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Require a digest-bound SkyPilot attestation before any public tag write."""
 
@@ -1052,6 +1416,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if ok and item.tool == "ltx2":
             ok, detail = verify_ltx_publication_source(item)
             detail = f"LTX GATE — {detail}"
+        if ok and item.tool == "ncore":
+            ok, detail = verify_ncore_publication_source(item)
+            detail = f"NCORE GATE — {detail}"
         print(f"  {item.source_ref}  {'ok' if ok else f'UNREADABLE — {detail}'}")
         if not ok:
             failures.append((item, detail))

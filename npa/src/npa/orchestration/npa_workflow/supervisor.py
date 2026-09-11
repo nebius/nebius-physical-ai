@@ -197,6 +197,7 @@ class CheckpointValidation:
 class PreflightEvidence:
     checks: Mapping[str, str] = field(default_factory=dict)
     observed_at: str = ""
+    scope: Mapping[str, Any] = field(default_factory=dict)
 
     REQUIRED_RELAUNCH_CHECKS = frozenset(
         {
@@ -220,6 +221,7 @@ class PreflightEvidence:
             "checks": dict(sorted(self.checks.items())),
             "observed_at": self.observed_at,
             "relaunch_ready": self.relaunch_ready,
+            "scope": dict(self.scope),
         }
 
 

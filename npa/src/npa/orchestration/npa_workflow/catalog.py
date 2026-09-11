@@ -6,6 +6,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
 
 
 @dataclass(frozen=True)
@@ -136,27 +140,80 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.curobo.prepare": ToolEntry(
         name="workbench.curobo.prepare",
         description="cuRobo V2 prepare with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'prepare', '--output-path', '{{config.curobo_output_uri}}', '--mode', '{{config.curobo_mode}}'],
+        argv_template=[
+            "npa",
+            "workbench",
+            "curobo",
+            "prepare",
+            "--output-path",
+            "{{config.curobo_output_uri}}",
+            "--mode",
+            "{{config.curobo_mode}}",
+        ],
     ),
     "workbench.curobo.benchmark": ToolEntry(
         name="workbench.curobo.benchmark",
         description="cuRobo V2 benchmark with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'benchmark', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa",
+            "workbench",
+            "curobo",
+            "benchmark",
+            "--input-path",
+            "{{config.curobo_input_uri}}",
+            "--output-path",
+            "{{config.curobo_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
     ),
     "workbench.curobo.plan": ToolEntry(
         name="workbench.curobo.plan",
         description="cuRobo V2 plan with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'plan', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa",
+            "workbench",
+            "curobo",
+            "plan",
+            "--input-path",
+            "{{config.curobo_input_uri}}",
+            "--output-path",
+            "{{config.curobo_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
     ),
     "workbench.curobo.validate": ToolEntry(
         name="workbench.curobo.validate",
         description="cuRobo V2 validate with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'validate', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa",
+            "workbench",
+            "curobo",
+            "validate",
+            "--input-path",
+            "{{config.curobo_input_uri}}",
+            "--output-path",
+            "{{config.curobo_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
     ),
     "workbench.curobo.visualize": ToolEntry(
         name="workbench.curobo.visualize",
         description="cuRobo V2 visualize with verified artifact handoffs.",
-        argv_template=['npa', 'workbench', 'curobo', 'visualize', '--input-path', '{{config.curobo_input_uri}}', '--output-path', '{{config.curobo_output_uri}}', '--run-id', '{{run.id}}'],
+        argv_template=[
+            "npa",
+            "workbench",
+            "curobo",
+            "visualize",
+            "--input-path",
+            "{{config.curobo_input_uri}}",
+            "--output-path",
+            "{{config.curobo_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
     ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
@@ -254,6 +311,49 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.variant}}",
             "--require-gpu",
             "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.convert_colmap": ToolEntry(
+        name="workbench.nurec.convert_colmap",
+        description="Convert COLMAP with Apache-2.0 NVIDIA NCore, decode and verify all V4 data, and publish a self-contained sequence for separate proprietary NRE reconstruction.",
+        config_defaults={
+            "cache_dir": str(DEFAULT_COLMAP_CACHE_DIR),
+            "scratch_dir": str(DEFAULT_COLMAP_SCRATCH_DIR),
+            "dataset_root": ".",
+            "colmap_dir": "sparse/0",
+            "images_dir": "images",
+            "masks_dir": "",
+            "rig_mode": "derive",
+            "reference_camera": "",
+        },
+        omit_flags_when_empty=("--masks-dir", "--reference-camera"),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "convert-colmap",
+            "--input-path",
+            "{{config.colmap_input_uri}}",
+            "--output-path",
+            "{{config.ncore_sequence_uri}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--scratch-dir",
+            "{{config.scratch_dir}}",
+            "--dataset-root",
+            "{{config.dataset_root}}",
+            "--colmap-dir",
+            "{{config.colmap_dir}}",
+            "--images-dir",
+            "{{config.images_dir}}",
+            "--masks-dir",
+            "{{config.masks_dir}}",
+            "--reference-camera",
+            "{{config.reference_camera}}",
+            "--rig-mode",
+            "{{config.rig_mode}}",
+            "--output-format",
             "json",
         ],
     ),
@@ -781,6 +881,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
+        config_defaults={"alignment_mode": "", "attribute_threshold": ""},
+        omit_flags_when_empty=("--alignment-mode", "--attribute-threshold"),
         description=(
             "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
             "(hallucination + VLM attribute verification, Apache-2.0) plus the "
@@ -803,6 +905,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.configs_uri}}",
             "--threshold",
             "{{config.grade_threshold}}",
+            "--attribute-threshold",
+            "{{config.attribute_threshold}}",
+            "--alignment-mode",
+            "{{config.alignment_mode}}",
             "--temporal-threshold",
             "{{config.temporal_consistency_threshold}}",
             "--temporal-regions-json",
@@ -2787,6 +2893,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.prepare_video_input": ToolEntry(
         name="workbench.cosmos3.prepare_video_input",
+        config_defaults={"conditioning_fps": ""},
+        omit_flags_when_empty=("--conditioning-fps",),
         description=(
             "Select one direct video or LeRobot v2/v3 episode/camera and stage "
             "the canonical source video plus caption frames."
@@ -2810,12 +2918,18 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.input_uri}}",
             "--provenance-uri",
             "{{config.input_provenance_uri}}",
+            "--conditioning-fps",
+            "{{config.conditioning_fps}}",
             "--run-id",
             "{{run.id}}",
         ],
     ),
     "workbench.cosmos3.generate_variants": ToolEntry(
         name="workbench.cosmos3.generate_variants",
+        config_defaults={"structural_control": "", "conditioning_fps": "",
+                         "transfer_chunk_frames": "", "control_guidance": ""},
+        omit_flags_when_empty=("--structural-control", "--conditioning-fps",
+                               "--transfer-chunk-frames", "--control-guidance"),
         access_capabilities=("cosmos3",),
         description=(
             "Run real Cosmos 3 video2video inference once per PAIDF variant, "
@@ -2869,6 +2983,14 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--guardrails",
             "--source-motion-weight",
             "{{config.source_motion_weight}}",
+            "--structural-control",
+            "{{config.structural_control}}",
+            "--conditioning-fps",
+            "{{config.conditioning_fps}}",
+            "--transfer-chunk-frames",
+            "{{config.transfer_chunk_frames}}",
+            "--control-guidance",
+            "{{config.control_guidance}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -2919,7 +3041,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
-
     "workbench.robocasa.task_registration": ToolEntry(
         name="workbench.robocasa.task_registration",
         description="Verify RoboCasa Gymnasium task registration.",
@@ -3089,6 +3210,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ],
     ),
 }
+
 
 def validate_tool_ref(tool_ref: str) -> ToolEntry:
     entry = TOOL_CATALOG.get(tool_ref)

@@ -10,6 +10,7 @@
 #   DEV_VM_SSH_HOST         hostname or IP of the dev VM
 #   DEV_VM_SSH_USER         SSH login user
 #   DEV_VM_SSH_PRIVATE_KEY  private key (PEM) authorized on the dev VM
+#   DEV_VM_SSH_KNOWN_HOSTS  independently verified SSH host key entry
 # Optional:
 #   DEV_VM_SSH_PORT         SSH port (defaults to 22)
 #
@@ -62,18 +63,22 @@ jobs:
     timeout-minutes: 300
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Verify required secrets are present
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
+          DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
           missing=""
           [ -n "$DEV_VM_SSH_HOST" ] || missing="$missing DEV_VM_SSH_HOST"
           [ -n "$DEV_VM_SSH_USER" ] || missing="$missing DEV_VM_SSH_USER"
           [ -n "$DEV_VM_SSH_PRIVATE_KEY" ] || missing="$missing DEV_VM_SSH_PRIVATE_KEY"
+          [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ] || missing="$missing DEV_VM_SSH_KNOWN_HOSTS"
           if [ -n "$missing" ]; then
             echo "::error::Missing required secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
             exit 1
@@ -105,47 +110,82 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "Effective tier=$tier ref=$ref (event=$EVENT_NAME)"
 
+      - name: Check direct SSH reachability
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          import socket
+          import sys
+
+          def reachable(label, host, port):
+              try:
+                  with socket.create_connection((host, port), timeout=15):
+                      print(f"{label}: TCP reachable", flush=True)
+                      return True
+              except OSError:
+                  print(f"{label}: TCP unreachable", flush=True)
+                  return False
+
+          port = os.environ.get("DEV_VM_SSH_PORT") or "22"
+          if not port.isdecimal() or not 1 <= int(port) <= 65535:
+              sys.exit("::error::DEV_VM_SSH_PORT must be a valid TCP port.")
+          if not reachable("Dev VM SSH", os.environ["DEV_VM_SSH_HOST"], int(port)):
+              reachable("GitHub HTTPS control", "github.com", 443)
+              reachable("GitHub SSH control", "ssh.github.com", 443)
+              sys.exit("::error::The VM is unreachable from this runner before SSH authentication. Check its public route and network rules; no private key was staged.")
+          PYTHON
+
       - name: Configure SSH access to the dev VM
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
           DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
-          # Optional: a pre-vetted known_hosts entry (recommended). When set it is
-          # used as-is; otherwise we fall back to ssh-keyscan (trust-on-first-use).
+          # Require independently verified host keys before sending credentials.
           DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
+          umask 077
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$DEV_VM_SSH_PRIVATE_KEY" > ~/.ssh/dev_vm_key
           chmod 600 ~/.ssh/dev_vm_key
           port="${DEV_VM_SSH_PORT:-22}"
           echo "SSH_PORT=$port" >> "$GITHUB_ENV"
-          if [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ]; then
-            # Pre-vetted pin: no trust-on-first-use window.
-            printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            # Trust-on-first-use: records whatever key is presented now. Set the
-            # DEV_VM_SSH_KNOWN_HOSTS secret to remove this MITM-at-keyscan window.
-            echo "::warning::DEV_VM_SSH_KNOWN_HOSTS not set; using ssh-keyscan (trust-on-first-use)."
-            ssh-keyscan -p "$port" -H "$DEV_VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          fi
+          printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy runner script to the dev VM
+        id: stage
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
         run: |
+          remote_dir="$(ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
+            'umask 077; mktemp -d /tmp/npa-daily.XXXXXXXXXX')"
+          if ! [[ "$remote_dir" =~ ^/tmp/npa-daily\.[A-Za-z0-9]{10}$ ]]; then
+            echo "::error::The VM returned an invalid staging directory."
+            exit 1
+          fi
+          # Publish before copying so a failed upload still gets cleaned up.
+          printf 'directory=%s\n' "$remote_dir" >> "$GITHUB_OUTPUT"
           scp -P "$SSH_PORT" \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
             -o StrictHostKeyChecking=yes \
             scripts/dev-vm-daily-tests.sh \
-            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}:/tmp/npa-dev-vm-daily-tests.sh"
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}:${remote_dir}/runner.sh"
 
       - name: Run test tier on the dev VM
         env:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
           TIER: ${{ steps.plan.outputs.tier }}
           REF: ${{ steps.plan.outputs.ref }}
           # Optional passthroughs; empty when not configured.
@@ -168,6 +208,8 @@ jobs:
           # git refs and Nebius ids/flags never legitimately contain such chars.
           safe='^[A-Za-z0-9._/-]*$'
           for pair in "git_ref=$REF" \
+                      "REMOTE_RUN_DIR=$REMOTE_RUN_DIR" \
+                      "test_tier=$TIER" \
                       "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
                       "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
                       "NPA_E2E_CLUSTER_CONTEXT=$NPA_E2E_CLUSTER_CONTEXT" \
@@ -191,7 +233,7 @@ jobs:
             allow_gpu=1
           fi
 
-          remote_cmd="chmod +x /tmp/npa-dev-vm-daily-tests.sh && \
+          remote_cmd="chmod 700 '${REMOTE_RUN_DIR}/runner.sh' && \
             NPA_DAILY_ALLOW_LIVE_GPU=${allow_gpu} \
             NPA_E2E_SERVERLESS_PROJECT='${NPA_E2E_SERVERLESS_PROJECT}' \
             NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
@@ -201,14 +243,33 @@ jobs:
             NPA_E2E_REGISTRY='${NPA_E2E_REGISTRY}' \
             NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
             NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \
-            bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
+            bash '${REMOTE_RUN_DIR}/runner.sh' '${TIER}' '${REF}'"
 
           ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
             -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=1200 \
             "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
             "bash -lc \"${remote_cmd}\""
+
+      - name: Clean up the remote runner script
+        if: ${{ always() && steps.stage.outputs.directory != '' }}
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
+        run: |
+          if ! [[ "$REMOTE_RUN_DIR" =~ ^/tmp/npa-daily\.[A-Za-z0-9]{10}$ ]]; then
+            echo "::error::Refusing to clean an invalid remote staging directory."
+            exit 1
+          fi
+          ssh -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
+            "rm -f -- '${REMOTE_RUN_DIR}/runner.sh' && rmdir -- '${REMOTE_RUN_DIR}'"
 
       - name: Clean up SSH key
         if: always()

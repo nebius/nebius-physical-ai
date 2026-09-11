@@ -53,6 +53,14 @@
   },
   "images": [
     {
+      "name": "npa-ncore",
+      "dockerfile": "ncore/Dockerfile",
+      "build_script": "ncore/build.sh",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

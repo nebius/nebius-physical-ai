@@ -8,7 +8,7 @@ The supported workflow authoring surface is the declarative `npa.workflow/v0.0.1
 spec:
 
 ```text
-workflows/testing/nurec-reconstruct.yaml
+workflows/main/nurec-reconstruct.yaml
 ```
 
 The spec runs each state in its own pod and hands artifacts over through S3. This

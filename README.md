@@ -91,6 +91,13 @@ Foxglove viewer. This diagram describes workflow execution; the
 [Workbench Ray guide](docs/workbench/ray.md) routes direct native Jobs/Core,
 Train, Serve, and KubeRay use to the supported paths.
 
+The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
+manual GitHub workflow, a dedicated VM with public SSH, pinned host keys, and
+isolated test execution. The workflow connects directly from GitHub without a
+VPN or an identity-federation service. The guide also covers selecting an
+external public address pool and updating trusted SSH settings after an address
+change.
+
 Python and HTTP coverage varies by tool. The
 [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) explains
 typed clients, callback wrappers, and their return values.
@@ -377,7 +384,7 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   workflows/workbench/
     sim2real/              # Operator notes and legacy compatibility
 workflows/                 # Supported npa.workflow/v0.0.1 catalog; see README.md
-  main/                    # sim2real.yaml and paidf-cosmos3.yaml only
+  main/                    # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
   testing/                 # All other catalog workflow specs
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)

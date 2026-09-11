@@ -152,6 +152,45 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def _capture_mk8s_backend_plan(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    from npa import cluster_backends
+
+    backend = cluster_backends.get_backend("mk8s")
+    seen: dict[str, object] = {}
+
+    class CapturingBackend:
+        def plan(self, desired):  # noqa: ANN001, ANN202 - backend test double
+            seen["desired"] = desired
+            seen["plan"] = backend.plan(desired)
+            return seen["plan"]
+
+        def preflight(self, desired, request):  # noqa: ANN001, ANN202
+            return backend.preflight(desired, request)
+
+    monkeypatch.setattr(cluster_backends, "get_backend", lambda _name: CapturingBackend())
+    return seen
+
+
+def _reserved_capacity_plan():
+    from npa.provisioning_preflight import WholePathPreflightPlan, resolve_topology
+
+    return WholePathPreflightPlan(
+        project_alias="proj",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="eu-north1",
+        topology=resolve_topology(
+            cluster_name="reserved-cluster",
+            gpu_nodes=1,
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-example",
+            preemptible=False,
+        ),
+        decision="ready",
+    )
+
+
 def test_provision_if_absent_dry_run_reports_actions(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -174,10 +213,11 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
-def test_provision_if_absent_dry_run_forwards_infiniband_fabric(
+def test_provision_if_absent_dry_run_preserves_strict_reserved_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_runtime(tmp_path, monkeypatch)
+    seen = _capture_mk8s_backend_plan(monkeypatch)
 
     result = provisioning.provision_if_absent(
         project="proj",
@@ -193,7 +233,54 @@ def test_provision_if_absent_dry_run_forwards_infiniband_fabric(
     )
 
     assert result.status == "ready"
+    assert result.preflight["topology"]["capacity_block_group"] == (
+        "capacityblockgroup-example"
+    )
+    assert result.preflight["topology"]["gpu_preemptible"] is False
+    assert not any(
+        quota["name"].startswith("compute.instance.gpu.")
+        for quota in result.preflight["quotas"]
+    )
+    assert seen["desired"].gpu_nodes.capacity_block_group == (
+        "capacityblockgroup-example"
+    )
+    assert seen["desired"].gpu_nodes.preemptible is False
+    assert seen["plan"]["gpu_reservation"] == "strict"
     assert any("provider_mutation=false" in action for action in result.actions)
+
+
+def test_reserved_capacity_recovery_uses_the_effective_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    from npa.provisioning_journal import ProvisioningOperation
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
+    applied: dict[str, object] = {}
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **kwargs: applied.update(kwargs),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="reserved-cluster",
+        kubeconfig=tmp_path / "reserved-kubeconfig",
+        skip_s3=True,
+        _resolved_plan=_reserved_capacity_plan(),
+    )
+
+    journal = ProvisioningOperation(result.operation_id).read()
+    resume_argv = journal["recovery_commands"]["resume_argv"]
+    group_index = resume_argv.index("--capacity-block-group")
+    assert resume_argv[group_index + 1] == "capacityblockgroup-example"
+    assert "--on-demand" in resume_argv
+    assert "--preemptible" not in resume_argv
+    assert journal["preflight_plan"]["topology"]["capacity_block_group"] == (
+        "capacityblockgroup-example"
+    )
+    assert applied["capacity_block_group"] == "capacityblockgroup-example"
+    assert applied["preemptible"] is False
 
 
 def test_provision_if_absent_preflight_uses_terraform_disk_overrides(

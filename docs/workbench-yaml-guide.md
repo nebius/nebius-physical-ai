@@ -17,7 +17,7 @@ SkyPilot YAML, and a few tool-specific single-task examples or resource profiles
 remain in guarded locations. The supported catalog has two workflow directories:
 
 ```text
-workflows/main/     # sim2real.yaml and paidf-cosmos3.yaml only
+workflows/main/     # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
 workflows/testing/  # All other catalog workflows; add new pipelines here
 ```
 

@@ -122,6 +122,8 @@ sonic = [
 dev = [
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
+    # Daily public DROID staging tests use the OpenPI image's GCS client.
+    "google-cloud-storage==3.13.1",
     # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
     # Keep this explicit development dependency out of core and `full`; the
     # LeIsaac image separately removes and scans bundled static FFmpeg bytes.
@@ -140,6 +142,7 @@ dev = [
 [dependency-groups]
 dev = [
     "uvicorn>=0.52.4",
+    "google-cloud-storage==3.13.1",
     "fastapi~=0.136.1",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
@@ -206,6 +209,8 @@ ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128"
 curobo = "0.8.0-cuda13-b300-unbuilt"
 content-agents = "0.5.2-npa2"
+# Source inventory only: use an explicit validated image until release acceptance.
+ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"

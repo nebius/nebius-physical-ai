@@ -35,8 +35,10 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 #: Run sub-directories materialized from S3 before building a recording. Covers
 #: both producers: the data-factory blueprint (input/cosmos_augmented/
 #: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
-#: neural-reconstruction workflow (ncore/reconstruction/novel_views). Missing
-#: subtrees are skipped.
+#: neural-reconstruction workflow (source/ncore/reconstruction/novel_views).
+#: Only source attribution is fetched; the original capture archive is not
+#: needed to visualize the converted run. Missing subtrees are skipped unless
+#: a COLMAP marker makes its three lineage documents mandatory.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
@@ -46,11 +48,37 @@ RUN_SUBDIRS = (
     "configs",
     "grade",
     "curation",
+    "source",
     "ncore",
     "reconstruction",
     "novel_views",
     "reports",
 )
+
+_COLMAP_LINEAGE_ARTIFACTS = (
+    (
+        "source",
+        "source/attribution.json",
+        "COLMAP source attribution",
+        "dataset revision sha256 creator license selected_capture source_counts",
+    ),
+    (
+        "conversion",
+        "ncore/sequence/conversion.json",
+        "COLMAP to NCore conversion",
+        "",
+    ),
+    (
+        "rig",
+        "ncore/sequence/npa-rig.json",
+        "NCore rig derivation",
+        "status reference_camera pose_count cameras already_present poses_component_group "
+        "copied_dynamic_edges copied_static_edges",
+    ),
+)
+_COLMAP_LINEAGE_PATHS = tuple(row[1] for row in _COLMAP_LINEAGE_ARTIFACTS)
+# Rig sidecars also belong to preconverted NCore; they alone do not identify COLMAP.
+_COLMAP_LINEAGE_MARKERS = _COLMAP_LINEAGE_PATHS[:2]
 
 
 def _int_env(name: str, default: int) -> int:
@@ -185,6 +213,7 @@ def build_run_rrd(
     run_id = _run_id_from_uri(input_uri)
     active_storage = storage_client
     source_inventory: list[dict[str, Any]] = []
+    require_colmap_lineage = False
     output_object_key = ""
     output_exists = False
     if input_uri.startswith("s3://"):
@@ -202,13 +231,19 @@ def build_run_rrd(
                 "remote RRD publication must remain inside the canonical run prefix"
             )
         source_inventory = _s3_inventory(active_storage, input_uri)
+        require_colmap_lineage = _inventory_has_colmap_lineage(
+            source_inventory, source_prefix
+        )
         output_exists = any(
             row["key"] == output_object_key for row in source_inventory
         )
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
-            input_uri, Path(tmp) / "run", storage_client=active_storage
+            input_uri,
+            Path(tmp) / "run",
+            storage_client=active_storage,
+            require_colmap_lineage=require_colmap_lineage,
         )
         captions = _load_captions(local)
 
@@ -449,6 +484,13 @@ def _s3_inventory(storage_client: Any, uri: str) -> list[dict[str, Any]]:
             if item.get("Key")
         )
     return sorted(rows, key=lambda row: row["key"])
+
+
+def _inventory_has_colmap_lineage(
+    inventory: list[dict[str, Any]], run_prefix: str
+) -> bool:
+    lineage_keys = {run_prefix + relative for relative in _COLMAP_LINEAGE_MARKERS}
+    return any(str(row.get("key") or "") in lineage_keys for row in inventory)
 
 
 def _inventory_sha256(rows: list[dict[str, Any]]) -> str:
@@ -942,7 +984,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     aug = _read_json(aug_dir / "manifest.json")
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
-        docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        docs["pipeline/2_augment"] = _json_block("Augment — generated variants", aug)
         conditioning = f"control={aug.get('control') or 'n/a'}"
         if aug.get("control_prompt"):
             conditioning += f" on '{aug['control_prompt']}'"
@@ -997,7 +1039,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     if grade_docs:
         docs["pipeline/3_grade"] = "\n".join(grade_docs)
 
-    # Curation report.
+    # Curation reports from both real components, when available.
+    curator = _read_json(local / "curation" / "cosmos_curator.json")
+    if isinstance(curator, dict):
+        docs["pipeline/4_cosmos_curator"] = _json_block("Cosmos Curator report", curator)
+        stage_log.append(f"cosmos-curator: {curator.get('clip_count', 0)} clip(s)")
     cur = _read_json(local / "curation" / "report.json")
     if isinstance(cur, dict):
         docs["pipeline/4_curation"] = _json_block("Curation report", cur)
@@ -1031,12 +1077,84 @@ def _read_yaml(path: Path) -> Any:
         return None
 
 
-def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
-    """Build the neural-reconstruction stage docs for the Rerun panel.
+def _lineage_fields(payload: dict, names: str) -> dict:
+    return {name: payload[name] for name in names.split() if name in payload}
 
-    Every entry is optional, so a data-factory run (which has none of these
-    artifacts) gets an empty dict and is completely unaffected.
-    """
+
+def _read_lineage(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    payload = _read_json(path)
+    if not isinstance(payload, dict) or not payload:
+        raise DataFactoryVizError(f"NuRec lineage is unreadable: {path.name}")
+    return payload
+
+
+def _colmap_conversion_lineage(report: dict) -> dict:
+    """Keep conversion facts without embedding source filenames or private paths."""
+    payload = _lineage_fields(
+        report,
+        "schema_version status engine counts poses_component_group time_mapping point_filter",
+    )
+    payload["source"] = _lineage_fields(
+        report.get("source", {}), "archive_sha256 counts origin_points_filtered"
+    )
+    payload["converter"] = _lineage_fields(
+        report.get("converter", {}), "revision target runtime_sha256 license"
+    )
+    return payload
+
+
+def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
+    if not any((local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS):
+        return {}
+    docs: dict[str, str] = {}
+    for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
+        path = local / relative
+        report = _read_lineage(path)
+        if report is None:
+            raise DataFactoryVizError(f"NuRec lineage artifact is missing: {relative}")
+        payload = (
+            _colmap_conversion_lineage(report)
+            if entity == "conversion"
+            else _lineage_fields(report, fields)
+        )
+        payload["artifact_sha256"] = _sha256_path(path)
+        docs[f"provenance/{entity}"] = _json_block(title, payload)
+    if docs:
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n"
+            "_Capture counts describe conversion input/output, not NRE training coverage. "
+            "Photographic ordering is not synchronized capture time; sparse SfM points "
+            "are not physical LiDAR._\n\n" + "\n".join(docs.values())
+        )
+        stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
+    return docs
+
+
+def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe actual NuRec artifacts, including either input capture format."""
+    docs = _load_colmap_docs(local, stage_log)
+    if not docs:
+        docs = _load_ncore_manifest_docs(local, stage_log)
+    docs.update(_load_nurec_metrics_docs(local, stage_log))
+    docs.update(_load_novel_view_docs(local, stage_log))
+    if (local / "novel_views").is_dir():
+        docs["provenance/rrd_review"] = _json_block(
+            "Novel-view review settings",
+            {
+                "schema": "npa.nurec.rrd-review.v1",
+                "max_frames_per_entity": RRD_MAX_FRAMES_PER_ENTITY,
+                "max_frame_dim": RRD_MAX_FRAME_DIM,
+                "jpeg_quality": RRD_JPEG_QUALITY,
+            },
+        )
+    return docs
+
+
+def _load_ncore_manifest_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the preconverted-NCore fetch manifest when present."""
     docs: dict[str, str] = {}
 
     # Stage 1 — the real capture that was reconstructed, plus how the rig frame
@@ -1068,6 +1186,12 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
             f"{len(manifest.get('camera_ids') or [])} camera(s))"
         )
 
+    return docs
+
+
+def _load_nurec_metrics_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the metrics emitted by NRE validation."""
+    docs: dict[str, str] = {}
     # Stage 2 — the trained Gaussian reconstruction and its real quality metrics.
     metrics = _read_yaml(local / "reconstruction" / "metrics.yaml")
     if isinstance(metrics, dict):
@@ -1092,6 +1216,12 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         else:
             stage_log.append("reconstruct: metrics recorded")
 
+    return docs
+
+
+def _load_novel_view_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the rendered novel-view frames and videos."""
+    docs: dict[str, str] = {}
     # Stage 3 — novel views rendered from the trained scene.
     novel_root = local / "novel_views"
     if novel_root.is_dir():
@@ -1134,7 +1264,7 @@ _CAPTION_HEADERS = {
     ),
     "labeled_augmented": (
         "## Augmented-clip captions — Token Factory VLM\n\n"
-        "_Descriptive per-frame labels of the Cosmos Transfer 2.5 OUTPUT. This is "
+        "_Descriptive per-frame labels of the generated video output. This is "
         "captioning, not the quality gate — see `pipeline/3_grade` for the "
         "attribute-verify / hallucination check (score + promote/loop_back decision)._\n\n"
     ),
@@ -1162,7 +1292,13 @@ def _load_captions(local: Path) -> dict[str, str]:
     return out
 
 
-def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClient | None") -> Path:
+def _materialize_run(
+    input_uri: str,
+    dest: Path,
+    *,
+    storage_client: "StorageClient | None",
+    require_colmap_lineage: bool = False,
+) -> Path:
     if not input_uri.startswith("s3://"):
         return Path(input_uri)
     from npa.clients.storage import StorageClient
@@ -1171,12 +1307,30 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     dest.mkdir(parents=True, exist_ok=True)
     root = input_uri.rstrip("/")
     for sub in RUN_SUBDIRS:
+        if sub == "source":
+            continue
         try:
             client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue
+    _download_colmap_lineage(client, root, dest, required=require_colmap_lineage)
     return dest
+
+
+def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -> None:
+    lineage_paths = (
+        _COLMAP_LINEAGE_PATHS
+        if required
+        else ("source/attribution.json",)
+    )
+    for relative in lineage_paths:
+        local_path = dest / relative
+        try:
+            client.download_file(f"{root}/{relative}", str(local_path))
+        except Exception:
+            if required:
+                raise
 
 
 def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient | None") -> str:

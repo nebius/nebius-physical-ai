@@ -40,7 +40,7 @@ npa workbench workflow list \
 
 Author and submit `npa.workflow/v0.0.1` specs from the
 [`workflow catalog`](../../workflows/README.md). `workflows/main/` contains only
-`sim2real.yaml` and `paidf-cosmos3.yaml`; all other catalog specs, including new
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`; other specs, including new
 workflows, belong in `workflows/testing/`.
 
 **No-image tools** (Token Factory specs): set
@@ -72,6 +72,8 @@ kind: Workflow
 
 metadata:
   name: my-workflow
+  # Set for workflows whose live branches depend on decision artifacts.
+  executionMode: runtime
 
 config:            # parameters; referenced by tokens
   bucket: my-bucket
@@ -97,6 +99,14 @@ states:
 ```
 
 ## State mechanics
+
+`metadata.executionMode: runtime` makes the generic submit command select the
+runtime orchestrator automatically. Use it when live execution must re-read a
+decision artifact to exit a loop or choose a transition. Read-only planning still
+flattens the selected `--assume-decision` path. An explicit `--no-runtime` is
+rejected for these workflows because a one-shot plan cannot honor their real
+data-dependent control flow. These workflows also reject `--assume-decision`
+for execution; use it only for offline planning previews.
 
 | Field | Purpose |
 | --- | --- |
@@ -162,8 +172,9 @@ and launches it. Use `--plan-only` to inspect the plan without launching.
 
 ### Runtime orchestrator (`--runtime`)
 
-The default submit path is one-shot: it renders the flattened serial plan (loops
-unrolled with `--assume-decision`) and launches it. That path is unchanged.
+Without `metadata.executionMode: runtime`, the default submit path is one-shot:
+it renders the flattened serial plan (loops unrolled with `--assume-decision`)
+and launches it. Runtime-required workflows select the driver automatically.
 
 `--runtime` adds a driver that executes the graph wave by wave:
 
@@ -204,6 +215,13 @@ independently recomputed from the current spec, source selection, and digest pin
 declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
+
+For runtime workflows, GPU capacity is checked against each rendered wave at the
+shared SDK submit boundary. Resuming an existing job does not require spare GPU
+capacity or record a new capacity check. Supervisor evidence retains the wave,
+attempt and observation time of a successful submission; adopting a job without
+that local evidence leaves capacity unknown. Every new or retried submission
+must pass the SDK checks again.
 
 Submission binds those checks to one effective execution target. The selected
 NPA project must have saved project, tenant and region identities. The provider's

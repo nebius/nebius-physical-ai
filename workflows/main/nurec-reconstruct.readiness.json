@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "12f80d0a169f442fe13d4ed61cfc7143f17d58734315f88d4acff4e98bb92dae",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "All four promoted-path CLI checks exited 0 on September 9, 2026: schema validation, plan-spec, scheduler preview, and submit --plan-only. These checks did not launch GPU work.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/main/nurec-reconstruct.yaml --json",
+        "npa workbench workflow plan-spec workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --json",
+        "npa workbench workflow run-spec workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --plan-only --scheduler-plan --json",
+        "npa workbench workflow submit workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --plan-only"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The promoted YAML parses identically to the saved September 8, 2026 multi-pod workflow. Real input, GPU training, rig-offset rendering, and decoded run artifacts were verified for the default sample.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The catalog uses example-bucket. A new run must supply a writable bucket and unique run prefix; historical S3 handoffs are proven only for the completed run.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The completed run consumed the default public PhysicalAI-NuRec-PPISP struktur28 capture and published the NCore sequence across pods. Other dataset or scene overrides need separate checks.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must supply S3 credentials, NGC image access and the matching Kubernetes pull secret. HF access is needed only for gated or private dataset overrides; historical authorization does not verify a future operator.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The completed run used the NRE image digest recorded in the guide. A new run must stage its intended NPA source and verify the selected vendor image; the catalog still uses the existing 26.04 tag.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The completed run used one RTX PRO 6000 Blackwell GPU. A future target needs RT cores, healthy SkyPilot workers, and the declared shared-memory and bootstrap configuration; L40S was not tested in this run.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
+    }
+  }
+}

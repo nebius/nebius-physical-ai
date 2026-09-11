@@ -591,6 +591,89 @@ def test_raw_production_environment_supplies_exact_principal(provider, configure
     assert provider.s3.calls[0][2].startswith("task/raw-output/.npa-probes/")
 
 
+def test_rendered_cpu_wave_does_not_require_free_gpus(provider, configured, monkeypatch):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: pytest.fail("a CPU wave must not consult GPU capacity"),
+    )
+    _, report, _ = preflight_skypilot_submission(
+        [raw_task()], project="unit", infra="k8s/unit-context",
+    )
+    assert report["execution_readiness"] == "pass"
+    assert provider.s3.calls
+
+
+@pytest.mark.parametrize("location", ["resources", "config"])
+@pytest.mark.parametrize("pool", ["available", "missing"])
+@pytest.mark.parametrize("nodes", [1, 2])
+@pytest.mark.parametrize("placement", ["selector", "affinity"])
+def test_rendered_gpu_wave_respects_placement_and_gang_size(
+    provider, configured, monkeypatch, location, pool, nodes, placement,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory, KubernetesGpuNode
+
+    inventory = KubernetesGpuInventory(
+        "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(
+            KubernetesGpuNode(
+                "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
+                free_cpu_millis=4000, free_memory_bytes=16 * 10**9, free_pod_slots=1,
+                labels=(("pool", "available"),),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    document = raw_task()
+    document["resources"]["accelerators"] = "B200:1"
+    document["num_nodes"] = nodes
+    pod_spec = {"nodeSelector": {"pool": pool}} if placement == "selector" else {
+        "affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
+            "nodeSelectorTerms": [{"matchExpressions": [{"key": "pool", "operator": "In", "values": [pool]}]}],
+        }}},
+    }
+    document.setdefault(location, {})["kubernetes"] = {
+        "pod_config": {"spec": pod_spec},
+    }
+    if pool == "missing" or nodes == 2:
+        with pytest.raises(ExecutionPreflightError, match="gpu"):
+            preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+        assert not provider.s3.calls
+    else:
+        _, report, _ = preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+        assert report["checks"]["gpu"] == "pass"
+
+
+@pytest.mark.parametrize("task_config", [
+    {"kubernetes": {"pod_config": {"spec": {"nodeSelector": {"pool": "other"}}}}},
+    {"kubernetes": {"pod_config": {"spec": ["invalid"]}}},
+    {"kubernetes": {"pod_config": ["invalid"]}},
+    {"kubernetes": ["invalid"]},
+])
+def test_gpu_wave_rejects_ambiguous_or_malformed_pod_configuration(
+    provider, configured, monkeypatch, task_config,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    document["resources"].update({
+        "accelerators": "B200:1",
+        "kubernetes": {"pod_config": {"spec": {"nodeSelector": {"pool": "available"}}}},
+    })
+    document["config"] = task_config
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: pytest.fail("ambiguous placement must fail before inventory"),
+    )
+    with pytest.raises(ExecutionPreflightError, match="gpu"):
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert not provider.s3.calls
+
+
 def test_multi_document_execution_header_is_not_mutated(provider, configured):
     from npa.execution_preflight import preflight_skypilot_submission
 

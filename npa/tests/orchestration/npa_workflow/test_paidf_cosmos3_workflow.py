@@ -3,16 +3,68 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("flags", [["--assume-decision", "promote_checkpoint"],
+                                    ["--runtime", "--assume-decision", "promote_checkpoint"]])
+def test_submit_requires_actual_runtime_decisions_before_side_effects(monkeypatch, flags):
+    def unexpected(**kwargs):
+        raise AssertionError("credential resolution must not be reached")
+
+    monkeypatch.setattr("npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials", unexpected)
+    result = runner.invoke(app, ["workbench", "workflow", "submit", str(SPEC),
+                                "--run-id", "runtime-contract", *flags])
+    assert result.exit_code == 1
+    assert "reject --assume-decision for execution" in result.output
+
+
+def test_source_overlay_is_selected_by_the_spec(monkeypatch):
+    from npa.deploy.images import container_image_for_tool
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions, render_skypilot_yaml
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/staged-source.tar.gz")
+    spec = load_spec(SPEC)
+    plan = build_plan(spec, run_id="overlay-contract", assume_decision="promote_checkpoint")
+    rendered = render_skypilot_yaml(spec, plan, run_id="overlay-contract",
+                                   options=SkypilotRenderOptions(registry="ghcr.io/nebius/nebius-physical-ai", materialize_registry_secrets=False))
+    tasks = [task for task in yaml.safe_load_all(rendered) if task and "resources" in task]
+    assert tasks
+    assert all(task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/staged-source.tar.gz" for task in tasks)
+    baked = [task for task in tasks if task["resources"].get("image_id")]
+    assert baked
+    assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in baked)
+    annotation = next(task for task in tasks if "paidf_cosmos3_annotation" in task["run"])
+    assert annotation["resources"]["image_id"] == "docker:" + container_image_for_tool(
+        "rerun-viewer", registry="ghcr.io/nebius/nebius-physical-ai")
+    assert not annotation["resources"].get("accelerators")
+
+
+def test_legacy_evaluator_argv_omits_new_options():
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(ROOT / "workflows/testing/physical-ai-data-factory.yaml")
+    plan = build_plan(spec, run_id="legacy-contract", assume_decision="promote_checkpoint")
+    for step in plan.steps:
+        if step.tool_ref == "workbench.cosmos_evaluator.evaluate":
+            assert "--alignment-mode" not in step.argv
+            assert "--attribute-threshold" not in step.argv
 
 
 def _doc() -> dict:
@@ -22,6 +74,7 @@ def _doc() -> dict:
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"
+    assert doc["metadata"]["executionMode"] == "runtime"
     states = doc["states"]
     assert states["prepare-input"]["toolRef"] == "workbench.cosmos3.prepare_video_input"
     assert (
@@ -36,6 +89,16 @@ def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     assert argv[:4] == ["npa", "workbench", "cosmos3", "generate-variants"]
     assert "--input-path" in argv and "--guardrails" in argv
     assert "echo" not in argv
+
+
+def test_paidf_cosmos3_cannot_be_prepared_as_a_one_shot_submit() -> None:
+    with pytest.raises(NpaWorkflowError, match="requires runtime execution"):
+        prepare_npa_workflow_for_submit(
+            SPEC,
+            run_id="paidf-one-shot",
+            assume_decision="promote_checkpoint",
+            config_overrides={"bucket": "example-bucket"},
+        )
 
 
 def test_general_cosmos3_toolref_forwards_conditioning_and_sampling() -> None:
@@ -90,8 +153,9 @@ def test_configuration_surface_and_privacy_defaults() -> None:
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
     assert float(config["source_motion_weight"]) == 0.0
-    assert float(config["grade_threshold"]) == 0.75
-    assert config["augmentation_seed"] == ""
+    assert float(config["grade_threshold"]) == 0.2
+    assert float(config["attribute_threshold"]) == 0.25
+    assert config["augmentation_seed"] == "30"
     assert (
         doc["states"]["generate-configs"]["run"]["argv"][-1]
         == "{{config.augmentation_seed}}"
@@ -131,6 +195,12 @@ def test_validate_and_plan_both_decision_paths() -> None:
         names = [step["state"] for step in payload["steps"]]
         if decision == "promote_checkpoint":
             assert "finalize" in names and "cosmos-curate" in names
+            visualizers = {step["state"]: step for step in payload["steps"]
+                           if step["state"] in {"visualize-quality-evidence", "visualize"}}
+            quality_argv = visualizers["visualize-quality-evidence"]["argv"]
+            final_argv = visualizers["visualize"]["argv"]
+            assert any(value.endswith("/reports/quality-evidence.rrd") for value in quality_argv)
+            assert any(value.endswith("/reports/sim2real.rrd") for value in final_argv)
         else:
             assert names[-1] == "reject-quality"
             assert "cosmos-curate" not in names

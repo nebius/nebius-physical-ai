@@ -9,10 +9,12 @@ runtime traversal matches the plan-time unroll for the same decisions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1921,7 +1923,7 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     second_submitter = FakeSubmitter()
     resume_options = RuntimeOptions(
         poll_seconds=0, max_wait_seconds=60, resume=True,
-        pre_submit_hook=check_capacity, preflight_evidence={"gang_capacity": "unknown"},
+        pre_submit_hook=check_capacity, preflight_evidence=_supervisor_preflight(),
     )
     second = _executor(
         spec,
@@ -1937,6 +1939,9 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     adopted = [wave for wave in second_report.waves if wave.get("adopted")]
     assert adopted and adopted[0]["job_id"] == "1"
     assert adopted[0]["key"] == key
+    proof = second._attempt_preflight(next(attempt for attempt in second.attempts if attempt.adopted))
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
     if capacity_blocked:
         assert second_report.status == "failed"
         assert "no free GPU capacity" in second_report.error
@@ -2831,6 +2836,8 @@ def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> No
 
     task_names = [name for call in submitter.calls for name in call["tasks"]]
     assert report.status == "succeeded"
+    assert sum("generate-variants" in name for name in task_names) == 2
+    assert sum("evaluate" in name for name in task_names) == 2
     assert any("visualize-quality-evidence" in name for name in task_names)
     assert any("reject-quality" in name for name in task_names)
     for forbidden in ("annotate-augmented", "cosmos-curate", "curate", "finalize"):
@@ -3345,6 +3352,154 @@ def _supervisor_preflight() -> dict[str, str]:
     }
 
 
+@pytest.fixture()
+def runtime_sdk_submission(tmp_path: Path, mocker):
+    """Keep the real SDK gate and submit ordering; fake its external boundaries."""
+    from npa.orchestration.skypilot import workflow as sdk
+    from npa.orchestration.skypilot.launch_transaction import (
+        LaunchState, LaunchTransactionResult,
+    )
+
+    config = SimpleNamespace(
+        sky_bin=tmp_path / "sky", global_config_path=None,
+        isolated_config_dir=tmp_path / "sdk-state",
+    )
+    mocker.patch.object(sdk, "resolve_config", return_value=config)
+    mocker.patch.object(sdk, "ensure_skypilot_version", return_value=config.sky_bin)
+    mocker.patch.object(sdk, "sky_environment", return_value={})
+    mocker.patch.object(sdk, "_selected_kube_context", return_value="unit-context")
+    preflight = mocker.patch.object(sdk, "_execution_preflight", return_value=(None, {}, {}))
+    health = SimpleNamespace(to_dict=lambda: {})
+    api = mocker.patch.object(sdk, "_ensure_local_api_daemon_cwd_locked", return_value=health)
+    controller = mocker.patch.object(sdk, "_wait_for_healthy_jobs_controller", return_value=health)
+    transactions = []
+
+    def launch(**kwargs):
+        transactions.append(kwargs["logical_id"])
+        return LaunchTransactionResult(
+            LaunchState.SUBMITTED, kwargs["logical_id"],
+            job_id=str(len(transactions)), launch_sequence=1,
+        )
+
+    job = mocker.patch.object(sdk, "run_launch_transaction", side_effect=launch)
+    return SimpleNamespace(preflight=preflight, api=api, controller=controller, job=job)
+
+
+def test_runtime_default_sdk_records_wave_proof_without_poll_time_refresh(
+    tmp_path: Path, mocker, runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(step for step in build_plan(spec, run_id="rt-proof").steps if step.state == "gate")
+    now = mocker.patch("npa.orchestration.npa_workflow.runtime.utc_now", return_value="2026-08-30T01:00:00Z")
+    options = RuntimeOptions(poll_seconds=0, preflight_evidence=_supervisor_preflight())
+    executor = _executor(spec, run_id="rt-proof", options=options, store=MemoryStore(),
+                         status_fn=FakeStatus(["PENDING", "SUCCEEDED"]))
+    executor._submitter = None
+    wave_hashes = []
+    options.pre_submit_hook = lambda path: wave_hashes.append(hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def observe(**kwargs):
+        now.return_value = "2026-08-30T02:00:00Z"
+        return JobBlockerReport(job_id=kwargs["job_id"])
+
+    mocker.patch("npa.orchestration.skypilot.job_blockers.inspect_job_blockers", side_effect=observe)
+    executor.execute(gate)
+
+    proof = next(event["preflight"] for event in SupervisorLedger(executor.ledger.store).events()
+                 if event.get("phase") == "decision")
+    assert proof["checks"]["gang_capacity"] == "pass"
+    assert proof["observed_at"] == "2026-08-30T01:00:00Z"
+    assert proof["scope"] == {
+        "source": "default_sdk_submit", "run_id": "rt-proof",
+        "wave_key": executor.attempts[0].key, "attempt": 1,
+        "rendered_wave_sha256": wave_hashes[0],
+    }
+    runtime_sdk_submission.preflight.assert_called_once()
+    assert [doc["name"] for doc in runtime_sdk_submission.preflight.call_args.args[0]][1:] == ["gate"]
+    assert now.return_value == "2026-08-30T02:00:00Z"
+
+
+@pytest.mark.parametrize("denied_attempt", [1, 2])
+def test_runtime_sdk_capacity_denial_blocks_initial_launch_and_explicit_retry(
+    tmp_path: Path, runtime_sdk_submission, denied_attempt: int,
+) -> None:
+    from npa.execution_preflight import ExecutionPreflightError
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(step for step in build_plan(spec, run_id="rt-denied").steps if step.state == "gate")
+    options = RuntimeOptions(poll_seconds=0, retries=1, retry_backoff_seconds=0,
+                             preflight_evidence=_supervisor_preflight())
+    executor = _executor(spec, run_id="rt-denied", options=options,
+                         status_fn=FakeStatus(["FAILED"]), store=MemoryStore())
+    executor._submitter = None
+    observed = []
+
+    def preflight(documents, **kwargs):
+        attempt = executor.attempts[-1]
+        observed.append((attempt.attempt, executor._attempt_preflight(attempt)))
+        if attempt.attempt == denied_attempt:
+            raise ExecutionPreflightError("gpu", "no free gang capacity")
+        return None, {}, {}
+
+    runtime_sdk_submission.preflight.side_effect = preflight
+    with pytest.raises(NpaWorkflowError, match="no free gang capacity"):
+        executor.execute(gate)
+
+    assert [number for number, _proof in observed] == list(range(1, denied_attempt + 1))
+    assert all(proof.checks["gang_capacity"] == "unknown" for _, proof in observed)
+    failed_proof = executor._attempt_preflight(executor.attempts[-1])
+    assert failed_proof.checks["gang_capacity"] == "unknown"
+    assert failed_proof.observed_at == "" and failed_proof.scope == {}
+    assert runtime_sdk_submission.api.call_count == denied_attempt - 1
+    assert runtime_sdk_submission.controller.call_count == denied_attempt - 1
+    assert runtime_sdk_submission.job.call_count == denied_attempt - 1
+    if denied_attempt == 2:
+        assert executor._attempt_preflight(executor.attempts[0]).checks["gang_capacity"] == "pass"
+
+
+def test_runtime_custom_submitter_does_not_invent_capacity_proof(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    options = RuntimeOptions(preflight_evidence=_supervisor_preflight(), resume=True)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, options=options, submitter=submitter)
+    attempt = WaveAttempt(key="001|serial|work", states=["work"], kind="serial")
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: workflow\n---\nname: work\nrun: 'true'\n")
+    executor._submit(wave, "work", attempt)
+    assert len(submitter.calls) == 1
+    proof = executor._attempt_preflight(attempt)
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
+    assert options.preflight_evidence == _supervisor_preflight()
+
+
+def test_runtime_refresh_failure_invalidates_prior_submit_proof(
+    tmp_path: Path, runtime_sdk_submission,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, options=RuntimeOptions(preflight_evidence=_supervisor_preflight()))
+    executor._submitter = None
+    attempt = WaveAttempt(key="001|serial|work", states=["work"], kind="serial")
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: work\nresources: {cloud: kubernetes}\nrun: 'true'\n")
+    executor._submit(wave, "work", attempt)
+    assert executor._attempt_preflight(attempt).checks["gang_capacity"] == "pass"
+
+    def fail_refresh(_path):
+        raise RuntimeError("image refresh failed")
+
+    executor.options.pre_submit_hook = fail_refresh
+    with pytest.raises(RuntimeError, match="image refresh failed"):
+        executor._submit(wave, "work", attempt)
+    proof = executor._attempt_preflight(attempt)
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
+    runtime_sdk_submission.preflight.assert_called_once()
+    runtime_sdk_submission.job.assert_called_once()
+
+
 def test_runtime_supervisor_stops_configuration_retry_immediately(
     tmp_path: Path, mocker
 ) -> None:
@@ -3403,7 +3558,7 @@ def test_runtime_supervisor_stops_configuration_retry_immediately(
 
 
 def test_runtime_supervisor_recovers_transient_once_without_duplicate(
-    tmp_path: Path, mocker
+    tmp_path: Path, mocker, runtime_sdk_submission,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 
@@ -3440,13 +3595,15 @@ def test_runtime_supervisor_recovers_transient_once_without_duplicate(
         output_checker=lambda _uri: next(checks),
         store=MemoryStore(),
     )
+    executor._submitter = None
 
     result = executor.execute(gate)
 
     assert result["status"] == "ok"
     assert [attempt.attempt for attempt in executor.attempts] == [1, 2]
-    assert len(submitter.calls) == 2
-    assert submitter.calls[0]["job_name"] != submitter.calls[1]["job_name"]
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert executor.attempts[0].job_name != executor.attempts[1].job_name
     assert cancels[0]["job_id"] == "1"
 
 
@@ -3526,7 +3683,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
 
 
 def test_runtime_persistent_transient_exhausts_finite_policy(
-    tmp_path: Path, mocker
+    tmp_path: Path, mocker, runtime_sdk_submission,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 
@@ -3561,11 +3718,13 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
         output_checker=lambda _uri: False,
         store=MemoryStore(),
     )
+    executor._submitter = None
 
     with pytest.raises(NpaWorkflowError, match="INFRASTRUCTURE_RECOVERY_EXHAUSTED"):
         executor.execute(gate)
 
-    assert len(submitter.calls) == 2
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
     assert [attempt.infrastructure_recovery_count for attempt in executor.attempts] == [
         0,
         1,

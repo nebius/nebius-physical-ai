@@ -1,14 +1,60 @@
-"""SDK wrappers for the Workbench NuRec / NRE CLI.
+"""SDK clients for NVIDIA NCore ingestion and NuRec / NRE reconstruction.
 
 Neural reconstruction: a real sensor capture (NCore V4) becomes a 3D Gaussian
 reconstruction, a renderable USDZ, and novel-view renders, driven by NVIDIA's
-public NRE container on an RT-core GPU. See
+proprietary NRE container on an RT-core GPU. Apache-2.0 NCore ingestion
+is a separate CPU capability. See
 ``skills/workflows/neural-reconstruction/SKILL.md``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, Literal
+
 from npa._sdk import make_cli_wrapper
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
+
+
+def convert_colmap(
+    input_path: str,
+    output_path: str,
+    *,
+    cache_dir: Path | str = DEFAULT_COLMAP_CACHE_DIR,
+    scratch_dir: Path | str = DEFAULT_COLMAP_SCRATCH_DIR,
+    dataset_root: str = ".",
+    colmap_dir: str = "sparse/0",
+    images_dir: str = "images",
+    masks_dir: str = "",
+    rig_mode: Literal["derive", "preserve"] = "derive",
+    reference_camera: str = "",
+    include_downsampled_images: bool = True,
+) -> dict[str, Any]:
+    """Convert an S3 COLMAP dataset with NVIDIA NCore and publish a verified V4 sequence."""
+    from npa.workbench.nurec.colmap import (
+        ColmapConversionRequest,
+        convert_colmap as run,
+    )
+
+    return run(
+        ColmapConversionRequest(
+            input_path=input_path,
+            output_path=output_path,
+            cache_dir=Path(cache_dir),
+            scratch_dir=Path(scratch_dir),
+            dataset_root=dataset_root,
+            colmap_dir=colmap_dir,
+            images_dir=images_dir,
+            masks_dir=masks_dir,
+            rig_mode=rig_mode,
+            reference_camera=reference_camera,
+            include_downsampled_images=include_downsampled_images,
+        )
+    )
+
 
 check = make_cli_wrapper(
     "npa.cli.nurec",
@@ -44,6 +90,7 @@ status = make_cli_wrapper(
 
 __all__ = [
     "check",
+    "convert_colmap",
     "fetch",
     "finalize",
     "reconstruct",

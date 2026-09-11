@@ -14,19 +14,33 @@ from npa.orchestration.skypilot import _bin, local_api
 from npa.orchestration.skypilot.workflow_state import tail_live_job_logs
 
 
+def _write_sky(executable: Path, body: str) -> Path:
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        f"    print('skypilot, version {_bin.REQUIRED_SKYPILOT_VERSION}')\n"
+        "    raise SystemExit(0)\n"
+        + body
+    )
+    executable.chmod(0o700)
+    interpreter = executable.with_name("python")
+    interpreter.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
+    )
+    interpreter.chmod(0o700)
+    return executable
+
+
 @pytest.fixture
 def recording_sky(tmp_path: Path) -> Path:
-    executable = tmp_path / "sky"
-    executable.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
+    return _write_sky(
+        tmp_path / "sky", "import json, os\n"
         "print(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), "
         "'home': os.environ.get('HOME'), "
         "'endpoint': os.environ.get('SKYPILOT_API_SERVER_ENDPOINT'), "
         "'config': os.environ.get('SKYPILOT_GLOBAL_CONFIG')}))\n"
     )
-    executable.chmod(0o700)
-    return executable
 
 
 @pytest.mark.parametrize(("stage", "follow"), [("0", False), ("", True)])
@@ -86,11 +100,10 @@ def test_logs_propagate_remote_task_selection_failure(
     stdout = "\x1b[31m" + diagnostic + "\x1b[0m" + ("" if split_streams else trailer)
     stderr = trailer if split_streams else ""
     executable = tmp_path / "sky"
-    executable.write_text(
-        f"#!{sys.executable}\nimport sys\n"
+    _write_sky(
+        executable,
         f"sys.stdout.write({stdout!r})\nsys.stderr.write({stderr!r})\n"
     )
-    executable.chmod(0o700)
 
     result = tail_live_job_logs(sky_bin=str(executable), job_id="61", stage=stage)
 
@@ -112,8 +125,7 @@ def test_logs_do_not_reclassify_application_diagnostics(
 ) -> None:
     monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
     executable = tmp_path / "sky"
-    executable.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.write({output!r})\n")
-    executable.chmod(0o700)
+    _write_sky(executable, f"sys.stdout.write({output!r})\n")
 
     result = tail_live_job_logs(sky_bin=str(executable), job_id="61", stage="rollout")
 

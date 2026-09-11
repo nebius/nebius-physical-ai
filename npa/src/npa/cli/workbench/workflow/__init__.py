@@ -430,15 +430,15 @@ def submit_cmd(
             "JSON always retains full details."
         ),
     ),
-    runtime: bool = typer.Option(
-        False,
+    runtime: bool | None = typer.Option(
+        None,
         "--runtime/--no-runtime",
         help=(
             "For npa.workflow specs: drive the run with the runtime orchestrator "
             "(submit each wave, poll to terminal, read the real decision artifact "
-            "from S3, then replan). Required for parallel fan-out and for real "
-            "runtime early-exit; the default one-shot path renders the flattened "
-            "serial plan with --assume-decision."
+            "from S3, then replan). Workflows with metadata.executionMode=runtime "
+            "select it automatically and reject an explicit --no-runtime. Other "
+            "workflows default to the flattened one-shot plan."
         ),
     ),
     resume: bool = typer.Option(
@@ -869,6 +869,23 @@ def submit_cmd(
         except Exception as exc:
             _fail(str(exc))
             return
+        from npa.orchestration.npa_workflow.submit import spec_requires_runtime
+
+        if spec_requires_runtime(merged_npa_spec):
+            if runtime is False:
+                _fail(
+                    f"workflow {merged_npa_spec.name!r} requires runtime execution; "
+                    "--no-runtime cannot honor its data-dependent control flow"
+                )
+                return
+            runtime = True
+            if not plan_only and assume_decision:
+                _fail(
+                    "Runtime-required workflows reject --assume-decision for execution; "
+                    "actual evaluator decisions must control the run."
+                )
+                return
+    runtime = bool(runtime)
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
@@ -1406,7 +1423,7 @@ def submit_cmd(
                         merged_npa_spec, context=infra_context, allowed_nodes=None,
                         sky_bin=sky_bin, config_path=config_path,
                         isolated_config_dir=isolated_config_dir,
-                    )) if infra_context and not deploy_if_absent and not (runtime and resume) else None,
+                    )) if infra_context and not deploy_if_absent and not runtime else None,
                 )
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc))
@@ -1808,9 +1825,10 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
-        # A resumed job already owns its capacity. Reconcile it before requiring
-        # free nodes; the launch hook still checks every new or retried wave.
-        if not plan_only and merged_npa_spec is not None and not (runtime and resume):
+        # Runtime submits one rendered wave at a time through the mandatory SDK
+        # execution preflight. Checking every state here would block CPU-only
+        # resume on GPU capacity needed by an already completed generation stage.
+        if not runtime and not plan_only and merged_npa_spec is not None:
             try:
                 _preflight_submit_gang_capacity(
                     merged_npa_spec,
@@ -1832,13 +1850,12 @@ def submit_cmd(
                 "execution_target": "pass" if execution_preflight_report else "unknown",
                 "accelerator_resolution": "pass" if resolve_accelerators else "unknown",
                 "per_node_gpu_shape": "pass" if resolve_accelerators else "unknown",
-                "gang_capacity": "unknown" if resume else "pass",
+                "gang_capacity": "unknown",
             }
 
             def refresh_runtime_preflight(_wave_yaml: Path) -> None:
                 """Re-establish mutable launch facts before every runtime wave."""
 
-                runtime_preflight_evidence["gang_capacity"] = "unknown"
                 if execution_target is not None:
                     import yaml
                     from npa.execution_preflight import verify_execution_target, verify_worker_environment
@@ -1881,17 +1898,9 @@ def submit_cmd(
                     raise RuntimeError(
                         "accelerator resolution changed after initial preflight"
                     )
-                if merged_npa_spec is not None:
-                    _preflight_submit_gang_capacity(
-                        merged_npa_spec,
-                        context=infra_context,
-                        accelerator_overrides=refreshed_accelerators,
-                        allowed_nodes=None,
-                        sky_bin=sky_bin,
-                        config_path=config_path,
-                        isolated_config_dir=isolated_config_dir,
-                    )
-                runtime_preflight_evidence["gang_capacity"] = "pass"
+                # submit_workflow checks current capacity against this wave's
+                # rendered resources, including gang size and placement rules.
+                # The complete plan above binds stable image/accelerator identity.
 
             _run_npa_workflow_runtime(
                 yaml_path,
@@ -1935,6 +1944,7 @@ def submit_cmd(
                 assume_decision=assume_decision,
                 config_overrides=substitutions,
                 render_options=npa_render_options,
+                allow_runtime_required=plan_only,
             )
         except NpaWorkflowError as exc:
             _fail(str(exc))

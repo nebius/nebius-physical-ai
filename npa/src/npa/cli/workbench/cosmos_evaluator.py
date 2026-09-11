@@ -83,6 +83,8 @@ def evaluate_cmd(
     threshold: float = typer.Option(
         0.682, "--threshold", help="Pass threshold for the run score."
     ),
+    attribute_threshold: float = typer.Option(1.0, "--attribute-threshold", help="Required fraction of correct appearance checks; endpoint errors always fail."),
+    alignment_mode: str = typer.Option("off", "--alignment-mode", help="required verifies complete prepared-source timing and hashes before scoring; off preserves legacy evaluation."),
     hallucination_weight: float = typer.Option(
         0.5,
         "--hallucination-weight",
@@ -192,6 +194,8 @@ def evaluate_cmd(
             configs_uri=configs_uri,
             original_video=original_video,
             threshold=threshold,
+            attribute_threshold=attribute_threshold,
+            alignment_mode=alignment_mode,
             hallucination_weight=hallucination_weight,
             temporal_threshold=temporal_threshold,
             temporal_regions_json=temporal_regions_json,

@@ -78,6 +78,7 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_confidentiality_scan` | The scanner, its built-in Nebius patterns, or the gitleaks wiring changed. Keep `.gitleaks.toml` and `npa/src/npa/guardrails/confidentiality.py` in sync. |
+| `test_ncore_attribution` / `test_ncore_source_attribution` | NCore's exact CPython notice, immutable dual-archive proof, Git path/mode boundary, diff line mapping, or source disposition drifted. Restore the exact provenance-bound contract; never add a general exemption or hide raw findings. |
 | `test_security_source` | Source scanner output, inventory, ignore handling or stable finding identity is incomplete. Restore fail-closed scanning; run the real scanner workload in `docs/security/merge-security-gate.md`. |
 | `test_security_gate` | A regression comparison, snapshot boundary or dependency report check failed. Preserve duplicate detection and reject incomplete reports or source paths outside the snapshot. |
 | `test_security_scan_input` | The manual image-scan input became shell syntax. Pass it through a step environment variable and quote that variable in the command. |
@@ -119,6 +120,7 @@ the current surface, never to recreate the old one.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, or makes mypy blocking. Match the existing template. |
+| `test_daily_vm_network` | Daily SSH access loses host-key verification or isolated staging cleanup, requests unnecessary identity permissions, or adds a PR trigger. Restore pinned host keys, direct SSH, per-run private directories, and cleanup on failure. |
 | `test_e2e_gate_reachability` | A new `NPA_*` e2e gate has no runner mapping. Wire it into `scripts/dev-vm-daily-tests.sh` or record a reviewed manual reason. |
 | `test_terraform_provisioner_shell` | Bash embedded in the agent Terraform is not syntactically valid, or an SSH wait is unbounded. Check the heredocs. |
 | `test_no_syntax_warnings` | The package emits a `SyntaxWarning`, usually an invalid escape in a regex. Use a raw string. |

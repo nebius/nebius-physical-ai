@@ -70,7 +70,12 @@ def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
         )
 
         entry = blackwell.get(_image_name(tool))
-        if entry is not None:
+        if entry is not None and entry.get("verdict") == "not-applicable":
+            # CPU ingestion images can be publication-unvalidated without a GPU
+            # architecture assertion. Do not invent a pending GPU build for them.
+            assert entry.get("validation") == "not-required", tool
+            assert containers[tool]["golden_eval"]["gpu"] == "none", tool
+        elif entry is not None:
             assert entry.get("validation") in UNPROVEN_STATES, (
                 f"{tool} is unvalidated for publication but "
                 f"blackwell-dc-images.json records "

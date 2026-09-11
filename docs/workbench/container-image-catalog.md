@@ -36,19 +36,39 @@ for historical comparison and provenance, including superseded LeRobot and
 LanceDB releases; their availability does not establish current functional
 support. Resolve and retain the manifest digest for reproducibility.
 
-The build inventory has 35 packaging entries (34 redistribution-eligible and
-one restricted); the tool map has 36 entries (32 public-release members, one
-restricted tool, and three validation candidates). Foundation and derived
+At the 2026-09-05 audit, the build inventory had 35 packaging entries (34
+redistribution-eligible and one restricted); the tool map had 36 entries (32
+public-release members, one restricted tool, and three validation candidates). Foundation and derived
 Dockerfiles are not independent public releases. In particular, `loop-eval`
 uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
+
+The current source inventory, including the pending NCore integration, has
+**37 packaging entries** (35 redistribution-eligible and two restricted) and
+**38 mapped tools**: 32 public-release members, two restricted tools, and four
+quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
+from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
+a new registry audit or acceptance of the quarantined images.
 
 LeRobot 0.6.0 remains selectable package support without an accepted public
 image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
 `404 MANIFEST_UNKNOWN` in the separate optional-variant check; use a validated
 operator image for that version. It is not a missing member of the current
 public release plan.
+
+## Pending NCore conversion image
+
+`npa-ncore` is an additional development validation candidate for the
+[COLMAP ingestion workflow](guides/nurec-colmap-reconstruct.md). It packages
+pinned Apache-2.0 NCore conversion code and the MIT COLMAP reader, with no
+baked dataset, weights or proprietary NRE runtime. Repository packaging marks
+it redistribution-eligible but quarantined from public publication until its
+exact-image scans and real capability evidence are accepted. There is no
+accepted public release row or verified anonymous pull claim for this image.
+Select development bytes only with an explicit immutable image digest.
+The existing NRE GPU consumer remains separately licensed. The new full
+COLMAP-to-reconstruction workflow is **not yet live validated**.
 
 ## 2026-09-04 coherent Sim2Real publication
 
