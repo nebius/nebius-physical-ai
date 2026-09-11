@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib
 import json
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -24,7 +27,6 @@ PROFILE = (
     / "profiles"
     / "byof-solution-smoke-robomimic-b200-gpu.yaml"
 )
-
 SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
 DATASET_SHA256 = "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
@@ -44,6 +46,70 @@ def _workflow_config() -> dict[str, object]:
 def _smoke_python() -> str:
     smoke = str(_workflow_config()["smoke_command"])
     return smoke.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+def _live_e2e_module():
+    """Import the live module so its pure contracts run in the default suite."""
+
+    tests_root = str(ROOT / "npa")
+    sys.path.insert(0, tests_root)
+    try:
+        return importlib.import_module(
+            "tests.e2e.test_byof_onboarding_live_e2e"
+        )
+    finally:
+        sys.path.remove(tests_root)
+
+
+@pytest.mark.parametrize(
+    "missing_variable",
+    (
+        "NPA_E2E_PROJECT",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY",
+        "NPA_BYOF_KUBECONFIG",
+        "NPA_BYOF_K8S_CONTEXT",
+        "NPA_BYOF_K8S_NAMESPACE",
+        "NPA_E2E_S3_BUCKET",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY",
+    ),
+)
+def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    missing_variable: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    selectors = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+    }
+    for variable, value in selectors.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.delenv(missing_variable, raising=False)
+
+    with pytest.raises(AssertionError):
+        _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NPA_E2E_MK8S_RESERVED_CAPACITY", "1")
+    module = _live_e2e_module()
+    rendered = module._materialize_robomimic_attested_profile(
+        tmp_path / "robomimic-attested.yaml"
+    )
+
+    source_task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
+    rendered_task = list(yaml.safe_load_all(rendered.read_text(encoding="utf-8")))[1]
+    assert source_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
+    assert rendered_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == "1"
 
 
 def test_robomimic_workflow_validates_and_plans_real_byof_stage() -> None:
@@ -96,6 +162,8 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"train.py"',
         "TRAIN_STEPS = 4",
         "VALIDATION_STEPS = 2",
+        'Path("/workspace/byof-inputs") / output_dir.name',
+        "raw_dataset.replace(dataset)",
         'config.train.hdf5_filter_key = "train"',
         'config.train.hdf5_validation_filter_key = "valid"',
         '["git", "-C", str(repo_root), "rev-parse", "HEAD"]',
@@ -122,6 +190,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"validation_sample_count": sum(sample_counts[key] for key in valid_keys)',
         '"train_loss": train_loss',
         '"validation_loss": validation_loss',
+        '"configured_validation_forward_steps": VALIDATION_STEPS',
         '"sha256": checkpoint_hash',
         '"finite": finite',
         '"within_allowed_range": within_range',
@@ -150,10 +219,15 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     )
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert task["envs"]["BYOF_IMAGE"] == ""
-    assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == (
-        "${NPA_E2E_MK8S_RESERVED_CAPACITY}"
+    assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
+    assert "${NPA_E2E_MK8S_RESERVED_CAPACITY}" not in PROFILE.read_text(
+        encoding="utf-8"
     )
     assert "pip install --quiet boto3" not in PROFILE.read_text(encoding="utf-8")
+    assert "runtime input must not be uploaded as output" in PROFILE.read_text(
+        encoding="utf-8"
+    )
+    assert "if smoke_exit_code == 0:" in PROFILE.read_text(encoding="utf-8")
     assert 'smoke_artifact["exit_status"] = smoke_exit_code' in PROFILE.read_text(
         encoding="utf-8"
     )

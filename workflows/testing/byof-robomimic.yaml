@@ -80,7 +80,6 @@ config:
     import math
     import os
     import re
-    import shutil
     import ssl
     import subprocess
     import sys
@@ -193,8 +192,10 @@ config:
     if len(smi_rows) != 1 or "B200" not in smi_rows[0].upper():
         raise RuntimeError(f"nvidia-smi did not prove exactly one B200: {smi_rows!r}")
 
-    raw_dataset = output_dir / "lift_ph_lowdim_v15.download"
-    dataset = output_dir / "lift_ph_lowdim_v15.hdf5"
+    input_dir = Path("/workspace/byof-inputs") / output_dir.name
+    input_dir.mkdir(parents=True, exist_ok=False)
+    raw_dataset = input_dir / "lift_ph_lowdim_v15.download"
+    dataset = input_dir / "lift_ph_lowdim_v15.hdf5"
     dataset_url = (
         "https://huggingface.co/datasets/robomimic/robomimic_datasets/resolve/"
         f"{DATASET_REVISION}/{DATASET_PATH}?download=true"
@@ -212,8 +213,6 @@ config:
         raise RuntimeError(
             f"dataset identity mismatch: sha256={raw_hash} bytes={byte_count}"
         )
-    shutil.copyfile(raw_dataset, dataset)
-
     with h5py.File(raw_dataset, "r") as handle:
         demo_keys = sorted(handle["data"].keys())
         sample_counts = {
@@ -226,6 +225,7 @@ config:
         raise RuntimeError(
             f"official Lift PH inventory mismatch: demos={len(demo_keys)} samples={sum(sample_counts.values())}"
         )
+    raw_dataset.replace(dataset)
 
     split_script = repo_root / "robomimic" / "scripts" / "split_train_val.py"
     split_program = "\n".join(
@@ -320,7 +320,10 @@ config:
 
     checkpoints = list(train_root.glob("lift_ph_lowdim_bc_smoke/*/last.pth"))
     if len(checkpoints) != 1:
-        raise RuntimeError(f"expected one latest checkpoint, got {checkpoints!r}")
+        raise RuntimeError(
+            "expected exactly one pinned-upstream checkpoint at "
+            f"<output>/lift_ph_lowdim_bc_smoke/<timestamp>/last.pth, got {checkpoints!r}"
+        )
     checkpoint_path = checkpoints[0]
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     policy, checkpoint = policy_from_checkpoint(
@@ -404,7 +407,7 @@ config:
             "optimizer": "adam",
             "optimizer_step_count": optimizer_step_count,
             "configured_optimizer_steps": TRAIN_STEPS,
-            "validation_forward_steps": VALIDATION_STEPS,
+            "configured_validation_forward_steps": VALIDATION_STEPS,
             "train_loss": train_loss,
             "validation_loss": validation_loss,
         },

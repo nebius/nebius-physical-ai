@@ -8,9 +8,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -21,6 +23,7 @@ from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
     byof_validation_repo,
     resolve_byof_kubernetes_target,
+    resolve_byof_profile_path,
     resolve_byof_resource_yaml,
     resolve_skypilot_bin,
     skypilot_config_for_project,
@@ -336,36 +339,10 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     assert selectors["context"], "a manager-issued Kubernetes context is required"
     assert selectors["namespace"] and selectors["namespace"] != "default"
     assert selectors["bucket"], "a manager-issued output bucket is required"
+    assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
+        "the manager's STRICT reserved-capacity gate is required"
+    )
     return selectors
-
-
-@pytest.mark.parametrize(
-    "missing_selector",
-    ("project", "registry", "kubeconfig", "context", "namespace", "bucket"),
-)
-def test_robomimic_gate_refuses_missing_manager_context(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    missing_selector: str,
-) -> None:
-    kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
-    selectors = {
-        "project": ("NPA_E2E_PROJECT", "manager-project"),
-        "registry": ("NPA_BYOF_ROBOMIMIC_REGISTRY", "private.invalid/robomimic"),
-        "kubeconfig": ("NPA_BYOF_KUBECONFIG", str(kubeconfig)),
-        "context": ("NPA_BYOF_K8S_CONTEXT", "manager-context"),
-        "namespace": ("NPA_BYOF_K8S_NAMESPACE", "robomimic-validation"),
-        "bucket": ("NPA_E2E_S3_BUCKET", "manager-bucket"),
-    }
-    for name, (variable, value) in selectors.items():
-        if name == missing_selector:
-            monkeypatch.delenv(variable, raising=False)
-        else:
-            monkeypatch.setenv(variable, value)
-
-    with pytest.raises(AssertionError):
-        _robomimic_live_selectors("manager-project")
 
 
 def _robomimic_runner_command(
@@ -374,6 +351,7 @@ def _robomimic_runner_command(
     project: str,
     output_root: str,
     run_id: str,
+    profile_yaml: Path,
 ) -> list[str]:
     options = (
         ("--registry", registry),
@@ -388,7 +366,7 @@ def _robomimic_runner_command(
         ("--solution-name", "robomimic"),
         ("--capability-name", str(config["capability_name"])),
         ("--smoke-artifact-name", "robomimic-smoke.json"),
-        ("--yaml", str(config["resource_profile_yaml"])),
+        ("--yaml", str(profile_yaml)),
         ("--output-root", output_root),
         ("--wait-timeout", "-1"),
         ("--run-id", run_id),
@@ -398,6 +376,24 @@ def _robomimic_runner_command(
         str(BYOF_RUNNER),
         *(item for pair in options for item in pair),
     ]
+
+
+def _materialize_robomimic_attested_profile(destination: Path) -> Path:
+    """Bind the manager's STRICT gate into a run-local profile, never the repo."""
+
+    assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1"
+    source = resolve_byof_profile_path(
+        "byof-solution-smoke-robomimic-b200-gpu"
+    )
+    documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+    assert len(documents) == 2
+    task = documents[1]
+    assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
+    task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = "1"
+    destination.write_text(
+        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
+    )
+    return destination
 
 
 def _robomimic_target_env(
@@ -435,23 +431,33 @@ def _invoke_robomimic_gate(
         os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID")
         or f"robomimic-live-{os.getpid()}"
     )
-    cmd = _robomimic_runner_command(
-        config,
-        registry,
-        selectors["project"],
-        f"s3://{bucket}/oss-solutions/robomimic",
-        run_id,
-    )
-    accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
-    if accepted_image:
-        assert "@sha256:" in accepted_image and accepted_image.startswith(
-            f"{registry}/"
+    with tempfile.TemporaryDirectory(prefix="npa-robomimic-profile-") as temp_dir:
+        profile_yaml = _materialize_robomimic_attested_profile(
+            Path(temp_dir) / "robomimic-attested.yaml"
         )
-        cmd.extend(["--image", accepted_image, "--skip-build"])
-    env = _robomimic_target_env(selectors["project"], selectors, cmd)
-    proc = subprocess.run(
-        cmd, check=False, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env
-    )
+        cmd = _robomimic_runner_command(
+            config,
+            registry,
+            selectors["project"],
+            f"s3://{bucket}/oss-solutions/robomimic",
+            run_id,
+            profile_yaml,
+        )
+        accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+        if accepted_image:
+            assert "@sha256:" in accepted_image and accepted_image.startswith(
+                f"{registry}/"
+            )
+            cmd.extend(["--image", accepted_image, "--skip-build"])
+        env = _robomimic_target_env(selectors["project"], selectors, cmd)
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
@@ -503,7 +509,7 @@ def _assert_robomimic_training(artifact: dict[str, object]) -> None:
     assert training["algorithm"] == "bc" and training["optimizer"] == "adam"
     assert training["optimizer_step_count"] == 4
     assert training["configured_optimizer_steps"] == 4
-    assert training["validation_forward_steps"] == 2
+    assert training["configured_validation_forward_steps"] == 2
     assert math.isfinite(training["train_loss"])
     assert math.isfinite(training["validation_loss"])
     assert artifact["checkpoint"]["reloaded"] is True
@@ -540,10 +546,10 @@ def _assert_robomimic_runtime(artifact: dict[str, object], summary_image: str) -
 
 @pytest.mark.skipif(
     os.environ.get("NPA_BYOF_LIVE_GPU") != "1"
-    or os.environ.get("BYOF_ROBOMIMIC_LIVE") != "1"
+    or os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") != "1"
     or os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") != "1",
     reason=(
-        "Set NPA_BYOF_LIVE_GPU=1, BYOF_ROBOMIMIC_LIVE=1, and "
+        "Set NPA_BYOF_LIVE_GPU=1, NPA_BYOF_ROBOMIMIC_LIVE_B200=1, and "
         "NPA_E2E_MK8S_RESERVED_CAPACITY=1 only with the assigned STRICT "
         "one-B200 runtime context to execute the robomimic gate."
     ),
