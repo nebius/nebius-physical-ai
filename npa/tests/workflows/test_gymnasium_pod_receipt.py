@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "npa"))
@@ -23,6 +24,10 @@ NODE_NAME = "reserved-rtx-node"
 NODE_UID = "reserved-rtx-node-uid"
 PROVIDER_GROUP = "reserved-provider-group"
 CONTEXT = "child-context"
+PROFILE = ROOT / (
+    "npa/src/npa/workflows/byof/profiles/"
+    "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml"
+)
 
 
 class _RunningProcess:
@@ -72,6 +77,17 @@ def _receipt_env(evidence: Path) -> dict[str, str]:
     }
 
 
+def _profile_receipt_validator() -> str:
+    documents = [
+        document
+        for document in yaml.safe_load_all(PROFILE.read_text(encoding="utf-8"))
+        if document is not None
+    ]
+    run = str(documents[1]["run"])
+    marker = "/opt/venv/bin/python - <<'PY'\n"
+    return run.split(marker, 1)[1].split("\nPY\n", 1)[0]
+
+
 def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -114,6 +130,21 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     receipt_path = evidence / f"{RUN_ID}-pod-image-receipt.json"
     assert json.loads(receipt_path.read_text(encoding="utf-8")) == receipt
     assert receipt_path.stat().st_mode & 0o077 == 0
+    pod_receipt_path = evidence / "npa_pod_image_receipt.json"
+    pod_receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    validated = subprocess.run(
+        [sys.executable, "-c", _profile_receipt_validator()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "BYOF_IMAGE": IMAGE,
+            "NPA_SMOKE_OUTPUT_DIR": str(evidence),
+            "NPA_BYOF_RUN_ID": RUN_ID,
+        },
+    )
+    assert validated.returncode == 0, validated.stderr
+    assert DIGEST in validated.stdout
 
 
 def test_owner_receipt_refuses_a_different_runtime_digest(
