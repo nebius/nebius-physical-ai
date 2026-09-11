@@ -179,6 +179,20 @@ def test_member_hash_duplicate_encryption_and_link_refuse(
         )
 
 
+def test_later_member_failure_removes_an_already_verified_member(
+    tmp_path, monkeypatch
+) -> None:
+    payload = _archive()
+    _configure_archive(monkeypatch, payload)
+    H.MEMBER_SPECS[H.NAVMESH_NAME]["sha256"] = "0" * 64
+    root = tmp_path / "partial-cache"
+
+    with pytest.raises(H.SmokeFailure, match="member hash mismatch"):
+        H.fetch_scene_assets(root, opener=lambda *_a, **_k: Response(payload))
+
+    assert not list(root.iterdir())
+
+
 def test_runtime_contract_requires_real_gpu_egl_bullet_navigation_and_attribution() -> (
     None
 ):

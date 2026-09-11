@@ -23,13 +23,15 @@
     "(^|/)scene_datasets(/|$)",
     "(^|/)habitat-test-scenes\\.zip$",
     "(^|/)ca-certificates[^/]*\\.deb$",
-    "(^|/)(wheelhouse|apt/lists|apt/archives)(/|$)",
-    "(^|/)(weights?|checkpoints?|outputs?|cache)(/|$)",
     "(^|/)ffmpeg-[^/]+$",
     "(^|/)libnvidia[^/]*",
     "(^|/)usr/local/cuda(/|$)",
     "(^|/)root/\\.docker(/|$)",
     "(^|/)ssh_host_.*_key$"
+  ],
+  "forbidden_nondirectory_path_patterns": [
+    "(^|/)(wheelhouse|apt/lists|apt/archives)(/|$)",
+    "(^|/)(weights?|checkpoints?|outputs?|cache)(/|$)"
   ],
   "forbidden_content_sha256": [
     "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06",

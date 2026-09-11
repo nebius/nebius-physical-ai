@@ -72,9 +72,9 @@ unique and must be tested with its own upstream-named capabilities.
 Pinned MIT source:
 `facebookresearch/habitat-sim@57ee4941dc4765240f0f91f70b2c97a919bf9038`.
 Upstream warns that beyond v0.3.4, Meta internal teams do not officially
-maintain releases or provide active development. This remains an
-operator-private BYOF registry candidate, not a public NPA image or an accepted
-live capability.
+maintain releases or provide active development. This is a public-eligible but
+unbuilt and publication-quarantined candidate, not a published NPA image or an
+accepted live capability.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
@@ -87,7 +87,7 @@ The hard gate fetches the official Meta test-scene archive referenced by the
 pinned Habitat-Sim tree, verifies its 94,590,970-byte SHA-256
 `1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
 extracts only the exact hash-pinned `skokloster-castle.glb` and `.navmesh`, and
-deletes the archive. The private build uses an immutable Ubuntu package snapshot
+deletes the archive. The dedicated build uses an immutable Ubuntu package snapshot
 and a 35-wheel, hash-locked Python closure, and preserves package inventories
 with the result. Habitat's pinned README and the original asset identify the
 demo as CC BY 4.0; the proof carries attribution, license/original links, and
