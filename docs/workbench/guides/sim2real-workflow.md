@@ -410,11 +410,14 @@ cm. For a custom/private dataset, omit `--preset` and continue to use the
 existing `--var dataset_id=...`, `trigger_uri=...`, and `seed_manifest_uri=...`
 path.
 
-The production training default is 2,000 PPO updates per inner pass. Each later
-pass resumes the validation-selected checkpoint, so the three-pass inner loop
-can cover 6,000 cumulative updates without weakening the fixed validation or
-gold predicates. Reduced plumbing proofs may override this value explicitly;
-effectiveness runs should retain the convergence-capable default.
+The production training default is 2,000 PPO updates per inner pass. The
+canonical workflow resumes the newest checkpoint from the same run, so its
+three-pass inner loop can cover 6,000 cumulative updates. Validation ranks the
+completed checkpoints and selects one for gold evaluation; the selected
+checkpoint can differ from the latest training checkpoint. The validation and
+gold predicates remain fixed. Reduced plumbing proofs may override the update
+count explicitly; effectiveness runs should retain the convergence-capable
+default.
 
 For Isaac PPO runs, Rerun plots measured optimizer losses from
 `training/ppo/value_loss` and `training/ppo/surrogate_loss`. It omits the
