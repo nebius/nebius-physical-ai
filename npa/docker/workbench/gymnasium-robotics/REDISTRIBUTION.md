@@ -17,6 +17,10 @@ transformation/build chain, and the complete Ubuntu binary-to-source closure
 must be present as bytes in the image's source annex. URLs and written offers
 do not satisfy this contract. Until those locks are complete and independently
 accepted, no build, publication, or capability claim is permitted.
+Acceptance also requires their independently reviewed exact lock hashes and the
+base's uncompressed layer digest to be pinned in both byte scanner and runtime
+verifier code. Phase A leaves those trust roots unset, intentionally making a
+self-declared complete lock insufficient.
 
 Operator-created `gymnasium-robotics-smoke.json` telemetry remains an output of
 the operator's run. It is not a redistribution grant for upstream material and

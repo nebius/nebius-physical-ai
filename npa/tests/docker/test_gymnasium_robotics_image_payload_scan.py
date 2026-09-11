@@ -7,18 +7,23 @@ SCANNER = ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py"
 WORKFLOW = ROOT / ".github/workflows/publish-public-images.yml"
 
 
-def test_scanner_covers_config_history_all_layers_whiteouts_and_rootfs() -> None:
+def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None:
     text = SCANNER.read_text(encoding="utf-8")
     for token in (
         '"manifest.json"',
-        'config.get("history", [])',
+        '_scan_policy_bytes("exact image config", config_raw)',
+        'config_name != f"{config_digest}.json"',
         'entry.get("Layers", [])',
+        'config_rootfs.get("diff_ids") != layer_diff_ids',
+        '_scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)',
         'leaf == ".wh..wh..opq"',
         'leaf.startswith(".wh.")',
         "rootfs[path] = content",
+        'kind = "symlink" if item.issym() else "hardlink"',
         "_nested_archive_members(path, content)",
+        '"requirements.lock": None',
         "corresponding-source annex is empty",
-        "final rootfs contains missing or unclassified regular files",
+        "final rootfs contains missing or unclassified entries",
         "final image must declare the non-root ubuntu user",
         '"unresolved_findings": 0',
         '"release_authorized": False',
