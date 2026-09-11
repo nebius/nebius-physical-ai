@@ -127,6 +127,10 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     )
     profile = PROFILE.read_text(encoding="utf-8")
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in profile
+    assert 'NVIDIA_DRIVER_CAPABILITIES: "graphics,utility"' in profile
+    assert "export NVIDIA_DRIVER_CAPABILITIES=graphics,utility" in WORKFLOW.read_text(
+        encoding="utf-8"
+    )
     assert "B200" not in WORKFLOW.read_text(encoding="utf-8")
     assert "B200" not in profile
     assert "/opt/npa/gymnasium-robotics/verify_image.py" in profile

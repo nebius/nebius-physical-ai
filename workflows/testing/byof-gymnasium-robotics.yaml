@@ -20,7 +20,7 @@ config:
   smoke_command: |
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
-    export NVIDIA_DRIVER_CAPABILITIES=all
+    export NVIDIA_DRIVER_CAPABILITIES=graphics,utility
     exec /opt/venv/bin/python -I -B /opt/npa/gymnasium-robotics/capability_smoke.py
   solution_name: "gymnasium-robotics"
   capability_name: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
