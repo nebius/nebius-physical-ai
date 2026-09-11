@@ -1382,8 +1382,14 @@ def test_submit_error_recovers_exact_scheduler_id_and_config_for_cleanup(
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
     args.cleanup = True
-    generated_config = tmp_path / "generated-skypilot.yaml"
+    isolated = tmp_path / "isolated"
+    generated_config = (
+        isolated / "submissions" / "human-run-name" / "skypilot-config.yaml"
+    )
+    generated_config.parent.mkdir(parents=True)
     generated_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    generated_config.chmod(0o600)
+    args.isolated_config_dir = str(isolated)
     observed: dict[str, object] = {}
     transaction = SimpleNamespace(job_id="73")
 
@@ -1391,7 +1397,6 @@ def test_submit_error_recovers_exact_scheduler_id_and_config_for_cleanup(
         raise module.SkyPilotSubmitError(
             "reconciled failure",
             transaction=transaction,
-            config_path=generated_config,
         )
 
     def cleanup(scheduler_job_id, **kwargs):
@@ -1408,8 +1413,45 @@ def test_submit_error_recovers_exact_scheduler_id_and_config_for_cleanup(
     summary = json.loads(capsys.readouterr().out)
     assert observed == {"job_id": "73", "config_path": generated_config}
     assert summary["submit"]["scheduler_job_id_recovered"] is True
+    assert summary["submit"]["reconciled_scheduler_job_id"] is True
+    assert summary["submit"]["generated_config_recovered"] is True
     assert summary["cleanup"]["verified"] is True
     assert summary["cleanup"]["remote_absence_verified"] is True
+
+
+def test_submit_error_preserves_when_generated_config_cannot_be_recovered(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    args.isolated_config_dir = str(isolated)
+    observed: list[str] = []
+
+    def submit(*_args, **_kwargs):
+        raise module.SkyPilotSubmitError(
+            "reconciled failure",
+            transaction=SimpleNamespace(job_id="73"),
+        )
+
+    def cleanup(scheduler_job_id, **_kwargs):
+        observed.append(scheduler_job_id)
+        result = module.CleanupResult()
+        result.errors.append("exact config unavailable; resources preserved")
+        return result
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == [""]
+    assert summary["submit"]["reconciled_scheduler_job_id"] is True
+    assert summary["submit"]["scheduler_job_id_recovered"] is False
+    assert summary["submit"]["generated_config_recovered"] is False
+    assert summary["cleanup"]["remote_absence_verified"] is False
 
 
 def test_wait_exception_emits_failure_and_cleans_exact_scheduler_id(
