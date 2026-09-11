@@ -26,7 +26,14 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
 
 
 def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
-    layer = _tar(tmp_path / "clean.tar", {"opt/robomimic/LICENSE": b"MIT\n"})
+    layer = _tar(
+        tmp_path / "clean.tar",
+        {
+            "opt/robomimic/LICENSE": b"MIT\n",
+            "opt/robomimic/robomimic/models/__init__.py": b"\n",
+            "opt/robomimic/robomimic/models/obs_nets.py": b"class ObservationNet:\n    pass\n",
+        },
+    )
     assert scanner.scan(layer, {"history": [{"created_by": "COPY source"}]}) == []
 
 
@@ -42,6 +49,10 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
         ("workspace/byof-inputs/lift.hdf5", "dataset_payload"),
         ("workspace/byof-runs/robomimic-smoke.json", "run_output_or_proof"),
         ("opt/npa-runtime/robomimic/payload/bin/python", "populated_runtime_cache"),
+        (
+            "opt/robomimic/robomimic/models/pretrained.pth",
+            "checkpoint_or_weight",
+        ),
         ("root/.docker/config.json", "credential_file"),
     ],
 )

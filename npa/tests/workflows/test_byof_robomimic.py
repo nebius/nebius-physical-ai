@@ -710,6 +710,59 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
     assert payload["run_started"] is False
 
 
+def test_robomimic_runner_cannot_disguise_registered_base_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = _byof_runner_module()
+    monkeypatch.setenv(
+        "NPA_BYOF_ROBOMIMIC_IMAGE",
+        "private.invalid/robomimic/npa-robomimic@sha256:" + "a" * 64,
+    )
+    for variable in (
+        "NPA_E2E_PROJECT",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY",
+        "NPA_BYOF_KUBECONFIG",
+        "NPA_BYOF_K8S_CONTEXT",
+        "NPA_BYOF_K8S_NAMESPACE",
+        "NPA_E2E_S3_BUCKET",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY",
+        "NPA_BYOF_LIVE_GPU",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(
+        runner,
+        "_base_image_candidates",
+        lambda **_: pytest.fail("disguised robomimic request reached image resolution"),
+    )
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/example/unrelated.git",
+            "--solution-name",
+            "unrelated",
+            "--registry",
+            "private.invalid/robomimic",
+            "--base-profile",
+            "prebuilt",
+            "--base-image",
+            "tool://robomimic",
+            "--skip-build",
+            "--skip-run",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert status == 64
+    assert payload["status"] == "refused"
+    assert payload["build_started"] is False
+    assert payload["push_started"] is False
+    assert payload["run_started"] is False
+
+
 @pytest.mark.parametrize(
     (
         "registry",
