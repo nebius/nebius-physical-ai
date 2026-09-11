@@ -1,60 +1,51 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "4bbb3f0a1f5fb50943734b5fbb7dadbaa8363adf00e7a50850e8360c05853eb6",
+  "workflow_sha256": "66496bf124025b516c82a85187adbf872b839d5ee0987ca12bca058438a7fd52",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "NPA validate-spec and plan-spec both exited zero; the resolved plan contains one workbench.byof.repo state with no HF or NGC access requirement.",
+      "reason": "The Phase A workflow validates and plans as one prebuilt BYOF state with an intentionally non-resolving placeholder and no build command; this is static planning evidence only.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-gymnasium-robotics.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-review --json"
+        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-phase-a-review --json"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Resolved argv selects the exact source/base/profile and runs the registered environment through 120 real steps with touch/contact/state/EGL/digest hard failures before emitting the one named JSON. Live execution remains a separate runtime prerequisite.",
-      "evidence": [
-        "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
-        "npa/tests/workflows/test_byof_gymnasium_robotics.py"
-      ]
+      "status": "unverified",
+      "reason": "The fixed in-image hard-gate script preserves the registered Shadow Hand, MuJoCo contact/touch/orientation, EGL, RTX, and digest checks, but no redesigned image exists and no current-head capability run is claimed.",
+      "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "verified",
-      "reason": "The public spec retains example-bucket, while the manager-issued owner-only child runtime context supplies a task-owned output prefix and records a successful write-read-delete storage probe.",
-      "evidence": [
-        "manager-issued child runtime context (owner-only)"
-      ]
+      "status": "unverified",
+      "reason": "Phase A authorizes no storage transaction; future exact-digest qualification must independently prove atomic write/read/delete under a run-owned prefix.",
+      "evidence": []
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The official public repository, exact commit, directly loaded XML closure, meshes, textures, and notices were independently fetched and hash-verified before implementation.",
+      "status": "blocked",
+      "reason": "Reviewed source and asset identities are recorded, but the exact Shadow preferred-form/transformation delivery and reciprocal Ubuntu/Python source closure are incomplete.",
       "evidence": [
-        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing"
+        "npa/docker/workbench/gymnasium-robotics/source-lock.json",
+        "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
       ]
     },
     "credentials": {
-      "status": "verified",
-      "reason": "No model or dataset credential is required. The manager has authorized this child to use task-owned private-registry, storage, Kubernetes, and Nebius credential paths without persisting a registry token.",
-      "evidence": [
-        "manager-issued child runtime context (owner-only)"
-      ]
+      "status": "not_applicable",
+      "reason": "No model, dataset, gated asset, or terms credential is part of the capability, and Phase A performs no build, pull, push, or cloud operation.",
+      "evidence": []
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The corrected task-private immutable image was built, pushed, pulled by exact digest, and passed the complete all-layer secret, private-key, credential, model/weight, external-dataset, cache, package, license, SBOM, and fixed-critical byte gates. The distinct rejected digest was removed and is prohibited for runtime; exact references and receipts remain owner-only.",
+      "status": "blocked",
+      "reason": "No Phase A image has been built. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
       "evidence": [
-        "docs/workbench/byof-gymnasium-robotics.md#pinned-inputs-and-licensing",
-        "manager-issued child image qualification receipts (owner-only)"
+        "npa/docker/workbench/gymnasium-robotics/REDISTRIBUTION.md"
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "A mode-0600 child-local kubeconfig context is bound to the exact assigned namespace, and the supported SkyPilot kubernetes.allowed_nodes.names contract contains only the assigned node. Owner-only live preflight matches its UID, Ready state, one allocatable RTX PRO 6000 Blackwell GPU, provider-group label, and one active STRICT reservation; the namespace has no Pod, RoleBinding, or pull secret. Capability execution, Pod-observed digest proof, and exact-run cleanup remain pending and are not claimed here.",
-      "evidence": [
-        "manager-issued child runtime context and pre-submit receipts (owner-only)"
-      ]
+      "status": "blocked",
+      "reason": "No current-head private or anonymous-public exact-digest RTX run is authorized or available; the placeholder must never be submitted.",
+      "evidence": []
     }
   }
 }

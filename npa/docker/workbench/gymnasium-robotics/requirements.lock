@@ -1,0 +1,8 @@
+# npa.gymnasium-robotics.requirements-lock.v1
+# status: phase-a-incomplete
+# An authorized resolver must replace this refusal-only file with a complete
+# Python 3.12 Linux x86-64 --require-hashes closure. No package resolution or
+# download is permitted during Phase A. The independently reviewed MuJoCo wheel
+# is recorded here only as evidence; it is not a complete install closure.
+mujoco==3.12.0 \
+    --hash=sha256:7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0

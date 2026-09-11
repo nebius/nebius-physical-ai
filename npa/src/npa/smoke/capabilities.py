@@ -27,6 +27,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "gymnasium-robotics": [
+        "future exact candidate runs the registered Shadow Dexterous Hand environment",
+        "120 MuJoCo steps and 2,400 substeps prove contact, touch, and orientation change",
+        "EGL produces distinct RGB frames on one RTX PRO 6000 Blackwell",
+        "Phase A is unbuilt and none of these checks are current-image evidence",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

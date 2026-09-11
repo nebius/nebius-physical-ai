@@ -1,0 +1,30 @@
+{
+  "schema": "npa.gymnasium-robotics.corresponding-source-lock.v1",
+  "status": "phase-a-incomplete",
+  "reason": "A URL or source offer is not corresponding source; exact conveyed bytes and build/transformation inputs are still absent.",
+  "final_rootfs_manifest_sha256": null,
+  "deliveries": [
+    {
+      "binary_component": "farama-gymnasium-robotics",
+      "archive_sha256": "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
+      "license": "MIT",
+      "artifacts": null
+    },
+    {
+      "binary_component": "shadow-hand-xml-mesh-texture-assets",
+      "build_instructions_sha256": null,
+      "license": "GPL-2.0-only AND Apache-2.0",
+      "preferred_form_archive_sha256": null,
+      "source_commit": "59d6bdf35bd9cf53185a20eb63413fdfe57fe77c",
+      "transformation_manifest_sha256": null,
+      "artifacts": null
+    },
+    {
+      "binary_component": "ubuntu-runtime-closure",
+      "binary_manifest_sha256": null,
+      "build_materials_sha256": null,
+      "source_manifest_sha256": null,
+      "artifacts": null
+    }
+  ]
+}

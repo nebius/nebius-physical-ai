@@ -57,6 +57,13 @@ restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
 `robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 they do not constitute acceptance of the quarantined images.
 
+Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
+It is deliberately absent from the mapped-tool count, supported versions,
+public build matrix, release table, and compatibility charts. Its Phase A
+Dockerfile is expected to refuse before network access until exact reciprocal
+source and package closure exists; no image, scan, anonymous pull, or current
+GPU capability is claimed.
+
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
