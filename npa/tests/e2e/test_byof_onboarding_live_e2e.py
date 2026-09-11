@@ -638,6 +638,7 @@ def _assert_gymnasium_physics(artifact: dict[str, object]) -> None:
     assert touch["steps_with_nonzero_readings"] > 0
     assert touch["max_reading"] > 0
     transition = artifact["state_transition"]
+    assert transition["max_object_position_delta_m"] > 1e-6
     assert transition["max_object_orientation_delta_rad"] > 0
     assert transition["max_full_qpos_delta_l2"] > 0
 
@@ -952,9 +953,7 @@ def _gymnasium_pod_image_receipt(
 ) -> dict[str, object]:
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
-    expected_node_name = env.get(
-        "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME", ""
-    ).strip()
+    expected_node_name = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME", "").strip()
     assert expected_node_name, (
         "NPA_BYOF_GYMNASIUM_ROBOTICS_NODE_NAME must identify the assigned node"
     )
