@@ -5,7 +5,7 @@ BYOF workload runs in — accelerator, CPU/memory floors, the image placeholder 
 substitutes, and the smoke command for that workload — and nothing else.
 
 The workflow surface is the `npa.workflow` spec
-[`npa/workflows/workbench/npa-workflows/byof.yaml`](../../../../../workflows/workbench/npa-workflows/byof.yaml).
+[`workflows/testing/byof.yaml`](../../../../../../workflows/testing/byof.yaml).
 Its `workbench.byof.repo` toolRef runs `npa workbench byof run`, which passes one of
 these files through `--yaml {{config.resource_profile_yaml}}`. Authoring a BYOF pipeline
 means editing the spec; picking a *pod shape* means picking a profile here.
@@ -39,7 +39,7 @@ Selection lives in `npa/src/npa/workflows/byof/live.py::resolve_byof_resource_ya
 ## Do not add a multi-stage pipeline here
 
 If you find yourself chaining stages, that is a workflow: author an
-`npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` instead.
+`npa.workflow/v0.0.1` spec under `workflows/` instead.
 `npa/tests/guardrails/test_byof_profiles.py` keeps these files single-task.
 
 The Wan profiles upload the GPU smoke outputs normally. Once that job succeeds,

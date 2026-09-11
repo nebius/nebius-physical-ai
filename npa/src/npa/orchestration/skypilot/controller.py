@@ -117,13 +117,20 @@ def _apply_controller_region(
     For Kubernetes the SkyPilot ``region`` is the kube context; co-locating the
     controller with the target context keeps the controller and its jobs in the
     same region so bucket mounts resolve against the right object-storage
-    endpoint. An explicit region already in the block is preserved.
+    endpoint. The caller-supplied region is authoritative and replaces any
+    stale region already present in the controller resource block.
     """
 
     region = (controller_region or "").strip()
     if not region:
         return
-    resources.setdefault("region", region)
+    # An explicit ``--infra k8s/<context>`` is authoritative for this
+    # submission.  Keeping a region inherited from the operator's global
+    # SkyPilot config can make a later runtime wave address a stale cluster,
+    # even though the generated allowlist and KUBECONFIG both select the new
+    # context.  Override the inherited value so controller placement and task
+    # placement cannot diverge.
+    resources["region"] = region
 
 
 def _controller_resources_for_backend(

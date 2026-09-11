@@ -7,6 +7,26 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### GPU routing selects on workload, not just on the GPU
+
+- SONIC image resolution now intersects the GPU target with the workload. Each
+  variant in `sonic_image_manifest.json` declares the pipeline stages it serves,
+  so a fine-tune or train request on a datacenter-Blackwell target fails with the
+  capability gap named instead of silently resolving `npa-sonic-mujoco`, whose
+  published variant serves MuJoCo evaluation only.
+- ONNX container evaluation selects the `isaac-render` workload, including
+  explicit manifest variants. The separate MuJoCo checkpoint evaluator remains
+  available. Datacenter Blackwell labels no longer select workstation images or
+  accelerators, and custom workflow images can bypass unavailable default images.
+- Offline extension architecture measurement rejects truncated and malformed
+  fatbinary containers before their headers can satisfy `--require`.
+- Isaac Lab's RT-core requirement now applies to rendering rather than to every
+  submit. Headless state-based training may target H100/H200/B200; a task id that
+  declares camera or rendered observations is still restricted to L40S and
+  RTX PRO 6000, as is `isaac-lab deploy`. GPU classification moved to the
+  tool-neutral `npa.workbench.gpu_classes`, with per-tool policy in
+  `npa.workbench.sonic.routing` and the new `npa.workbench.isaac_lab.routing`.
+
 - Agent artifact loading now requires a discovered `run_id`/`run_ref` inventory
   context with every S3 URI. URI-only requests return structured error
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
@@ -121,7 +141,7 @@ under `npa/src/npa/workflows/skypilot/`.
 - **Multi-node stages.** A resource profile can declare `num_nodes`, so a spec can ask
   for a real gang-scheduled block; previously that was only reachable through
   `npa burst submit --nodes`, outside the workflow surface. Additive: a 1-node profile
-  renders exactly as before. Reference spec `npa-workflows/multi-node-probe.yaml`
+  renders exactly as before. Reference spec `workflows/testing/multi-node-probe.yaml`
   verifies one report per rank from distinct hosts.
 - **`isaac-lab-cosmos-sdg-burst-smoke.yaml` relocated** to `npa/src/npa/burst/examples/`:
   it is a single-task input to `npa burst submit-yaml`, not a workflow (no plan, no stage
@@ -148,7 +168,7 @@ under `npa/src/npa/workflows/skypilot/`.
   using only the standard library, so the retargeting-backed specs are live-testable
   without NVIDIA's dual-licensed motion dataset. `retargeting.yaml`'s live case was
   previously **failing** for lack of input data.
-- **New spec:** `npa-workflows/vlm-eval-token-factory.yaml` — zero-GPU VLM scoring
+- **New spec:** `workflows/testing/vlm-eval-token-factory.yaml` — zero-GPU VLM scoring
   through the hosted `api` backend. This is the VLM eval path that needs no vLLM
   server, and it is registered in the live matrix as a `cpu` case.
 - **`outputs:` declarations corrected in eight specs (eleven stages).** A stage can
@@ -189,7 +209,7 @@ under `npa/src/npa/workflows/skypilot/`.
   as ~80 lines of bash inside `sim-to-real-loop.yaml` and, separately, as Python inside a
   gated GPU test. The report is field-compatible with the template's, including the
   distinction that `task_success` gates on the **mean** score rather than the pass rate.
-  New spec `npa-workflows/vlm-eval-loop.yaml`.
+  New spec `workflows/testing/vlm-eval-loop.yaml`.
 - **A self-hosted VLM stage now serves the model it calls.** `vlm_backend: self-hosted`
   makes the tool POST to localhost, and nothing in a spec started a server — the stage
   failed with `Connection refused`. The renderer gained a per-`toolRef` **run preamble**
@@ -293,7 +313,7 @@ under `npa/src/npa/workflows/skypilot/`.
 - **`npa workbench sonic train --runtime in-job`** trains in the pod the stage is already
   running in, instead of provisioning a Nebius Job from inside it.
 - **The legacy `sim_to_real` stack is retired.** The watcher survives and submits
-  `npa-workflows/sim2real-vlm-rl.yaml`; `scripts/run_sim_to_real_pipeline.py` and
+  the then-current `sim2real-vlm-rl.yaml`; `scripts/run_sim_to_real_pipeline.py` and
   `run_sim_to_real_quickstart.py` are gone with it.
 - **Isaac Lab frame capture is a package module** (`npa.workflows.isaac_capture`) instead of a
   repo script, so it runs in a pod with no checkout; `npa/scripts/capture_isaac_lab_scene_frames.py`

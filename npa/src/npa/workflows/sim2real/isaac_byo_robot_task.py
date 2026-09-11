@@ -1284,6 +1284,48 @@ def configure_convergence_action_noise(
     target = float(target_std)
     if not math.isfinite(target) or not 0.0 < target <= 1.0:
         raise ValueError("target_std must be finite and between zero and one")
+    # rsl-rl >= 5.0: the actor MLPModel keeps its noise in a Distribution module
+    # (std_type + std_param/log_std_param). Map that shape onto the legacy
+    # attribute names so one code path performs the exact same update.
+    distribution = getattr(policy, "distribution", None)
+    if distribution is not None and hasattr(distribution, "std_type"):
+        if "Heteroscedastic" in type(distribution).__name__:
+            raise RuntimeError(
+                "resume convergence does not support state-dependent action noise"
+            )
+        std_type = str(getattr(distribution, "std_type", ""))
+        if std_type == "scalar":
+            parameter_name = "std_param"
+        elif std_type == "log":
+            parameter_name = "log_std_param"
+        else:
+            raise RuntimeError(f"unsupported RSL-RL std_type: {std_type!r}")
+        noise_std_type = std_type
+        stored_value = math.log(target) if std_type == "log" else target
+        parameter = getattr(distribution, parameter_name, None)
+        if parameter is None or not hasattr(parameter, "detach"):
+            raise RuntimeError(
+                f"RSL-RL distribution lacks mutable {parameter_name} parameter"
+            )
+        detached = parameter.detach()
+        detached.fill_(stored_value)
+        parameter.requires_grad_(not freeze)
+        raw_values = detached.reshape(-1).tolist()
+        actual_values = [
+            math.exp(float(value)) if std_type == "log" else float(value)
+            for value in (raw_values if isinstance(raw_values, list) else [raw_values])
+        ]
+        if not actual_values or any(
+            not math.isclose(value, target, rel_tol=1.0e-6, abs_tol=1.0e-7)
+            for value in actual_values
+        ):
+            raise RuntimeError("RSL-RL action-noise convergence update did not persist")
+        return {
+            "noise_std_type": noise_std_type,
+            "target_std": target,
+            "parameter_count": len(actual_values),
+            "frozen": bool(freeze),
+        }
     if bool(getattr(policy, "state_dependent_std", False)):
         raise RuntimeError(
             "resume convergence does not support state-dependent action noise"
@@ -1385,6 +1427,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("TASK_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # The scenario wrapper is the canonical stock-Franka path. Apply the exact
     # reward, object, and optimizer contract here so those settings cannot be
     # lost as provenance-only Hydra arguments on the bypassed train.py branch.
@@ -1420,6 +1464,8 @@ try:
     torch.manual_seed(SEED)
     print("ROBOT_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
     acfg["num_steps_per_env"] = STEPS_PER_ENV
@@ -1533,8 +1579,16 @@ try:
             raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
         runner.alg.entropy_coef = float(ENT_FINAL)
         if CONVERGENCE_STD:
+            # rsl-rl >= 5.0 renamed alg.policy; the actor model carries the noise.
+            _policy_model = (
+                getattr(runner.alg, "policy", None)
+                or getattr(runner.alg, "actor_critic", None)
+                or getattr(runner.alg, "actor", None)
+            )
+            if _policy_model is None:
+                raise RuntimeError("RSL-RL algorithm exposes no policy/actor model")
             noise_audit = robotmod.configure_convergence_action_noise(
-                runner.alg.policy,
+                _policy_model,
                 target_std=float(CONVERGENCE_STD),
                 freeze=True,
             )

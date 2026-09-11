@@ -19,7 +19,7 @@ FORBIDDEN_DISTRIBUTIONS = (
 
 
 def main() -> int:
-    expected = "9d9edf4dd685c329a36bde45ed05bf5e0d51a3d78cf764d91bedb031e1a94694"
+    expected = "c13b5b13868fa45bb125e0f7f32ec718bcb10e554ce34b85af944dbd4bafc6aa"
     if os.environ.get("NPA_COSMOS3_CLOSURE_SHA256") != expected:
         raise SystemExit("FATAL: runtime closure checksum drift")
     lock = Path("/opt/npa-cosmos3-serving/requirements.lock")

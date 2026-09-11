@@ -13,6 +13,8 @@ import yaml
 
 from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
+from npa.workbench.gpu_classes import DATACENTER_HEADLESS, classify_gpu_target
+from npa.workbench.sonic.routing import FINETUNE, validate_gpu_routing
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
 from npa.orchestration.skypilot.workflow import WorkflowResult
 from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypilot_workflow
@@ -99,16 +101,27 @@ def materialize_sonic_workflow(
     docs = _load_yaml_documents(yaml_path)
     resolved_run_id = run_id or _default_run_id(yaml_path)
     resolved_gpu_target = (gpu_target or DEFAULT_GPU_TARGET).strip()
-    entry = sonic_image_entry(
-        gpu_target=resolved_gpu_target or None,
-        image_variant=image_variant or None,
-    )
-    resolved_variant = str(entry["id"])
+    validate_gpu_routing(workload=FINETUNE, gpu_target=resolved_gpu_target)
+    # The locomotion workflow runs the Isaac fine-tune stage out of this one
+    # image, so resolve it for that workload rather than for the GPU alone. A
+    # MuJoCo-only variant matching the same GPU target must not be substituted.
+    resolved_variant = ""
+    # An explicit runtime is the supported BYOF escape hatch when no published
+    # variant covers the target. Do not mislabel it as a first-party image.
+    # An explicitly supplied variant still has to satisfy the manifest contract.
+    if not image or image_variant:
+        entry = sonic_image_entry(
+            gpu_target=resolved_gpu_target or None,
+            image_variant=image_variant or None,
+            workload=FINETUNE,
+        )
+        resolved_variant = str(entry["id"])
     resolved_policy_image = image or container_image_for_tool(
         "sonic",
         registry=registry or None,
         gpu_target=resolved_gpu_target or None,
         image_variant=resolved_variant,
+        workload=FINETUNE,
     )
     resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
     resolved_npa_image = npa_image
@@ -116,7 +129,7 @@ def materialize_sonic_workflow(
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
-    resolved_accelerators = accelerators or _default_accelerators(resolved_gpu_target)
+    resolved_accelerators = accelerators or default_accelerators(resolved_gpu_target)
     resolved_cloud = cloud or _default_cloud(resolved_gpu_target)
     resolved_region = _resolve_region(region)
     resolved_registry_auth = _resolve_registry_auth(
@@ -301,24 +314,40 @@ def _resolve_s3_prefix(explicit: str, run_id: str) -> str:
     return prefix.rstrip("/") + "/"
 
 
-def _default_accelerators(gpu_target: str) -> str:
+def default_accelerators(gpu_target: str) -> str:
+    """Return the SkyPilot accelerator request for a SONIC GPU target."""
+
     normalized = gpu_target.strip().lower().replace("_", "-")
-    if "rtx" in normalized or "blackwell" in normalized or "sm-120" in normalized:
+    if _uses_workstation_target(normalized):
         return "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     if "h200" in normalized:
         return "H200:1"
     if "h100" in normalized:
         return "H100:1"
+    if "b300" in normalized:
+        return "B300:1"
     if "b200" in normalized:
         return "B200:1"
     return "L40S:1"
 
 
+def _default_accelerators(gpu_target: str) -> str:
+    """Compatibility wrapper for callers that used the former private helper."""
+
+    return default_accelerators(gpu_target)
+
+
 def _default_cloud(gpu_target: str) -> str:
     normalized = gpu_target.strip().lower().replace("_", "-")
-    if "rtx" in normalized or "blackwell" in normalized or "sm-120" in normalized:
+    if _uses_workstation_target(normalized):
         return "kubernetes"
     return "nebius"
+
+
+def _uses_workstation_target(normalized: str) -> bool:
+    return classify_gpu_target(normalized) != DATACENTER_HEADLESS and any(
+        token in normalized for token in ("rtx", "blackwell", "sm-120")
+    )
 
 
 def _resolve_region(region: str) -> str:

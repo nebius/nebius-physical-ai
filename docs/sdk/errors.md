@@ -6,10 +6,12 @@ The serverless SDK exposes typed exceptions from
 
 ## Installation and import
 
-The SDK ships with the `npa` package:
+The SDK ships with the `npa` package. Follow [Install npa](../install.md) to
+clone the repository and create a virtual environment, then install from the
+repository root:
 
 ```bash
-pip install npa  # or via your team's internal package source
+pip install -e npa
 ```
 
 Import typed exceptions from `npa.clients.serverless`:

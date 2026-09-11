@@ -9,11 +9,11 @@ Optional filters:
 
   NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu,gpu,multi   # default: all three
   NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=token-factory-caption.yaml,...
-  NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=3600
+  NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=3600  # 0 waits indefinitely for every case
   NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS=30
   NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1
   NPA_E2E_SKYPILOT_CONFIG_PATH=/tmp/run/skypilot-config.yaml
-  NPA_REGISTRY / --registry via NPA_E2E_REGISTRY
+  --registry via NPA_E2E_REGISTRY (optional; public GHCR is the default)
   NEBIUS_TOKEN_FACTORY_KEY for cpu-tier Token Factory twins
 
 This exercises the full path: validate → plan → render → sky jobs launch →
@@ -51,6 +51,7 @@ from .npa_workflow_live_helpers import (
     SUBMIT_LIVE_MATRIX,
     SubmitLiveCase,
     assert_no_credential_leakage,
+    assert_nurec_colmap_live_outputs,
     assume_decision_for,
     concurrency_overlaps,
     live_bucket,
@@ -71,7 +72,7 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows"
 RUNNER = CliRunner()
 
 TERMINAL_OK = frozenset({"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"})
@@ -114,14 +115,11 @@ def forbidden_markers() -> list[str]:
 
 @pytest.fixture(scope="module")
 def e2e_registry() -> str:
-    registry = (
-        os.environ.get("NPA_E2E_REGISTRY")
-        or os.environ.get("NPA_REGISTRY")
-        or ""
+    from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+    return (
+        os.environ.get("NPA_E2E_REGISTRY") or DEFAULT_PUBLIC_CONTAINER_REGISTRY
     ).strip()
-    if not registry:
-        pytest.skip("Set NPA_E2E_REGISTRY or NPA_REGISTRY for live npa.workflow submit")
-    return registry
 
 
 def _max_wait() -> int:
@@ -133,12 +131,16 @@ def _case_max_wait(case: SubmitLiveCase) -> int:
 
     ``max_wait_seconds`` on a case means "this workload genuinely takes this
     long" (a cold multi-GB image pull, a long train). The env var is the default
-    for cases that declare nothing. Both the CLI's ``--max-wait-seconds`` and the
-    polling loop below MUST use this same number: when they disagreed, the daily
-    runner's shorter env value cancelled healthy long jobs that the CLI had been
-    told to wait for.
+    for cases that declare nothing, except explicit zero disables the deadline
+    for every case. Both the CLI's ``--max-wait-seconds`` and the polling loop
+    below MUST use this same number: when they disagreed, the daily runner's
+    shorter env value cancelled healthy long jobs that the CLI had been told to
+    wait for.
     """
-    return case.max_wait_seconds or _max_wait()
+    default_wait = _max_wait()
+    if default_wait == 0:
+        return 0
+    return case.max_wait_seconds or default_wait
 
 
 def _skypilot_config_args() -> list[str]:
@@ -324,10 +326,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
     # A case may declare its own budget when it is much slower than the rest
     # (a big image pull, a self-hosted model's cold start); otherwise the tier's.
     max_wait = _case_max_wait(case)
-    deadline = time.monotonic() + max_wait
+    deadline = None if max_wait == 0 else time.monotonic() + max_wait
     last_status = str(submit_payload.get("status") or "SUBMITTED")
     try:
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             current = workflow_status(job_id)
             last_status = (current.status or "UNKNOWN").upper()
             assert_no_credential_leakage(
@@ -335,6 +337,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 extra_forbidden=forbidden_markers,
             )
             if last_status in TERMINAL_OK:
+                if case.spec == "nurec-colmap-reconstruct.yaml":
+                    assert_nurec_colmap_live_outputs(
+                        bucket=bucket, run_id=run_id, e2e_project=e2e_project
+                    )
                 return
             if _is_terminal_fail(last_status):
                 detail = (

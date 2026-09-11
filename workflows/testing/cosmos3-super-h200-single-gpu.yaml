@@ -1,0 +1,59 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-super-h200-single-gpu
+  description: >-
+    Validate the real Cosmos3-Super TP-1 serving path on one H200. This is an
+    isolated functional/performance validation, not the paper's eight-replica
+    8x1 node cell and not an eight-GPU node-throughput measurement.
+
+config:
+  bucket: example-bucket
+  runtime_image: "registry.example.invalid/operator/cosmos3-super-benchmark-wrapper@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  image_pull_secret: npa-cosmos3-super-registry
+  prefix: "runs/{{run.id}}/cosmos3-super-h200-single-gpu"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  topologies: 1x1
+  attempts: "24"
+  suite: h200-single-gpu
+  gpu_family: H200
+  base_port: "8100"
+
+resources:
+  h200-single-gpu:
+    cloud: kubernetes
+    accelerators: H200:1
+    cpus: 16
+    memory: 200Gi
+    image: "{{config.runtime_image}}"
+    disk_size: 500
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: "{{config.image_pull_secret}}"
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 32Gi
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+
+initial: benchmark
+
+states:
+  benchmark:
+    description: >-
+      Start one real TP-1 loopback service, require one strictly valid warmup,
+      run 24 sequential fixed-workload requests, and publish measured evidence.
+    toolRef: workbench.cosmos3.super_benchmark
+    resources: h200-single-gpu
+    outputs:
+      - uri: "{{config.output_uri}}benchmark.json"
+        schema: npa.cosmos3-super.h200-single-gpu-validation.v1
+    terminal: true

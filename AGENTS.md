@@ -14,17 +14,18 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 
 - `skills/workflows/`: workflow-level procedures such as sim-to-real, policy training, Cosmos3 inference, and reference SkyPilot workflows.
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, Cosmos3 setup/troubleshooting, and agent visual feedback (Describe this).
+- `skills/atomic/contributions/SKILL.md`: required readability, documentation, and anti-pattern rules when writing or reviewing contributions, including workbench agent changes.
 - `skills/atomic/agent-visual-feedback/SKILL.md`: Describe-this multimodal feedback for Rerun / video / image / data viewers.
 - `skills/workflows/add-workbench-tool/SKILL.md`: add a new workbench tool end to end — implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green.
 - `skills/atomic/npa-cli-conventions/SKILL.md`: write or modify an npa CLI command or SDK function — registration, the `--input-path`/`--output-path` contract, output format, error handling and exit codes, the `resolve_typer_defaults`/`json_stdout_contract`/`intent_boundary` decorators, and config/credential access.
 - `skills/atomic/toolref-argv-contract/SKILL.md`: the contract that stops a workflow stage from rendering cleanly and then crashing in the pod — real flag names, literal-value rules, reachability, image routing.
-- `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to a change, and the exact local command for each, cheapest first.
+- `skills/atomic/pre-pr-validation/SKILL.md`: which PR gates apply to a change, and the exact local command for each, cheapest first.
 - `skills/atomic/audit-container-docs/SKILL.md`: required catalog reconciliation when a workbench image or solution is added, removed, retagged, reclassified, published, or otherwise changed; it keeps the public-image table aligned with repository intent and anonymous GHCR state.
 - `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate to its cause and fix.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, Fleet, and Nebius infra.
 - `skills/workflows/first-run-setup/SKILL.md`: zero to a first verified result on a fresh machine or new project — an ordered, gated path (install → configure → credential preflight → cheapest-proof workload → validate spec → provision → image pullability → submit) with a stop condition at every step.
 - `skills/atomic/gpu-first-guidance/SKILL.md`: recommending a path, writing user-facing docs, or answering "what should I run first?" — lead with the Nebius GPU path, describe hosted inference by what it does, and stay warm and genuinely helpful when someone asks about cost or has no cluster yet.
-- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` / `access` before spending GPU time.
+- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor`. Prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access` before spending GPU time.
 - `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or produced no artifacts — status and pod-level reason, stage logs, S3 evidence, image pullability, scheduling, and the resume-vs-cancel decision.
 - `skills/atomic/teardown-and-cost/SKILL.md`: stop spend safely — cancel-before-destroy ordering, cloud versus local state, and the orphan audit for leaked clusters, agent VMs, controllers, buckets, and cross-project fleets.
 - `skills/tools/token-factory/SKILL.md`: zero-GPU hosted inference (captioning, batch generation, Cosmos physical-AI reasoning) — the cheapest tier that produces a real artifact, with no cluster and no provisioning.
@@ -32,10 +33,13 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
+- `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
+- `skills/tools/cosmos3-super-benchmark/SKILL.md`: reproduce the fixed Cosmos3-Super vLLM-Omni serving sweep on one eight-GPU B200 or H200 node, or validate the isolated one-H200 TP-1 path, with strict MP4 validity and scope-correct throughput accounting.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
+- `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.
 - `skills/tools/fleet/SKILL.md`: deploy a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe.
 - `skills/tools/scenario-gen/SKILL.md`: adversarial scenario generation — an RL adversary that maximizes failures of a policy-under-test, scenario ranking, and the adversarial-scenario-hardening workflow.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate, and query production sensor data as a versioned, lineage-tracked dataset (FiftyOne curation + LanceDB query index).

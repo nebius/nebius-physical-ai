@@ -1,21 +1,39 @@
-# Easy Guides
+# Workbench Guides
 
-Short, friendly, copy-paste guides for getting a robot doing something
-interesting on Nebius Physical AI. Each one picks a **robot**, a **simulation
-environment**, and a **cool public dataset**, then walks you from zero to a
-result.
+Choose a robot, generation, reconstruction, or data workflow to run on Nebius.
+Complete the [npa quickstart](../../quickstart.md) first, then follow the chosen
+guide's input, access, and GPU requirements through to its output artifacts.
 
-New here? Pick whichever robot sounds like the most fun — the guides are
-independent, and each one ends with something you can look at.
+## Choose a workflow
+
+| I want to… | Guide |
+| --- | --- |
+| Train or evaluate a robot policy | Pick a [robot guide](#robot-and-reconstruction-guides) below |
+| Generate images with Cosmos 3 | [Cosmos 3 generation](../cosmos3-generate.md) |
+| Augment a source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) |
+| Build a labeled and curated dataset with Cosmos Transfer | [Physical AI Data Factory](physical-ai-data-factory-deploy.md) |
+| Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
+
+For an existing YAML spec, browse the
+[workflow catalog](../../../workflows/README.md).
+For hosted captioning, generation, and reasoning stages, see
+[Token Factory](../token-factory.md).
+
+## Robot and reconstruction guides
+
+Pick a guide for the robot or scene you want to work with. Check its runtime and
+validation scope before running; the recorded backend checks below distinguish
+local checks, smoke runs, and live outcomes.
 
 | Guide | Robot | Sim / engine | Public dataset | GPU |
 | --- | --- | --- | --- | --- |
-| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | L40S+ |
+| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | H200 for headless training; see rendering caveat |
 | [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | H100 |
 | [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | yes |
 | [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
 | [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | RT-core: L40S / RTX PRO 6000 |
 | [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | RT-core: RTX PRO 6000 / L40S |
+| [Build a parameterized living-lab digital twin](living-lab-nurec-fanout.md) (default 16-GPU) | n/a (multi-zone scene capture) | NVIDIA NuRec / NRE (16-way default fan-out, parameterizable) | `nvidia/PhysicalAI-NuRec-PPISP` | 16 x RTX PRO 6000 default (8 x 2) |
 
 ## How these guides work
 
@@ -49,9 +67,12 @@ The guides assume you have completed
 [../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
 `npa configure`). Each guide calls out exactly when credentials are required.
 
-## What's been validated on real backends
+## Recorded backend checks
 
-These guides were exercised against live Nebius (via `npa`), not just read:
+These entries record earlier checks against local and live backends. Each result
+applies to the stated runtime and scope; the table does not establish that every
+guide has completed end to end. Consult the selected tool's current guide and
+skill for implementation changes since these checks.
 
 | Path | Backend | Result |
 | --- | --- | --- |
@@ -72,18 +93,21 @@ managed-K8s + BYOF; for a serverless capacity retry use `--gpu-type gpu-l40s-d`.
 
 SONIC G1 (MuJoCo) is documented from its cookbook and not yet re-run here.
 
-## Bring your own everything
+<a id="bring-your-own-everything"></a>
 
-These guides use public datasets and the shipped robots so you can reproduce
-them, but the workbench is built to be swapped:
+## Use your own data, policy, or robot
 
-- **Bring your own dataset** — point any guide at an S3 `LeRobotDataset` URI.
-- **Bring your own policy image** — swap the container, keep the contract.
-- **Bring your own robot** — Franka, Reachy 2, Unitree G1, quadrupeds, and more
-  are all just configs over the same train / eval / serve / infer commands.
+Check the selected tool's contract before substituting inputs:
 
-When you're ready for the production recipes, head to the
-[cookbooks](../cookbooks/README.md).
+- Datasets must match the required format and observation/action schemas.
+  LeRobotDataset is supported by the LeRobot paths; other guides use video,
+  motion, scene, or tool-specific inputs.
+- A custom policy image must implement the selected tool's input, output,
+  and runtime contract.
+- A different robot may need assets, simulator support, observation and action
+  mappings, and training configuration. Available commands vary by tool.
+
+See the [cookbooks](../cookbooks/README.md) for detailed recipes.
 
 ## Physical AI Data Factory (video data augmentation)
 
@@ -96,6 +120,7 @@ tools.
 | --- | --- |
 | [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) | **Copy-paste runbook** — from zero to a running blueprint (includes a one-block Quick start that stages input frames and submits) |
 | [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
+| [paidf-campaign-reuse.md](paidf-campaign-reuse.md) | Reuse one immutable source, generation, and evaluation campaign across provider workshops |
 
 > **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
 > seeds captionable frames (no dataset needed) and submits an input-conditioned

@@ -19,12 +19,20 @@ from npa.workflows.distill_two_vm import TwoVMDistillError
 
 
 runner = CliRunner()
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 #: Frozen raw-task fixtures. The submit wrapper accepts a customer's own SkyPilot YAML,
 #: so that contract needs a raw task to exercise -- but not a SHIPPED one, which is what
 #: made these tests block the catalog's retirement. See tests/fixtures/skypilot/README.md.
 SKYPILOT_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/skypilot"
-NPA_SPECS = REPO_ROOT / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
+
+
+@pytest.fixture(autouse=True)
+def _execution_scope_boundary(monkeypatch):
+    # This module tests CLI wiring against fake launch/storage backends; the
+    # mandatory provider-scope gate is exercised by test_execution_preflight.
+    monkeypatch.setattr("npa.cli.workbench.workflow._execution_target_preflight", lambda *args, **kwargs: (None, {}))
+    monkeypatch.setattr("npa.cli.workbench.workflow._raw_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
 
 
 @pytest.mark.parametrize(
@@ -88,6 +96,15 @@ class FakeWorkflowS3:
 def _patch_workflow_s3(
     monkeypatch: pytest.MonkeyPatch, fake_s3: FakeWorkflowS3
 ) -> None:
+    from npa.clients.credentials import CredentialsConfig
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
+        lambda **kwargs: CredentialsConfig(
+            s3_access_key_id="test-access", s3_secret_access_key="test-secret",
+            s3_endpoint="https://storage.example",
+        ),
+    )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.boto3.client",
         lambda *args, **kwargs: fake_s3,
@@ -168,6 +185,7 @@ def test_workbench_workflow_submit_dispatches_skypilot(
         return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
     )
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 
     result = runner.invoke(
         app,
@@ -239,7 +257,7 @@ def test_submit_injects_configured_secret_without_printing_it(
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
         lambda **kwargs: SimpleNamespace(
-            endpoint_url="https://storage.us-central1.nebius.cloud",
+            endpoint_url="https://storage.eu-west1.nebius.cloud",
             secret_values={"HF_TOKEN": secret},
             missing=(),
         ),
@@ -265,7 +283,12 @@ def test_submit_injects_configured_secret_without_printing_it(
 
     assert result.exit_code == 0, result.output
     assert secret not in result.output
-    assert submit_mock.call_args.kwargs["extra_env"] == {"HF_TOKEN": secret}
+    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+
+    assert submit_mock.call_args.kwargs["extra_env"] == {
+        "HF_TOKEN": secret,
+        **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.eu-west1.nebius.cloud"),
+    }
 
 
 def test_workbench_workflow_submit_json_exposes_run_id(mocker, tmp_path) -> None:
@@ -1818,13 +1841,7 @@ def test_prepare_run_persists_current_schema_plan_only_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    spec = (
-        REPO_ROOT
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = NPA_SPECS / "physical-ai-data-factory.yaml"
 
     prepared = runner.invoke(
         app,
@@ -1965,6 +1982,10 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
         lambda *args, **kwargs: evidence,
     )
     monkeypatch.setattr(

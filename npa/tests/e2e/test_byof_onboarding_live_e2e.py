@@ -46,7 +46,7 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BYOF_SPEC = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof.yaml"
+BYOF_SPEC = REPO_ROOT / "workflows" / "testing" / "byof.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 RUNNER = CliRunner()
 

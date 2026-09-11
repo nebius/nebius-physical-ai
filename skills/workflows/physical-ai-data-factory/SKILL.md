@@ -37,7 +37,7 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
+`workflows/testing/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
@@ -331,15 +331,15 @@ submits. All three Cosmos images install
 covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
 Kubernetes passes, so an entrypoint must exec its arguments.
 
-Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
-`meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
-(Cosmos-family critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
+Verified Token Factory model roles: `MiniMaxAI/MiniMax-M3` (VLM),
+`nvidia/Nemotron-3_5-Lightning` (LLM), `MiniMaxAI/MiniMax-M3`
+(hosted reasoning critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
 Token Factory model.
 
 ## Commands
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns). The shipped
@@ -577,6 +577,37 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
 - **Restricted-egress visualization:** the `visualize` state uses
   `workbench.nurec.visualize`, which the renderer pins to the prebuilt
   `npa-rerun-viewer` image. It never performs `pip install` at task runtime.
+
+## Immutable campaign reuse and provider derivatives
+
+The expensive source, generation, and evaluation stages are frozen once into an
+immutable base campaign (`npa.paidf.campaign.v1`), and every provider workshop
+becomes a derivative run that reads the base read-only and writes to its own
+prefix. The contracts live in `npa.workflows.paidf_campaign`
+(`docs/workbench/guides/paidf-campaign-reuse.md` is the runbook):
+
+- `build_partner_input` / `validate_partner_input` pin the base campaign ID,
+  manifest URI, and canonical digest; a derivative run cannot execute
+  `source`, `generation`, or `evaluation`, must declare a `curation`,
+  `observability`, or `simulation` role, credential *references* (never
+  values), and an output prefix separate from the base campaign.
+- `build_execution_receipt` / `build_partner_result` account for every
+  declared overlay stage and prove `source_mutated: false` with every output
+  under the derivative prefix.
+- Curation flows through provider-neutral candidates
+  (`npa.paidf.candidates.v1`), decisions (`npa.paidf.decisions.v1`), and
+  reconciliation (`npa.paidf.reconciliation.v1`). A decision provider is
+  exactly `name` plus a `curation` or `evaluation` role; each decision is
+  exactly `candidate_id`, `decision`, `evidence`, `reason`, and a
+  caller-supplied `decided_at` in `YYYY-MM-DDTHH:MM:SSZ` UTC-second form.
+  `accept` enters the training set, `reject` is dropped, and `review` is a
+  valid but unresolved state that is reported explicitly and never enters
+  accepted replacements. Provider exports reconcile by exact external ID and
+  every terminal row must carry a non-null decision state.
+- Regenerating any base stage creates a new campaign; existing campaigns are
+  never silently changed. This is a contract layer, not a provider plugin
+  system: provider execution stays in provider-specific code, and no live
+  second-provider integration is claimed until one runs.
 
 ## Testing (live-infra is a priority)
 

@@ -140,9 +140,9 @@ Validate and plan the checked-in spec:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-ltx2.yaml
+  workflows/testing/byof-ltx2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-ltx2.yaml --run-id ltx2-plan
+  workflows/testing/byof-ltx2.yaml --run-id ltx2-plan
 ```
 
 ## Dev VM runbook

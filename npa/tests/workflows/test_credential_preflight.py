@@ -6,15 +6,17 @@ import pytest
 
 from npa.workflows.credential_preflight import (
     CREDENTIAL_CHECKS,
+    SUPPORTED_CREDENTIAL_CHECKS,
     CredentialProbes,
     check_hf,
+    check_nebius,
     check_ngc,
     check_s3,
     check_token_factory,
     has_failure,
     run_credential_preflight,
 )
-from npa.workflows.sim2real_health import FAIL, PASS, WARN
+from npa.workflows.sim2real_health import FAIL, PASS, SKIP, WARN
 
 
 @dataclass
@@ -76,35 +78,38 @@ def test_ngc_warns_when_missing() -> None:
     assert check_ngc(_Creds(), CredentialProbes()).status == WARN
 
 
-def test_ngc_warns_on_bad_prefix() -> None:
-    result = check_ngc(_Creds(ngc_api_key="not-a-key"), CredentialProbes())
-    assert result.status == FAIL
-    assert "nvapi-" in result.remedy
+@pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
+def test_ngc_nonempty_credential_passes_presence_only_offline(credential: str) -> None:
+    result = check_ngc(_Creds(ngc_api_key=credential), CredentialProbes())
+    assert result.status == PASS
+    assert "not verified" in result.summary
 
 
-def test_ngc_pass_with_hyphen_key() -> None:
-    # Real personal NGC keys are prefixed 'nvapi-'.
-    assert (
-        check_ngc(_Creds(ngc_api_key="nvapi-abc123"), CredentialProbes()).status == PASS
+@pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
+def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement(
+    credential: str,
+) -> None:
+    observed: list[str] = []
+
+    def validate(key: str) -> str:
+        observed.append(key)
+        return "entitlement-required"
+
+    result = check_ngc(
+        _Creds(ngc_api_key=credential), CredentialProbes(ngc_validator=validate)
     )
-
-
-def test_ngc_pass_with_underscore_key() -> None:
-    # Older docs sometimes show 'nvapi_'; accept it too.
-    assert check_ngc(_Creds(ngc_api_key="nvapi_abc"), CredentialProbes()).status == PASS
-
-
-def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement() -> None:
-    probes = CredentialProbes(ngc_validator=lambda key: "entitlement-required")
-    result = check_ngc(_Creds(ngc_api_key="nvapi-abc123"), probes)
     assert result.status == PASS
     assert "not implied" in result.summary
+    assert observed == [credential]
+    assert credential not in " ".join((result.summary, result.remedy, *result.details))
 
 
 def test_ngc_live_probe_fails_when_key_is_rejected() -> None:
+    secret = "registry-bad-credential"
     probes = CredentialProbes(ngc_validator=lambda key: "auth-401")
-    result = check_ngc(_Creds(ngc_api_key="nvapi-bad"), probes)
+    result = check_ngc(_Creds(ngc_api_key=secret), probes)
     assert result.status == FAIL
+    assert secret not in " ".join((result.summary, result.remedy, *result.details))
 
 
 def test_s3_warns_without_keys() -> None:
@@ -177,9 +182,91 @@ def test_token_factory_fail_when_verifier_raises() -> None:
     assert result.status == FAIL
 
 
+@dataclass
+class _ProfileVerification:
+    identity_verified: bool
+    iam_token_minted: bool
+    profile: str = ""
+    failure_reason: str = ""
+
+
+def test_nebius_skips_without_live_probe() -> None:
+    result = check_nebius(_Creds(), CredentialProbes())
+    assert result.status == SKIP
+    assert "offline mode" in result.summary
+
+
+def test_nebius_passes_only_when_identity_and_token_mint_succeed() -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            True, True, profile="operator"
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == PASS
+    assert result.summary == "Configured Nebius CLI profile is authenticated."
+    assert "operator" not in result.summary
+
+
+@pytest.mark.parametrize(
+    ("identity_verified", "iam_token_minted", "expected"),
+    [
+        (False, False, "could not resolve"),
+        (False, True, "could not resolve"),
+        (True, False, "could not mint"),
+    ],
+)
+def test_nebius_fails_when_either_live_probe_fails(
+    identity_verified: bool, iam_token_minted: bool, expected: str
+) -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            identity_verified, iam_token_minted
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == FAIL
+    assert expected in result.summary
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "expected_summary"),
+    [
+        ("cli_unavailable", "Nebius CLI is not available."),
+        ("timeout", "Nebius CLI authentication check timed out."),
+        ("probe_error", "Nebius CLI authentication check could not run."),
+    ],
+)
+def test_nebius_reports_execution_failure_reason(
+    failure_reason: str, expected_summary: str
+) -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            False, False, profile="operator", failure_reason=failure_reason
+        )
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.status == FAIL
+    assert result.summary == expected_summary
+    assert "operator" not in " ".join((result.summary, result.remedy, *result.details))
+
+
+def test_nebius_names_default_profile_source_without_identifier() -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(True, True)
+    )
+    result = check_nebius(_Creds(), probes)
+    assert result.summary == "Default Nebius CLI profile is authenticated."
+
+
 def test_run_credential_preflight_default_order() -> None:
     results = run_credential_preflight(_Creds(), probes=CredentialProbes())
     assert [r.name for r in results] == list(CREDENTIAL_CHECKS)
+
+
+def test_supported_checks_add_nebius_without_changing_defaults() -> None:
+    assert CREDENTIAL_CHECKS == ("hf", "ngc", "s3", "token_factory")
+    assert SUPPORTED_CREDENTIAL_CHECKS == (*CREDENTIAL_CHECKS, "nebius")
 
 
 def test_run_credential_preflight_rejects_unknown_check() -> None:

@@ -2,7 +2,7 @@
 
 > **Presentation-only legacy script.** Do not use the private operator-pack
 > commands below to launch a qualification run. The sole production entrypoint
-> is `npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime`; follow
+> is `npa workbench workflow submit workflows/main/sim2real.yaml --runtime`; follow
 > [the canonical operator guide](sim2real-workflow.md). Pre-staged artifacts here
 > are for a timed presentation, never live-run evidence.
 
@@ -47,7 +47,7 @@ s3://<bucket>/<prefix>/<run-id>/
    ```bash
    export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
    npa workbench workflow submit \
-     npa/workflows/workbench/npa-workflows/sim2real.yaml \
+     workflows/main/sim2real.yaml \
      --runtime --resume --run-id <live-run-id> <operator-vars-and-secrets>
    ```
 
@@ -71,7 +71,7 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 | 6 | **Feature lineage** | Records that state PPO consumes scenario configs, while token/pixel artifacts remain reporting/VLM inputs | `tokens/manifest.json` | Quick JSON peek at explicit consumer fields |
 | 7 | **Action rollouts** | Exact checkpoint across at least 64 curated scenarios with 32 decision/event samples each | `actions/train/outer-01/iter-01/rollout-*/` | Show applied config digests and simulator reach/contact/grasp/lift/place state |
 | 8 | **VLM critique** | Dual Cosmos-Reason per-step labels calibrate against simulator truth | `vlm_eval/train/outer-01/iter-01/<rollout-id>.json` | Show confidence/disagreement plus bounded shaping |
-| 9 | **RL signal + trainer** | Dense simulator reward + bounded VLM shaping → real 500-iteration RSL-RL PPO; fixed validation ranks checkpoints | `training_signal/train/...`, `byo-trainer/.../ppo-telemetry.json`, `checkpoints/validation-selection/` | Show nonzero temporal credit, PPO curves, and selection proof |
+| 9 | **RL signal + trainer** | Dense simulator reward + bounded VLM shaping → real 2,000-iteration RSL-RL PPO per resumed pass; fixed validation ranks checkpoints | `training_signal/train/...`, `byo-trainer/.../ppo-telemetry.json`, `checkpoints/validation-selection/` | Show nonzero temporal credit, PPO curves, and selection proof |
 | 10 | **Gold held-out eval** | The admitted Isaac workflow task loads the validation-selected checkpoint | `eval/gold-heldout/outer-XX/report.json` | **Live:** strict success is 5 cm plus stable placement; 10/15/20 cm remain diagnostics |
 | 11 | **Threshold gate** | Compare strict stable-placement `success_rate` to threshold (`0.50`) | `outer_loop/decision.json`; passing gates promote, while every real best checkpoint remains honestly packaged | **Fallback story** (below) |
 | 12 | **Real-world validation (BYO seam)** | Documented external stub | `stage_12_external_validation/external_stub.json` | Always SEAM; customer hook point |
@@ -111,7 +111,7 @@ Show one slide or browser tab: the 14-state graph from [sim2real-architecture.md
 
 ```bash
 # What runs on cluster (abbreviated)
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml \
+npa workbench workflow submit workflows/main/sim2real.yaml \
   --runtime --resume --run-id <run-id> <operator-vars-and-secrets>
 ```
 

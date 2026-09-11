@@ -35,13 +35,15 @@ from npa.cli.agent_workflow import (
     _TEMPLATES,
 )
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = (
-    REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+    REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
 )
 
 _GOLDEN_YAMLS = [
+    "nurec-reconstruct.yaml",
     "byof.yaml",
     "rl-policy-training-sim-success.yaml",
     "sim2real-two-step-agent.yaml",
@@ -459,11 +461,7 @@ def test_embedded_agent_uses_the_exact_canonical_sim2real_yaml() -> None:
 
     canonical = (
         REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
+        / "workflows" / "main" / "sim2real.yaml"
     ).read_text(encoding="utf-8")
     source = _embedded_agent_workflow_source()
 
@@ -991,7 +989,10 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.get("/infra/soperator/status/{{name}}")' in source
     assert "agent-live-infra-plan" in source
     assert "pip install -e" in source
-    assert "deploy/cluster" in source
+    from npa.cli.agent_source_archive import _REQUIRED_ROOTS
+
+    assert "create_agent_source_archive" in source
+    assert "deploy/cluster" in _REQUIRED_ROOTS
     assert "_soperator_deploy_from_payload" in source
     assert "DEFAULT_SOLUTIONS_LIBRARY_REF" in source
     assert "_validate_immutable_solutions_library_ref" in source
@@ -1212,6 +1213,8 @@ def test_generate_isaac_byof_yaml_validates() -> None:
     assert result["ok"] is True, f"isaac-byof validate failed: {result.get('error')}"
     assert result["name"] == "byof"
     assert "<repo-url>" in yaml_text
+    assert "repo_auth: none" in yaml_text
+    assert "repo_token_env: GH_TOKEN" in yaml_text
     assert "base_profile: ubuntu" in yaml_text
     assert "byof-run" in set(result["states"])
 
@@ -1425,9 +1428,8 @@ def test_generate_workflow_yaml_aliases() -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_validates(yaml_name: str) -> None:
     """All golden NPA workflow YAMLs in the repo should parse and validate."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     yaml_text = yaml_path.read_text(encoding="utf-8")
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True, f"{yaml_name} failed: {result.get('error')}"
@@ -1436,9 +1438,8 @@ def test_golden_yaml_validates(yaml_name: str) -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
     """Golden YAMLs should plan successfully with the CLI."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     result = runner.invoke(
         app,
         [

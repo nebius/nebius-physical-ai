@@ -60,7 +60,6 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
             s3_endpoint="",
         ),
     )
-    mocker.patch("npa.cli.workbench.lerobot.resolve_container_registry", return_value="registry.example/npa")
     client.subnet_resolver = mocker.patch(
         "npa.cli.workbench.lerobot.resolve_subnet",
         return_value="vpcsubnet-1",
@@ -107,7 +106,6 @@ def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_st
             s3_endpoint="",
         ),
     )
-    mocker.patch("npa.cli.workbench.lerobot.resolve_container_registry", return_value="registry.example/npa")
     client.subnet_resolver = mocker.patch(
         "npa.cli.workbench.lerobot.resolve_subnet",
         return_value="vpcsubnet-1",
@@ -459,7 +457,7 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["project_id"] == "project-1"
     assert kwargs["name"] == "train-1"
     assert kwargs["image"] == (
-        "registry.example/npa/npa-lerobot:"
+        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:"
         "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert kwargs["gpu_type"] == "gpu-h200-sxm"
@@ -482,7 +480,9 @@ def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> N
 
     assert result.exit_code == 0, result.output
     kwargs = client.create_job.call_args.kwargs
-    assert kwargs["image"] == "registry.example/npa/npa-lerobot:0.6.0"
+    assert kwargs["image"] == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.6.0"
+    )
     assert "--env_eval_freq=1000000" in kwargs["command"]
     assert "--eval_freq=" not in kwargs["command"]
 

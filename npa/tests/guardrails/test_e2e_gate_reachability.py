@@ -16,6 +16,56 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_RAY_FAST_SYNC_LIVE_CONFIG": (
+        "native working-directory source delivery requires an operator-selected Ray Jobs endpoint and private evidence"
+    ),
+    "NPA_AGENT_RECOVERY_LIVE_CONFIG": "creates and destroys an isolated operator-selected agent VM while injecting a credential staging failure",
+    "NPA_RAY_CLIP_RESULTS": "requires operator-selected downloaded native Ray CLIP CUDA result artifacts",
+    "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
+        "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
+    ),
+    "NPA_RAY_TRAIN_LIVE_CONFIG": (
+        "native Train CUDA recovery/cancellation requires an isolated operator-preflighted Ray Jobs runtime and S3 prefix"
+    ),
+    "NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG": (
+        "completed public CLIP result provenance and exact owned workload storage require private operator selection"
+    ),
+    "NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG": (
+        "native Ray Jobs stop/resume requires two preflighted owned GPUs and private SSH/evidence configuration"
+    ),
+    "NPA_VM_SECURITY_LIVE": (
+        "mutates credentials and services on an operator-selected dedicated VM or UID-verified isolated CPU Pod"
+    ),
+    "NPA_SONIC_IMAGE_WORKLOAD_LIVE": (
+        "real checkpoint dynamics requires an operator-preflighted owned GPU container and private evidence directory"
+    ),
+    "NPA_DETECTION_RUNTIME_LIVE": "real detector training and service restart require an operator-selected deployment",
+    "NPA_EXECUTION_PREFLIGHT_LIVE_CONFIG": "exact-prefix write verification requires an operator-selected private execution target",
+    "NPA_AGENT_IMPROVEMENT_LIVE": (
+        "requires a dedicated operator-selected queue, protected actual-check receipts "
+        "and independently obtained review evidence; shared-agent runners cannot synthesize these"
+    ),
+    "NPA_E2E_SKYPILOT_LOCAL_DAEMON": (
+        "restarts a real local API daemon in an isolated CPU-only PID/network namespace"
+    ),
+    "NPA_FLEET_RTX_RUN_WORKLOADS": (
+        "creates real driver qualification Jobs on every explicitly selected Fleet cluster"
+    ),
+    "NPA_ISAAC_EVAL_VERIFY_CONFIG": (
+        "read-only policy evaluation checks require owner-private project artifact references"
+    ),
+    "NPA_FLEET_QUOTA_VERIFY_SPEC": (
+        "read-only Fleet storage quota checks require an owner-private planned spec"
+    ),
+    "NPA_FLEET_PROJECT_VERIFY_SPEC": (
+        "read-only Fleet identity checks require an owner-private exact project spec"
+    ),
+    "NPA_FLEET_RTX_VERIFY_SPEC": (
+        "read-only RTX configuration checks require an owner-private Fleet spec"
+    ),
+    "NPA_FLEET_RTX_KUBECONFIGS": (
+        "read-only RTX checks require exact operator-selected cluster kubeconfigs"
+    ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",
@@ -42,8 +92,14 @@ MANUAL_GATES = {
     "NPA_E2E_SERVERLESS_PROJECT": "serverless suite is reachable through e2e-serverless",
     "NPA_E2E_FORCE_NER": "optional fallback knob inside the reachable serverless tier",
     "NPA_E2E_MK8S_GPU_HEALTH": "fresh reserved mk8s GPU validation requires explicit operator authorization",
+    "NPA_E2E_MK8S_MIXED_GPU_HEALTH": (
+        "targets an operator-selected fresh mixed GPU cluster with an explicit per-node capacity plan"
+    ),
     "NPA_E2E_MK8S_FRESH_CLUSTER": "prevents accidentally targeting an existing or production-adjacent cluster",
     "NPA_E2E_MK8S_RESERVED_CAPACITY": "prevents silent fallback from reviewed reserved GPU capacity",
+    "NPA_E2E_MK8S_RTX_RENDERING": (
+        "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
+    ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
@@ -113,3 +169,14 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     ):
         assert gate in runner_text
         assert gate not in MANUAL_GATES
+
+
+def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:
+    runner = RUNNER_FILES[0].read_text(encoding="utf-8")
+    for gate in ("NPA_FLEET_STORAGE_VERIFY", "NPA_FLEET_STORAGE_VERIFY_SPEC",
+                 "NPA_FLEET_STORAGE_EVIDENCE_DIR"):
+        assert gate in runner
+        assert gate not in MANUAL_GATES
+    assert 'if [[ "${NPA_FLEET_STORAGE_VERIFY:-0}" != "1" ]]; then' in runner
+    assert 'run_fleet_storage_verification "$py"' in runner
+    assert "tests/e2e/test_fleet_storage_verification_live.py" in runner

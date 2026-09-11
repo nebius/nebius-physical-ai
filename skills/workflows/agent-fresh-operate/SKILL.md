@@ -31,22 +31,77 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
   resume its first incomplete phase. Do not use `--replace` solely because the
   final Terraform/SSH response was lost; mismatched or unavailable evidence is
   indeterminate and resumable.
+- A completed service installer writes a private receipt before credentials are
+  staged. Interrupted bootstrap retries reuse that install only when its rendered
+  contents match exactly, then restage credentials and verify health. Changed
+  source/settings or a missing receipt require installation again.
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 
 All `npa agent …` and `nebius` commands run on the **operator/dev VM** with
-`~/.npa/config.yaml` and `~/.npa/credentials.yaml`. Cloud agents sync the
-target branch to the dev VM before live tests.
+the selected NPA configuration root (`NPA_CONFIG_DIR`, default `~/.npa`).
+Use the authorized checkout and branch for live tests.
+
+The committed recovery regression is
+`npa/tests/e2e/test_agent_recovery_live.py`. Set
+`NPA_AGENT_RECOVERY_LIVE_CONFIG` to an owner-only JSON file containing
+`deploy_args` (the argument array beginning with `agent`, `deploy`, including an
+unused `--name`, exact project, `--agent-only`, and ingress settings) and
+`evidence_dir` (an owner-only directory outside the checkout). Use isolated
+`NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR`, run credential/capacity preflights,
+then run that test with the checkout's own Python. It injects an SSH failure during
+credential staging, requires one service install across both attempts, verifies
+authenticated health on the same VM, and destroys that exact test agent.
+When the project already has agent records, cleanup uses `--keep-iam` to preserve
+their shared identity and still requires provider-verified absence of the test
+agent's infrastructure.
+
+After setting the private configuration and completing the preflights, enable
+the common E2E gate as well as the recovery-specific configuration:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_agent_recovery_live.py -q
+```
 
 ## Procedure
 
+For an explicitly authorized existing bucket in another project, save its exact
+`bucket`, `endpoint`, `owner_project_id`, and provider `bucket_id` in the selected
+project's `terraform_state` configuration before deploy. The agent verifies both
+projects belong to the selected tenant and the bucket's ID, name, and actual
+parent agree, then probes the exact Terraform state key. This binding authorizes
+data-plane use only: it creates no bucket or storage IAM grant and preserves the
+actual owner in backend evidence. Missing or mismatched bindings fail before
+Terraform. Without an explicit binding, the backend must exist in the compute
+project. Keep credential selection in the supported private credential store or
+process environment; do not represent external storage as newly owned resources.
+
+When reusing configured storage, agent bootstrap creates or verifies a custom
+group inside the compute project and an `editor` permit on that exact project
+for the attached `npa-agent` account. It does not add a tenant-wide editors
+membership. Creation IDs are journaled; rollback and last-agent cleanup verify
+exact ownership and dependencies before deleting only run-created bindings.
+Existing broad grants are not removed automatically.
+
 1. **Preconditions (dev VM).**
    ```bash
-   cd ~/nebius-physical-ai
-   git checkout <branch> && npa/.venv/bin/pip install -e npa -q
-   nebius profile activate "${NPA_NEBIUS_PROFILE:-npa-mk8s}"
-   export NPA_NEBIUS_PROFILE="${NPA_NEBIUS_PROFILE:-npa-mk8s}"
+   cd <authorized-checkout>
+   export NPA_CONFIG_DIR=<private-runtime-config-directory>
+   export NPA_OPERATION_JOURNAL_DIR=<private-operation-journal-directory>
+   export NPA_NEBIUS_PROFILE=<verified-profile>
    export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
    ```
+
+   Bootstrap the authorized checkout's own virtualenv before operating it.
+   `NPA_CONFIG_DIR` selects local config, credentials, cluster state, agent auth,
+   workbench Terraform directories, and the default Terraform plugin cache.
+   Set it before importing NPA. Concurrent operators should use separate private
+   directories with the selected project stanza and authorized credentials. Provider
+   calls honor the selected profile per command; deploying an agent does not
+   activate or rewrite the host's shared default profile. Keep explicit
+   operation-journal and SkyPilot isolation and Fleet `work_root` settings when
+   using those runtimes. The operation journal has its own configuration override;
+   setting `NPA_CONFIG_DIR` alone does not relocate it.
 
    `NPA_SSH_KEY` is the SSH **private-key path** used after provisioning. It is
    not cloud-init key content and must never be passed as
@@ -96,7 +151,7 @@ target branch to the dev VM before live tests.
 
 4. **Smoke gate (default “done” for fresh deploy).**
    ```bash
-   source ~/.npa/agents/<alias>/agent/auth.env
+   source "${NPA_CONFIG_DIR:-$HOME/.npa}/agents/<alias>/agent/auth.env"
    BASE="$(npa/.venv/bin/npa agent status --project <alias> --name agent --json \
      | npa/.venv/bin/python -c 'import json,sys; print(json.load(sys.stdin).get("public_url","").rstrip("/"))')"
    curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/models"
@@ -160,11 +215,12 @@ before preflight or deploy:
 NPA_NEBIUS_PROFILE=<profile> npa agent preflight --project <alias> --name <name> --agent-only
 ```
 
-Without it, the CLI queries whichever profile is active, and a tenant that
-profile cannot read answers `PermissionDenied`. Because the quota API fails
-closed by design, that denial surfaces as `unverified mutation prerequisite:
-compute.instance.count: provider/RBAC query failed` — which reads like a quota
-problem but is an identity problem. Distinguish the two in one command: if
+Without it, the CLI queries whichever profile is active. If that profile cannot
+read the tenant but can read the configured project, preflight falls back to the
+project quota catalog and emits a `WARN` that the tenant aggregate remains
+unverified. A finite project shortfall is still a hard `FAIL`; unrelated quota
+query errors and an unreadable project fallback also fail closed. Distinguish a
+profile mismatch from intentionally project-scoped access in one command: if
 
 ```bash
 nebius quotas quota-allowance list --parent-id <tenant> --all --profile <profile>
@@ -188,10 +244,15 @@ correct behavior; templates that need no cluster (PAIDF, the generic
 precondition with `GET /api/infra/backends` — `has_infra: false` and an empty
 `configured` list means cluster-backed templates cannot be exercised there.
 
-Preflight fails closed when it cannot *read* a quota (`PermissionDenied` on
-`list_quota_allowances` reports an unverified mutation prerequisite). This is
-deliberate spend safety, not a bug: an operator with create rights but no
-quota-read grant in that tenant cannot deploy until the read grant exists.
+Preflight does not require a tenant-wide quota-list grant when the provider
+specifically denies that scope and the exact project's quota catalog remains
+readable. It reports `whole_path_capacity` as `WARN`: project-local restrictions
+were verified, but the provider still enforces the unseen tenant aggregate at
+apply time. A finite project allowance with insufficient headroom is a real
+capacity denial and remains `FAIL`. A malformed response, non-RBAC provider
+failure, unreadable project catalog, missing identity, or other unverified
+mutation prerequisite also remains `FAIL`; do not treat those as the scoped-IAM
+fallback.
 
 `ssh_egress` is a generic heuristic that probes the first public IP found in
 *any* saved agent record, so its "your Nebius agent VM" wording can name an

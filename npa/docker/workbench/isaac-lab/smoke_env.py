@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Callable
 
 
-EXPECTED_ISAAC_LAB_VERSION = os.environ.get("ISAAC_LAB_VERSION", "2.3.2.post1")
-EXPECTED_ISAAC_SIM_VERSION = os.environ.get("ISAAC_SIM_VERSION", "5.1.0.0")
+EXPECTED_ISAAC_LAB_VERSION = os.environ.get("ISAAC_LAB_VERSION", "3.0.0b2.post1")
+EXPECTED_ISAAC_SIM_VERSION = os.environ.get("ISAAC_SIM_VERSION", "6.0.1.0")
 RT_GPU_MARKERS = ("L40S", "RTX")
 
 

@@ -61,15 +61,15 @@ Validate and plan the checked-in specs:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+  workflows/testing/byof-wan2.2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml \
+  workflows/testing/byof-wan2.2.yaml \
   --run-id wan22-plan
 
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  workflows/testing/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  workflows/testing/byof-wan2.2-multigpu.yaml \
   --run-id wan22-multigpu-plan
 ```
 

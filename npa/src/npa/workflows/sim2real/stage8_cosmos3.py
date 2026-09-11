@@ -1,4 +1,4 @@
-"""Hosted Cosmos3 rollout evaluation for canonical Sim2Real Stage 8."""
+"""Hosted rollout evaluation; Cosmos3 artifact names remain compatible."""
 
 from __future__ import annotations
 
@@ -48,11 +48,13 @@ def run(args: argparse.Namespace) -> None:
     """Score every Stage 7 rollout and publish the Stage 8 barrier record."""
 
     from npa.workbench.cosmos.reason import (
+        hosted_rollout_model_family,
         run_token_factory_rollout_vlm,
         task_description_from_manifest,
     )
 
     root = str(args.root_uri).rstrip("/")
+    family = hosted_rollout_model_family(args.reason_model)
     work = Path(tempfile.mkdtemp(prefix="npa-s2r-stage-08-"))
     source = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
@@ -88,6 +90,7 @@ def run(args: argparse.Namespace) -> None:
         "schema": "npa.sim2real.cosmos3_evaluator.v1",
         "evaluator": "cosmos3",
         "model": args.reason_model,
+        "reason_family": family,
         "provider": "nebius",
         "backend": "token_factory",
         "evaluations": results,
@@ -107,10 +110,11 @@ def run(args: argparse.Namespace) -> None:
         stage=8,
         name="stage_08_vlm_eval_train",
         tier="WORKS",
-        evidence="Hosted Cosmos3-Super-Reasoner scored every Stage 7 rollout with event-local labels through Token Factory.",
+        evidence=f"Hosted {args.reason_model} scored every Stage 7 rollout with event-local labels through Token Factory.",
         artifacts={
             "result": output_uri,
             "model": args.reason_model,
+            "reason_family": family,
             "provider": evaluator_usage["provider"],
             "backend": "token_factory",
             "evaluator_usage": evaluator_usage,

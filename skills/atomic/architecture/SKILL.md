@@ -16,12 +16,13 @@ The platform progression is:
 
 The current phase is Workbench, the Tools layer: marketplace model, pay per use, `npa` CLI/SDK/agents.
 
-There are 8 tools: LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, and SONIC.
-
-Tool validation state: 8/8 named Workbench tools have at least one
-artifact-bearing e2e validation on Nebius. Cosmos closed the last gap in W13
-through `cosmos train --runtime serverless --smoke`; Cosmos visual-generation
-rendering paths remain constrained by the EGL/DRI container gap.
+The May 2026 snapshot covers LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos,
+LanceDB, GR00T, and SONIC. It is historical context, not the current tool count
+or proof that a newly built image works. Resolve current capabilities from the
+workflow catalog and `skills/index.yaml`; resolve image validation and publication
+from `npa/src/npa/deploy/images.py` and
+`docs/workbench/container-image-catalog.md`. New source and replacement digests
+need their own real capability and artifact evidence.
 
 SkyPilot is the sole orchestrator. Argo is deprecated.
 

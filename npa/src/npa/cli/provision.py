@@ -78,6 +78,14 @@ def provision_if_absent_cmd(
         "--gpu-driver-mode",
         help="GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`.",
     ),
+    gpu_workload_profile: str = typer.Option(
+        "",
+        "--gpu-workload-profile",
+        help=(
+            "Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, "
+            "GPU Operator drivers, and mandatory GLX/EGL/Vulkan readiness."
+        ),
+    ),
     managed_driver_preset: str = typer.Option(
         "",
         "--managed-driver-preset",
@@ -183,6 +191,7 @@ def provision_if_absent_cmd(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         gpu_driver_mode=gpu_driver_mode,
+        gpu_workload_profile=gpu_workload_profile,
         managed_driver_preset=managed_driver_preset,
         allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
         gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,

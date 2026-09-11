@@ -143,7 +143,7 @@ redistribution rights or invents an NPA EULA boolean.
 ## Validate and run
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
+SPEC=workflows/testing/content-agents-rigid-object.yaml
 npa cluster up ... --gpu-driver-mode operator
 npa workbench health preflight --checks s3,token_factory --json
 npa workbench workflow validate-spec "$SPEC"

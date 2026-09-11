@@ -9,7 +9,7 @@ API is deliberately scoped to *one* executable task.
 Two properties keep that boundary honest:
 
 * **one task per file** — the moment a second stage appears it is a workflow, and belongs in
-  `npa/workflows/workbench/npa-workflows/` as an `npa.workflow/v0.0.1` spec;
+  `workflows/testing/` as an `npa.workflow/v0.0.1` spec;
 * **`${VAR}` placeholders survive** — they are the burst substitution surface, so a concrete
   registry id, bucket name or run id must never be committed here.
 """
@@ -37,7 +37,7 @@ def test_example_set_is_pinned() -> None:
 
     assert found == set(PINNED_EXAMPLES), (
         "burst examples changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(PINNED_EXAMPLES)}, found {sorted(found)}"
     )
 
@@ -89,7 +89,7 @@ def test_burst_accepts_the_example_once_vars_are_supplied(name: str) -> None:
     task = _single_task_from_documents(_load_burst_yaml_documents(source), source)
     overrides = {
         "NPA_RUN_ID": "burst-guardrail",
-        "ISAAC_LAB_IMAGE": "example-registry/npa-isaac-lab:2.3.2.post1",
+        "ISAAC_LAB_IMAGE": "example-registry/npa-isaac-lab:3.0.0b2.post1",
         "NPA_OUTPUT_URI": "s3://example-bucket/burst/burst-guardrail/",
     }
     task = _replace_task_placeholders(task, overrides)
@@ -98,6 +98,9 @@ def test_burst_accepts_the_example_once_vars_are_supplied(name: str) -> None:
     assert not _unresolved_task_placeholders(task), task.get("envs")
     # Raises BurstConfigError if the task is not submittable.
     _validate_burst_yaml_runtime(task, source)
+    run = task["run"]
+    assert "VISUALIZER_ARGS=(--visualizer none)" in run
+    assert "2.*) VISUALIZER_ARGS=(--headless)" in run
 
 
 def test_examples_are_not_in_the_retiring_workflow_catalog() -> None:

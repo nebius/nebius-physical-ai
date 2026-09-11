@@ -84,15 +84,16 @@ case "$VARIANT" in
     TAG_SUFFIX=""
     # Docker Hub CUDA, digest-pinned and freely redistributable. Was
     # nvcr.io/nvidia/isaac-lab, which baked Omniverse Kit and needed an NGC login.
-    BASE_IMAGE_DEFAULT="nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+    BASE_IMAGE_DEFAULT="nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01"
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     NPA_ISAAC_VENV="/opt/npa/sim/venv"
     NPA_ISAAC_SKIP_TORCH=0
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
     # The container runtime injects the host driver + Vulkan ICD given
     # NVIDIA_DRIVER_CAPABILITIES=all; nothing driver-related is baked any more.
     NPA_DRIVER_PROVISIONING="host-mounted"
-    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm120"
+    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm103,sm120"
     NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-isaac-sim"
     NPA_RUNTIME_USER="ubuntu"
     ;;
@@ -109,6 +110,7 @@ case "$VARIANT" in
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     NPA_ISAAC_VENV="/opt/npa/venv"
     NPA_ISAAC_SKIP_TORCH=1
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
     NPA_DRIVER_PROVISIONING="host-mounted"
     NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm103,sm120"
@@ -129,6 +131,7 @@ case "$VARIANT" in
     NPA_IMAGE_PYTHON_DEFAULT="/opt/npa/venv/bin/python"
     NPA_ISAAC_VENV="/opt/npa/venv"
     NPA_ISAAC_SKIP_TORCH=1
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
     REQUIRE_TORCH_SM120=0
     NPA_DRIVER_PROVISIONING="host-mounted"
     NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm120"
@@ -230,6 +233,7 @@ BUILD_ARGS=(
   --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
   --build-arg "NPA_ISAAC_VENV=${NPA_ISAAC_VENV}"
   --build-arg "NPA_ISAAC_SKIP_TORCH=${NPA_ISAAC_SKIP_TORCH}"
+  --build-arg "TORCH_INDEX_URL=${TORCH_INDEX_URL}"
   --build-arg "REQUIRE_TORCH_SM120=${REQUIRE_TORCH_SM120}"
   --build-arg "NPA_DRIVER_PROVISIONING=${NPA_DRIVER_PROVISIONING}"
   --build-arg "NPA_CUDA_ARCHITECTURES=${NPA_CUDA_ARCHITECTURES}"

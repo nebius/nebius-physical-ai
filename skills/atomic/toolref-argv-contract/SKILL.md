@@ -77,7 +77,7 @@ join through `shard_activation_config` and `shard_output_config`.
 An argv template alone is not enough. Three other surfaces must agree:
 
 - **Reachability** — every catalog entry must be reachable from a shipped spec
-  under `npa/workflows/workbench/npa-workflows/`, or be listed in
+  under `workflows/`, or be listed in
   `PUBLIC_REUSABLE_TOOLREFS` in `catalog.py` as a deliberate public primitive.
   Enforced by `npa/tests/guardrails/test_shown_workflow_catalog.py`.
 - **Docs** — one row per toolRef in
@@ -100,7 +100,7 @@ npa/.venv/bin/python -m pytest \
 Then validate the spec that uses the entry:
 
 ```bash
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/<spec>.yaml
+npa workbench workflow validate-spec workflows/testing/<spec>.yaml
 ```
 
 Remember what each proves. The guardrail proves the argv can run; `validate-spec`

@@ -145,6 +145,8 @@ class TerraformStateConfig:
     session_token: str = ""
     region: str = ""
     addressing_style: str = "path"
+    owner_project_id: str = ""
+    bucket_id: str = ""
 
 
 @dataclass
@@ -1445,6 +1447,8 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
         session_token=str(state.get("session_token", "") or ""),
         region=str(state.get("region", "") or ""),
         addressing_style=str(state.get("addressing_style", "path") or "path"),
+        owner_project_id=str(state.get("owner_project_id", "") or ""),
+        bucket_id=str(state.get("bucket_id", "") or ""),
     )
 
 

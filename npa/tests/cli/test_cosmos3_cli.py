@@ -220,6 +220,61 @@ def test_cosmos3_ray_batch_dry_run_uses_standard_path_contract(tmp_path) -> None
     assert payload["batch_size"] == 1
 
 
+def test_cosmos3_super_benchmark_dry_run_exposes_fixed_contract(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "super-benchmark",
+            "--output-path",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["gpu"] == {"family": "B200", "node_gpu_count": 8}
+    assert payload["sync_timeout_seconds"] == 5400
+    assert [item["name"] for item in payload["topologies"]] == [
+        "1x8",
+        "2x4",
+        "4x2",
+        "8x1",
+    ]
+    assert all(item["measured_attempts"] == 24 for item in payload["topologies"])
+
+
+def test_cosmos3_super_benchmark_dry_run_exposes_h200_single_gpu_scope(
+    tmp_path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "super-benchmark",
+            "--output-path",
+            str(tmp_path / "out"),
+            "--topologies",
+            "1x1",
+            "--suite",
+            "h200-single-gpu",
+            "--gpu-family",
+            "H200",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["gpu"] == {"family": "H200", "node_gpu_count": 1}
+    assert payload["validation_scope"]["paper_reproduction"] is False
+    assert payload["cells"][0]["server_parallelism"] == [
+        "--tensor-parallel-size",
+        "1",
+    ]
+
+
 def test_cosmos3_ray_serve_refuses_outside_the_service_image(
     tmp_path, monkeypatch
 ) -> None:
@@ -249,3 +304,21 @@ def test_cosmos3_ray_serve_wires_standard_model_cache(tmp_path, monkeypatch) -> 
         cache / "cosmos3/downloads"
     )
     assert (cache / "huggingface/hub").is_dir()
+
+
+def test_cosmos3_ray_batch_invalid_response_exits_without_completed_output(tmp_path, mocker) -> None:
+    batch = tmp_path / "batch.json"
+    batch.write_text('{"samples":[{"name":"one","model_mode":"text2image"}]}')
+    mocker.patch(
+        "npa.workbench.cosmos.ray_serve._request_json",
+        return_value={"schema_version": "unsupported"},
+    )
+    destination = tmp_path / "out"
+    result = runner.invoke(app, [
+        "workbench", "cosmos3", "ray-batch", "--input-path", str(batch),
+        "--output-path", str(destination), "--endpoint", "http://service.invalid:8000",
+    ])
+    assert result.exit_code == 1
+    assert "unsupported Cosmos3 Ray response schema" in result.output
+    assert "completed" not in result.stdout
+    assert not destination.exists()

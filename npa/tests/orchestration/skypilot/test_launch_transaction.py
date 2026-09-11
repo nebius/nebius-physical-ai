@@ -332,6 +332,45 @@ def test_resume_rejects_existing_unobservable_phantom_record() -> None:
     )
 
 
+def test_resume_relaunches_instead_of_adopting_cancelled_job() -> None:
+    reconciliations = iter(
+        [
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "125",
+                "CANCELLED",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "126",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+        ]
+    )
+    launches = 0
+
+    def launch() -> None:
+        nonlocal launches
+        launches += 1
+
+    result = run_launch_transaction(
+        logical_id="resume-after-cancel",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(reconciliations),
+        classify_launch_error=_transient,
+    )
+
+    assert launches == 1
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "126"
+    assert result.recovery_decision == "submitted_and_reconciled"
+
+
 def test_authoritative_absence_allows_one_safe_retry() -> None:
     clock = FakeClock()
     launches = 0
@@ -434,6 +473,101 @@ def test_indeterminate_reconciliation_never_launches_or_retries() -> None:
         )
     assert launches == 0
     assert caught.value.result.state is LaunchState.INDETERMINATE
+
+
+def test_async_launch_waits_for_exact_job_observability_without_relaunch() -> None:
+    clock = FakeClock()
+    launches = 0
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "88", "PENDING"),
+        ]
+    )
+
+    def launch() -> object:
+        nonlocal launches
+        launches += 1
+        return object()
+
+    result = run_launch_transaction(
+        logical_id="async-observability",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "88"
+    assert launches == 1
+    assert len(result.reconciliations) == 4
+
+
+def test_async_launch_ignores_stale_terminal_row_until_replacement_is_visible() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "8", "RUNNING"),
+        ]
+    )
+
+    result = run_launch_transaction(
+        logical_id="replace-terminal-row",
+        readiness=_stable,
+        launch=lambda: object(),
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "8"
+    assert len(result.reconciliations) == 3
+
+
+def test_async_launch_never_adopts_stale_terminal_row_at_deadline() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+        ]
+    )
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="terminal-row-never-replaced",
+            readiness=_stable,
+            launch=lambda: object(),
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            recovery_policy=RecoveryPolicy(2, 1, 1, 2, 0),
+            clock=clock,
+            sleeper=clock.sleep,
+            random_source=lambda: 0.5,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.state is not LaunchState.SUBMITTED
+    assert result.job_id == ""
+    assert result.existence == "indeterminate"
+    assert result.recovery_decision == "block_after_uncertain_success"
+    assert result.reconciliations[-1]["status"] == "CANCELLED"
 
 
 def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(

@@ -27,10 +27,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 SPECS = (
     Path(__file__).resolve().parents[4]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "workflows" / "testing"
 )
 
 

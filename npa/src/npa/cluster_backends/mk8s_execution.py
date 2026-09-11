@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import logging
 import os
 import re
@@ -15,10 +16,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_driver import (
+    inspect_recipe_declared_variables,
+    resolve_gpu_driver_strategy,
+)
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster_backends.kuberay import (
+    KUBERAY_STATE_FILES, KubeRaySpec, kuberay_materialized_digest,
+    validate_kuberay_destroyed_state, validate_kuberay_execution_inputs,
+    validate_kuberay_recipe_inventory,
+)
 from npa.cluster_backends.process import (
     _redact as _redact_output,
+    isolate_terraform_providers,
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
@@ -34,6 +44,7 @@ from npa.cluster_backends.mk8s_model import (
 from npa.cluster_backends.mig import wait_for_mig_ready
 from npa.cluster_backends.mk8s_render import (
     gpu_node_group_layout,
+    patch_explicit_region_defaults,
     patch_provider_domain,
     provider_domain,
     render_tfvars,
@@ -129,6 +140,8 @@ def verify_cluster(
                 timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
                 cuda_smoke=cluster.gpu_cuda_smoke,
                 cuda_smoke_image=cluster.gpu_cuda_smoke_image,
+                graphics_smoke=cluster.gpu_graphics_smoke,
+                graphics_smoke_image=cluster.gpu_graphics_smoke_image,
             ),
             evidence_path=evidence_path,
             on_status=on_status,
@@ -382,6 +395,11 @@ def _load_json_file(path: Path | None) -> dict[str, Any]:
 
 
 def _write_env_sidecar(install_dir: Path, data: dict[str, Any]) -> None:
+    previous = _load_env_sidecar(install_dir) or {}
+    if previous.get("kuberay_managed") is True:
+        data = {**data, "kuberay_managed": True}
+        if "kuberay_materialized_sha256" not in data and "kuberay_materialized_sha256" in previous:
+            data["kuberay_materialized_sha256"] = previous["kuberay_materialized_sha256"]
     _write_json_file(install_dir / _ENV_SIDECAR, data)
 
 
@@ -517,6 +535,49 @@ def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
     return data or None
 
 
+def _kuberay_execution_cluster(cluster: MK8sDesired, install_dir: Path) -> MK8sDesired:
+    """Historical opt-in keeps protecting state when desired policy is omitted."""
+
+    saved = _load_env_sidecar(install_dir) or {}
+    if "kuberay_managed" in saved and type(saved["kuberay_managed"]) is not bool:
+        raise ValueError("KubeRay recovery provenance is malformed")
+    if saved.get("kuberay_managed") is True:
+        return replace(cluster, kuberay=KubeRaySpec(enabled=True))
+    return cluster
+
+
+def validate_kuberay_installation(
+    cluster: MK8sDesired, install_dir: Path, *, recipe_dir: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> MK8sDesired:
+    """Validate installation inputs while retaining historical KubeRay protection.
+
+    Args:
+        cluster: Desired cluster, which may now omit or disable KubeRay.
+        install_dir: Owned installation containing deployment provenance.
+        recipe_dir: Optional source recipe to verify before materialization.
+        environ: Explicit execution environment, or None for the current process.
+    Returns:
+        Desired cluster with KubeRay protection enabled when provenance requires it.
+    Raises:
+        ValueError: Provenance, execution inputs or recipe violate the contract.
+        OSError: Installation or recipe entries cannot be inspected or read.
+    """
+    guarded = _kuberay_execution_cluster(cluster, install_dir)
+    validate_kuberay_execution_inputs(
+        guarded, workdir=install_dir / _K8S_TRAINING_SUBDIR, environ=environ,
+    )
+    if guarded.kuberay and guarded.kuberay.enabled and recipe_dir is not None:
+        validate_kuberay_recipe_inventory(recipe_dir)
+    return guarded
+
+
+def _reset_kuberay_module_cache(workdir: Path) -> None:
+    modules_cache = workdir / ".terraform/modules"
+    if modules_cache.exists():
+        shutil.rmtree(modules_cache)
+
+
 def _prepare_install_dir(
     install_dir: Path,
     *,
@@ -534,13 +595,34 @@ def _prepare_install_dir(
     ``k8s-training`` copy where terraform must run.
     """
 
-    install_dir.mkdir(parents=True, exist_ok=True)
+    # Bind opt-in KubeRay to the pristine source before the existing, reviewed
+    # region/filesystem materialization patches or any local-state mutation.
+    kuberay_tfvars = (
+        render_tfvars(
+            cluster, ssh_public_key=ssh_public_key,
+            recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+        )
+        if cluster.kuberay and cluster.kuberay.enabled else None
+    )
     workdir = install_dir / _K8S_TRAINING_SUBDIR
+    guarded = validate_kuberay_installation(
+        cluster, install_dir, recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+    )
+    protected = bool(guarded.kuberay and guarded.kuberay.enabled)
+    install_dir.mkdir(parents=True, exist_ok=True)
+    # Terraform trusts cached source-to-directory mappings. Rebuild those from
+    # the reviewed recipe; keep initialized provider caches and state intact.
+    if protected:
+        _reset_kuberay_module_cache(workdir)
     modules_dst = install_dir / _MODULES_SUBDIR
     # Refresh recipe files but preserve any existing terraform state/plugins.
     if workdir.exists():
         for item in workdir.iterdir():
-            if item.name.startswith("terraform.tfstate") or item.name == ".terraform":
+            preserve_state = (
+                item.name in KUBERAY_STATE_FILES or item.name == ".terraform.tfstate.lock.info"
+                if protected else item.name.startswith("terraform.tfstate")
+            )
+            if preserve_state or item.name == ".terraform":
                 continue
             if item.is_dir():
                 shutil.rmtree(item, ignore_errors=True)
@@ -550,6 +632,14 @@ def _prepare_install_dir(
     if modules_dst.exists():
         shutil.rmtree(modules_dst, ignore_errors=True)
     shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
+
+    locals_file = workdir / "locals.tf"
+    if locals_file.is_file():
+        original = locals_file.read_text()
+        patched = patch_explicit_region_defaults(original)
+        if patched != original:
+            locals_file.write_text(patched)
+            _log(on_status, "enabled explicit node settings beyond legacy recipe regions")
 
     # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
     # the generated debugger-pod name. That defeats success-evidence checking and
@@ -661,6 +751,7 @@ def _prepare_install_dir(
         )
 
     (workdir / "terraform.tfvars").write_text(
+        kuberay_tfvars if kuberay_tfvars is not None else
         render_tfvars(cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir)
     )
     return workdir
@@ -786,12 +877,23 @@ def _cluster_tf_env(
     region: str,
     subnet_id: str,
     profile: str = "",
+    recipe_dir: Path | None = None,
 ) -> dict[str, str]:
     env = _terraform_env(nebius_bin, profile=profile)
     env["TF_VAR_tenant_id"] = tenant_id
     env["TF_VAR_parent_id"] = project_id
     env["TF_VAR_region"] = region
     env["TF_VAR_subnet_id"] = subnet_id
+    if profile and recipe_dir is not None and {
+        "nebius_profile", "nebius_cli",
+    } <= inspect_recipe_declared_variables(recipe_dir):
+        # A minted IAM token can expire while Kubernetes workers provision.
+        # Let the provider refresh the exact selected profile and let its
+        # Kubernetes clients acquire fresh ExecCredentials when needed.
+        env.pop("NEBIUS_IAM_TOKEN", None)
+        env.pop("NPA_NEBIUS_IAM_TOKEN", None)
+        env["TF_VAR_nebius_profile"] = profile
+        env["TF_VAR_nebius_cli"] = nebius_bin
     return env
 
 
@@ -1811,8 +1913,35 @@ def _is_verified_unchanged_target(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     cluster_id = str(saved.get("cluster_id") or "")
+    if not cluster_id and saved.get("status") == "provisioning":
+        # A later application failure must not count existing workers twice.
+        # Recover only this target's exact local resource identity, then
+        # independently verify every requested cloud pool below.
+        try:
+            state = json.loads(
+                (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+            )
+            candidates = [
+                instance.get("attributes", {})
+                for resource in state.get("resources", [])
+                if resource.get("mode") == "managed"
+                and resource.get("type") == "nebius_mk8s_v1_cluster"
+                and not resource.get("module")
+                for instance in resource.get("instances", [])
+                if not instance.get("deposed")
+            ]
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if candidate.get("parent_id") == project_id and candidate.get("name") == cluster.name:
+                    cluster_id = str(candidate.get("id") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            return False
     if (
-        str(saved.get("status") or "") != "deployed"
+        str(saved.get("status") or "") not in {
+            "deployed", "provisioning", "validating-gpu-health", "validating-mig",
+            "validating-cluster-basics", "deployed-validation-failed",
+            "deployed-credentials-failed",
+        }
         or not project_id
         or not cluster_id
         or str(saved.get("tenant_id") or "") != tenant_id
@@ -1827,9 +1956,15 @@ def _is_verified_unchanged_target(
         saved_tfvars = tfvars_path.read_text(encoding="utf-8")
         rendered_tfvars = render_tfvars(cluster, ssh_public_key=ssh_public_key)
 
-        if _normalize_tfvars_assignments(saved_tfvars) != _normalize_tfvars_assignments(
-            rendered_tfvars
-        ):
+        def capacity_configuration(text: str) -> str:
+            # The RTX Helm selector consumes no new cloud capacity. Keep every
+            # other rendered setting in the conservative comparison.
+            return _normalize_tfvars_assignments("\n".join(
+                line for line in text.splitlines()
+                if not re.match(r"\s*gpu_operator_rtx_driver_profile\s*=", line)
+            ))
+
+        if capacity_configuration(saved_tfvars) != capacity_configuration(rendered_tfvars):
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -1843,7 +1978,7 @@ def _is_verified_unchanged_target(
         or metadata.get("region")
         or ""
     )
-    expected_name = project.display_name(prefix) if project.name else ""
+    expected_name = project.display_name(prefix) if project.name and not project.project_id else ""
     provider_parent_id = _provider_field(metadata, "parent_id", "parentId")
     if (
         str(metadata.get("id") or "") != project_id
@@ -1876,6 +2011,7 @@ def _is_verified_unchanged_target(
         [
             *_nebius_argv(nebius_bin, profile),
             "mk8s",
+            "v1",
             "node-group",
             "list",
             "--parent-id",
@@ -1918,29 +2054,128 @@ def _is_verified_unchanged_target(
         for pool in (cluster.cpu_nodes, cluster.gpu_nodes)
         if pool is not None and pool.count > 0
     ]
+    if cluster.gpu_nodes and cluster.gpu_count() > 0:
+        per_group, group_count = gpu_node_group_layout(cluster)
+        if group_count > 1:
+            expected_pools = [pool for pool in expected_pools if pool is not cluster.gpu_nodes]
+            expected_pools.extend(
+                replace(cluster.gpu_nodes, count=per_group) for _ in range(group_count)
+            )
     if len(groups) != len(expected_pools):
         return False
 
-    unmatched = [item for item in groups if isinstance(item, dict)]
+    unmatched = [
+        _decode_v1_node_group_preemptibility(item)
+        for item in groups if isinstance(item, dict)
+    ]
     if len(unmatched) != len(groups):
         return False
+    instances: list[dict[str, Any]] = []
+    if any(item.get("status", {}).get("state") == "PROVISIONING" for item in unmatched):
+        try:
+            inventory = _run_capture(
+                [*_nebius_argv(nebius_bin, profile), "compute", "v1", "instance",
+                 "list", "--parent-id", project_id, "--all", "--format", "json"],
+                env=env, check=False,
+            )
+            payload = json.loads(inventory.stdout or "{}")
+            instances = payload.get("items") if isinstance(payload, dict) else None
+            if inventory.returncode != 0 or not isinstance(instances, list):
+                return False
+            if not all(isinstance(item, dict) for item in instances):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
+    # Allocation evidence depends on the provider item, not the desired pool.
+    # Keep it with the item as matched groups are removed from consideration.
+    unmatched_with_allocation = [
+        (item, _node_group_has_allocated_workers(
+            item, instances, project_id=project_id, cluster_id=cluster_id,
+        ))
+        for item in unmatched
+    ]
     for pool in expected_pools:
         match_index = next(
             (
                 index
-                for index, item in enumerate(unmatched)
-                if _provider_node_group_matches_pool(item, pool)
+                for index, (item, allocated_repair) in enumerate(unmatched_with_allocation)
+                if _provider_node_group_matches_pool(
+                    item, pool, allocated_repair=allocated_repair,
+                )
             ),
             None,
         )
         if match_index is None:
             return False
-        unmatched.pop(match_index)
-    return not unmatched
+        unmatched_with_allocation.pop(match_index)
+    return not unmatched_with_allocation
+
+
+def _node_group_has_allocated_workers(
+    payload: dict[str, Any], instances: list[dict[str, Any]], *,
+    project_id: str, cluster_id: str,
+) -> bool:
+    """Distinguish a readiness repair from unallocated provisioning demand."""
+
+    metadata = payload.get("metadata") or {}
+    spec = payload.get("spec") or {}
+    status = payload.get("status") or {}
+    template = spec.get("template") or {}
+    group_id = metadata.get("id")
+    reservation = template.get("reservation_policy") or {}
+    if (
+        status.get("state") != "PROVISIONING" or not group_id
+        or metadata.get("parent_id") != cluster_id
+        or reservation.get("policy") != "STRICT"
+        or len(reservation.get("reservation_ids") or []) != 1
+    ):
+        return False
+    try:
+        count = int(spec["fixed_node_count"])
+        if count <= 0 or int(status["node_count"]) != count or int(status["target_node_count"]) != count:
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    workers = [item for item in instances if
+               ((item.get("metadata") or {}).get("labels") or {}).get("mk8s-node-group-id") == group_id]
+    if len(workers) != count or len({(item.get("metadata") or {}).get("id") for item in workers}) != count:
+        return False
+    return all(
+        _instance_matches_node_group(
+            item, project_id=project_id, cluster_id=cluster_id,
+            node_group_id=group_id, template=template,
+        )
+        and (item.get("status") or {}).get("state") == "RUNNING"
+        and (item.get("status") or {}).get("reservation_id")
+        and (item.get("status") or {}).get("disk_attachments")
+        for item in workers
+    )
+
+
+def _decode_v1_node_group_preemptibility(payload: dict[str, Any]) -> dict[str, Any]:
+    """Decode the v1 API's presence marker at the authoritative CLI boundary.
+
+    `template.preemptible` is an Empty message: {} enables preemption and
+    omission disables it. It is not an omitted, unknown boolean. Keep malformed
+    values intact so the strict pool matcher rejects them; preserve legacy
+    explicit booleans accepted by that matcher.
+    """
+
+    spec = payload.get("spec")
+    template = spec.get("template") if isinstance(spec, dict) else None
+    if not isinstance(template, dict):
+        return payload
+    if "preemptible" not in template:
+        value = False
+    elif template["preemptible"] == {}:
+        value = True
+    else:
+        return payload
+    return {**payload, "spec": {**spec, "template": {**template, "preemptible": value}}}
 
 
 def _provider_node_group_matches_pool(
-    payload: dict[str, Any], pool: MK8sNodePool
+    payload: dict[str, Any], pool: MK8sNodePool, *, allocated_repair: bool = False,
 ) -> bool:
     """Compare one provider node-group payload with one desired pool."""
 
@@ -1984,7 +2219,8 @@ def _provider_node_group_matches_pool(
     )
     expected_preemptible = bool(pool.preemptible)
     if (
-        str(status.get("state") or "") != "RUNNING"
+        (str(status.get("state") or "") != "RUNNING"
+         and not (allocated_repair and status.get("state") == "PROVISIONING"))
         or fixed_node_count != pool.count
         or str(resources.get("platform") or "") != pool.platform
         or str(resources.get("preset") or "") != pool.preset
@@ -2074,7 +2310,9 @@ def _deploy_one_cluster(
             region=region,
             subnet_id=subnet_id,
             profile=profile,
+            recipe_dir=workdir,
         )
+        guarded = validate_kuberay_installation(cluster, install_dir, environ=env)
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
         # apply fails midway. Project network ownership is recorded separately.
         # ``status`` starts as "provisioning" and becomes "deployed" only after
@@ -2094,6 +2332,11 @@ def _deploy_one_cluster(
             ),
             "status": "provisioning",
         }
+        if guarded.kuberay and guarded.kuberay.enabled:
+            sidecar.update(
+                kuberay_managed=True,
+                kuberay_materialized_sha256=kuberay_materialized_digest(install_dir),
+            )
         _write_env_sidecar(install_dir, sidecar)
         _log(
             on_status,
@@ -2107,6 +2350,7 @@ def _deploy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         recovered_identity = _reconcile_tainted_node_groups(
             terraform_bin=terraform_bin,
             workdir=workdir,
@@ -2444,14 +2688,41 @@ def _destroy_one_cluster(
     # authenticates as the wrong tenant's principal.
     profile = profile or str(saved.get("profile") or "")
     workdir = install_dir / _K8S_TRAINING_SUBDIR
-    env = _cluster_tf_env(
-        nebius_bin,
-        tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
-        project_id=project_id,
-        region=str(saved.get("region") or spec.region),
-        subnet_id=subnet_id,
-        profile=profile,
-    )
+
+    def refused(reason: str) -> dict[str, Any]:
+        return {
+            "project_key": project.key(), "cluster_name": cluster.name,
+            "status": "destroy-incomplete", "errors": [reason],
+            "retry_command": retry_command, "install_dir": str(install_dir),
+            **log_metadata,
+        }
+
+    # Refusal must never enter the provider fallback or discard recovery state.
+    # The retained recipe, variables, workspace and actual execution environment
+    # all affect what a zero-exit Terraform destroy means.
+    try:
+        guarded = validate_kuberay_installation(cluster, install_dir)
+        protected = bool(guarded.kuberay and guarded.kuberay.enabled)
+        if protected:
+            expected = saved.get("kuberay_materialized_sha256")
+            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                raise ValueError("KubeRay teardown needs validated deployment provenance; reapply the reviewed recipe first")
+            if kuberay_materialized_digest(install_dir) != expected:
+                raise ValueError("KubeRay materialized inputs changed; recovery state retained")
+        env = _cluster_tf_env(
+            nebius_bin,
+            tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
+            project_id=project_id,
+            region=str(saved.get("region") or spec.region),
+            subnet_id=subnet_id,
+            profile=profile,
+            recipe_dir=workdir,
+        )
+        validate_kuberay_execution_inputs(guarded, workdir=workdir, environ=env)
+        if protected:
+            _reset_kuberay_module_cache(workdir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return refused(f"teardown inputs could not be verified: {exc}")
     _log(
         on_status,
         f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""),
@@ -2468,6 +2739,7 @@ def _destroy_one_cluster(
                 timeout=900,
                 log_path=log_path,
             )
+            isolate_terraform_providers(workdir, env)
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,
@@ -2572,6 +2844,12 @@ def _destroy_one_cluster(
             "install_dir": str(install_dir),
             **log_metadata,
         }
+
+    if protected:
+        try:
+            validate_kuberay_destroyed_state(workdir)
+        except (OSError, ValueError) as exc:
+            return refused(f"teardown completion could not be verified: {exc}")
 
     # Terraform is the authoritative owner of all recipe resources. Only after
     # its successful destroy may the exact global cluster identity and local

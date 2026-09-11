@@ -54,11 +54,13 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     # compatible load path instead of blindly POSTing every run to load-run.
     assert 'entry.source_type === "local_demo"' in load_fn
     assert 'entry.source_type === "artifact_storage"' in load_fn
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, {" in load_fn
+    assert "pendingSelection: true," in load_fn
+    assert "isCurrent," in load_fn
     assert (
-        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
+        "loadWorkflowHistoryRun(chosen, activeArtifactRunRef, { isCurrent })"
         in load_fn
     )
-    assert "loadWorkflowHistoryRun(chosen, activeArtifactRunRef)" in load_fn
 
 
 def test_failed_exact_search_is_separate_from_currently_loaded_run() -> None:

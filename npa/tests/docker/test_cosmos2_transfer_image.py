@@ -27,7 +27,7 @@ BUILD_BASE_SHA = (
 RUNTIME_BASE_SHA = (
     "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
 )
-EXACT_TAG = "2.5.1-sam2-multigpu-20260817-r2"
+EXACT_TAG = "2.5.1-sim2real-coherent-20260904"
 
 
 def _dockerfile() -> str:
@@ -79,9 +79,9 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert not re.search(r"(?im)^\s*(COPY|ADD)\s+.*assets", text)
 
     overrides = (IMAGE_DIR / "security-overrides.txt").read_text(encoding="utf-8")
-    assert "nltk-3.10.0-py3-none-any.whl" in overrides
+    assert "nltk-3.10.3-py3-none-any.whl" in overrides
     assert (
-        "sha256=54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf"
+        "sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c"
         in overrides
     )
     assert "defusedxml-0.7.1-py2.py3-none-any.whl" in overrides
@@ -99,13 +99,13 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73"
         in overrides
     )
-    assert "setuptools-83.0.0-py3-none-any.whl" in overrides
+    assert "setuptools-84.0.0-py3-none-any.whl" in overrides
     assert (
-        "sha256=29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
+        "sha256=51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
         in overrides
     )
     assert "files.pythonhosted.org" in overrides
-    assert overrides.count("#sha256=") == 5
+    assert overrides.count("#sha256=") == 23
     assert re.search(
         r"uv pip install --python \.venv/bin/python --no-deps\s+\\\s+"
         r"--requirement /tmp/cosmos2-security-overrides\.txt",
@@ -113,11 +113,11 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     )
     # The direct-URL security overrides carry URL-fragment hashes; the separate
     # NPA CLI wheel overlay below deliberately uses pip-style --require-hashes.
-    assert 'version("nltk") == "3.10.0"' in text
+    assert 'version("nltk") == "3.10.3"' in text
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text
     assert 'version("msgpack") == "1.2.1"' in text
-    assert 'version("setuptools") == "83.0.0"' in text
+    assert 'version("setuptools") == "84.0.0"' in text
     assert ".venv/bin/python -m pip --version" in text
     assert 'importlib.util.find_spec("pip") is None' in text
     assert 'importlib.util.find_spec("setuptools") is None' in text
@@ -243,6 +243,18 @@ def test_final_runtime_is_non_root_relocated_and_cache_writable_by_design() -> N
     assert "/opt/cosmos/cosmos-transfer2.5/.venv/bin/npa" in text
     assert "workbench cosmos2 transfer --help" in text
     assert "rm -rf /opt/cosmos/model-cache/xdg/uv" in text
+
+
+def test_functional_smoke_materializes_pinned_guardrail_tokenizer_cache() -> None:
+    text = _dockerfile()
+    smoke = (IMAGE_DIR / "smoke_functional.sh").read_text(encoding="utf-8")
+    assert "prepare_guardrail_nltk_data" in smoke
+    runner = (ROOT / "npa/src/npa/workbench/cosmos/transfer.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"' in runner
+    assert re.search(r'GUARDRAIL_REVISION = "[0-9a-f]{40}"', runner)
+    assert "target.is_relative_to(hub)" in runner
     assert "chown -R ubuntu:ubuntu /opt/cosmos/model-cache" in text
     assert "/opt/cosmos/model-cache/xdg/uv/.npa-write-probe" in text
     assert 'python3 -c "import cosmos_transfer2"' in text
@@ -355,11 +367,7 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
     workflow = yaml.safe_load(
         (
             ROOT
-            / "npa"
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "cosmos2-transfer.yaml"
+            / "workflows" / "testing" / "cosmos2-transfer.yaml"
         ).read_text(encoding="utf-8")
     )
     assert (

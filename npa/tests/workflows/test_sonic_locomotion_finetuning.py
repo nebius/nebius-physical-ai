@@ -14,7 +14,7 @@ EXPECTED_RETARGETING_IMAGE = "<your-registry>/npa-retargeting:0.1.1"
 PIPELINE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.yaml"
 # The raw sonic-export / sonic-eval / sonic-export-eval templates are retired; their
 # npa.workflow specs are the surface now (each live-verified — see EVIDENCE §R4/§R5).
-NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_WORKFLOWS = ROOT / "workflows" / "testing"
 SONIC_TRAIN_STANDALONE_YAML = (
     ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
 )

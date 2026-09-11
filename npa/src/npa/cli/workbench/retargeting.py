@@ -28,7 +28,7 @@ console = Console(stderr=True)
 
 # The `npa.workflow` spec this tool is driven by. Path only: `retargeting workflow`
 # / `status` print it; `npa workbench workflow submit <path>` runs it.
-WORKFLOW_PATH = Path("npa/workflows/workbench/npa-workflows/retargeting.yaml")
+WORKFLOW_PATH = Path("workflows/testing/retargeting.yaml")
 DEFAULT_RETARGETING_IMAGE_ENV = "NPA_RETARGETING_IMAGE"
 
 

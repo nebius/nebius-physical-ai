@@ -20,9 +20,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "npa/scripts/render_gpu_coverage_chart.py"
 COMMITTED_SVG = REPO_ROOT / "docs/assets/image-gpu-coverage.svg"
+CATALOG = REPO_ROOT / "docs/workbench/container-image-catalog.md"
 
 
 def _load() -> ModuleType:
+    """Load the renderer as a module without making scripts a package."""
     spec = importlib.util.spec_from_file_location("render_gpu_coverage_chart", SCRIPT)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -33,11 +35,21 @@ def _load() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def chart() -> ModuleType:
+    """Provide the loaded chart renderer once for this test module."""
     return _load()
 
 
 def _without_render_date(svg: str) -> str:
+    """Remove the one intentionally volatile part of generated SVG output."""
     return re.sub(r"Rendered \d{4}-\d{2}-\d{2}", "Rendered", svg)
+
+
+def _catalog_band(text: str, heading: str) -> tuple[int, set[str]]:
+    """Extract a count and image names from one catalog summary bullet."""
+    pattern = rf"- \*\*(\d+) {re.escape(heading)}\*\*:(.*?)(?=\n- \*\*|\n\nTwo gaps)"
+    match = re.search(pattern, text, flags=re.DOTALL)
+    assert match, f"missing catalog band: {heading}"
+    return int(match.group(1)), set(re.findall(r"`(npa-[^`]+)`", match.group(2)))
 
 
 def test_committed_chart_matches_the_matrix_and_the_publishing_plan(
@@ -54,6 +66,7 @@ def test_committed_chart_matches_the_matrix_and_the_publishing_plan(
 
 
 def test_every_published_image_has_a_matrix_row(chart: ModuleType) -> None:
+    """Every release in the publishing plan must have chart source data."""
     rows = chart.matrix_rows()
     missing = sorted(set(chart.published_images()) - set(rows))
     assert not missing, f"published but absent from the compatibility matrix: {missing}"
@@ -73,3 +86,36 @@ def test_each_cell_keeps_its_matrix_wording_as_a_tooltip(chart: ModuleType) -> N
     svg = chart.render(published, chart.matrix_rows())
     assert svg.count("<title>") == len(published) * len(chart.COLUMNS)
     assert "cu128 NVRTC cannot JIT" in svg
+    assert "accepted records" in svg
+    assert "[accepted records](" not in svg
+
+
+def test_every_current_public_cell_has_an_explicit_classification(
+    chart: ModuleType,
+) -> None:
+    """New matrix vocabulary must fail the test until the chart handles it."""
+    rows = chart.matrix_rows()
+    for image in chart.published_images():
+        assert len(rows[image]) == len(chart.COLUMNS)
+        for cell in rows[image]:
+            chart.classify(cell, image)
+
+
+def test_catalog_summary_matches_generated_band_membership(chart: ModuleType) -> None:
+    """Keep prose counts and image lists synchronized with generated bands."""
+    rows = chart.matrix_rows()
+    grid = chart._classified_grid(chart.published_images(), rows)
+    expected = {
+        key: set(members) for _label, key, members in chart._ordered_bands(grid)
+    }
+    catalog = CATALOG.read_text(encoding="utf-8")
+    headings = {
+        "clean": "GPU images have no known blocked platform",
+        "blocked": "public images are blocked on at least one platform",
+        "cpu": "are CPU-only and GPU-agnostic",
+    }
+    assert set(expected) == set(headings)
+    for key, heading in headings.items():
+        count, members = _catalog_band(catalog, heading)
+        assert count == len(expected[key])
+        assert members == expected[key]

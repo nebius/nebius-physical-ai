@@ -181,6 +181,26 @@ def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
         state_store.write_artifact("../escape.yaml", body)
 
 
+def test_run_state_store_uses_explicit_artifact_listing_capability() -> None:
+    listed: list[tuple[str, str]] = []
+
+    def artifact_lister(bucket: str, prefix: str) -> list[str]:
+        listed.append((bucket, prefix))
+        return [f"{prefix}b.json", f"{prefix}a.json", "other/key.json"]
+
+    state_store = RunStateStore(
+        bucket="bucket",
+        prefix="runs/demo",
+        artifact_lister=artifact_lister,
+    )
+
+    assert state_store.list_artifacts("supervisor") == [
+        "supervisor/a.json",
+        "supervisor/b.json",
+    ]
+    assert listed == [("bucket", "runs/demo/supervisor/")]
+
+
 def test_run_state_store_artifact_uses_explicit_storage_credentials(
     monkeypatch,
 ) -> None:
@@ -221,6 +241,47 @@ def test_run_state_store_artifact_uses_explicit_storage_credentials(
         "Key": "runs/groot/workflow.yaml",
         "Body": b"kind: Workflow\n",
         "ContentType": "application/octet-stream",
+    }
+
+
+def test_run_state_store_output_check_uses_explicit_storage_credentials(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeS3:
+        def head_object(self, **kwargs: object) -> dict[str, int]:
+            captured["head"] = kwargs
+            return {"ContentLength": 17}
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    def fake_from_environment(**kwargs: str) -> FakeStorage:
+        captured["credentials"] = kwargs
+        return FakeStorage()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        fake_from_environment,
+    )
+    state_store = RunStateStore(
+        bucket="project-bucket",
+        prefix="runs/demo",
+        endpoint_url="https://project-storage.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
+    )
+
+    assert state_store.artifact_exists("s3://project-bucket/runs/demo/result.json")
+    assert captured["credentials"] == {
+        "endpoint_url": "https://project-storage.example.invalid",
+        "aws_access_key_id": "project-access",
+        "aws_secret_access_key": "project-secret",
+    }
+    assert captured["head"] == {
+        "Bucket": "project-bucket",
+        "Key": "runs/demo/result.json",
     }
 
 

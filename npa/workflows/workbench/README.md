@@ -1,14 +1,13 @@
-# NPA Workbench workflow catalog
+# NPA Workbench reference assets
 
-This directory holds the **supported, customer-facing** Workbench workflow
-catalog for robotics, simulation, perception, eval, and synthetic-data
-workloads. The supported specs are declarative `npa.workflow` YAMLs; SkyPilot
-remains the underlying execution engine, but the raw SkyPilot task templates are
-no longer part of the shown catalog (see [Layout](#layout)).
+This directory retains workflow configuration, conventions, operator notes, and
+finite legacy compatibility assets. The supported declarative workflow catalog
+lives at the repository root in `workflows/main/` and `workflows/testing/`.
+SkyPilot remains the workflow execution engine.
 
 ## ➡️ Start here: the workflow catalog
 
-**[`npa-workflows/README.md`](npa-workflows/README.md)** is the catalog of every
+**[Workflow catalog](../../../workflows/README.md)** is the catalog of every
 supported workflow spec (`apiVersion: npa.workflow/v0.0.1`). Author and submit
 these with:
 
@@ -23,11 +22,9 @@ Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 
 ## Layout
 
-- `npa-workflows/`: the supported declarative `npa.workflow` specs plus the
-  [workflow catalog](npa-workflows/README.md). This is the only workflow YAML
-  set we show and support.
+- `configs/`: component and benchmark configuration assets.
 - `sim2real/`: operator notes and the finite legacy compatibility DAG. The only
-  supported Sim2Real submission spec is `npa-workflows/sim2real.yaml`; it uses
+  supported Sim2Real submission spec is `workflows/main/sim2real.yaml`; it uses
   the ordinary standard runtime and never routes to direct Kubernetes.
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
@@ -48,7 +45,7 @@ Submit the staged VLM-to-RL loop:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  workflows/main/sim2real.yaml \
   --run-id <run-id> \
   --var NPA_SIM2REAL_BUCKET=<your-bucket> \
   --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
@@ -57,7 +54,7 @@ npa workbench workflow submit \
 The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
 `npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
 compositional standard runtime. The single canonical YAML is
-[`npa-workflows/sim2real.yaml`](npa-workflows/sim2real.yaml); the deeper reference is
+[`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml); the deeper reference is
 [`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
 
 ## Submission Pattern

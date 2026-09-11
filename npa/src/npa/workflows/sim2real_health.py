@@ -29,7 +29,7 @@ SKIP = "SKIP"
 
 CLI_MODULE = "npa.cli.workbench.sim2real"
 CLI_CALLBACK = "run_command"
-RUNBOOK_YAML = Path("npa/workflows/workbench/npa-workflows/sim2real.yaml")
+RUNBOOK_YAML = Path("workflows/main/sim2real.yaml")
 
 
 @dataclass(frozen=True)
@@ -189,8 +189,6 @@ def coherence_failures(repo_root: Path) -> list[str]:
         "isaac_image",
         "viewer_image",
         "isaac_cache_pvc",
-        "gpu_queue",
-        "gpu_priority_class",
     }
     missing_config = sorted(required_config - set(config))
     if missing_config:
@@ -382,7 +380,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=WARN,
             summary="Some images are not fully qualified for a pull check.",
             remedy=(
-                "Set NPA_REGISTRY or pass fully-qualified "
+                "Set NPA_SIM2REAL_REGISTRY or pass fully-qualified "
                 "<registry>/<image>:<tag> values so the agent-sa pull path can be verified."
             ),
             details=tuple(sorted(set(not_actionable))),
@@ -511,15 +509,15 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             details=(_short(can_i.stderr or can_i.stdout),),
         )
 
-    service_account = config.k8s_service_account or "agent-sa"
-    service_account_user = f"system:serviceaccount:{namespace}:{service_account}"
+    # The canonical SkyPilot workflow uses the selected Kubernetes credentials.
+    # agent-sa belonged to the retired sibling-Job controller; impersonating it
+    # rejects valid Fleet clusters and checks a principal that never submits work.
     controller_patch = runner(
         [
             "auth",
             "can-i",
             "patch",
             "jobs.batch",
-            f"--as={service_account_user}",
             "-n",
             namespace,
         ]
@@ -532,42 +530,15 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             name="cluster",
             status=FAIL,
             summary=(
-                f"Service account {service_account!r} cannot patch Jobs in "
+                "The selected Kubernetes identity cannot patch Jobs in "
                 f"namespace {namespace!r}."
             ),
             remedy=(
-                "Grant the Sim2Real controller Role the 'patch' verb on "
-                "batch/jobs. Durable reconciliation records structured heartbeats "
-                "and adopts exact-identity Jobs through the Kubernetes API."
+                "Grant the selected workflow identity the 'patch' verb on "
+                "batch/jobs in this namespace, then rerun preflight with the "
+                "same kubeconfig and context used by workflow submit --runtime."
             ),
             details=(_short(controller_patch.stderr or controller_patch.stdout),),
-        )
-
-    kueue_observe = runner(
-        [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-            f"--as={service_account_user}",
-            "-n",
-            namespace,
-        ]
-    )
-    if kueue_observe.returncode != 0 or kueue_observe.stdout.strip().lower() != "yes":
-        return CheckResult(
-            name="cluster",
-            status=FAIL,
-            summary=(
-                f"Service account {service_account!r} cannot list Kueue Workloads "
-                f"in namespace {namespace!r}."
-            ),
-            remedy=(
-                "Grant the Sim2Real controller Role the 'list' verb on "
-                "kueue.x-k8s.io/workloads. Durable reconciliation must observe "
-                "the generated Workload admission, flavor, and terminal state."
-            ),
-            details=(_short(kueue_observe.stderr or kueue_observe.stdout),),
         )
 
     cache_pvc = config.k8s_isaac_cache_pvc.strip()

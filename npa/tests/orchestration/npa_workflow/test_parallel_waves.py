@@ -264,7 +264,7 @@ def test_wave_plan_defaults_concurrency_to_group_size(tmp_path: Path) -> None:
 def test_wave_plan_of_serial_spec_is_all_serial() -> None:
     repo_root = Path(__file__).resolve().parents[4]
     spec = load_spec(
-        repo_root / "npa" / "workflows" / "workbench" / "npa-workflows" / "bdd100k-pipeline.yaml"
+        repo_root / "workflows" / "testing" / "bdd100k-pipeline.yaml"
     )
     wave_plan = build_wave_plan(spec, run_id="serial-1")
     assert {wave.kind for wave in wave_plan.waves} == {WAVE_SERIAL}
@@ -410,7 +410,7 @@ def test_trigger_numeric_fields_are_validated(tmp_path: Path, value: str) -> Non
 # --------------------------------------------------- the shipped catalog specs
 
 
-SHIPPED = Path(__file__).resolve().parents[4] / "npa" / "workflows" / "workbench" / "npa-workflows"
+SHIPPED = Path(__file__).resolve().parents[4] / "workflows" / "testing"
 
 
 def test_shipped_fanout_spec_wave_shape() -> None:

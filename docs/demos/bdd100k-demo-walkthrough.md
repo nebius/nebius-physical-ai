@@ -7,11 +7,10 @@ exact FiftyOne (Voxel51) UI steps and commands for technical viewers.
 - **Companion writeup (the full story):** [bdd100k-lancedb-demo.md](bdd100k-lancedb-demo.md)
 - **Pipeline + how to run/reproduce:** [../workbench/cookbooks/bdd100k-pipeline.md](../workbench/cookbooks/bdd100k-pipeline.md)
 - **Narrated slideshow video (built from live captures):** [assets/bdd100k/bdd100k-demo.mp4](assets/bdd100k/bdd100k-demo.mp4)
-- **Unedited live session recording (real FiftyOne UI):** [assets/bdd100k/bdd100k-live-session.mp4](assets/bdd100k/bdd100k-live-session.mp4)
 - **Architecture diagram:** [assets/bdd100k/architecture.png](assets/bdd100k/architecture.png)
 - **Reproduced from (LanceDB):** [Unifying the AV ML Stack blog](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb) · [lancedb/training object-detection](https://github.com/lancedb/training/tree/main/object-detection)
 
-> The `live-*.png` screenshots and `bdd100k-live-session.mp4` were captured from
+> The `live-*.png` screenshots were captured from
 > the deployed FiftyOne app (`bdd100k-real-data-demo`) running on the
 > `npa-workbench-eu-north1` cluster.
 
@@ -31,20 +30,21 @@ Nebius** — open in a browser, no install.
 One SkyPilot YAML runs the whole chain on Nebius Managed Kubernetes: raw frames
 in object storage → LanceDB ingest → CPU enrichment → CLIP embeddings on H100 →
 failure-mode views → a detector per view on H100 → per-view evaluation → the
-FiftyOne review app on a public URL.
+FiftyOne review app through authenticated local forwarding.
 
 ## Run of show (about 8 minutes)
 
 ### 0. Before the meeting — bring the FiftyOne app up
 
 ```bash
-# Expose the review app to external viewers (LoadBalancer public IP)
-npa workbench fiftyone deploy --public-ip
-npa workbench fiftyone status        # prints: Public URL: http://<external-ip>:5151
+# Deploy the review app with a loopback listener
+npa workbench fiftyone deploy --runtime kubernetes
+npa workbench fiftyone status
+npa workbench fiftyone open          # keep this port-forward running
 ```
 
-Open that URL in a browser tab and have it ready on the shared screen. (Operators
-who prefer a local tunnel can use `npa workbench fiftyone open` instead.)
+Keep the local browser tab ready on the shared screen. The App is an operator
+interface; grant SSH or Kubernetes port-forward access only to authorized reviewers.
 
 If you have no live cluster, play the prebuilt video
 ([assets/bdd100k/bdd100k-demo.mp4](assets/bdd100k/bdd100k-demo.mp4)) and use the
@@ -129,15 +129,14 @@ There are three options, in increasing order of "live":
    npa/.venv/bin/python docs/demos/build_bdd100k_demo_video.py
    ```
 
-2. **Unedited live session (committed):**
-   [assets/bdd100k/bdd100k-live-session.mp4](assets/bdd100k/bdd100k-live-session.mp4)
-   — a headless-browser recording of the real FiftyOne app cycling the three
-   saved views. Reproduce against a reachable FiftyOne endpoint with Playwright:
+2. **Record a live session:** no unedited session video is included in this
+   repository. To capture the three saved views, use Playwright against a
+   reachable FiftyOne endpoint you operate:
 
    ```bash
    npa/.venv/bin/pip install playwright
    npa/.venv/bin/python -m playwright install --with-deps chromium
-   # then drive http://<fiftyone-public-ip>:5151 and record the context;
+   # then drive http://127.0.0.1:5151 and record the context;
    # FiftyOne saved views are URL-addressable: ?view=rider-train,
    # ?view=nighttime-person-train, ?view=distant-person-train
    ```

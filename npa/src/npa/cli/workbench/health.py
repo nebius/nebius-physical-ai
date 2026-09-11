@@ -9,6 +9,8 @@ from __future__ import annotations
 import json as json_module
 import os
 import shutil
+import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -17,10 +19,13 @@ import typer
 from npa.clients.credentials import load_credentials
 from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 from npa.clients.kube import run_kubectl
+from npa.clients.nebius_auth import ProfileVerification, nebius_profile, verify_profile
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workflows.credential_preflight import (
-    CREDENTIAL_CHECKS,
+    DEFAULT_CREDENTIAL_CHECKS,
+    SUPPORTED_CREDENTIAL_CHECKS,
     CredentialProbes,
     run_credential_preflight,
 )
@@ -58,7 +63,7 @@ def _repo_root() -> Path:
     # Walk up to the repo root that contains the workflow tree.
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "npa" / "workflows" / "workbench").is_dir():
+        if (parent / "workflows" / "main" / "sim2real.yaml").is_file():
             return parent
     return Path.cwd()
 
@@ -110,41 +115,57 @@ def _ngc_auth_verifier(api_key: str) -> str:
     return check_ngc_image_access(api_key)
 
 
+def _nebius_profile_verifier() -> ProfileVerification:
+    """Verify the selected Nebius CLI profile without surfacing provider output."""
+
+    return verify_profile(nebius_profile())
+
+
 @app.command("preflight")
+@json_stdout_contract
 def preflight_command(
     checks: str = typer.Option(
-        ",".join(CREDENTIAL_CHECKS),
+        ",".join(DEFAULT_CREDENTIAL_CHECKS),
         "--checks",
         help=(
             "Comma-separated checks to run, or 'all'. "
-            f"Choices: all, {', '.join(CREDENTIAL_CHECKS)}."
+            f"Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
         ),
     ),
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live network probes (HF/NGC/S3/Token Factory); only check presence.",
+        help=(
+            "Skip live provider probes; credential checks use presence only and "
+            "Nebius CLI authentication is skipped."
+        ),
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when a check fails."
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
-    """Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+    """Validate service credentials and optional Nebius CLI authentication.
 
     A single PASS/WARN/FAIL/SKIP report over the credentials nearly every
     workbench tool needs, so cold-start credential gaps surface here instead of
     mid-run. Exits non-zero on any FAIL unless ``--warn-only`` is passed.
     """
 
-    selected = [item.strip() for item in checks.split(",") if item.strip()]
-    if "all" in selected:
-        selected = list(CREDENTIAL_CHECKS)
-    unknown = [item for item in selected if item not in CREDENTIAL_CHECKS]
+    selected = list(dict.fromkeys(item.strip() for item in checks.split(",") if item.strip()))
+    if not selected:
+        raise typer.BadParameter("select at least one check or 'all'.", param_hint="--checks")
+    unknown = [
+        item for item in selected if item != "all" and item not in SUPPORTED_CREDENTIAL_CHECKS
+    ]
     if unknown:
         raise typer.BadParameter(
-            f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(CREDENTIAL_CHECKS)}."
+            "unknown check(s): "
+            f"{', '.join(unknown)}. Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}.",
+            param_hint="--checks",
         )
+    if "all" in selected:
+        selected = list(SUPPORTED_CREDENTIAL_CHECKS)
 
     credentials = load_credentials()
     if offline:
@@ -161,6 +182,7 @@ def preflight_command(
                 aws_secret_access_key=credentials.s3_secret_access_key,
             ),
             token_factory_verifier=_token_factory_verifier,
+            nebius_profile_verifier=_nebius_profile_verifier,
         )
 
     results = run_credential_preflight(credentials, probes=probes, checks=selected)
@@ -194,14 +216,36 @@ def access_command(
         False, "--warn-only", help="Exit 0 even when an access check fails."
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+    prepare: bool = typer.Option(
+        False,
+        "--prepare",
+        help=(
+            "Prepare exact HF/NGC catalog approvals, persist non-secret evidence, "
+            "and return official pages plus a safe resume command."
+        ),
+    ),
+    open_pages: bool = typer.Option(
+        False,
+        "--open-pages",
+        help=(
+            "Affirmatively open missing official approval pages in the local browser. "
+            "NPA never clicks or submits acceptance controls."
+        ),
+    ),
+    recheck: bool = typer.Option(
+        False,
+        "--recheck",
+        help="Ignore unchanged Ready evidence and re-probe every exact artifact.",
+    ),
 ) -> None:
     """Check HF + NGC access to every gated model the workbench capabilities need.
 
-    Given a Hugging Face token and an NGC API key, this reports whether the token
-    already has access to each gated model and prints the exact 'Agree and access
-    repository' URL for anything still gated. Hugging Face gated licenses must be
-    accepted interactively on the model page — there is no API to accept them for
-    you — so this command automates the check and the guidance, not the click.
+    Given a Hugging Face token and an NGC API key, this reports whether the
+    credential can fetch an exact gated payload and prints the official approval
+    URL for anything still blocked. Ready proves technical fetch entitlement only;
+    it is not proof of legal acceptance. Any required assent remains a human action
+    on the provider page, so this command automates the check and guidance, not the
+    click.
 
     Pass ``--save-env-credentials`` to persist supported environment credentials to
     ~/.npa/credentials.yaml. Exits non-zero on any FAIL unless ``--warn-only``.
@@ -250,6 +294,79 @@ def access_command(
 
         ngc_validator = check_ngc_image_access
 
+    if prepare:
+        from npa.workbench.access_approval import (
+            DEFAULT_STATE_PATH,
+            approval_plan,
+            blocked,
+            exact_requirements,
+            probe_requirements,
+        )
+
+        state_path = Path(
+            os.environ.get("NPA_ACCESS_APPROVAL_STATE_PATH", str(DEFAULT_STATE_PATH))
+        )
+        requirements = exact_requirements(selected)
+        evidence = probe_requirements(
+            requirements,
+            hf_token=resolved_hf,
+            ngc_key=resolved_ngc,
+            hf_validator=None if offline else validate_hf_access,
+            ngc_validator=ngc_validator,
+            state_path=state_path,
+            force=recheck,
+        )
+        selected_label = "all" if selected is None else ",".join(selected)
+        resume = (
+            "npa workbench health access --capability "
+            f"{selected_label} --prepare --recheck"
+        )
+        if offline:
+            resume += " --offline"
+        plan = approval_plan(evidence, resume_command=resume)
+        if open_pages and output_json:
+            raise typer.BadParameter("--open-pages cannot be combined with --json")
+        if (
+            not open_pages
+            and not output_json
+            and blocked(plan)
+            and sys.stdin.isatty()
+        ):
+            counts = plan["counts"]
+            open_pages = typer.confirm(
+                "This catalog needs approval for "
+                f"{counts['hf']} HF resource(s) and {counts['ngc']} NGC artifact(s). "
+                "Open the official pages now?",
+                default=False,
+            )
+        if open_pages:
+            for url in plan["official_urls"]:
+                webbrowser.open_new_tab(str(url))
+        if output_json:
+            typer.echo(json_module.dumps(plan, indent=2, sort_keys=True))
+        else:
+            counts = plan["counts"]
+            typer.echo(
+                "Catalog approval plan: "
+                f"{counts['hf']} Hugging Face resource(s), "
+                f"{counts['ngc']} NVIDIA NGC artifact(s) need attention."
+            )
+            for provider, rows in plan["providers"].items():
+                typer.echo(f"{provider}:")
+                for row in rows:
+                    typer.echo(
+                        f"  - {row['artifact']}@{row['revision'] or 'provider-current'}: "
+                        f"{row['status']} ({row['official_url']})"
+                    )
+            if blocked(plan):
+                typer.echo(
+                    "NPA did not accept any terms. Complete any approval while signed "
+                    "in as yourself, then resume with:"
+                )
+                typer.echo(f"  {plan['resume_command']}")
+        if blocked(plan) and not warn_only:
+            raise typer.Exit(code=1)
+        return
     results = check_workbench_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,

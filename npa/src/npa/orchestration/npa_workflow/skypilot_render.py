@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ from npa.workbench.model_cache import (
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     "workbench.vlm_eval": "cosmos",
@@ -49,6 +51,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
@@ -81,6 +84,12 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    "workbench.cosmos3.super_benchmark": (
+        "HF_TOKEN",
+        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
@@ -1265,7 +1274,12 @@ def default_npa_setup() -> str:
         "        rel = key[len(prefix):].lstrip('/') if prefix else key\n"
         "        if not rel or key.endswith('/'):\n"
         "            continue\n"
-        "        out = dest / rel\n"
+        "        relative = pathlib.PurePosixPath(rel)\n"
+        "        if not key.startswith(prefix) or relative.is_absolute() or '..' in relative.parts or '\\\\' in rel:\n"
+        "            raise ValueError('Unsafe object key in source prefix')\n"
+        "        out = (dest / relative).resolve()\n"
+        "        if not out.is_relative_to(dest.resolve()):\n"
+        "            raise ValueError('Source object escapes its destination')\n"
         "        out.parent.mkdir(parents=True, exist_ok=True)\n"
         "        s3.download_file(bucket, key, str(out))\n"
         "    if not resp.get('IsTruncated'):\n"
@@ -1313,16 +1327,37 @@ def default_npa_setup() -> str:
         "        rel = key[len(prefix):].lstrip('/') if prefix else key\n"
         "        if not rel or key.endswith('/'):\n"
         "            continue\n"
-        "        out = dest / rel\n"
+        "        relative = pathlib.PurePosixPath(rel)\n"
+        "        if not key.startswith(prefix) or relative.is_absolute() or '..' in relative.parts or '\\\\' in rel:\n"
+        "            raise ValueError('Unsafe object key in source prefix')\n"
+        "        out = (dest / relative).resolve()\n"
+        "        if not out.is_relative_to(dest.resolve()):\n"
+        "            raise ValueError('Source object escapes its destination')\n"
         "        out.parent.mkdir(parents=True, exist_ok=True)\n"
         "        s3.download_file(bucket, key, str(out))\n"
         "    if not resp.get('IsTruncated'):\n"
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
+        # Put the source tree first before attempting the editable install. A secure
+        # non-root workbench image may intentionally make /opt/venv/bin/npa
+        # immutable; the source-only overlay remains sufficient and reviewable.
+        '  if [ -n "$PYTHONPATH" ]; then\n'
+        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
+        "  else\n"
+        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
+        "  fi\n"
+        "  export PYTHONPATH\n"
         # --no-deps FIRST: the overlay is the same distribution the image already has, so
         # resolving its requirements would only risk moving a pinned vendor stack.
-        "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
+        "  if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
+        "    echo 'using isolated non-root npa overlay environment' >&2\n"
+        "    python3 -m venv --system-site-packages /tmp/npa-overlay-venv\n"
+        "    /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
+        "/tmp/npa-src-overlay --no-deps\n"
+        '    PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
+        "    export PATH\n"
+        "  fi\n"
         # ... and WITH deps if the CLI still will not import. An image that installed npa with
         # its own curated `--no-deps` list leaves the overlay short of whatever that list
         # omitted: live job 309 died on `No module named 'paramiko'` after a clean overlay of a
@@ -1336,15 +1371,6 @@ def default_npa_setup() -> str:
         "  fi\n"
         # The overlay is the freshest tree, so it is the one worth putting on the import path.
         "  npa_record_src_root /tmp/npa-src-overlay\n"
-        # Same reason as the stage preamble: the install alone is not enough to
-        # displace a baked npa, so make the overlay explicit for the rest of setup too
-        # (the interpreter recorded below is checked with `import npa`).
-        '  if [ -n "$PYTHONPATH" ]; then\n'
-        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
-        "  else\n"
-        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
-        "  fi\n"
-        "  export PYTHONPATH\n"
         "fi\n"
         # Record the interpreter that can actually import npa, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
@@ -1416,6 +1442,15 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+# Keep the independent NuRec consumer stable when it reads newly converted V4
+# sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
+# into NVIDIA's proprietary NRE image.
+NUREC_NCORE_PIN = (
+    "nvidia-ncore @ https://files.pythonhosted.org/packages/a0/c1/"
+    "4e417aca37daae1ced7515b3f24912245b35cea4696359c1ebb32127c665/"
+    "nvidia_ncore-19.5.1-py3-none-any.whl"
+    "#sha256=a753f81470ba1b35567cbca26794a7f9ceefe04ec306b962a52dd18dc988fe29"
+)
 
 
 def _sonic_deps_setup() -> str:
@@ -1516,6 +1551,17 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref == "workbench.nurec.convert_colmap":
+        # Conversion uses the committed CPU image and its hash-locked runtime
+        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
+        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+        return (
+            "set -e\n"
+            "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
+            "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py\n"
+            "printf '%s' /opt/venv/bin/python > /tmp/npa-python\n"
+            "printf '%s' /opt/npa > /tmp/npa-src-root\n"
+        )
     if tool_ref.startswith("workbench.content_agents."):
         # The public Content Agents image deliberately carries only the narrow
         # module adapter used by its five toolRefs. Requiring the full ``npa``
@@ -1671,7 +1717,7 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
             '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
@@ -1867,6 +1913,12 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_NAME": spec.name,
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
+        # Retain output roles for the shared raw/rendered SDK submission gate.
+        "NPA_EXECUTION_OUTPUTS": json.dumps([
+            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
+            for output in scheduler_task.get("outputs") or []
+            if str(output.get("uri") or "").startswith("s3://")
+        ], separators=(",", ":")),
     }
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
@@ -1976,6 +2028,14 @@ def build_skypilot_task_doc(
         # This renderer/planner value is authoritative.  SkyPilot's runtime
         # variables are independent evidence and the worker cross-checks them.
         envs["NPA_COSMOS_NODE_COUNT"] = str(num_nodes)
+    if (
+        str(scheduler_task.get("tool_ref") or "")
+        == "workbench.openpi.full_droid_prepare"
+    ):
+        # The image carries CUDA JAX for later GPU stages, but preparation is a
+        # CPU-only pod. Set this before the CLI imports JAX plugins; doing it in
+        # the prepare handler is too late once the command tree is imported.
+        envs["JAX_PLATFORMS"] = "cpu"
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
@@ -2111,7 +2171,7 @@ def _inject_operator_registry_docker_secrets(
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server)
+    username, password = resolve_registry_credentials(server, image=image_id)
     if not username:
         return
     if materialize:

@@ -1859,7 +1859,7 @@ def main(argv: list[str] | None = None) -> int:
 
     warnings.warn(
         "npa.workflows.sim_to_real is legacy. Use npa.workflows.sim2real "
-        "(npa/workflows/workbench/npa-workflows/sim2real.yaml) for the production VLM→RL loop.",
+        "(workflows/main/sim2real.yaml) for the production VLM→RL loop.",
         DeprecationWarning,
         stacklevel=1,
     )

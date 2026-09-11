@@ -19,6 +19,11 @@ from npa.errors import ScopedCredentialError
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _browser_cors_succeeds(mocker):
+    return mocker.patch("npa.cli.rerun._verify_browser_cors")
+
+
 class RerunHostFakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
@@ -91,7 +96,7 @@ def _rrd(tmp_path: Path, body: bytes = b"recording") -> tuple[Path, str]:
 
 
 def test_local_file_uploads_with_sha_metadata_and_generates_versioned_url(
-    tmp_path: Path, mocker
+    tmp_path: Path, mocker, _browser_cors_succeeds
 ) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
@@ -109,6 +114,7 @@ def test_local_file_uploads_with_sha_metadata_and_generates_versioned_url(
     assert result.rrd_s3_uri == f"s3://target/{key}"
     assert result.sha256 == sha
     assert result.rerun_version == RERUN_VERSION
+    assert result.browser_cors_verified is True
     assert result.ttl_expires_at == "2026-05-11T23:30:00Z"
     assert result.share_url.startswith(
         f"https://app.rerun.io/version/{RERUN_VERSION}/?url="
@@ -116,6 +122,9 @@ def test_local_file_uploads_with_sha_metadata_and_generates_versioned_url(
     assert s3.objects[("target", key)]["Metadata"] == {"sha256": sha}
     assert s3.put_calls == [("target", key, {"sha256": sha})]
     assert s3.presign_calls[-1]["ExpiresIn"] == 3600
+    _browser_cors_succeeds.assert_called_once_with(
+        result.presigned_url, bucket="target", project=None
+    )
 
 
 def test_s3_file_with_matching_metadata_skips_upload(mocker) -> None:
@@ -171,6 +180,26 @@ def test_missing_file_is_clear_error(tmp_path: Path, mocker) -> None:
             s3_client=RerunHostFakeS3(),
             host_s3_client=RerunHostFakeS3(),
         )
+
+
+def test_failed_browser_preflight_stops_before_upload(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    path, _ = _rrd(tmp_path)
+    s3 = RerunHostFakeS3()
+    _browser_cors_succeeds.side_effect = RerunHostError("CORS unavailable")
+
+    with pytest.raises(RerunHostError, match="CORS unavailable"):
+        host_recording(
+            str(path),
+            target_bucket="target",
+            s3_client=s3,
+            host_s3_client=RerunHostFakeS3(),
+        )
+
+    assert s3.put_calls == []
+    assert s3.head_calls == []
 
 
 def test_missing_scoped_creds_without_flag_raises_scoped_credential_error(
@@ -255,10 +284,12 @@ def test_json_output_contains_full_schema(tmp_path: Path, mocker) -> None:
         "ttl_expires_at",
         "sha256",
         "rerun_version",
+        "browser_cors_verified",
     }
     assert data["sha256"] == sha
     assert data["rrd_s3_uri"] == f"s3://target/rerun-shared/{sha}.rrd"
     assert data["rerun_version"] == RERUN_VERSION
+    assert data["browser_cors_verified"] is True
     assert "app.rerun.io" in data["share_url"]
     assert "version" in data["share_url"]
 

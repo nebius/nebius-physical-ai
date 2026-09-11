@@ -120,7 +120,7 @@ def _positive_int(name: str, default: int) -> int:
 def _load_checkpoint(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise SystemExit(f"checkpoint not found: {path}")
-    payload = torch.load(path, map_location="cpu", weights_only=False)
+    payload = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict):
         raise SystemExit("checkpoint payload is not a dictionary")
     if "policy_state_dict" not in payload and "actor_model_state_dict" not in payload:

@@ -719,7 +719,7 @@ def test_fetch_verifies_caches_and_supports_offline_hit(
 ) -> None:
     body = b"verified physical video bytes"
     contract = _contract_for_bytes(body)
-    monkeypatch.setattr(dfi, "urlopen", lambda *_args, **_kwargs: _Response(body))
+    monkeypatch.setattr(dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(body))
 
     path, status = dfi._fetch_starter(
         contract, cache_dir=tmp_path, offline=False, reporter=lambda _message: None
@@ -729,7 +729,7 @@ def test_fetch_verifies_caches_and_supports_offline_hit(
 
     monkeypatch.setattr(
         dfi,
-        "urlopen",
+        "_open_starter_url",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(URLError("offline")),
     )
     same, status = dfi._fetch_starter(
@@ -750,7 +750,7 @@ def test_offline_cache_miss_and_checksum_mismatch_fail_closed(
         )
 
     monkeypatch.setattr(
-        dfi, "urlopen", lambda *_args, **_kwargs: _Response(b"tampered")
+        dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(b"tampered")
     )
     with pytest.raises(dfi.PaidfInputError, match="SHA-256 mismatch"):
         dfi._fetch_starter(

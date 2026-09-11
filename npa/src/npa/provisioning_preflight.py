@@ -63,6 +63,7 @@ class ResolvedTopology:
     gpu_preset: str = DEFAULT_GPU_PRESET
     gpu_disk_gib: int = DEFAULT_GPU_DISK_GIB
     gpu_preemptible: bool = False
+    capacity_block_group: str = ""
     public_node_ips: bool = False
     accelerator: str = "RTXPRO6000:1"
 
@@ -128,7 +129,20 @@ class ResolvedTopology:
         quota_name = gpu_quota_name(self.gpu_platform)
         # Preemptible capacity can change the GPU capacity pool.  It never
         # changes the hard instance/disk/IP arithmetic above.
-        if quota_name and self.required_gpus and not self.gpu_preemptible:
+        #
+        # A STRICT capacity-block-backed pool consumes the named reservation,
+        # not the ordinary GPU-family allowance. This mirrors the fleet path
+        # (cluster_backends/quotas.py: required_quotas skips a bound GPU pool)
+        # and the existing MIG STRICT carve-out in `cluster up`. The reservation
+        # itself is validated (owner/region/platform/remaining capacity) by the
+        # provisioning preflight before apply, so skipping here never weakens
+        # the gate; it only stops double-charging reservation-backed GPUs.
+        if (
+            quota_name
+            and self.required_gpus
+            and not self.gpu_preemptible
+            and not self.capacity_block_group
+        ):
             requirements[quota_name] = self.required_gpus
         return requirements
 
@@ -297,6 +311,7 @@ def resolve_topology(
     gpu_platform: str = "",
     gpu_preset: str = "",
     preemptible: bool | None = None,
+    capacity_block_group: str = "",
     public_node_ips: bool = False,
     control_plane_instances: int = 0,
     control_plane_disks: int = 0,
@@ -336,6 +351,7 @@ def resolve_topology(
         gpu_preset=str(gpu_preset or inferred_preset or DEFAULT_GPU_PRESET).strip(),
         gpu_disk_gib=_positive_gib(gpu_disk_gib, "gpu_disk_gib"),
         gpu_preemptible=bool(preemptible) if preemptible is not None else False,
+        capacity_block_group=str(capacity_block_group or "").strip(),
         public_node_ips=bool(public_node_ips),
         accelerator=requested_accelerator or "RTXPRO6000:1",
     )

@@ -34,8 +34,8 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
         _rate(report, "place"),
         _rate(report, "lift"),
         _rate(report, "stable_grasp"),
-        _rate(report, "contact"),
         _rate(report, "reach"),
+        _rate(report, "contact"),
         -mean_distance,
         -int(candidate.get("outer_iteration") or 0),
         -int(candidate.get("inner_iteration") or 0),
@@ -64,7 +64,7 @@ def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     best = dict(ranked[0])
     best["rank_key"] = list(checkpoint_rank_key(best))
     best["selection_policy"] = (
-        "strict_success,place,lift,stable_grasp,contact,reach,"
+        "strict_success,place,lift,stable_grasp,reach,contact,"
         "lower_mean_final_distance,earlier_checkpoint"
     )
     best["candidate_count"] = len(ranked)

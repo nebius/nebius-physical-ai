@@ -128,9 +128,10 @@ def test_agent_confirmation_to_real_gpu_artifact_and_grounded_answer(
     tmp_path: Path,
     e2e_project: str | None,
 ) -> None:
-    registry = (os.environ.get("NPA_E2E_REGISTRY") or os.environ.get("NPA_REGISTRY") or "").strip()
-    if not registry:
-        pytest.skip("Set NPA_E2E_REGISTRY or NPA_REGISTRY for the agent GPU live proof")
+    registry = (
+        os.environ.get("NPA_E2E_REGISTRY")
+        or "ghcr.io/nebius/nebius-physical-ai"
+    ).strip()
 
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC_NAME)
     run_id = f"agent-gpu-{uuid.uuid4().hex[:12]}"

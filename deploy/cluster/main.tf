@@ -110,6 +110,8 @@ module "k8s_training" {
     replication_factor = 1
   }
 
+  # Legacy standalone state keeps Ray off. The validated CPU opt-in is exposed
+  # through a one-entry Fleet and the shared mk8s backend (docs/fleet-kuberay.md).
   enable_kuberay_cluster = false
   enable_kuberay_service = false
   enable_opa_gatekeeper  = false

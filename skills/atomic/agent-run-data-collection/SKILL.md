@@ -19,6 +19,9 @@ Resolve these from owner-only runtime configuration; never commit their values:
 
 Before enabling collection, verify the active agent deployment reports the same
 tenant and that the destination bucket is a writable resource in that tenant.
+Pass the verified active tenant and authorized dataset bucket to the emitter;
+empty identity arguments fail closed. S3 access alone does not establish bucket
+ownership: retain the provider ownership and deployment identity proof privately.
 Tenant-wide discovery alone does not authorize cross-project writes. Do not
 create a bucket, grant IAM, or change tenant/project configuration unless the
 operator separately requests it.
@@ -61,7 +64,20 @@ Write a new immutable object for every episode:
 Never append by rewriting one shared JSONL object: concurrent S3 writers lose
 rows. Retrying the same finalized payload must resolve to the same object key;
 different payloads for one episode id remain visible and must be treated as a data
-quality conflict rather than overwritten.
+quality conflict rather than overwritten. A sanitized correction does not
+supersede an existing immutable claim: retain it pending and exclude the whole
+conflicted episode from training until explicit data-quality reconciliation. A
+delivery receipt proves byte delivery, not privacy or training eligibility.
+
+Freeze the canonical raw record once with `collection.status=pending`. Its bytes
+and content hash never change during delivery or retry. After exact S3
+read-after-write verification, the runtime publishes a separate immutable
+`npa.agent.trajectory-receipt.v1` delivery receipt and verifies that receipt too.
+Only then may the emitter return `collected`. The pending status inside an
+immutable raw record describes its state at finalization; consumers use its
+verified receipt to establish delivery. A conditional episode claim identifies
+divergent payloads for the same episode as a conflict while preserving both raw
+objects. Do not retry without conditional-write support.
 
 If the S3 write fails, persist the same finalized record to an owner-only local
 outbox and mark collection `pending`. Never report the record as collected until
@@ -69,6 +85,13 @@ a read-after-write check confirms the object hash. Do not fail or repeat an
 otherwise completed GPU or destructive operation merely because telemetry
 failed. Retry pending records at the start of the next episode or through an
 explicit flush.
+
+The private outbox envelope binds each frozen record to the original tenant,
+bucket, and prefix using a destination digest and includes a digest of the exact
+payload bytes. Flush verifies that binding and both content digests before any
+write, never rewrites the tenant, and retains mismatches or conflicts for
+explicit reconciliation. Legacy unbound outbox records require reconciliation;
+never silently redirect them to the current destination.
 
 ## Record contents
 
@@ -94,6 +117,28 @@ data, and secret-shaped values. Replace concrete infrastructure identifiers in
 free text with typed references; retain the configured tenant id only in the
 access-controlled scope field needed to prove routing. Keep raw and curated
 datasets separate, and never train on evaluation or held-out runs.
+
+The runtime removes whole private-key blocks, credential fields/environment
+payloads, data URIs, private URI paths, concrete resource IDs and addresses,
+including identifiers used as mapping keys. Redact the configured dataset URI
+and its nonempty prefix even when the prefix appears alone as a directory name
+or mapping key; checking only complete URIs misses those observations. Unknown
+objects and inline bytes are rejected rather than stringified. For customer names
+or other private text that has no recognizable credential/infrastructure shape, configure
+`NPA_AGENT_DATASET_REDACTION_FILE` to an owner-only JSON file containing
+`{"literals": ["<private value>"]}`. Resolve those values privately; never commit
+the file or rely on pattern matching to identify arbitrary customer data.
+
+Private literals can coincide with protocol words. Preserve authoritative schema
+keys and exact enum constants only at their recognized trajectory paths and
+types; reject malformed protocol fields before either S3 or outbox writes.
+Nested observations, arbitrary mapping keys, caller episode/session IDs,
+timestamps, model/tool names and hash values remain data subject to redaction.
+Key renaming must retain every mapping value without overwriting existing or
+lookalike keys, and generated suffixes must pass the same privacy rules.
+Sanitization must be idempotent; recheck the finalized payload immediately before
+each write, without altering its immutable bytes or treating a receipt as a
+privacy exception.
 
 At completion, surface only `collected`, `pending`, or `disabled` plus the episode
 id. Do not print the tenant id, bucket name, credentials, or full destination

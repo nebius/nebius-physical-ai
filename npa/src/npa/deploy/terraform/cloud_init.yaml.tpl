@@ -1,4 +1,5 @@
 #cloud-config
+# NPA_SSH_HOST_KEY_NONCE=${ssh_host_key_nonce}
 
 users:
   - name: ${jsonencode(ssh_user)}
@@ -9,6 +10,11 @@ users:
 
 %{ if workbench_type != "agent" ~}
 write_files:
+  - path: /usr/local/lib/npa/load_env.sh
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: ${literal_env_loader_b64}
 %{ if workbench_type == "fiftyone" ~}
   - path: /etc/apt/apt.conf.d/99npa-network
     permissions: "0644"
@@ -21,7 +27,7 @@ write_files:
     owner: ${ssh_user}:${ssh_user}
     permissions: "0600"
     content: |
-      FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
+      FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1
       FIFTYONE_DEFAULT_APP_PORT=${server_port}
       FIFTYONE_DATABASE_DIR=/opt/fiftyone/db
       FIFTYONE_DEFAULT_DATASET_DIR=/opt/fiftyone/datasets
@@ -69,7 +75,7 @@ write_files:
           except Exception as exc:
               print(f"Could not load dataset {dataset_name!r}: {exc}", flush=True)
 
-      address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+      address = "127.0.0.1"
       port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "5151"))
       session = fo.launch_app(
           dataset,
@@ -110,6 +116,9 @@ write_files:
 runcmd:
   - |
     set -e
+    # Only the public key reaches the provider-owned serial log. No SSH or
+    # application credentials are staged before this identity is verified.
+    printf 'NPA_SSH_HOST_KEY %s %s\n' '${ssh_host_key_nonce}' "$(cat /etc/ssh/ssh_host_ed25519_key.pub)" > /dev/ttyS0
     # runcmd string items are interpreted by /bin/sh, so keep this block POSIX-safe.
 %{ if workbench_type == "cosmos" ~}
     COSMOS_DATA_DEVICE="/dev/disk/by-id/virtio-npa-cosmos-data"
@@ -226,12 +235,46 @@ runcmd:
     chmod 600 /etc/npa-fiftyone/env
 
     if [ ! -x "$FIFTYONE_VENV/bin/python" ] || \
-       ! sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" -c "from importlib import metadata; raise SystemExit(0 if metadata.version('fiftyone') == '${fiftyone_version}' else 1)" 2>/dev/null
+       ! sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" - <<'PY' >/dev/null 2>&1
+    import hashlib
+    from importlib import metadata
+    from packaging.version import Version
+
+    valid = metadata.version("fiftyone") == "${fiftyone_version}"
+    valid = valid and Version(metadata.version("datasets")) >= Version("5.0.1")
+    valid = valid and Version(metadata.version("pillow")) >= Version("12.3.0")
+    valid = valid and Version(metadata.version("paramiko")) >= Version("5.0.0")
+    binary = metadata.distribution("fiftyone-db").locate_file("fiftyone/db/bin/mongod")
+    digest = hashlib.sha256()
+    with binary.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    valid = valid and digest.hexdigest() == "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696"
+    raise SystemExit(0 if valid else 1)
+    PY
     then
       rm -rf "$FIFTYONE_VENV"
       sudo -H -u ${ssh_user} python3 -m venv "$FIFTYONE_VENV" || { echo "ERROR: Failed to create FiftyOne venv"; exit 1; }
       sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" -m pip install --upgrade pip setuptools wheel || { echo "ERROR: Failed to upgrade pip"; exit 1; }
-      sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" -m pip install "fiftyone==${fiftyone_version}" boto3 datasets huggingface_hub pyarrow pillow || { echo "ERROR: Failed to install FiftyOne"; exit 1; }
+      sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" -m pip install "fiftyone==${fiftyone_version}" boto3 "datasets>=5.0.1" huggingface_hub pyarrow "pillow>=12.3.0" "paramiko>=5.0.0" || { echo "ERROR: Failed to install FiftyOne"; exit 1; }
+      (
+        set -e
+        umask 077
+        mongodb_tmp="$(mktemp -d)"
+        trap 'rm -rf -- "$mongodb_tmp"' EXIT
+        curl --fail --location --silent --show-error -o "$mongodb_tmp/mongodb.tgz" "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.40.tgz"
+        echo "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89  $mongodb_tmp/mongodb.tgz" | sha256sum -c -
+        tar xzf "$mongodb_tmp/mongodb.tgz" -C "$mongodb_tmp"
+        mongodb_bin="$("$FIFTYONE_VENV/bin/python" -c 'from importlib import metadata; print(metadata.distribution("fiftyone-db").locate_file("fiftyone/db/bin/mongod"))')"
+        mkdir -p "$(dirname "$mongodb_bin")" "$FIFTYONE_HOME/mongodb-notices"
+        install -m 0755 "$mongodb_tmp/mongodb-linux-x86_64-ubuntu2204-7.0.40/bin/mongod" "$mongodb_bin"
+        for notice in LICENSE-Community.txt MPL-2 THIRD-PARTY-NOTICES; do
+          install -m 0444 "$mongodb_tmp/mongodb-linux-x86_64-ubuntu2204-7.0.40/$notice" "$FIFTYONE_HOME/mongodb-notices/"
+        done
+        echo "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696  $mongodb_bin" | sha256sum -c -
+        "$mongodb_bin" --version
+      )
+      sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" -m pip check
     fi
 
     sudo -H -u ${ssh_user} "$FIFTYONE_VENV/bin/python" - <<'PY'
@@ -245,7 +288,7 @@ runcmd:
 
     cat > "/home/${ssh_user}/.fiftyone/config.json" <<JSON
     {
-      "default_app_address": "0.0.0.0",
+      "default_app_address": "127.0.0.1",
       "default_app_port": ${server_port}
     }
     JSON
@@ -287,10 +330,9 @@ runcmd:
       sleep 1
     done
 
-    echo "WARNING: FiftyOne app did not respond on port ${server_port} before cloud-init readiness timeout"
+    echo "ERROR: FiftyOne app did not respond on port ${server_port} before cloud-init readiness timeout"
     systemctl --no-pager status npa-fiftyone-app || true
-    echo "=== FiftyOne setup complete with app readiness warning - $(date) ==="
-    exit 0
+    exit 1
 %{ else ~}
 %{ if workbench_type == "groot" || workbench_type == "groot-container" ~}
 %{ if workbench_type == "groot-container" ~}
@@ -509,19 +551,18 @@ runcmd:
       . /opt/lerobot/venv/bin/activate
     fi
     if [ -f /opt/lerobot/.env ]; then
-      set -a
-      . /opt/lerobot/.env
-      set +a
+      . /usr/local/lib/npa/load_env.sh
+      npa_load_env_file /opt/lerobot/.env
     fi
     GLOBAL_EOF
     chmod 644 /etc/profile.d/lerobot.sh
 
     # Also add to user's .bashrc for non-login shells
-    echo 'set -a; source /opt/lerobot/.env; set +a' >> /home/${ssh_user}/.bashrc
+    echo '. /usr/local/lib/npa/load_env.sh; npa_load_env_file /opt/lerobot/.env' >> /home/${ssh_user}/.bashrc
     echo 'source /opt/lerobot/venv/bin/activate'    >> /home/${ssh_user}/.bashrc
 
     # Add to root's .bashrc as well
-    echo 'set -a; source /opt/lerobot/.env; set +a' >> /root/.bashrc
+    echo '. /usr/local/lib/npa/load_env.sh; npa_load_env_file /opt/lerobot/.env' >> /root/.bashrc
     echo 'source /opt/lerobot/venv/bin/activate'    >> /root/.bashrc
 
     # Headless EGL access requires the login user to be able to open the DRM nodes.

@@ -49,6 +49,7 @@ EXCUSED: dict[str, str] = {
     # downloads weights is pointed at an explicit variable above, so nothing
     # model-sized reaches its fallback here.
     "XDG_CACHE_HOME": "generic cache root, not a weight fallback in practice",
+    "NUMBA_CACHE_DIR": "JIT compilation cache, not model weights",
     # Runtime dependency closures, deliberately a separate volume: they are
     # verified wheel sets warmed once and consumed read-only, not weights that
     # accumulate. See docs/workbench/model-weight-cache.md.
@@ -122,6 +123,8 @@ EXCUSED_EMPTY_DIRS = {
     "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
     "tmp": "scratch space",
     "shm": "/dev/shm, sized for the renderer",
+    "npa-sudo-shim": "standard init-container sudo shim (tiny script), never a weights cache",
+    "dshm": "/dev/shm sized for the NRE renderer/reconstruction (medium Memory)",
 }
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"

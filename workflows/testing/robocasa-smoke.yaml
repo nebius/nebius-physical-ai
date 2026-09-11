@@ -1,0 +1,69 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: robocasa-smoke
+  description: >
+    RoboCasa native workbench smoke — verify Gymnasium task registration, kitchen
+    asset availability, headless EGL environment reset, and a real random rollout
+    with a video artifact, all through the npa-robocasa service.
+
+config:
+  bucket: example-bucket
+  prefix: "robocasa-smoke/{{run.id}}"
+  env_id: "robocasa/PickPlaceCounterToCabinet"
+  robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  iterations: "1"
+  num_envs: "1"
+  poll_seconds: "30"
+  timeout_seconds: "3600"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+
+initial: task-registration
+
+states:
+  task-registration:
+    description: Verify RoboCasa Gymnasium task registration.
+    toolRef: workbench.robocasa.task_registration
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}"
+        schema: npa.robocasa.task_registration.v1
+    next: asset-availability
+
+  asset-availability:
+    description: Verify RoboCasa kitchen asset availability.
+    toolRef: workbench.robocasa.asset_availability
+    resources: gpu
+    needs: [task-registration]
+    outputs:
+      - uri: "{{config.output_uri}}"
+        schema: npa.robocasa.asset_availability.v1
+    next: egl-env-reset
+
+  egl-env-reset:
+    description: Create and reset a headless EGL RoboCasa environment.
+    toolRef: workbench.robocasa.egl_env_reset
+    resources: gpu
+    needs: [asset-availability]
+    outputs:
+      - uri: "{{config.output_uri}}"
+        schema: npa.robocasa.egl_env_reset.v1
+    next: random-rollout
+
+  random-rollout:
+    description: Run a real RoboCasa random rollout with a video artifact.
+    toolRef: workbench.robocasa.random_rollout
+    resources: gpu
+    needs: [egl-env-reset]
+    outputs:
+      - uri: "{{config.output_uri}}"
+        schema: npa.robocasa.random_rollout.v1
+    terminal: true

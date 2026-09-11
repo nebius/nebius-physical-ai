@@ -111,11 +111,11 @@ SkyPilot stays the execution engine, but the shown catalog is npa.workflow-only
 `npa.workflow/v0.0.1` specs, CPU-only and `cloud: kubernetes`:
 
 - Aggregate a run (ingest-run -> dashboard):
-  `npa/workflows/workbench/npa-workflows/insights-aggregate.yaml`
+  `workflows/testing/insights-aggregate.yaml`
 - Hardening with insights (hardening stages -> ingest-run -> dashboard):
-  `npa/workflows/workbench/npa-workflows/hardening-with-insights.yaml`
+  `workflows/testing/hardening-with-insights.yaml`
 - CPU-only smoke (ingest fixture -> compare -> dashboard):
-  `npa/workflows/workbench/npa-workflows/insights-smoke.yaml`
+  `workflows/testing/insights-smoke.yaml`
 
 toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
 `workbench.insights.compare`, `workbench.insights.dashboard`.

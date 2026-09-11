@@ -14,6 +14,7 @@
       "properties": {
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "executionMode": { "enum": ["runtime"] },
         "namespace": { "type": "string" },
         "labels": { "type": "object" }
       },
@@ -93,7 +94,8 @@
         "required": ["uri"],
         "properties": {
           "uri": { "type": "string" },
-          "schema": { "type": "string" }
+          "schema": { "type": "string" },
+          "kind": { "enum": ["file", "directory"] }
         }
       }
     }

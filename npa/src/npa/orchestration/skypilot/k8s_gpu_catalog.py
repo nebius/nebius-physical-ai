@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -65,6 +66,70 @@ def _kubeconfig_env(kubeconfig: Kubeconfig) -> dict[str, str] | None:
         return None
     env = os.environ.copy()
     env["KUBECONFIG"] = str(Path(kubeconfig).expanduser())
+    return env
+
+
+def kubernetes_sky_environment(
+    *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
+) -> dict[str, str]:
+    """Bind cluster checks and discovery to one exact owned API when isolated."""
+    env = _kubeconfig_env(kubeconfig) or os.environ.copy()
+    from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+    isolated_root = resolve_isolated_config_dir()
+    if isolated_root is not None:
+        selected = str(kubeconfig or env.get("KUBECONFIG") or "").strip()
+        if not selected or not str(context).strip():
+            raise KubernetesGpuCatalogError(
+                "Isolated SkyPilot discovery requires an exact kubeconfig and context"
+            )
+        kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
+        env["KUBECONFIG"] = str(kubeconfig_path)
+        # Cluster validation may launch a GPU task. It must never fall through
+        # to the operator's shared API, even before workflow submission exists.
+        from npa.orchestration.skypilot.cleanup import sky_environment
+        from npa.orchestration.skypilot.local_api import ensure_isolated_api
+        import yaml
+
+        identity = hashlib.sha256(
+            f"{kubeconfig_path.resolve()}\0{context}".encode()
+        ).hexdigest()[:24]
+        scope = isolated_root / "cluster-validation" / identity
+        scope.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if scope.is_symlink():
+            raise RuntimeError("Cluster validation state must not be a symlink")
+        config: dict = {}
+        inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
+        if inherited:
+            config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
+            if not isinstance(config, dict):
+                raise RuntimeError("SkyPilot configuration must be a mapping")
+        kubernetes = config.setdefault("kubernetes", {})
+        if not isinstance(kubernetes, dict):
+            raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
+        kubernetes["allowed_contexts"] = [context]
+        config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
+        config_path = scope / "client-config.yaml"
+        try:
+            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
+                raise RuntimeError(
+                    "Cluster validation configuration changed; reconcile its owned API first"
+                ) from None
+        else:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(config_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
+        env = sky_environment(scope, environment=env)
+        ensure_isolated_api(
+            isolated_dir=scope,
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=str(kubeconfig_path.parent),
+        )
     return env
 
 
@@ -781,6 +846,8 @@ def _normalize(name: str) -> str:
 
 
 _EXPLICIT_ACCELERATOR_ALIASES = (
+    frozenset({"b200", "nvidiab200"}),
+    frozenset({"b300", "nvidiab300"}),
     frozenset(
         {
             "rtx6000",
@@ -826,7 +893,7 @@ def parse_kubernetes_gpu_catalog(
             continue
         if not in_table:
             continue
-        if wanted and current_context and current_context != wanted:
+        if wanted and current_context != wanted:
             continue
         columns = re.split(r"\s{2,}", line)
         if len(columns) < 2:
@@ -861,6 +928,9 @@ def discover_kubernetes_gpu_catalog(
     if config_override:
         cmd[2:2] = ["--config", config_override]
     execute = runner or subprocess.run
+    environment = kubernetes_sky_environment(
+        context=context, kubeconfig=kubeconfig, sky_executable=sky_executable
+    )
     try:
         result = execute(
             cmd,
@@ -869,7 +939,7 @@ def discover_kubernetes_gpu_catalog(
             text=True,
             timeout=timeout,
             check=False,
-            env=_kubeconfig_env(kubeconfig),
+            env=environment,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise KubernetesGpuCatalogError(
@@ -888,7 +958,7 @@ def discover_kubernetes_gpu_catalog(
             text=True,
             timeout=timeout,
             check=False,
-            env=_kubeconfig_env(kubeconfig),
+            env=environment,
         )
         checked_output = "\n".join(
             part for part in (checked.stdout, checked.stderr) if part
@@ -911,7 +981,7 @@ def discover_kubernetes_gpu_catalog(
             text=True,
             timeout=timeout,
             check=False,
-            env=_kubeconfig_env(kubeconfig),
+            env=environment,
         )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:

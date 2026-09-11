@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import subprocess
-import tempfile
 import time
 from enum import Enum
 from pathlib import Path
@@ -16,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient
+from npa.cli.agent_source_archive import create_agent_source_archive
 from npa.workbench.model_cache import (
     RUNTIME_DOCKER,
     docker_model_cache_volumes,
@@ -116,24 +115,10 @@ def write_remote_env_file(
     *,
     owner: str = "ubuntu",
 ) -> None:
-    """Write an env file on the VM using SFTP, then secure it with sudo."""
-    env_content = render_shell_env_file(env)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
-        tmp.write(env_content)
-        local_path = tmp.name
-
-    tmp_remote = f"/tmp/{Path(remote_path).name}.{int(time.time() * 1000)}"
-    try:
-        _sftp_upload(ssh, local_path, tmp_remote)
-        ssh.run_or_raise(
-            f"sudo mkdir -p {shlex.quote(str(Path(remote_path).parent))} && "
-            f"sudo mv {shlex.quote(tmp_remote)} {shlex.quote(remote_path)} && "
-            f"sudo chown {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(remote_path)} && "
-            f"sudo chmod 600 {shlex.quote(remote_path)}"
-        )
-    finally:
-        os.unlink(local_path)
+    """Atomically install a private shell env file on the VM."""
+    write_remote_text_file(
+        ssh, remote_path, render_shell_env_file(env), owner=owner, mode="0600"
+    )
 
 
 def write_remote_docker_env_file(
@@ -143,24 +128,10 @@ def write_remote_docker_env_file(
     *,
     owner: str = "ubuntu",
 ) -> None:
-    """Write a Docker --env-file on the VM without shell quoting."""
-    env_content = render_docker_env_file(env)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
-        tmp.write(env_content)
-        local_path = tmp.name
-
-    tmp_remote = f"/tmp/{Path(remote_path).name}.{int(time.time() * 1000)}"
-    try:
-        _sftp_upload(ssh, local_path, tmp_remote)
-        ssh.run_or_raise(
-            f"sudo mkdir -p {shlex.quote(str(Path(remote_path).parent))} && "
-            f"sudo mv {shlex.quote(tmp_remote)} {shlex.quote(remote_path)} && "
-            f"sudo chown {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(remote_path)} && "
-            f"sudo chmod 600 {shlex.quote(remote_path)}"
-        )
-    finally:
-        os.unlink(local_path)
+    """Atomically install a private Docker env file without shell quoting."""
+    write_remote_text_file(
+        ssh, remote_path, render_docker_env_file(env), owner=owner, mode="0600"
+    )
 
 
 def write_remote_text_file(
@@ -171,22 +142,28 @@ def write_remote_text_file(
     owner: str = "ubuntu",
     mode: str = "0644",
 ) -> None:
-    """Write a text file on the VM using SFTP, then move it into place."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
-        tmp.write(content)
-        local_path = tmp.name
+    """Stage privately, then atomically replace a root-managed destination.
 
-    tmp_remote = f"/tmp/{Path(remote_path).name}.{int(time.time() * 1000)}"
-    try:
-        _sftp_upload(ssh, local_path, tmp_remote)
-        ssh.run_or_raise(
-            f"sudo mkdir -p {shlex.quote(str(Path(remote_path).parent))} && "
-            f"sudo mv {shlex.quote(tmp_remote)} {shlex.quote(remote_path)} && "
-            f"sudo chown {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(remote_path)} && "
-            f"sudo chmod {shlex.quote(mode)} {shlex.quote(remote_path)}"
+    Both staging directories are created with mode 0700 before file creation.
+    The final temporary file resides on the destination filesystem, so mv -T
+    publishes one complete file without opening an existing destination.
+    """
+    parent = shlex.quote(str(Path(remote_path).parent))
+    target = shlex.quote(remote_path)
+    template = shlex.quote(str(Path(remote_path).parent / ".npa-install.XXXXXXXXXX"))
+    with ssh.temporary_directory() as directory:
+        source = f"{directory}/payload"
+        ssh.upload_private_text(content, source)
+        script = (
+            "set -eu; "
+            f"sudo mkdir -p -- {parent}; "
+            f"npa_install_dir=$(sudo mktemp -d {template}); "
+            "trap 'sudo rm -rf -- \"$npa_install_dir\"' EXIT HUP INT TERM; "
+            f"sudo install -m {shlex.quote(mode)} -o {shlex.quote(owner)} "
+            f"-g {shlex.quote(owner)} -- {shlex.quote(source)} \"$npa_install_dir/payload\"; "
+            f"sudo mv -fT -- \"$npa_install_dir/payload\" {target}"
         )
-    finally:
-        os.unlink(local_path)
+        ssh.run_or_raise(f"bash -lc {shlex.quote(script)}", label="install remote file")
 
 
 def docker_exec_cmd(container_name: str, command: str) -> str:
@@ -289,92 +266,64 @@ def deploy_server(
     server_config: dict[str, Any],
 ) -> None:
     """Copy the npa package to the VM, render server config, install systemd unit."""
-    # 1. Package and upload the npa source
-    with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
-        archive_path = tmp.name
+    with ssh.temporary_directory() as directory:
+        # 1. Package and upload the npa source
+        archive_path = create_agent_source_archive(_NPA_PACKAGE_ROOT.parent)
+        try:
+            # Upload via SSH (paramiko sftp)
+            _sftp_upload(ssh, archive_path, f"{directory}/npa.tgz")
+        finally:
+            os.unlink(archive_path)
 
-    try:
-        subprocess.run(
-            ["tar", "-czf", archive_path, "-C", str(_NPA_PACKAGE_ROOT), "."],
-            check=True,
-            capture_output=True,
-        )
-        # Upload via SSH (paramiko sftp)
-        ssh.run_or_raise("mkdir -p /tmp/npa-deploy")
-        _sftp_upload(ssh, archive_path, "/tmp/npa-deploy/npa.tgz")
-    finally:
-        os.unlink(archive_path)
-
-    # 2. Extract and install on the VM
-    ssh.run_or_raise(
-        "rm -rf /tmp/npa-src && mkdir /tmp/npa-src && "
-        "tar -xzf /tmp/npa-deploy/npa.tgz -C /tmp/npa-src 2>/dev/null; "
-        '/opt/lerobot/venv/bin/pip install -q "/tmp/npa-src[server]"'
-    )
-
-    # 3. Render and upload server.yaml
-    env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
-    template = env.get_template("server.yaml.j2")
-    rendered = template.render(**server_config)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
-        tmp.write(rendered)
-        yaml_path = tmp.name
-
-    try:
-        ssh.run_or_raise("sudo mkdir -p /etc/npa")
-        _sftp_upload(ssh, yaml_path, "/tmp/npa-server.yaml")
-        ssh.run_or_raise("sudo mv /tmp/npa-server.yaml /etc/npa/server.yaml && sudo chmod 644 /etc/npa/server.yaml")
-    finally:
-        os.unlink(yaml_path)
-
-    # 4. Write env file for systemd from the server config
-    env_vars: dict[str, Any] = {
-        "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
-        "NPA_SERVER_PORT": server_config.get("server_port", 8080),
-        "NPA_CHECKPOINT_DIR": server_config.get("checkpoint_dir", "/opt/lerobot/checkpoints"),
-        "NPA_CHECKPOINT_BUCKET": server_config.get("checkpoint_bucket", ""),
-        "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
-        "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
-        "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
-    }
-    shared_env = server_config.get("shared_env", {})
-    if isinstance(shared_env, dict):
-        env_vars.update(shared_env)
-    env_content = render_shell_env_file(env_vars)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
-        tmp.write(env_content)
-        env_path = tmp.name
-
-    try:
-        ssh.run_or_raise("sudo mkdir -p /etc/npa-lerobot-server")
-        _sftp_upload(ssh, env_path, "/tmp/npa-server.env")
+        # 2. Extract and install on the VM
         ssh.run_or_raise(
-            "sudo mv /tmp/npa-server.env /etc/npa-lerobot-server/env && "
-            "sudo chmod 600 /etc/npa-lerobot-server/env"
+            f"mkdir {shlex.quote(directory + '/source')} && "
+            f"tar -xzf {shlex.quote(directory + '/npa.tgz')} -C {shlex.quote(directory + '/source')} && "
+            f"/opt/lerobot/venv/bin/pip install -q {shlex.quote(directory + '/source/npa[server]')}"
         )
-    finally:
-        os.unlink(env_path)
 
-    # 5. Upload and enable systemd unit
-    service_src = _DEPLOY_DIR / "npa-lerobot-server.service"
-    if service_src.exists():
-        _sftp_upload(ssh, str(service_src), "/tmp/npa-lerobot-server.service")
+        # 3. Render and upload server.yaml
+        env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
+        template = env.get_template("server.yaml.j2")
+        rendered = template.render(**server_config)
+
+        write_remote_text_file(ssh, "/etc/npa/server.yaml", rendered, owner="root")
+
+        # 4. Write env file for systemd from the server config
+        env_vars: dict[str, Any] = {
+            "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
+            "NPA_SERVER_PORT": server_config.get("server_port", 8080),
+            "NPA_CHECKPOINT_DIR": server_config.get("checkpoint_dir", "/opt/lerobot/checkpoints"),
+            "NPA_CHECKPOINT_BUCKET": server_config.get("checkpoint_bucket", ""),
+            "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
+            "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
+            "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
+        }
+        shared_env = server_config.get("shared_env", {})
+        if isinstance(shared_env, dict):
+            env_vars.update(shared_env)
+        write_remote_env_file(ssh, "/etc/npa-lerobot-server/env", env_vars, owner="root")
+
+        # 5. Upload and enable systemd unit
+        service_src = _DEPLOY_DIR / "npa-lerobot-server.service"
+        if service_src.exists():
+            write_remote_text_file(
+                ssh, "/etc/systemd/system/npa-lerobot-server.service",
+                service_src.read_text(), owner="root",
+            )
+            ssh.run_or_raise(
+                "sudo systemctl daemon-reload && "
+                "sudo systemctl enable npa-lerobot-server"
+            )
+
+        # 6. Create required directories
         ssh.run_or_raise(
-            "sudo mv /tmp/npa-lerobot-server.service /etc/systemd/system/ && "
-            "sudo systemctl daemon-reload && "
-            "sudo systemctl enable npa-lerobot-server"
+            "sudo mkdir -p /var/log/npa-lerobot /opt/lerobot/checkpoints /opt/lerobot/job_status && "
+            "sudo chown ubuntu:ubuntu /var/log/npa-lerobot /opt/lerobot/checkpoints /opt/lerobot/job_status"
         )
 
-    # 6. Create required directories
-    ssh.run_or_raise(
-        "sudo mkdir -p /var/log/npa-lerobot /opt/lerobot/checkpoints /opt/lerobot/job_status && "
-        "sudo chown ubuntu:ubuntu /var/log/npa-lerobot /opt/lerobot/checkpoints /opt/lerobot/job_status"
-    )
-
-    # 7. Restart service
-    ssh.run_or_raise("sudo systemctl restart npa-lerobot-server")
+        # 7. Restart service
+        ssh.run_or_raise("sudo systemctl restart npa-lerobot-server")
 
 
 def deploy_lerobot_container(
@@ -477,9 +426,10 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
     if server_config.get("gpu_count"):
         env_args["NPA_GPU_COUNT"] = str(server_config["gpu_count"])
     env_args.update(cache_env)
-    env_flags = " ".join(
-        f"--env {shlex.quote(key + '=' + str(value))}"
-        for key, value in env_args.items()
+    # A later env file retains the former --env override precedence without
+    # exposing shared credentials in either the SSH shell or Docker argv.
+    write_remote_docker_env_file(
+        ssh, "/opt/lerobot/container.env", env_args, owner=ssh_user
     )
     volume_flags = " ".join(
         [
@@ -503,7 +453,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
         f"sudo docker rm -f {shlex.quote(container_name)} >/dev/null 2>&1 || true\n"
         f"sudo docker run -d --gpus all --ipc=host --network host "
         f"--name {shlex.quote(container_name)} --restart unless-stopped "
-        f"--env-file /opt/lerobot/.env {env_flags} {volume_flags} "
+        f"--env-file /opt/lerobot/.env --env-file /opt/lerobot/container.env {volume_flags} "
         f"{shlex.quote(image_ref)}"
     )
     ssh.run_or_raise(run_cmd)
@@ -643,22 +593,5 @@ def write_manifest(
 
 
 def _sftp_upload(ssh: SSHClient, local_path: str, remote_path: str) -> None:
-    """Upload a file via SFTP using paramiko."""
-    import paramiko
-
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    key_path = os.path.expanduser(ssh._config.key_path)
-    try:
-        client.connect(
-            hostname=ssh._config.host,
-            username=ssh._config.user,
-            key_filename=key_path,
-            timeout=15,
-            look_for_keys=False,
-        )
-        sftp = client.open_sftp()
-        sftp.put(local_path, remote_path)
-        sftp.close()
-    finally:
-        client.close()
+    """Upload through the shared private, atomic SFTP implementation."""
+    ssh.upload_file(local_path, remote_path)

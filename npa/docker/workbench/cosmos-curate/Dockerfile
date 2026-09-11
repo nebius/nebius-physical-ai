@@ -43,7 +43,7 @@ ARG MICROMAMBA_VERSION=2.0.5
 # execute whatever the endpoint served; verify it first and bump both together.
 ARG MICROMAMBA_SHA256=ff1a10b46e9ee673bb672ac464d4787b4e9c3569b75816a56f76dddc0b1f07fc
 ARG FFMPEG_VERSION=7.1.1
-ARG TORCH_VERSION=2.9.0
+ARG TORCH_VERSION=2.13.0
 
 LABEL npa.tool="cosmos-curate" \
       npa.version="${COSMOS_CURATE_VERSION}" \
@@ -160,7 +160,7 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
     && python -m pip install --no-cache-dir \
       "cosmos-xenna==${COSMOS_XENNA_VERSION}" \
       "attrs==26.1.0" \
-      "av==18.0.0" \
+      "av==17.1.0" \
       "azure-identity==1.25.3" \
       "azure-storage-blob==12.30.0" \
       "boto3==1.43.61" \
@@ -185,6 +185,7 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/smoke_functional.py /o
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/entrypoint.sh /opt/npa/docker/workbench/cosmos-curate/entrypoint.sh
 
 RUN python -m pip install --no-cache-dir -e /opt/npa \
+    && python -m pip check \
     && python -m py_compile /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py \
     && chmod +x /opt/npa/docker/workbench/cosmos-curate/entrypoint.sh
 

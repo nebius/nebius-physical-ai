@@ -30,11 +30,7 @@ runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
     REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "openpi-pi05-four-mode.yaml"
+    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -113,10 +109,28 @@ def spec_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def sky_bin(tmp_path: Path) -> str:
+def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from npa.orchestration.skypilot import workflow as workflow_runtime
+
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+    # This synthetic executable has no daemon. Keep the real health gate, but
+    # inspect synthetic procfs so an operator's running daemon cannot replace
+    # the accelerator behavior these tests are intended to exercise.
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    real_probe = workflow_runtime._probe_local_api_daemon_cwd
+
+    def probe(sky_executable, **kwargs):
+        kwargs.setdefault("proc_root", proc_root)
+        return real_probe(sky_executable, **kwargs)
+
+    monkeypatch.setattr(
+        workflow_runtime,
+        "_probe_local_api_daemon_cwd",
+        probe,
+    )
     return str(path)
 
 
@@ -223,7 +237,8 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     spec = {**SPEC}
@@ -238,6 +253,7 @@ def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
         )
 
     assert excinfo.type.__name__ == "Exit"
+    assert "nodes offer at most 1 of that GPU each" in capsys.readouterr().err
 
 
 def test_an_explicit_env_override_is_left_alone(
@@ -811,6 +827,28 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     assert excinfo.type.__name__ == "Exit"
 
 
+def test_registered_uncontracted_image_stops_after_pull_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+
+    def metadata_forbidden(*_args, **_kwargs):
+        raise AssertionError("uncontracted image reached bootstrap metadata lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata_forbidden,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        context="exact-context",
+    )
+
+    assert result == []
+
+
 def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
     digest = "sha256:" + "9" * 64
 
@@ -856,16 +894,22 @@ def test_image_bootstrap_probe_paths_share_observing_progress_helper(
             source="oci_attestation",
         ),
     )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
-        lambda **_kwargs: ImageContractEvidence(
+    probes = []
+
+    def probe(**kwargs):
+        probes.append(kwargs)
+        return ImageContractEvidence(
             image=immutable,
             digest=digest,
             contract_version=CONTRACT_VERSION,
             state="compatible",
             source="ephemeral_capability_probe",
             cleanup="verified",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
     )
     progress: list[tuple[str, int]] = []
     monkeypatch.setattr(
@@ -882,6 +926,8 @@ def test_image_bootstrap_probe_paths_share_observing_progress_helper(
     )
 
     assert progress == [(digest, 1800)]
+    assert len(probes) == 1
+    assert probes[0].get("runtime_bootstrap", False) is not runtime_probe_required
 
 
 def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
@@ -1149,24 +1195,17 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_preserves_an_existing_project_registry_override(
+def test_submit_ignores_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy saved registry overrides remain effective without new configure writes.
-
-    Without this, preflight checked one registry while the run pulled from
-    another, and the build command it printed named the wrong destination.
-    """
+    """A stale saved private registry must not repoint public workload images."""
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "registry-us.example/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1180,7 +1219,7 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
-def test_npa_registry_env_wins_over_project_config(
+def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
@@ -1189,18 +1228,21 @@ def test_npa_registry_env_wins_over_project_config(
         lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
-def test_an_unreadable_config_falls_back_to_the_render_default(
+def test_submit_without_explicit_registry_defers_to_render_default_without_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def explode(project=None):  # noqa: ANN001 - test stub
-        raise RuntimeError("no config")
+    config_lookups: list[str | None] = []
 
-    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+    def record_config_lookup(project=None):  # noqa: ANN001 - test stub
+        config_lookups.append(project)
+        return "registry.invalid/project"
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry", record_config_lookup
+    )
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
+    assert config_lookups == []

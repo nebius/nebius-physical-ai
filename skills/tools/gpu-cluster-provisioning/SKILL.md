@@ -52,6 +52,27 @@ The policy is topology-independent — expected capacity is derived from the
 requested node count and GPU preset, not from a GPU SKU or an assumption of
 eight devices per node.
 
+## RTX rendering profile
+
+For Isaac/RTX rendering on RTX PRO 6000 Kubernetes, use the explicit profile:
+
+```bash
+npa cluster up --gpu-workload-profile rtx-rendering
+```
+
+The profile selects `gpu-rtx6000` (or preserves an exact zonal variant such as
+`gpu-rtx6000-a`) and defaults to `1gpu-24vcpu-218gb`; an
+explicit `8gpu-192vcpu-1744gb` RTX PCIe preset is also supported. Both use the
+GPU Operator mounted-driver path and a mandatory graphics readiness gate. The
+8-GPU RTX shape is not an SXM/NVL fabric topology, so it does not enable a GPU
+cluster or the NVSwitch unsafe-operator exception. The
+gate runs after stabilization and CUDA vectorAdd on every GPU node. Its pinned,
+payload-clean RTX image must dynamically load operator-mounted GLX and EGL,
+create a Vulkan instance, and enumerate an NVIDIA physical device. Do not
+replace it with library filename or environment-variable inspection. The empty
+profile preserves the managed-image default for every other workload, and the
+NVSwitch operator rejection remains in force.
+
 ## Provision with the health gates on
 
 ```bash
@@ -60,7 +81,7 @@ npa cluster up \
   --gpu-nodes 2 --gpu-platform <platform> --gpu-preset <preset> \
   --cpu-nodes 1 --cpu-platform <platform> --cpu-preset <preset> \
   --gpu-driver-mode auto --managed-driver-preset cuda13.0 \
-  --gpu-health-stability-seconds 120 \
+  --gpu-health-stabilization-seconds 120 \
   --validation-timeout 60 --timeout 120
 ```
 
@@ -70,17 +91,19 @@ Defaults are deliberately strict, and every one of them is on for a reason:
   components, CUDA vectorAdd, and the default StorageClass.
 - `--gpu-cuda-smoke` (default) runs NVIDIA's CUDA vectorAdd **on every requested
   GPU node**, which is the cheapest proof that drivers actually work.
-- `--gpu-health-stability-seconds` (default 120) requires nodes, boot IDs,
+- `--gpu-health-stabilization-seconds` (default 120) requires nodes, boot IDs,
   fabric, capacity, and components to stay healthy for that window. It exists
   because GPU nodes routinely look healthy for a few seconds during labelling.
 - `--sky-smoke` (default) runs a SkyPilot Kubernetes GPU task and cleans it up.
+- `--gpu-workload-profile rtx-rendering` additionally requires the per-node
+  GLX/EGL/Vulkan renderer-facing gate; it has no skip/warn-only mode.
 
 Do not reach for `--skip-validate` / `--skip-gpu-cuda-smoke` to make a deploy
 "succeed" faster. Skipping them moves the failure to your first real job, where
 it costs more and is harder to attribute. `-1` on `--gpu-nodes` / `--cpu-nodes`
 keeps the configured value rather than meaning zero.
 
-For reserved capacity, `--capacity-block-group-id` selects a private capacity
+For reserved capacity, `--capacity-block-group` selects a private capacity
 block for strict GPU node-group reservation. `--preemptible` is often the only
 way to get several GPUs at once, but a reclaim stops nodes mid-run — keep CPU
 stages on the CPU pool, and note that preemptibility changes the capacity pool

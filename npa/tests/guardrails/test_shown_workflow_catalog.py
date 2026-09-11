@@ -20,22 +20,22 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = REPO_ROOT / "npa" / "workflows" / "workbench"
-NPA_WORKFLOWS = WORKBENCH / "npa-workflows"
+NPA_WORKFLOWS = REPO_ROOT / "workflows"
 
 
 def test_skypilot_catalog_dir_is_not_reintroduced() -> None:
     forbidden = WORKBENCH / "skypilot"
     assert not forbidden.exists(), (
         "The raw SkyPilot task catalog must not live in the shown workbench "
-        "catalog. Author npa.workflow specs in npa/workflows/workbench/"
-        "npa-workflows/ instead; raw SkyPilot YAML belongs only in guarded "
+        "catalog. Author npa.workflow specs in workflows/testing/ instead; "
+        "raw SkyPilot YAML belongs only in guarded "
         "tool-specific examples or test fixtures."
     )
 
 
 def test_no_raw_skypilot_task_yaml_in_shown_catalog() -> None:
     # Covers the catalog directory plus any promoted top-level blueprint spec
-    # (e.g. npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml).
+    # (e.g. workflows/testing/physical-ai-data-factory.yaml).
     offenders = [
         str(path.relative_to(REPO_ROOT))
         for path in iter_npa_workflow_specs()
@@ -51,7 +51,10 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
-    assert [path.name for path in specs].count("sim2real.yaml") == 1
+    for name in ("sim2real.yaml", "paidf-cosmos3.yaml", "nurec-reconstruct.yaml"):
+        expected = NPA_WORKFLOWS / "main" / name
+        assert [path for path in specs if path.name == name] == [expected]
+        assert not (NPA_WORKFLOWS / "testing" / name).exists()
 
 
 def test_tool_catalog_is_reachable_or_explicitly_public_reusable() -> None:

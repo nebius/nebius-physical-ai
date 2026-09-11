@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -149,13 +150,14 @@ def _redact_backend_secrets(message: str, context: TerraformBackendContext | Non
 
 
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
-_WORKBENCH_BASE = Path.home() / ".npa" / "workbenches"
+_NPA_CONFIG_DIR = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+_WORKBENCH_BASE = _NPA_CONFIG_DIR / "workbenches"
 # Shared Terraform plugin cache so every fresh per-deploy work dir reuses
 # already-downloaded providers instead of re-fetching them from
 # registry.terraform.io. This makes `terraform init` faster and resilient to
 # transient registry outages (a warm cache needs no network at all). Overridable
 # via the standard TF_PLUGIN_CACHE_DIR env var.
-_TF_PLUGIN_CACHE_DIR = Path.home() / ".npa" / "terraform-plugin-cache"
+_TF_PLUGIN_CACHE_DIR = _NPA_CONFIG_DIR / "terraform-plugin-cache"
 # Substrings that identify a transient `terraform init` failure worth retrying
 # (registry/network hiccups) rather than a real configuration error.
 _TRANSIENT_INIT_MARKERS = (
@@ -244,6 +246,7 @@ def _run(
     tf = _require_terraform()
     cmd = [tf] + args
     environment = _tf_env(cwd)
+    environment["NPA_SSH_TRUST_PYTHON"] = sys.executable
     environment.update(env_overrides or {})
     backend_context = _backend_context(cwd)
     if args and args[0] != "init" and _uses_remote_s3_backend(cwd) and backend_context is None:
@@ -539,6 +542,17 @@ def prepare_working_dir(
     """
     work_dir = _WORKBENCH_BASE / project / name
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Persist the boot challenge across retries. It is public, but must remain
+    # bound to this deployment and never be regenerated on each apply.
+    nonce_file = work_dir / "ssh-trust.auto.tfvars.json"
+    if not nonce_file.exists():
+        try:
+            with nonce_file.open("x", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                json.dump({"ssh_host_key_nonce": secrets.token_hex(32)}, handle)
+        except FileExistsError:
+            pass
 
     # Copy every file from the bundled Terraform directory.
     for src in _BUNDLED_TF_DIR.iterdir():

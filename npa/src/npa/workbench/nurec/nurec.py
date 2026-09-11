@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -707,6 +708,8 @@ class NurecFetchResult:
     ncore_json: str
     shard_count: int
     bytes_downloaded: int
+    observed_scene: str = ""
+    observed_variant: str = ""
     camera_ids: tuple[str, ...] = ()
     lidar_ids: tuple[str, ...] = ()
     colmap_dir: str = ""
@@ -726,6 +729,8 @@ class NurecFetchResult:
             "ncore_json": self.ncore_json,
             "shard_count": self.shard_count,
             "bytes_downloaded": self.bytes_downloaded,
+            "observed_scene": self.observed_scene,
+            "observed_variant": self.observed_variant,
             "camera_ids": list(self.camera_ids),
             "lidar_ids": list(self.lidar_ids),
             "colmap_dir": self.colmap_dir,
@@ -754,6 +759,7 @@ class NurecReconstructResult:
     command: tuple[str, ...] = ()
     output_uri: str = ""
     errors: tuple[str, ...] = ()
+    initialization: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -766,6 +772,7 @@ class NurecReconstructResult:
             "parsed_config_path": self.parsed_config_path,
             "metrics_path": self.metrics_path,
             "metrics": dict(self.metrics),
+            "initialization": dict(self.initialization),
             "gt_dir": self.gt_dir,
             "command": list(self.command),
             "output_uri": self.output_uri,
@@ -1249,6 +1256,41 @@ def fetch_nurec_dataset(
             ),
         )
 
+    # Independent observed provenance: derive the scene/variant from the actual
+    # unpacked archive directory, then fail closed if it disagrees with the
+    # requested values. This is not an echo of the request arguments — it is
+    # grounded in the extracted content itself, so a fetch that pulled the wrong
+    # capture (or a caller that passed the wrong flags) is rejected at fetch time.
+    observed_scene, observed_variant = derive_scene_variant_from_dir(scene_dir)
+    fetched = {
+        "dataset_id": config.dataset_id,
+        "scene": config.scene,
+        "variant": config.variant,
+        "observed_scene": observed_scene,
+        "observed_variant": observed_variant,
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene=config.scene,
+        requested_variant=config.variant,
+        requested_dataset_id=config.dataset_id,
+    )
+    if not ok:
+        return NurecFetchResult(
+            ok=False,
+            dataset_id=config.dataset_id,
+            scene=config.scene,
+            variant=config.variant,
+            scene_dir=str(scene_dir),
+            ncore_json="",
+            shard_count=0,
+            bytes_downloaded=bytes_downloaded,
+            observed_scene=observed_scene,
+            observed_variant=observed_variant,
+            colmap_dir=colmap_dir,
+            errors=("provenance mismatch: " + "; ".join(errors),),
+        )
+
     ncore_json = find_ncore_json(scene_dir)
     if ncore_json is None:
         return NurecFetchResult(
@@ -1310,6 +1352,8 @@ def fetch_nurec_dataset(
         ncore_json=str(resolved_json),
         shard_count=len(shards),
         bytes_downloaded=bytes_downloaded,
+        observed_scene=observed_scene,
+        observed_variant=observed_variant,
         camera_ids=cameras,
         lidar_ids=lidars,
         colmap_dir=colmap_dir,
@@ -1362,18 +1406,99 @@ def find_scene_dir(root: Path, scene_dir_name: str) -> Path | None:
     return None
 
 
+def derive_scene_variant_from_dir(scene_dir: str | Path) -> tuple[str, str]:
+    """Infer ``(scene, variant)`` from the *unpacked* NCore scene directory.
+
+    This is independent observed content from the actual extracted archive, not
+    an echo of the request arguments. The PPISP archives name the directory
+    ``<scene>`` for the standard/full variant and ``<scene>_<variant>``
+    (e.g. ``toro_auto``) otherwise. Returns ``(scene, "standard")`` when the
+    directory carries no variant suffix.
+    """
+    name = Path(scene_dir).name
+    if "_" in name:
+        scene, variant = name.rsplit("_", 1)
+        return scene.strip(), variant.strip()
+    return name, "standard"
+
+
+def _variant_layout_key(variant: str) -> str:
+    """Normalize a variant label that maps to the unsuffixed scene directory.
+
+    ``scene_dir_name`` returns the bare scene name for ``""``/``standard``/
+    ``default``/``full`` and ``<scene>_<variant>`` otherwise, so all of the
+    bare-layout labels compare equal when validating observed content.
+    """
+    v = (str(variant) or "").strip().lower()
+    if v in {"", "standard", "default", "full"}:
+        return "standard"
+    return v
+
+
+def validate_fetch_provenance(
+    fetched: Mapping[str, Any],
+    *,
+    requested_scene: str,
+    requested_variant: str,
+    requested_dataset_id: str = "",
+) -> tuple[bool, list[str]]:
+    """Fail-closed provenance check against *independently observed* content.
+
+    A fetch result must never be trusted just because it echoes the requested
+    dataset/scene/variant: those top-level fields are copied from the request
+    arguments. The authoritative evidence is the observed unpacked content
+    (``observed_scene`` / ``observed_variant``), which the fetch derives from the
+    scene directory that actually landed in the extracted archive. Missing
+    observed content, an observed-vs-requested mismatch, or a dataset_id mismatch
+    all fail closed.
+
+    Returns ``(ok, errors)``; ``errors`` is empty when ``ok`` is True.
+    """
+    errors: list[str] = []
+    observed_scene = str(fetched.get("observed_scene") or "")
+    observed_variant = str(fetched.get("observed_variant") or "")
+    if not observed_scene and not observed_variant:
+        return False, ["fetch result carries no observed unpacked content"]
+    if str(observed_scene).strip() != str(requested_scene).strip():
+        errors.append(
+            f"scene observed={observed_scene!r} != requested={requested_scene!r}"
+        )
+    if _variant_layout_key(observed_variant) != _variant_layout_key(requested_variant):
+        errors.append(
+            f"variant observed={observed_variant!r} != requested={requested_variant!r}"
+        )
+    if requested_dataset_id and str(fetched.get("dataset_id") or "") != requested_dataset_id:
+        errors.append("dataset_id mismatch")
+    return (not errors), errors
+
+
 def find_ncore_json(scene_dir: Path) -> Path | None:
     """Return the NCore V4 metadata JSON that sits next to the ``.zarr.itar`` shards.
 
-    NCore names the metadata ``<NAME>.json`` alongside ``<NAME>.zarr.itar``, so
-    prefer a JSON whose stem matches a shard; fall back to the shallowest JSON.
+    Prefer a valid V4 metadata document so conversion provenance and rig sidecars
+    cannot hide a renamed sequence. Retain the legacy shard-name fallback for
+    older exports whose metadata does not identify its format.
     """
     shard_stems = {path.name.split(".", 1)[0] for path in scene_dir.rglob("*.itar")}
     candidates = sorted(scene_dir.rglob("*.json"), key=lambda p: (len(p.parts), p.name))
+    # Conversion publishes a stable sequence.json alongside conversion.json and
+    # npa-rig.json. Its filename need not share the original shard stem: inspect
+    # V4 metadata before applying the legacy filename fallback.
+    for candidate in candidates:
+        try:
+            metadata = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("version") == "v4"
+            and metadata.get("component_stores")
+        ):
+            return candidate
     for candidate in candidates:
         if candidate.name.split(".", 1)[0] in shard_stems:
             return candidate
-    return candidates[0] if candidates else None
+    return None
 
 
 def read_rig_sidecar(ncore_json: Path | str) -> dict[str, Any]:
@@ -1469,6 +1594,13 @@ def reconstruct_scene(
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
+    from npa.workbench.nurec.ncore_initialization import (
+        export_initialization,
+        plan_initialization,
+    )
+
+    verify_ncore_input(ncore_json)
+    config, initialization = plan_initialization(config, ncore_json)
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     out_dir = config.resolved_out_dir
@@ -1489,8 +1621,10 @@ def reconstruct_scene(
             parsed_config_path="",
             metrics_path="",
             command=tuple(command),
+            initialization=initialization,
         )
 
+    initialization = export_initialization(ncore_json, initialization)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
@@ -1504,6 +1638,7 @@ def reconstruct_scene(
             parsed_config_path="",
             metrics_path="",
             command=tuple(command),
+            initialization=initialization,
             errors=(
                 f"NRE reconstruction failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
@@ -1559,6 +1694,7 @@ def reconstruct_scene(
         gt_dir=gt_dir,
         command=tuple(command),
         errors=tuple(errors),
+        initialization=initialization,
     )
 
 
@@ -1651,6 +1787,12 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
     ``{"test/psnr": ...}`` -- but the extraction is not limited to ``test/*``; any
     numeric leaf is recorded.
 
+    NRE 26.04 ships validation numbers under an ``aggregated_metrics`` section
+    where each entry is ``test/psnr: {aggregation_method: mean, value: 22.66}``.
+    Those are additionally exposed under the bare metric name (``test/psnr``), so
+    callers always read ``test/psnr`` / ``test/ssim`` / ``test/lpips`` regardless
+    of whether a release writes the flat form or the aggregated wrapper.
+
     Parsed with PyYAML when available and a flat ``key: value`` scan otherwise, so
     the helper stays usable in a dependency-light container. Metrics are EVIDENCE,
     never the deliverable: a metrics file that is missing, unreadable, or corrupt
@@ -1672,6 +1814,19 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
             for key, value in _flatten(payload):
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     metrics[key] = float(value)
+            # NRE 26.04 writes its validation numbers under an
+            # ``aggregated_metrics`` section, each entry a dict like
+            # ``test/psnr: {aggregation_method: mean, value: 22.66}``. Expose the
+            # numeric ``value`` under the bare metric name so callers can read
+            # ``test/psnr`` / ``test/ssim`` / ``test/lpips`` exactly as the skill
+            # documents, rather than the nested ``aggregated_metrics/.../value``.
+            aggregated = payload.get("aggregated_metrics")
+            if isinstance(aggregated, dict):
+                for name, entry in aggregated.items():
+                    if isinstance(entry, dict):
+                        value = entry.get("value")
+                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                            metrics[str(name)] = float(value)
             return metrics
     except ImportError:
         _logger.debug("PyYAML unavailable; falling back to a flat metrics scan")
@@ -1838,6 +1993,8 @@ def materialize_uri(
     in ``/tmp`` between them: the NCore sequence and the trained USDZ have to
     travel through S3. A local ``source_uri`` is returned as-is so the
     single-pod SkyPilot task keeps working without a round-trip.
+    Remote prefixes use a fresh generation alongside ``destination``; callers
+    must use the returned path. Existing generations are never overlaid.
     """
     if not source_uri:
         raise NurecError("source_uri is required")
@@ -1845,6 +2002,7 @@ def materialize_uri(
         local = Path(source_uri)
         if not local.exists():
             raise NurecError(f"local source does not exist: {local}")
+        _verify_materialized_colmap(local)
         return local
 
     from npa.clients.storage import StorageClient
@@ -1853,11 +2011,56 @@ def materialize_uri(
     target = Path(destination)
     is_prefix = source_uri.endswith("/")
     if is_prefix:
-        target.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Retain only this download as the returned generation. Overlaying an
+        # old cache can select a different, internally valid prior capture.
+        downloaded = Path(tempfile.mkdtemp(prefix=f"{target.name}-", dir=target.parent))
+        try:
+            client.download_path(source_uri, str(downloaded))
+            _verify_materialized_colmap(downloaded)
+        except Exception:
+            shutil.rmtree(downloaded)
+            raise
+        return downloaded
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
-    client.download_path(source_uri, str(target))
+        client.download_path(source_uri, str(target))
+    _verify_materialized_colmap(target)
     return target
+
+
+def verify_ncore_input(ncore_json: Path | str) -> None:
+    """Check converted local inputs before sensor discovery or NRE execution.
+
+    Legacy sequences without conversion sidecars retain their existing path.
+    Only the selected sequence directory is checked, not unrelated captures.
+    """
+    root = Path(ncore_json).parent
+    if not any(
+        path.exists() or path.is_symlink()
+        for path in (root / "conversion.json", root / ".npa-colmap-claim.json")
+    ):
+        return
+    from npa.workbench.nurec.colmap import verify_conversion_inventory
+
+    verify_conversion_inventory(root)
+
+
+def _verify_materialized_colmap(path: Path) -> None:
+    from npa.workbench.nurec.colmap import (
+        CONVERSION_REPORT,
+        PUBLICATION_CLAIM,
+        verify_conversion_inventory,
+    )
+
+    root = path if path.is_dir() else path.parent
+    directories = {
+        sidecar.parent
+        for name in (CONVERSION_REPORT, PUBLICATION_CLAIM)
+        for sidecar in root.rglob(name)
+    }
+    for directory in sorted(directories):
+        verify_conversion_inventory(directory)
 
 
 def publish_ncore_sequence(

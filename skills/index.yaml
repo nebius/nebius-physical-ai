@@ -28,7 +28,55 @@ licenses:
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
     applies_to:
       - physical-ai-data-factory
+  - path: skills/NOTICE-NVIDIA-NCORE-COLMAP
+    applies_to:
+      - neural-reconstruction
 skills:
+  - name: ray-workbench
+    category: tools
+    when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."
+    path: skills/tools/ray-workbench/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/ray.md
+      - type: cli_help
+        args: ["workbench", "cosmos3", "ray-batch", "--help"]
+        contains: "durable SDG batch"
+      - type: cli_help
+        args: ["fleet", "plan", "--help"]
+        contains: "resolved deployment plan"
+  - name: ray-train-synthetic
+    category: tools
+    when_to_use: "Run native Ray Train distributed CUDA synthetic regression, S3 checkpoints, optimizer recovery and factual Rerun metrics."
+    path: skills/tools/ray-train-synthetic/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/workflows/workbench/ray-train-synthetic/train.py
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/ray-train-synthetic/cluster.yaml
+  - name: curobo
+    category: tools
+    when_to_use: "Run, validate or review cuRobo V2 Franka pose planning and full motion benchmarks on CUDA with factual RRD artifacts."
+    path: skills/tools/curobo/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "curobo", "benchmark", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/curobo-benchmark.yaml
+  - name: access-approval
+    category: atomic
+    when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."
+    path: skills/atomic/access-approval/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/agent_backend/access_approval.py
+      - type: file_exists
+        path: npa/src/npa/workbench/access_approval.py
+      - type: file_exists
+        path: npa/tests/agent_eval/test_access_approval.py
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
@@ -82,24 +130,38 @@ skills:
         path: npa/docker/workbench/packaging-contract.yaml
       - type: file_exists
         path: npa/src/npa/deploy/images.py
+  - name: contributions
+    category: atomic
+    when_to_use: "Write or review NPA contributions, including workbench agent changes, for readability, documentation, and prohibited anti-patterns."
+    path: skills/atomic/contributions/SKILL.md
+    smoke:
+      - type: file_exists
+        path: CONTRIBUTING.md
+      - type: file_exists
+        path: skills/atomic/contributions/SKILL.md
   - name: cosmos3-codebase-nav
     category: atomic
-    when_to_use: "Navigate NPA Cosmos3 integration and upstream Cosmos framework files."
+    when_to_use: "Navigate NPA Cosmos3 integration, Nano vLLM-Omni diffusion, and upstream Cosmos framework files."
     path: skills/atomic/cosmos3-codebase-nav/SKILL.md
     smoke:
       - type: file_exists
         path: npa/src/npa/workbench/cosmos/cosmos3.py
+      - type: file_exists
+        path: npa/src/npa/workbench/cosmos/nano_video_augment.py
       - type: cli_help
         args: ["workbench", "cosmos", "check", "--help"]
         contains: "output"
   - name: cosmos3-env-troubleshoot
     category: atomic
-    when_to_use: "Troubleshoot Cosmos3 setup, fetch, inference, CUDA, Docker, and credential failures."
+    when_to_use: "Troubleshoot Cosmos3 setup, inference, Nano video artifact recovery, CUDA, Docker, and credential failures."
     path: skills/atomic/cosmos3-env-troubleshoot/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "cosmos", "fetch", "--help"]
         contains: "skip-checkpoint"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-augment-recover", "--help"]
+        contains: "output-path"
   - name: find-artifacts
     category: atomic
     when_to_use: "Discover, classify, and load artifacts in npa agent using artifact-first browse/pick/view flow."
@@ -128,7 +190,7 @@ skills:
         contains: "json"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml
+          - workflows/testing/cosmos-fetch.yaml
   - name: debug-failed-run
     category: atomic
     when_to_use: "Triage a workflow run that failed, hung, or produced no artifacts: status and pod-level reason, stage logs, S3 artifact evidence, image pullability, scheduling, and the resume-vs-cancel decision."
@@ -183,7 +245,7 @@ skills:
         contains: "--preemptible"
   - name: health-preflight
     category: atomic
-    when_to_use: "Before any deploy, image build, or GPU submit: prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` and `npa workbench health access` instead of failing mid-run."
+    when_to_use: "Before any deploy, image build, provisioning, or GPU submit: prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`."
     path: skills/atomic/health-preflight/SKILL.md
     smoke:
       - type: cli_help
@@ -201,10 +263,10 @@ skills:
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+          - workflows/testing/bdd100k-pipeline.yaml
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/sim2real.yaml
+          - workflows/main/sim2real.yaml
   - name: protect-nebius-infra-details
     category: atomic
     when_to_use: "Prepare commits, docs, reports, examples, tests, PR bodies, issues, or live-validation handoffs involving Nebius without publishing concrete live infrastructure details or credentials."
@@ -243,7 +305,7 @@ skills:
         contains: "workflow"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+          - workflows/testing/bdd100k-pipeline.yaml
   - name: teardown-and-cost
     category: atomic
     when_to_use: "Stop spend safely and audit orphaned resources: the mandatory cancel-before-destroy ordering, which commands touch cloud versus local state, finding leaked clusters/agent VMs/controllers/buckets, and choosing the cheapest tier that proves the point."
@@ -325,7 +387,7 @@ skills:
         path: npa/tests/guardrails/test_three_tier_contract.py
   - name: pre-pr-validation
     category: atomic
-    when_to_use: "Before pushing an npa change: which of the six PR gates apply, and the exact local command for each, in cheapest-first order."
+    when_to_use: "Before pushing an npa change: which PR gates apply, and the exact local command for each, in cheapest-first order."
     path: skills/atomic/pre-pr-validation/SKILL.md
     smoke:
       - type: file_exists
@@ -385,7 +447,7 @@ skills:
         contains: "event"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/dataset-ingest-curate.yaml
+          - workflows/testing/dataset-ingest-curate.yaml
   - name: detection-training
     category: tools
     when_to_use: "Train and evaluate Faster R-CNN detectors from LanceDB materialized views (BDD100K failure-mode slices): direct versus deployed-service execution, the label map required for string categories, and checkpoint discovery at eval time."
@@ -399,7 +461,21 @@ skills:
         contains: "gpu-type"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+          - workflows/testing/bdd100k-pipeline.yaml
+  - name: robocasa
+    category: tools
+    when_to_use: "Run RoboCasa kitchen-task simulation as a first-class NPA workbench tool: Gymnasium task registration, kitchen asset availability, headless EGL environment reset, and random rollouts with video artifacts through the npa-robocasa service."
+    path: skills/tools/robocasa/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "robocasa", "run", "--help"]
+        contains: "capability"
+      - type: cli_help
+        args: ["workbench", "robocasa", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/robocasa-smoke.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
@@ -430,9 +506,9 @@ skills:
         contains: "base-run"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/insights-smoke.yaml
-          - npa/workflows/workbench/npa-workflows/insights-aggregate.yaml
-          - npa/workflows/workbench/npa-workflows/hardening-with-insights.yaml
+          - workflows/testing/insights-smoke.yaml
+          - workflows/testing/insights-aggregate.yaml
+          - workflows/testing/hardening-with-insights.yaml
   - name: fiftyone
     category: tools
     when_to_use: "FiftyOne deployment, dataset curation, visualization, launch, and load-dataset behavior."
@@ -508,7 +584,7 @@ skills:
         contains: "runtime"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml
+          - workflows/testing/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
     when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
@@ -558,7 +634,7 @@ skills:
         contains: "checkpoint"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/mjlab-eval.yaml
+          - workflows/testing/mjlab-eval.yaml
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, and credential assumptions."
@@ -609,7 +685,7 @@ skills:
         path: npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml
+          - workflows/testing/byof-open-dreamer.yaml
   - name: wan2-2
     category: tools
     when_to_use: "Package, run, review, or extend the Alibaba Wan 2.2 TI2V-5B BYOF solution, its generated video evidence, or its verified Rerun recording."
@@ -619,8 +695,8 @@ skills:
         path: docs/workbench/wan2.2.md
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
-          - npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+          - workflows/testing/byof-wan2.2.yaml
+          - workflows/testing/byof-wan2.2-multigpu.yaml
   - name: alpamayo2-super
     category: tools
     when_to_use: "Package, preflight, run, validate, or troubleshoot NVIDIA Alpamayo 2 Super 34B VLA inference, its runtime-fetch image, separately gated PhysicalAI-AV data, and B200/RTX PRO 6000 workflow evidence."
@@ -631,7 +707,7 @@ skills:
         contains: "output-path"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+          - workflows/testing/alpamayo2-super-inference.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
   - name: retargeting
@@ -644,7 +720,7 @@ skills:
         contains: "output"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/retargeting.yaml
+          - workflows/testing/retargeting.yaml
   - name: scenario-gen
     category: tools
     when_to_use: "Generate adversarial scenarios via an RL adversary that maximizes failures of a policy-under-test, rank mined hard scenarios, or wire the adversarial-scenario-hardening workflow."
@@ -658,10 +734,10 @@ skills:
         contains: "output"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml
+          - workflows/testing/adversarial-scenario-hardening.yaml
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml
+          - workflows/testing/scenario-gen-smoke.yaml
   - name: skypilot-workflows
     category: tools
     when_to_use: "Run or debug how the engine renders and submits SkyPilot from an npa.workflow spec: invocation, limits, JobGroups, multi-node tasks, runner scripts, and cleanup; use author-npa-workflow for authoring."
@@ -696,9 +772,9 @@ skills:
         path: docs/workbench/token-factory.md
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/token-factory-caption.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-generate.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-cosmos-reason.yaml
+          - workflows/testing/token-factory-caption.yaml
+          - workflows/testing/token-factory-generate.yaml
+          - workflows/testing/token-factory-cosmos-reason.yaml
   - name: vlm-eval
     category: tools
     when_to_use: "Score rollouts with a vision-language model and turn the score into a pipeline gate: single rollout versus prefix-wide loop, rubric/threshold benchmark sweeps, backend selection (self-hosted, api, stub), and judging against a plan an earlier stage wrote."
@@ -712,9 +788,9 @@ skills:
         contains: "input-path"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-          - npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml
-          - npa/workflows/workbench/npa-workflows/vlm-eval-benchmark.yaml
+          - workflows/testing/vlm-eval-single.yaml
+          - workflows/testing/vlm-eval-loop.yaml
+          - workflows/testing/vlm-eval-benchmark.yaml
   - name: workbench-tool
     category: tools
     when_to_use: "Add, change, deploy, or call any NPA workbench tool."
@@ -739,18 +815,24 @@ skills:
         path: docs/quickstart.md
   - name: cosmos3-inference
     category: workflows
-    when_to_use: "Run or modify Cosmos3 inference: the containerized npa-cosmos3 generate path (image/video) or the public text-to-image SkyPilot workflow."
+    when_to_use: "Run or modify Cosmos3 inference: Nano diffusion video continuation/augmentation, containerized framework generation, or the text-to-image SkyPilot workflow."
     path: skills/workflows/cosmos3-inference/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
+          - workflows/testing/cosmos3-text-to-image.yaml
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+          - workflows/testing/cosmos3-generate.yaml
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-augment", "--help"]
+        contains: "edge-threshold"
+      - type: cli_help
+        args: ["workbench", "cosmos3", "nano-video-batch", "--help"]
+        contains: "concurrency"
   - name: cosmos3-ray-serve
     category: tools
     when_to_use: "Operate, validate, or troubleshoot persistent batched Cosmos3-Nano inference through NVIDIA cosmos-framework's native Ray Serve path."
@@ -764,9 +846,21 @@ skills:
         contains: "input-path"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos3-ray-batch.yaml
+          - workflows/testing/cosmos3-ray-batch.yaml
       - type: file_exists
         path: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
+  - name: cosmos3-super-benchmark
+    category: tools
+    when_to_use: "Reproduce, run, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU sweep on B200/H200, the ten-cell B200 public record, or the isolated single-H200 TP-1 suite with durable cell resume."
+    path: skills/tools/cosmos3-super-benchmark/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos3", "super-benchmark", "--help"]
+        contains: "H200 single-GPU validation"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/cosmos3-super-b200-benchmark.yaml
+          - workflows/testing/cosmos3-super-h200-benchmark.yaml
   - name: contribute-workbench-image
     category: workflows
     when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
@@ -787,9 +881,9 @@ skills:
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+          - workflows/testing/cosmos3-generate.yaml
       - type: file_exists
-        path: npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+        path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
     when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
@@ -805,7 +899,7 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/sim2real.yaml
+          - workflows/main/sim2real.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -815,7 +909,7 @@ skills:
     path: skills/workflows/sim2real-operate/SKILL.md
     smoke:
       - type: file_exists
-        path: npa/workflows/workbench/npa-workflows/sim2real.yaml
+        path: workflows/main/sim2real.yaml
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
@@ -850,7 +944,7 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-train.yaml
+          - workflows/testing/sonic-train.yaml
   - name: byof-onboard
     category: workflows
     when_to_use: "Onboard an OSS repo via BYOF — Ubuntu or Isaac Lab base, registry push, container-verify or sim workloads; NPA agent onboard_solution."
@@ -865,7 +959,7 @@ skills:
         contains: "--repo-url"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/byof.yaml
+          - workflows/testing/byof.yaml
       - type: workflow_yaml
         paths:
           - npa/src/npa/workflows/byof/profiles/byof-container-smoke-rtxpro.yaml
@@ -889,12 +983,14 @@ skills:
         path: npa/tests/e2e/test_byof_open_dreamer_live_e2e.py
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml
+          - workflows/testing/byof-open-dreamer.yaml
   - name: agent-fresh-operate
     category: workflows
     when_to_use: "Deploy, teardown, or reproduce a fresh NPA agent VM from scratch; validate /api/models and /api/chat; debug destroy/fresh-setup failures."
     path: skills/workflows/agent-fresh-operate/SKILL.md
     smoke:
+      - type: file_exists
+        path: npa/tests/e2e/test_agent_recovery_live.py
       - type: file_exists
         path: npa/scripts/agent_fresh_setup_loop.sh
       - type: cli_help
@@ -927,17 +1023,17 @@ skills:
         contains: "npa.workflow"
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-          - npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real.yaml
-          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/npa-workflows/av-night-scene-hardening.yaml
-          - npa/workflows/workbench/npa-workflows/cosmos-synth-fanout-curation.yaml
-          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
-          - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
-          - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
+          - workflows/testing/vlm-eval-single.yaml
+          - workflows/testing/tokenfactory-rollout-judge.yaml
+          - workflows/main/sim2real.yaml
+          - workflows/testing/bdd100k-pipeline.yaml
+          - workflows/testing/av-night-scene-hardening.yaml
+          - workflows/testing/cosmos-synth-fanout-curation.yaml
+          - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/tokenfactory-cosmos-gate.yaml
+          - workflows/testing/token-factory-parallel-fanout.yaml
+          - workflows/testing/token-factory-gate-loop.yaml
+          - workflows/testing/isaac-lab-rl-sweep.yaml
   - name: content-agents
     category: workflows
     when_to_use: "Package, validate, or operate NVIDIA Content Agents for real material/physics enrichment and OVRTX validation of a self-contained USD object, producing a narrow Isaac rigid-object handoff."
@@ -949,10 +1045,10 @@ skills:
         path: npa/src/npa/workflows/content_agents.py
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
+          - workflows/testing/content-agents-rigid-object.yaml
   - name: neural-reconstruction
     category: workflows
-    when_to_use: "Reconstruct real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / NRE on Nebius: NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also for NCore sequences that will not load in NRE and for RT-core GPU routing."
+    when_to_use: "Reconstruct real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / NRE on Nebius: COLMAP source ingestion (not yet live validated), NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also for NCore sequences that will not load in NRE and for RT-core GPU routing."
     path: skills/workflows/neural-reconstruction/SKILL.md
     smoke:
       - type: file_exists
@@ -962,12 +1058,16 @@ skills:
       - type: cli_help
         args: ["workbench", "nurec", "reconstruct", "--help"]
         contains: "config-name"
+      - type: cli_help
+        args: ["workbench", "nurec", "convert-colmap", "--help"]
+        contains: "input-path"
       - type: workflow_yaml
         paths:
           - npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
+          - workflows/main/nurec-reconstruct.yaml
+          - workflows/testing/nurec-colmap-reconstruct.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."
@@ -977,7 +1077,7 @@ skills:
         path: docs/workbench/npa-workflow-guide.md
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
+          - workflows/testing/tokenfactory-cosmos-gate.yaml
   - name: diagram-to-npa-workflow
     category: workflows
     when_to_use: "Turn an architecture diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes/arrows/diamonds/back-edges -> states, loops, gates, catalog toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines."
@@ -999,27 +1099,35 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml
+          - workflows/testing/cosmos-fetch.yaml
           - npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-train.yaml
+          - workflows/testing/sonic-train.yaml
       # Retired SkyPilot templates whose npa.workflow spec is now the reference.
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real.yaml
-          - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
-          - npa/workflows/workbench/npa-workflows/cosmos3-reason.yaml
-          - npa/workflows/workbench/npa-workflows/mjlab-eval.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-caption.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-generate.yaml
-          - npa/workflows/workbench/npa-workflows/token-factory-cosmos-reason.yaml
-          - npa/workflows/workbench/npa-workflows/vlm-eval-token-factory.yaml
-          - npa/workflows/workbench/npa-workflows/retargeting.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-eval.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-export.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml
-          - npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml
+          - workflows/testing/bdd100k-pipeline.yaml
+          - workflows/testing/cosmos3-text-to-image.yaml
+          - workflows/main/sim2real.yaml
+          - workflows/testing/isaac-lab-rl-sweep.yaml
+          - workflows/testing/cosmos3-reason.yaml
+          - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/token-factory-caption.yaml
+          - workflows/testing/token-factory-generate.yaml
+          - workflows/testing/token-factory-cosmos-reason.yaml
+          - workflows/testing/vlm-eval-token-factory.yaml
+          - workflows/testing/retargeting.yaml
+          - workflows/testing/sonic-eval.yaml
+          - workflows/testing/sonic-export.yaml
+          - workflows/testing/sonic-export-eval.yaml
+          - workflows/testing/sonic-locomotion-finetuning.yaml
+  - name: emit-reviewable-rrd
+    category: workflows
+    when_to_use: "Author, review, or operate an NPA workflow whose actual run outputs must become a factual, run-scoped, independently validated Rerun .rrd artifact."
+    path: skills/workflows/emit-reviewable-rrd/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
     when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
@@ -1027,7 +1135,7 @@ skills:
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+          - workflows/testing/physical-ai-data-factory.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"

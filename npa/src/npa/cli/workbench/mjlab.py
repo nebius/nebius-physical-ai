@@ -24,7 +24,7 @@ console = Console(stderr=True)
 
 # The `npa.workflow` spec this tool is driven by. Path only: `mjlab workflow` /
 # `status` print it, and `npa workbench workflow submit <path>` runs it.
-WORKFLOW_PATH = Path("npa/workflows/workbench/npa-workflows/mjlab-eval.yaml")
+WORKFLOW_PATH = Path("workflows/testing/mjlab-eval.yaml")
 
 
 class OutputFormat(str, Enum):

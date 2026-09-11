@@ -40,6 +40,7 @@ def test_cluster_up_accepts_the_same_flag_as_provision_if_absent() -> None:
 def test_gpu_driver_and_health_flags_align_across_direct_entrypoints() -> None:
     expected = {
         "--gpu-driver-mode",
+        "--gpu-workload-profile",
         "--managed-driver-preset",
         "--allow-unsafe-nvswitch-operator",
         "--deny-unsafe-nvswitch-operator",

@@ -197,6 +197,11 @@ def _canonical_s3_key(path: str) -> str:
     decoded = unquote(path).lstrip("/")
     if "\\" in decoded:
         raise StorageAuthorizationError("S3 URI keys must not contain backslashes")
+    # S3 prefixes are conventionally written with one trailing delimiter. It
+    # does not identify an empty child segment, so normalize that one safe form
+    # while continuing to reject duplicate separators and traversal segments.
+    if decoded.endswith("/") and not decoded.endswith("//"):
+        decoded = decoded[:-1]
     segments = decoded.split("/") if decoded else []
     if any(segment in {"", ".", ".."} for segment in segments):
         raise StorageAuthorizationError(

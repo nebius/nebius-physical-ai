@@ -8,9 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from npa.workbench.cosmos import reason as reason_module
 
 from npa.workbench.cosmos.reason import (
+    CosmosReasonError,
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,
@@ -161,7 +164,11 @@ def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
     assert selected == select_hosted_event_frames(frames)
 
 
-def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+)
+def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, model, family) -> None:
     frames = []
     for index in range(10):
         frame = tmp_path / f"camera-{index:03d}.png"
@@ -172,18 +179,23 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
         last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
 
         def chat_completion(self, **kwargs):
-            assert kwargs["model"] == DEFAULT_COSMOS3_MODEL
+            assert kwargs["model"] == model
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
             images = kwargs["messages"][0]["content"][1:]
             assert len(images) == 8
             assert all(item["image_url"]["url"].startswith("data:image/png;base64,") for item in images)
             return {
                 "id": "request-public-1",
-                "choices": [{"message": {"content": json.dumps({
+                "model": model,
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
                     "success": True,
                     "score": 0.9,
                     "summary": "stable cube grasp",
                     "per_step": [
-                        {"step": index, "critique_text": f"event {index} stable", "error_tags": ["ok"], "confidence": 0.8}
+                        {"step": index, "critique_text": f"event {index} stable",
+                         "error_tags": ["ok"], "confidence": 0.8,
+                         "camera_observation": "camera-000.png"}
                         for index in range(10)
                     ],
                 })}}],
@@ -191,7 +203,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
             }
 
     result = run_token_factory_rollout_vlm(
-        model_id=DEFAULT_COSMOS3_MODEL,
+        model_id=model,
         image_paths=frames,
         actions=[{"step": index, "action": [0.0]} for index in range(10)],
         task_description="strict cube grasp",
@@ -202,6 +214,9 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) 
     assert len(result["per_step"]) == 10
     assert result["schema"] == "npa.sim2real.vlm_eval.v3"
     assert result["backend"] == "token_factory"
+    assert result["model"] == model
+    assert result["reason_family"] == family
+    assert result["component_source"] == "token_factory_rollout_vlm"
     assert result["request"] == {
         "request_id": "request-public-1",
         "input_tokens": 100,
@@ -497,3 +512,187 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
 
     assert merged["per_step"][0]["critique_source"] == "model_missing"
     assert merged["per_step"][0]["confidence"] == 0.0
+
+
+@pytest.mark.parametrize("model", ["nvidia/Cosmos-Reason2-8B", "vendor/not-a-Cosmos3-Super-Reasoner"])
+def test_hosted_evaluator_rejects_unsupported_model_before_request(model, tmp_path):
+    with pytest.raises(CosmosReasonError, match="unsupported hosted rollout evaluator"):
+        run_token_factory_rollout_vlm(
+            model_id=model, image_paths=[], actions=[], task_description="task",
+            rollout_id="rollout-public", threshold=0.5,
+        )
+
+
+@pytest.mark.parametrize("model_payload", [
+    {}, {"model": None}, {"model": ""}, {"model": 17}, {"model": []},
+    {"model": DEFAULT_COSMOS3_MODEL},
+])
+def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path, model_payload):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **_kwargs):
+            return {**model_payload, "choices": []}
+
+    with pytest.raises(CosmosReasonError, match="different model identity"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[],
+            task_description="task", rollout_id="rollout-public", threshold=0.5,
+            client=Client(),
+        )
+
+
+def _complete_hosted_payload() -> dict:
+    return {
+        "success": True, "score": 0.9, "summary": "red square is inside green outline",
+        "per_step": [{
+            "step": 0, "critique_text": "red square finishes inside outline",
+            "error_tags": ["ok"], "confidence": 0.8,
+            "camera_observation": "frame.png",
+        }],
+    }
+
+
+@pytest.mark.parametrize("score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None])
+def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
+    payload = _complete_hosted_payload()
+    payload["score"] = score
+    with pytest.raises(CosmosReasonError, match="score must be a finite number"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload), actions=[{"step": 0, "action": [0.0]}],
+            rollout_id="synthetic", threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("text", [
+    '{"score":0.9,"success":true,"summary":"test", "per_step":[',
+    'score: 0.9 success: true',
+    'prefix {"score":0.9,"success":true,"per_step":[]}',
+    '```json\n{"score":0.9,"success":true,"per_step":[]}\n```',
+    '[{"score":0.9,"success":true,"per_step":[]}]',
+    '{"score":0.1,"score":0.9,"success":true,"per_step":[]}',
+])
+def test_hosted_parser_does_not_recover_truncated_or_ambiguous_json(text):
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            text, actions=[{"step": 0}], rollout_id="synthetic", threshold=0.5,
+            family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_event", "duplicate_event", "wrong_index", "boolean_index", "blank_critique",
+    "unknown_camera", "missing_confidence", "invalid_confidence", "unknown_tag",
+    "synthetic_critique", "wrong_rollout", "non_boolean_success", "blank_summary",
+])
+def test_hosted_requires_complete_model_local_event_contract(corruption):
+    payload = _complete_hosted_payload()
+    event = payload["per_step"][0]
+    if corruption == "missing_event":
+        payload["per_step"] = []
+    elif corruption == "duplicate_event":
+        payload["per_step"].append(dict(event))
+    elif corruption == "wrong_index":
+        event["step"] = 999
+    elif corruption == "boolean_index":
+        event["step"] = False
+    elif corruption == "blank_critique":
+        event["critique_text"] = ""
+    elif corruption == "unknown_camera":
+        event["camera_observation"] = "unrelated.png"
+    elif corruption == "missing_confidence":
+        event.pop("confidence")
+    elif corruption == "invalid_confidence":
+        event["confidence"] = float("nan")
+    elif corruption == "unknown_tag":
+        event["error_tags"] = ["invented"]
+    elif corruption == "synthetic_critique":
+        event["critique_source"] = "model_missing"
+    elif corruption == "wrong_rollout":
+        payload["rollout_id"] = "unrelated"
+    elif corruption == "non_boolean_success":
+        payload["success"] = "false"
+    elif corruption == "blank_summary":
+        payload["summary"] = ""
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload), actions=[{"step": 0}], rollout_id="synthetic",
+            threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+        )
+
+
+@pytest.mark.parametrize("finish_reason", [None, "length", "content_filter", "tool_calls"])
+def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_json(tmp_path, finish_reason):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            return {
+                "model": kwargs["model"],
+                "choices": [{"finish_reason": finish_reason,
+                             "message": {"content": json.dumps(_complete_hosted_payload())}}],
+            }
+
+    with pytest.raises(CosmosReasonError, match="incomplete completion"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0}],
+            task_description="task", rollout_id="synthetic", threshold=0.5, client=Client(),
+        )
+
+
+def test_complete_hosted_output_retains_original_score_and_ground_truth():
+    payload = _complete_hosted_payload()
+    actions = [{"step": 0, "action": [0.0], "simulator_ground_truth": {"placement_stable": True}}]
+    result = reason_module._parse_hosted_rollout_output(
+        json.dumps(payload), actions=actions, rollout_id="synthetic", threshold=0.5,
+        family="minimax_m3", frame_names=["frame.png"],
+    )
+    assert result["score"] == payload["score"] and result["success"] is True
+    assert result["per_step"][0]["critique_source"] == "model_per_step"
+    assert result["per_step"][0]["simulator_ground_truth"] == actions[0]["simulator_ground_truth"]
+
+
+@pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
+def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp_path, model):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+    actions = [{"step": index, "sim_step": index * 5, "action": [index / 100]} for index in range(65)]
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            lines = prompt.splitlines()
+            sent_actions = json.loads(next(line.removeprefix("Actions by step: ")
+                                           for line in lines if line.startswith("Actions by step: ")))
+            indices = json.loads(next(line.removeprefix("Required per_step indices: ")
+                                     for line in lines if line.startswith("Required per_step indices: ")))
+            assert sent_actions == actions
+            assert indices == list(range(65))
+            payload = _complete_hosted_payload()
+            payload["per_step"] = [
+                {**payload["per_step"][0], "step": index, "critique_text": f"event {index} remains visible"}
+                for index in indices
+            ]
+            return {
+                "model": kwargs["model"],
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(payload)}}],
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=model, image_paths=[frame], actions=actions,
+        task_description="synthetic event sequence", rollout_id="synthetic", threshold=0.5, client=Client(),
+    )
+    assert result["action_count"] == len(result["per_step"]) == 65
+    assert [event["step"] for event in result["per_step"]] == list(range(65))
+
+
+def test_self_hosted_prompt_retains_legacy_action_preview():
+    actions = [{"step": index, "action": [0.0]} for index in range(65)]
+    prompt = reason_module._cosmos_reason_prompt(
+        family="cosmos3", actions=actions, task_description="synthetic", frame_names=["frame.png"],
+    )
+    indices = json.loads(next(line.removeprefix("Required per_step indices: ")
+                             for line in prompt.splitlines() if line.startswith("Required per_step indices: ")))
+    assert indices == list(range(64))

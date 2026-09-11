@@ -20,7 +20,7 @@ from npa.config_schema import (
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
-CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
+CONFIG_PATH = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "config.yaml"
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
 _VERSION_CHECK_CACHE: set[tuple[str, int, int]] = set()
 
@@ -269,4 +269,7 @@ def _optional_path(value: Any | None) -> Path | None:
     text = os.fspath(value).strip()
     if not text:
         return None
-    return Path(text).expanduser()
+    # SkyPilot subprocesses deliberately execute from a durable cwd. Resolve
+    # operator-supplied relative paths while we still have the caller's cwd so a
+    # later status poll addresses the same config file as the original launch.
+    return Path(text).expanduser().resolve()

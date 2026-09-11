@@ -160,6 +160,20 @@ def test_remote_absence_receipt_precedes_real_local_state_removal(
 def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch, identity_fixture, tmp_path: Path
 ) -> None:  # noqa: ANN001
+    # The process/socket lifecycle is covered by test_local_api; this case
+    # exercises the receipt and independent cloud-absence ordering.
+    import json
+    import subprocess
+    from npa.orchestration.skypilot import local_api
+
+    source_sky = tmp_path / "home/.sky"
+    source_sky.mkdir(parents=True)
+    (source_sky / "user_hash").write_text("fixture-controller-owner")
+    sky_bin = tmp_path / "sky"
+    sky_bin.touch()
+    sky_bin.chmod(0o700)
+    monkeypatch.setattr(controller, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_: {"healthy": True})
     name = "sky-jobs-controller-demo"
     other = "sky-jobs-controller-unrelated"
     monkeypatch.setattr(
@@ -180,6 +194,23 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
         controller, "_wait_for_controller_pods_absent", lambda *args, **kwargs: ([], "")
     )
     downs: list[tuple[str, Path | None, str]] = []
+    prepared: list[str] = []
+
+    def prepare(argv, **kwargs):  # noqa: ANN001
+        # Metadata relocation has its own real runtime regressions. This test
+        # isolates successful preparation before checking deletion ordering.
+        assert Path(argv[1]).name == "controller_clone.py"
+        manifest_path = Path(argv[2])
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest_path.stat().st_mode & 0o777 == 0o600
+        assert manifest["controller_names"] == [name]
+        assert manifest["context"] == "verified-context"
+        assert Path(manifest["clone_root"]) != tmp_path
+        assert not downs
+        prepared.extend(manifest["controller_names"])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(controller.subprocess, "run", prepare)
 
     def down(target, **kwargs):  # noqa: ANN001
         latest = teardown_receipts.latest_phase_states(project_alias="demo")[
@@ -191,12 +222,13 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch.setattr(controller, "_down_jobs_controller", down)
 
     result = controller.cleanup_jobs_controller(
-        project="demo", context="verified-context", isolated_config_dir=tmp_path
+        project="demo", context="verified-context", isolated_config_dir=tmp_path, sky_bin=sky_bin
     )
 
     assert result.ok
     assert result.verified is True
     assert result.remote_absence_verified is True
+    assert prepared == [name]
     assert [item[0] for item in downs] == [name, name]
     assert downs[0][1] != tmp_path
     assert downs[0][2] == "in_progress"

@@ -21,7 +21,7 @@ ARG COSMOS3_SOURCE_REPO=https://github.com/NVIDIA/cosmos-framework.git
 # Pinned so a build is reproducible and the golden eval means something; bumping
 # this is a deliberate, tested change (upstream main moves and re-locks deps).
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
-# cu130 matches the CUDA 13 base and is the wheel set upstream pins for it.
+# The supported Torch 2.13 group matches the CUDA 13 base and its NATTEN ABI.
 # Generation needs the `guardrail` extra (guardrails are on by default). Upstream's
 # own Dockerfile takes `--all-extras`, which drags in the whole `train` closure
 # (433 vs 149 resolved packages: megatron-core, torchtitan, DALI, jupyterlab...).
@@ -29,7 +29,7 @@ ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
 # lock-pinned `train` members the generate path actually imports, and runs
 # verify_env.py at build time so a framework bump that needs more fails the build
 # instead of the first GPU run.
-ARG COSMOS3_UV_GROUP=cu130
+ARG COSMOS3_UV_GROUP=cu130-torch213
 ARG COSMOS3_UV_EXTRA=guardrail
 ARG COSMOS3_INFERENCE_DEPS="qwen-vl-utils==0.0.14 boto3==1.40.61"
 
@@ -104,17 +104,24 @@ RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
     && rm -rf "${COSMOS3_REPO}/.git"
 
 # The real inference environment, in the framework's own venv (torch cu130 +
-# flash-attn + guardrail deps). verify_env.py then walks the inference graph for
+# NATTEN + guardrail deps). verify_env.py then walks the inference graph for
 # every advertised generation mode, so the trimmed dependency set is proven at
 # build time rather than assumed.
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/verify_env.py /opt/cosmos3/verify_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/security-upgrades-requirements.txt /tmp/cosmos3-security-upgrades.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 RUN cd "${COSMOS3_REPO}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv python install \
     && chmod -R a+rX /opt/uv \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen \
        --extra "${COSMOS3_UV_EXTRA}" --group "${COSMOS3_UV_GROUP}" \
+    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
        ${COSMOS3_INFERENCE_DEPS} \
+    && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
+       --no-deps --require-hashes -r /tmp/cosmos3-security-upgrades.txt \
+    && uv pip check --python .venv/bin/python \
+    && rm -f /tmp/cosmos3-security-upgrades.txt \
     && find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
     && test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
@@ -130,6 +137,8 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
+    && /opt/npa/.venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
+    && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -rf /tmp/uv-cache
 

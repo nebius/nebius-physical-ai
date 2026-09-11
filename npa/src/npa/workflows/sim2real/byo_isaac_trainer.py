@@ -359,6 +359,8 @@ _PPO_METRIC_RE = re.compile(r"^\s*([^:]+):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\
 _PPO_FIELDS = {
     "Mean action noise std": "action_noise_std",
     "Mean value_function loss": "value_loss",
+    # rsl-rl >= 5.0 renamed the console field and dropped the timesteps line.
+    "Mean value loss": "value_loss",
     "Mean surrogate loss": "surrogate_loss",
     "Mean entropy loss": "entropy",
     "Mean reward": "episode_return",
@@ -424,7 +426,9 @@ def parse_ppo_training_log(text: str) -> dict[str, Any]:
 
     if not iterations:
         raise ValueError("RSL-RL log contains no Learning iteration records")
-    required = {"episode_return", "value_loss", "surrogate_loss", "total_timesteps"}
+    # rsl-rl >= 5.0 no longer prints "Total timesteps" in the iteration table;
+    # treat it as optional evidence rather than a completeness requirement.
+    required = {"episode_return", "value_loss", "surrogate_loss"}
     complete = [item for item in iterations if required.issubset(item)]
     if not complete:
         raise ValueError("RSL-RL log contains no complete PPO telemetry iteration")
@@ -957,7 +961,7 @@ def build_isaac_job_manifest(
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-            f"--max_iterations {iterations} --headless "
+            f'--max_iterations {iterations} "${{VIZ_ARGS[@]}}" '
             f"--kit_args {shlex.quote(kit_args)}"
             f"{seed_arg} "
             f"agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}"
@@ -965,6 +969,8 @@ def build_isaac_job_manifest(
         preflight_block = resume_block
         train_block = (
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
+            'VIZ_ARGS=(--visualizer none)\n'
+            'case "${ISAAC_LAB_VERSION:-}" in 2.*) VIZ_ARGS=(--headless) ;; esac\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
             # early reward history, making the learning curve unrecoverable.

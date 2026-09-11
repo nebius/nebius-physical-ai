@@ -30,11 +30,12 @@ DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
 DEFAULT_TIMEOUT_S = 600.0
 DEFAULT_RETRY_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
-DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
-# NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
-# Confirm availability for your key with `npa workbench token-factory models`.
-DEFAULT_REASONER_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Public serverless replacements from the August 2026 deprecation notice.
+# Explicit model IDs and endpoint overrides remain authoritative, including
+# dedicated endpoints serving older models.
+DEFAULT_TEXT_MODEL = "nvidia/Nemotron-3_5-Lightning"
+DEFAULT_VISION_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_REASONER_MODEL = "MiniMaxAI/MiniMax-M3"
 
 # Batch inference is a separate entitlement from real-time chat: a model can
 # serve /chat/completions and still reject a batch operation. The batch default
@@ -57,6 +58,21 @@ API_KEY_ENV_KEYS = (
 
 class TokenFactoryError(RuntimeError):
     """Raised when a Token Factory request is misconfigured or fails."""
+
+
+def default_chat_extra(model: str) -> dict[str, Any]:
+    """Keep visible-output workloads from spending their allowance on thinking.
+
+    These are model-specific template parameters, verified on Token Factory.
+    Callers can explicitly enable thinking through ``extra``. Unknown and
+    dedicated model IDs receive no guessed template parameters.
+    """
+
+    if model == "nvidia/Nemotron-3_5-Lightning":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    if model == "MiniMaxAI/MiniMax-M3":
+        return {"chat_template_kwargs": {"thinking_mode": "disabled"}}
+    return {}
 
 
 @dataclass(frozen=True)
@@ -139,7 +155,13 @@ def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
     """Verify key scope, model availability, and ability to execute inference."""
 
     try:
-        client = TokenFactoryClient(resolve_config(api_key=api_key, environ={}))
+        # Probe the same endpoint runtime inference uses, including a dedicated
+        # deployment of a retired public model. Keep the supplied key exclusive
+        # so a missing preflight key cannot fall back to another account's key.
+        endpoint_env = {
+            key: os.environ[key] for key in BASE_URL_ENV_KEYS if key in os.environ
+        }
+        client = TokenFactoryClient(resolve_config(api_key=api_key, environ=endpoint_env))
         if model not in client.list_models():
             return TokenFactoryAccessResult(False, model, "model unavailable to this key")
         response = client.chat_completion(
@@ -155,6 +177,12 @@ def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
         )
         if not response.get("choices"):
             return TokenFactoryAccessResult(False, model, "inference returned no choice")
+        choice = response["choices"][0]
+        visible, _ = split_reasoning(choice.get("message") or {})
+        if not visible or choice.get("finish_reason") == "length":
+            return TokenFactoryAccessResult(
+                False, model, "inference returned no complete visible answer"
+            )
         return TokenFactoryAccessResult(
             True, model, request_id=str(response.get("id") or "") or None
         )
@@ -242,13 +270,19 @@ class TokenFactoryClient:
             "model": model,
             "messages": list(messages),
             "temperature": temperature,
+            **default_chat_extra(model),
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
         if extra:
+            template = payload.get("chat_template_kwargs", {})
             payload.update(extra)
+            if isinstance(extra.get("chat_template_kwargs"), dict):
+                payload["chat_template_kwargs"] = {
+                    **template, **extra["chat_template_kwargs"]
+                }
 
         data = self._post_json(self._config.chat_completions_url, payload)
         if not isinstance(data, dict):

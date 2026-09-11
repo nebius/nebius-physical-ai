@@ -62,6 +62,7 @@ def test_rerun_viewer_bakes_exact_stage14_runtime() -> None:
         ("DEFAULT_REFERENCE_POLICY_TAG", "reference-policy"),
         ("DEFAULT_TRAINER_TAG", "lerobot-vlm-rl"),
         ("DEFAULT_EVAL_TAG", "loop-eval"),
+        ("DEFAULT_ISAAC_TAG", "isaac-lab"),
     ],
 )
 def test_sim2real_constant_matches_supported_tool_version(
@@ -78,11 +79,8 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     """The standard workflow must not supply mutable image-tag fallbacks."""
 
     path = (
-        Path(__file__).resolve().parents[2]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
+        Path(__file__).resolve().parents[3]
+        / "workflows" / "main" / "sim2real.yaml"
     )
     runbook = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = runbook["config"]
@@ -166,6 +164,9 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         "sudo",
         "netcat-openbsd",
         "NOPASSWD",
+        "rm -f /etc/ssh/ssh_host_*",
+        "PasswordAuthentication no",
+        "PermitRootLogin no",
     ):
         assert prerequisite in dockerfile
 

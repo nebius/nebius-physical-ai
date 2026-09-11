@@ -1,7 +1,7 @@
 """Build-time verification that the npa-cosmos3 generate path is fully resolvable.
 
 Runs inside the framework's own venv (no GPU, no weights) and walks the inference
-graph up to — but not including — weight loading: flags, the torch/flash-attn
+graph up to — but not including — weight loading: flags, the torch/NATTEN
 stack, the guardrail package, checkpoint-URI resolution, and setup/sample
 resolution for every generation mode the workbench advertises.
 
@@ -61,12 +61,32 @@ def check_flags() -> str:
 
 
 def check_torch_stack() -> str:
-    import flash_attn
+    import natten
     import torch
+    from natten.functional import attention
+
+    expected = {
+        "torch": "2.13.0+cu130",
+        "torchvision": "0.28.0+cu130",
+        "torchcodec": "0.14.0+cu130",
+        "natten": "0.21.6+cu130.torch213",
+    }
+    for name, version in expected.items():
+        actual = metadata.version(name)
+        if actual != version:
+            raise RuntimeError(f"{name}={actual}; expected {version}")
+    for name in ("flash-attn", "flash-attn-3-nv"):
+        try:
+            metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        raise RuntimeError(f"incompatible inherited attention package: {name}")
+    if not callable(attention):
+        raise RuntimeError("NATTEN attention is not callable")
 
     return (
         f"torch={torch.__version__} cuda={torch.version.cuda} "
-        f"flash_attn={flash_attn.__version__}"
+        f"natten={natten.__version__}"
     )
 
 

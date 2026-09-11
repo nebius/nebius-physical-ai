@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -16,6 +17,19 @@ FFMPEG = shutil.which("ffmpeg")
 requires_ffmpeg = pytest.mark.skipif(
     FFMPEG is None, reason="ffmpeg is required for video fixture tests"
 )
+
+
+def _quality_disposition(*, accepted: bool) -> dict[str, object]:
+    return {
+        "schema": c3.QUALITY_DISPOSITION_SCHEMA,
+        "quality_status": "accepted" if accepted else "rejected",
+        "decision": "promote_checkpoint" if accepted else "loop_back",
+        "evaluator_status": "completed",
+        "score": 0.88 if accepted else 0.27,
+        "threshold": 0.75,
+        "hard_checks_passed": accepted,
+        "reasons": [] if accepted else ["aggregate score is below threshold"],
+    }
 
 
 def _tiny_video(path: Path, *, color: str = "blue") -> Path:
@@ -180,18 +194,20 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 
 
 @requires_ffmpeg
+@pytest.mark.parametrize("prior_status", ["completed", "degraded"])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
-    tmp_path: Path,
+    tmp_path: Path, prior_status: str,
 ) -> None:
     paths = _generation_inputs(tmp_path)
     storage = _MemoryStorage()
     calls: list[dict] = []
+    generated_video = _tiny_video(tmp_path / "generated.mp4", color="red")
 
     def fake_generator(**kwargs):
         calls.append(kwargs)
         artifact = Path(kwargs["output_path"]) / kwargs["name"] / "vision.mp4"
         artifact.parent.mkdir(parents=True)
-        shutil.copy2(paths["source"], artifact)
+        shutil.copy2(generated_video, artifact)
         return {"output_path": str(artifact), "output_bytes": artifact.stat().st_size}
 
     args = (
@@ -242,9 +258,14 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["conditioned_input"] == "source.mp4"
     assert metadata["weights_baked"] is False
     assert metadata["motion_preservation"] is None
+    generated_bytes = generated_video.read_bytes()
+    assert generated_bytes != paths["source"].read_bytes()
+    for variant in first["variants"]:
+        assert storage.objects[variant["augmented_video_uri"]] == generated_bytes
+    assert metadata["published_video_sha256"] == hashlib.sha256(generated_bytes).hexdigest()
 
     (paths["scores"] / "cosmos_evaluator.json").write_text(
-        json.dumps({"status": "completed", "passed": False, "score": 0.4}),
+        json.dumps({"status": prior_status, "passed": False, "score": 0.4}),
         encoding="utf-8",
     )
     calls.clear()
@@ -258,61 +279,6 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert {call["seed"] for call in calls} == {110, 111}
     assert {call["guidance"] for call in calls} == {4.5}
     assert {call["num_steps"] for call in calls} == {22}
-
-
-@requires_ffmpeg
-def test_generate_variants_preserves_raw_cosmos_and_source_motion(tmp_path: Path) -> None:
-    paths = _generation_inputs(tmp_path)
-    storage = _MemoryStorage()
-
-    def fake_generator(**kwargs):
-        artifact = Path(kwargs["output_path"]) / kwargs["name"] / "vision.mp4"
-        _tiny_video(artifact, color="red")
-        return {"output_path": str(artifact), "output_bytes": artifact.stat().st_size}
-
-    manifest = c3.generate_variants(
-        str(paths["source"]),
-        str(paths["provenance"]),
-        str(paths["captions"]),
-        str(paths["configs"]),
-        "s3://example-bucket/run/cosmos_augmented/",
-        str(paths["scores"]),
-        str(paths["attempt"]),
-        "video2video",
-        "Cosmos3-Nano",
-        "Preserve the robot motion.",
-        "distortion",
-        10,
-        5.0,
-        20,
-        1,
-        1,
-        100,
-        -0.5,
-        2,
-        "latency",
-        True,
-        "test-run",
-        0.8,
-        storage=storage,
-        environ={"CUDA_VISIBLE_DEVICES": "0"},
-        generator=fake_generator,
-    )
-
-    variant = manifest["variants"][0]
-    motion = variant["motion_preservation"]
-    assert motion["engine"] == "ffmpeg-source-motion-composite"
-    assert motion["source_weight"] == 0.8
-    assert motion["cosmos_weight"] == pytest.approx(0.2)
-    assert motion["raw_cosmos_video_bytes"] > 0
-    assert len(motion["raw_cosmos_video_sha256"]) == 64
-    assert len(motion["published_video_sha256"]) == 64
-    assert motion["raw_cosmos_video_uri"] in storage.objects
-    assert variant["augmented_video_uri"] in storage.objects
-    assert (
-        storage.objects[motion["raw_cosmos_video_uri"]]
-        != storage.objects[variant["augmented_video_uri"]]
-    )
 
 
 @requires_ffmpeg
@@ -429,7 +395,7 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -468,60 +434,23 @@ def test_extract_frames_reports_missing_ffmpeg_as_domain_error(
         c3._extract_frames(tmp_path / "video.mp4", tmp_path / "frames")
 
 
-@pytest.mark.parametrize("source_weight", [-0.1, 1.0, 1.1])
-def test_preserve_source_motion_rejects_out_of_range_weights(
-    tmp_path: Path, source_weight: float
+@pytest.mark.parametrize("source_weight", [-0.1, 0.2, 0.8, 1.0, 1.1, float("nan"), float("inf")])
+def test_generate_variants_rejects_blending_before_storage_or_gpu(
+    monkeypatch: pytest.MonkeyPatch, source_weight: float,
 ) -> None:
-    with pytest.raises(
-        c3.PaidfCosmos3Error,
-        match="source motion weight must be strictly between 0 and 1",
-    ):
-        c3._preserve_source_motion(
-            tmp_path / "source.mp4",
-            tmp_path / "generated.mp4",
-            tmp_path / "output.mp4",
-            source_weight=source_weight,
-        )
+    def unexpected_work(*_args, **_kwargs):
+        pytest.fail("invalid blend setting reached storage or GPU work")
 
-
-def test_preserve_source_motion_reports_missing_ffmpeg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(c3.shutil, "which", lambda _binary: None)
-
-    with pytest.raises(
-        c3.PaidfCosmos3Error,
-        match="ffmpeg is required for source-motion-preserving publication",
-    ):
-        c3._preserve_source_motion(
-            tmp_path / "source.mp4",
-            tmp_path / "generated.mp4",
-            tmp_path / "output.mp4",
-            source_weight=0.5,
-        )
-
-
-def test_preserve_source_motion_reports_ffmpeg_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(c3.shutil, "which", lambda _binary: "/usr/bin/ffmpeg")
-    monkeypatch.setattr(
-        c3.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=["ffmpeg"], returncode=1, stdout="", stderr="blend failed"
-        ),
-    )
-
-    with pytest.raises(
-        c3.PaidfCosmos3Error,
-        match="source-motion-preserving publication failed: blend failed",
-    ):
-        c3._preserve_source_motion(
-            tmp_path / "source.mp4",
-            tmp_path / "generated.mp4",
-            tmp_path / "output.mp4",
-            source_weight=0.5,
+    monkeypatch.setattr(c3, "_storage", unexpected_work)
+    monkeypatch.setattr(c3, "_visible_gpu_ids", unexpected_work)
+    with pytest.raises(c3.PaidfCosmos3Error, match="source_motion_weight must be 0"):
+        c3.generate_variants(
+            "missing.mp4", "provenance.json", "captions/", "configs/",
+            "s3://example-bucket/out/", "scores/", "attempt.json",
+            "video2video", "Cosmos3-Nano", "prompt", "",
+            1, 5.0, 24, 1, 1, 1000, -0.5, 4, "latency", True, "test-run",
+            source_motion_weight=source_weight,
+            generator=unexpected_work,
         )
 
 
@@ -612,7 +541,7 @@ def test_finalize_missing_truthful_manifest_fields_raise_domain_error(
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -633,14 +562,7 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "rejected",
-                "decision": "loop_back",
-                "evaluator_status": "missing",
-                "hard_checks_passed": False,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=False)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -656,19 +578,13 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
         c3.require_accepted_quality(str(disposition))
 
 
-def test_quality_route_repairs_pre_decision_disposition_before_promotion(
+def test_quality_route_promotes_only_a_complete_accepted_disposition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "accepted",
-                "evaluator_status": "completed",
-                "hard_checks_passed": True,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=True)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -682,8 +598,51 @@ def test_quality_route_repairs_pre_decision_disposition_before_promotion(
         c3.route_quality_disposition(str(disposition), str(decision))
         == "promote_checkpoint"
     )
-    assert json.loads(disposition.read_text())["decision"] == "promote_checkpoint"
     c3.require_accepted_quality(str(disposition))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.pop("decision"), "incomplete"),
+        (lambda value: value.update(decision="loop_back"), "inconsistent"),
+        (lambda value: value.update(score=float("nan")), "finite number"),
+        (lambda value: value.update(score="0.88"), "finite number"),
+        (
+            lambda value: value.update(evaluator_status=None),
+            "non-empty string",
+        ),
+        (lambda value: value.update(reasons=[""]), "string list"),
+        (
+            lambda value: value.update(
+                quality_status="rejected",
+                decision="loop_back",
+                hard_checks_passed=False,
+                reasons=[],
+            ),
+            "inconsistent",
+        ),
+    ],
+)
+def test_quality_route_fails_closed_on_malformed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    message: str,
+) -> None:
+    disposition = tmp_path / "quality_disposition.json"
+    decision = tmp_path / "decision.json"
+    document = _quality_disposition(accepted=True)
+    mutation(document)
+    disposition.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, value: Path(uri).write_text(value, encoding="utf-8"),
+    )
+
+    with pytest.raises(c3.PaidfCosmos3Error, match=message):
+        c3.route_quality_disposition(str(disposition), str(decision))
+    assert not decision.exists()
 
 
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:

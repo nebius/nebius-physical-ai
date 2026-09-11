@@ -26,6 +26,32 @@ EXPECTED_LIGHT_INTENSITY = 3000.0
 STABLE_PLACEMENT_DISTANCE_M = 0.05
 STABLE_PLACEMENT_SPEED_MPS = 0.03
 STABLE_PLACEMENT_STEPS = 3
+# A real nine-pass Franka run drove deterministic held-out reach from 0/64 to
+# 64/64 while contact stayed 0/64 throughout. PPO's sampled training episodes
+# still reported lift reward, but the actor mean kept the binary gripper open.
+# Install the already-proven robot-agnostic grasp terms on the stock scenario
+# task as well: closure is rewarded only near the object, and lift intent remains
+# gated by near + closed so raising an empty hand cannot retain the signal.
+GRASP_CLOSURE_REWARD_WEIGHT = 16.0
+GRASP_CLOSURE_STD_M = 0.06
+GRASP_LIFT_ATTEMPT_REWARD_WEIGHT = 32.0
+GRASP_LIFT_ATTEMPT_STD_M = 0.05
+# The first real stock-Franka run with the grasp precursors converted 0/64
+# contact into 64/64 contact and 53/64 stable grasps, but deterministic rollouts
+# repeatedly stopped at 0.040-0.044 m object lift.  The stock Lift reward is a
+# step at its minimal-height boundary, so the last centimetre before the strict
+# 5 cm evaluator threshold still had no object-space gradient.  Reuse the
+# existing robot-agnostic continuous object-height term on the stock task.  Its
+# weight matches the lift-attempt precursor: the hand signal bootstraps motion,
+# then real object displacement—not a scripted action—must retain the reward.
+STOCK_DENSE_LIFT_REWARD_WEIGHT = 32.0
+STOCK_DENSE_LIFT_STD_M = 0.08
+STOCK_GRIPPER_JOINT_NAMES = (
+    "panda_finger_joint1",
+    "panda_finger_joint2",
+)
+STOCK_GRIPPER_OPEN_POSITION = 0.04
+STOCK_GRIPPER_CLOSED_POSITION = 0.0
 # The first validation canary learned reach/contact and 2/3 grasp+lift, but the
 # closest goal distance remained 0.205-0.364 m.  A 0.15 m tanh scale multiplied
 # by weight 8 is effectively flat at that boundary, so lifting remains the much
@@ -335,27 +361,70 @@ def apply_scenario_reset(env: Any, env_ids: Any, asset_cfg: Any) -> None:
 
     ids_cpu = ids.cpu()
     # Exact per-env material values.  This mirrors Isaac Lab's own material event
-    # setter but supplies the curated values instead of resampling buckets.
-    materials = asset.root_physx_view.get_material_properties()
-    friction = torch.tensor(
-        [float(row["physics"]["friction"]) for row in selected],
-        dtype=materials.dtype,
-        device=materials.device,
-    )
-    materials[ids_cpu, :, 0] = friction[:, None]
-    materials[ids_cpu, :, 1] = friction[:, None]
-    materials[ids_cpu, :, 2] = 0.0
-    asset.root_physx_view.set_material_properties(materials, ids_cpu)
+    # setter (envs/mdp/events.py) but supplies the curated values instead of
+    # resampling buckets. Isaac Lab 3.0's views hand out warp arrays and expect
+    # warp round-trips through `root_view`; older releases returned torch
+    # tensors from `root_physx_view`. Support both without changing values.
+    root_view = getattr(asset, "root_view", None) or asset.root_physx_view
+    materials_raw = root_view.get_material_properties()
+    friction_values = [float(row["physics"]["friction"]) for row in selected]
+    if isinstance(materials_raw, torch.Tensor):
+        materials = materials_raw
+        friction = torch.tensor(
+            friction_values, dtype=materials.dtype, device=materials.device
+        )
+        materials[ids_cpu, :, 0] = friction[:, None]
+        materials[ids_cpu, :, 1] = friction[:, None]
+        materials[ids_cpu, :, 2] = 0.0
+        root_view.set_material_properties(materials, ids_cpu)
+    else:
+        import warp as wp
 
-    masses = asset.root_physx_view.get_masses()
-    default_mass = asset.data.default_mass.cpu()
-    mass_scale = torch.tensor(
-        [float(row["physics"]["mass_scale"]) for row in selected],
-        dtype=masses.dtype,
-        device=masses.device,
-    )
-    masses[ids_cpu] = default_mass[ids_cpu].to(masses.device) * mass_scale[:, None]
-    asset.root_physx_view.set_masses(masses, ids_cpu)
+        materials = wp.to_torch(materials_raw)
+        ids_mat = ids.to(device=materials.device, dtype=torch.int32).contiguous()
+        friction = torch.tensor(
+            friction_values, dtype=materials.dtype, device=materials.device
+        )
+        materials[ids_mat.long(), :, 0] = friction[:, None]
+        materials[ids_mat.long(), :, 1] = friction[:, None]
+        materials[ids_mat.long(), :, 2] = 0.0
+        root_view.set_material_properties(
+            wp.from_torch(materials, dtype=wp.float32),
+            wp.from_torch(ids_mat, dtype=wp.int32),
+        )
+
+    # Exact per-env mass scaling. Isaac Lab 3.0 exposes the backend-safe
+    # partial setter `set_masses_index` (its own mass-randomization event uses
+    # it); the raw physx-view set_masses path remains only for older releases.
+    mass_scale_values = [float(row["physics"]["mass_scale"]) for row in selected]
+    set_masses_index = getattr(asset, "set_masses_index", None)
+    if callable(set_masses_index):
+        body_mass = asset.data.body_mass
+        body_mass = body_mass if isinstance(body_mass, torch.Tensor) else body_mass.torch
+        default_mass = asset.data.default_mass
+        default_mass = (
+            default_mass
+            if isinstance(default_mass, torch.Tensor)
+            else default_mass.torch
+        )
+        num_bodies = body_mass.shape[1] if body_mass.dim() > 1 else 1
+        device = body_mass.device
+        env_ids32 = ids.to(device=device, dtype=torch.int32).contiguous()
+        body_ids32 = torch.arange(num_bodies, dtype=torch.int32, device=device)
+        mass_scale = torch.tensor(
+            mass_scale_values, dtype=body_mass.dtype, device=device
+        )
+        partial = default_mass[ids.to(device).long()].reshape(len(selected), num_bodies)
+        partial = partial * mass_scale[:, None]
+        set_masses_index(masses=partial, body_ids=body_ids32, env_ids=env_ids32)
+    else:
+        masses = asset.root_physx_view.get_masses()
+        default_mass = asset.data.default_mass.cpu()
+        mass_scale = torch.tensor(
+            mass_scale_values, dtype=masses.dtype, device=masses.device
+        )
+        masses[ids_cpu] = default_mass[ids_cpu].to(masses.device) * mass_scale[:, None]
+        asset.root_physx_view.set_masses(masses, ids_cpu)
 
     if not getattr(env, "npa_scenario_first_reset_logged", False):
         print(
@@ -658,10 +727,27 @@ def _placement_state(
     command = env.command_manager.get_command(command_name)
     from isaaclab.utils.math import combine_frame_transforms
 
+    def _as_torch(value):
+        # Isaac Lab 3.0 asset buffers are lazy ProxyArrays; TorchScript
+        # functions such as combine_frame_transforms reject them. `.torch` is
+        # the documented zero-copy tensor view (a property in Isaac Lab 3.0);
+        # older releases already return torch tensors.
+        if isinstance(value, torch.Tensor):
+            return value
+        torch_view = getattr(value, "torch", None)
+        if isinstance(torch_view, torch.Tensor):
+            return torch_view
+        if callable(torch_view):
+            converted = torch_view()
+            if isinstance(converted, torch.Tensor):
+                return converted
+        # Last resort: ProxyArray.__getitem__ indexes the torch view.
+        return value[:]
+
     goal, _ = combine_frame_transforms(
-        robot.data.root_pos_w,
-        robot.data.root_quat_w,
-        command[:, :3],
+        _as_torch(robot.data.root_pos_w),
+        _as_torch(robot.data.root_quat_w),
+        _as_torch(command)[:, :3],
     )
     distance = torch.linalg.norm(position - goal, dim=1)
     speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)
@@ -1059,6 +1145,45 @@ def install_env_cfg(env_cfg: Any) -> bool:
     )
     env_cfg.commands.object_pose.class_type = _scenario_command_type()
     env_cfg.commands.object_pose.resampling_time_range = (1.0e9, 1.0e9)
+    # The stock task's sparse lift reward did not teach the deterministic actor
+    # mean to close its gripper on the curated distribution. Reuse the same
+    # embodiment-aware shaping functions as BYO robots, with the stock Franka
+    # finger contract made explicit. Both terms are precursors only; strict
+    # placement remains the unchanged object-space verdict below.
+    import isaac_byo_robot_task as robot_task  # noqa: WPS433 - baked runtime module
+
+    env_cfg.rewards.grasp_closure_curriculum = RewardTermCfg(
+        func=robot_task.grasp_shaping,
+        weight=GRASP_CLOSURE_REWARD_WEIGHT,
+        params={
+            "std": GRASP_CLOSURE_STD_M,
+            "object_name": "object",
+            "ee_frame_name": "ee_frame",
+            "gripper_joint_names": STOCK_GRIPPER_JOINT_NAMES,
+            "gripper_open": STOCK_GRIPPER_OPEN_POSITION,
+            "gripper_close": STOCK_GRIPPER_CLOSED_POSITION,
+        },
+    )
+    env_cfg.rewards.grasp_lift_attempt_curriculum = RewardTermCfg(
+        func=robot_task.grasp_lift_hold,
+        weight=GRASP_LIFT_ATTEMPT_REWARD_WEIGHT,
+        params={
+            "std": GRASP_LIFT_ATTEMPT_STD_M,
+            "object_name": "object",
+            "ee_frame_name": "ee_frame",
+            "gripper_joint_names": STOCK_GRIPPER_JOINT_NAMES,
+            "gripper_open": STOCK_GRIPPER_OPEN_POSITION,
+            "gripper_close": STOCK_GRIPPER_CLOSED_POSITION,
+        },
+    )
+    env_cfg.rewards.dense_object_lift_curriculum = RewardTermCfg(
+        func=robot_task.object_lift_progress,
+        weight=STOCK_DENSE_LIFT_REWARD_WEIGHT,
+        params={
+            "std": STOCK_DENSE_LIFT_STD_M,
+            "object_name": "object",
+        },
+    )
     env_cfg.rewards.stable_placement_curriculum = RewardTermCfg(
         func=stable_placement_curriculum,
         weight=STABLE_PLACEMENT_REWARD_WEIGHT,
@@ -1180,6 +1305,15 @@ def install_env_cfg(env_cfg: Any) -> bool:
         json.dumps(
             {
                 **scenario_contract_summary(rows),
+                "grasp_curriculum": {
+                    "closure_reward_weight": GRASP_CLOSURE_REWARD_WEIGHT,
+                    "closure_std_m": GRASP_CLOSURE_STD_M,
+                    "lift_attempt_reward_weight": GRASP_LIFT_ATTEMPT_REWARD_WEIGHT,
+                    "lift_attempt_std_m": GRASP_LIFT_ATTEMPT_STD_M,
+                    "gripper_joint_names": list(STOCK_GRIPPER_JOINT_NAMES),
+                    "gripper_open_position": STOCK_GRIPPER_OPEN_POSITION,
+                    "gripper_closed_position": STOCK_GRIPPER_CLOSED_POSITION,
+                },
                 "placement_curriculum": {
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,

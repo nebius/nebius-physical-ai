@@ -28,7 +28,7 @@ from npa.serverless_common import (
     split_serverless_env,
 )
 
-from npa.smoke.manifest import container
+from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 
 # Nebius AI Jobs always require a GPU preset, even for CPU-only workloads, so a
 # small default is used when a golden eval does not pin its own serverless GPU.
@@ -110,6 +110,8 @@ def submit_golden_eval(
     """
 
     spec = container(tool)
+    if spec.golden_eval.execution_timeout is None:
+        raise RuntimeError(UNLIMITED_SERVERLESS_ERROR)
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
@@ -137,6 +139,14 @@ def submit_golden_eval(
         # pyarrow/lancedb/fiftyone deps missing from slim tool images.
         "NPA_SKIP_EAGER_IMPORTS": "1",
     }
+    # cosmos3-ray-serve requires a bearer token for its authenticated API.
+    # Generate an ephemeral token; the smoke_functional.sh start/stop cycle
+    # is self-contained so the token never leaves the job.
+    if tool == "cosmos3-ray-serve":
+        extra_env["NPA_COSMOS3_RAY_TOKEN"] = "golden-eval-ephemeral-token"
+        # The light-import mode only exposes the cosmos3 CLI when
+        # NPA_LIGHT_WORKBENCH_TOOL is cosmos3-ray-serve.
+        extra_env["NPA_LIGHT_WORKBENCH_TOOL"] = "cosmos3-ray-serve"
     full_env = build_serverless_job_env(
         output_path=output_path,
         hf_token=cfg.hf_token,

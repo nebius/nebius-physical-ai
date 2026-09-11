@@ -11,7 +11,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW_DIR = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+WORKFLOW_DIR = ROOT / "workflows" / "testing"
 SKILL_PATH = (
     ROOT / "skills" / "workflows" / "oss-solution-registry-onboard" / "SKILL.md"
 )

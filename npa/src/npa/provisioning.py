@@ -19,6 +19,7 @@ from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
     ProvisioningOperation,
@@ -101,8 +102,10 @@ def _provision_recovery_argv(
         ("gpu_platform", "--gpu-platform"),
         ("gpu_preset", "--gpu-preset"),
         ("gpu_driver_mode", "--gpu-driver-mode"),
+        ("gpu_workload_profile", "--gpu-workload-profile"),
         ("managed_driver_preset", "--managed-driver-preset"),
         ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
+        ("capacity_block_group", "--capacity-block-group"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
     ):
@@ -169,6 +172,9 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
+            capacity_block_group=str(
+                bound.arguments.get("capacity_block_group") or ""
+            ),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan
@@ -179,8 +185,11 @@ def _transactional_provision(function):
         requested_name = (
             _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
         )
+        recovery_arguments = dict(bound.arguments)
+        recovery_arguments["capacity_block_group"] = plan.topology.capacity_block_group
+        recovery_arguments["preemptible"] = plan.topology.gpu_preemptible
         resume_argv = _provision_recovery_argv(
-            dict(bound.arguments),
+            recovery_arguments,
             alias=alias,
             cluster_name=cluster_name,
             context=context,
@@ -303,6 +312,7 @@ def provision_if_absent(
     gpu_platform: str = "",
     gpu_preset: str = "",
     gpu_driver_mode: str = "",
+    gpu_workload_profile: str = "",
     managed_driver_preset: str = "",
     allow_unsafe_nvswitch_operator: bool | None = None,
     gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
@@ -328,6 +338,17 @@ def provision_if_absent(
 
     forbid_destructive_provisioning("provision_if_absent")
     alias, environment, storage, registry = _resolve_project_runtime(project)
+    workload = resolve_gpu_workload_profile(
+        profile=gpu_workload_profile,
+        gpu_nodes=gpu_nodes,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
+        gpu_driver_mode=gpu_driver_mode,
+    )
+    gpu_nodes = workload.gpu_nodes
+    gpu_platform = workload.gpu_platform
+    gpu_preset = workload.gpu_preset
+    gpu_driver_mode = workload.gpu_driver_mode
     context = context_name.strip() or cluster_name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
     actions: list[str] = []
@@ -349,6 +370,7 @@ def provision_if_absent(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         agent_exists=agent_exists,
     )
@@ -359,6 +381,7 @@ def provision_if_absent(
     cpu_preset = topology.cpu_preset
     gpu_platform = topology.gpu_platform
     gpu_preset = topology.gpu_preset
+    capacity_block_group = topology.capacity_block_group
     preemptible = topology.gpu_preemptible
     actions.extend(_preflight_actions(plan))
 
@@ -510,8 +533,11 @@ def provision_if_absent(
                     gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
                     gpu_cuda_smoke=gpu_cuda_smoke,
                     gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                    gpu_graphics_smoke=workload.graphics_smoke,
                 )
                 actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
+                if workload.graphics_smoke:
+                    actions.append("k8s:validated RTX GLX/EGL/Vulkan readiness")
         k8s_ready = True
     elif not dry_run and (not environment.project_id or not environment.tenant_id):
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
@@ -543,9 +569,7 @@ def provision_if_absent(
                     count=desired_gpu_count,
                     platform=gpu_platform,
                     preset=gpu_preset,
-                    disk_size_gib=(
-                        128 if mig_enabled else topology.gpu_disk_gib
-                    ),
+                    disk_size_gib=(128 if mig_enabled else topology.gpu_disk_gib),
                     capacity_block_group=capacity_block_group,
                     preemptible=bool(preemptible),
                 )
@@ -561,6 +585,7 @@ def provision_if_absent(
             gpu_health_timeout_minutes=gpu_health_timeout_minutes,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_workload_profile=workload.profile,
             infiniband_fabric=infiniband_fabric,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
@@ -597,6 +622,7 @@ def provision_if_absent(
                     ("gpu_platform", gpu_platform),
                     ("gpu_preset", gpu_preset),
                     ("gpu_driver_mode", gpu_driver_mode),
+                    ("gpu_workload_profile", workload.profile),
                     ("managed_driver_preset", managed_driver_preset),
                 )
                 if value.strip()
@@ -640,6 +666,7 @@ def provision_if_absent(
                 gpu_platform=gpu_platform,
                 gpu_preset=gpu_preset,
                 gpu_driver_mode=gpu_driver_mode,
+                gpu_workload_profile=workload.profile,
                 managed_driver_preset=managed_driver_preset,
                 allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
                 gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
@@ -688,7 +715,7 @@ def provision_if_absent(
                 if operation is not None:
                     operation.heartbeat(details={"gpu_readiness": message})
 
-            wait_for_kubernetes_accelerators(
+            resolutions = wait_for_kubernetes_accelerators(
                 [requested_accelerator] if requested_accelerator else [],
                 context=context,
                 kubeconfig=kubeconfig_path,
@@ -699,11 +726,14 @@ def provision_if_absent(
                 on_status=report_gpu_status,
             )
             if sky_smoke:
+                smoke_accelerator = requested_accelerator
+                if requested_accelerator and requested_accelerator in resolutions:
+                    smoke_accelerator = resolutions[requested_accelerator].resolved
                 _run_skypilot_smoke(
                     Path(kubeconfig_path),
                     context,
                     cluster_name,
-                    requested_accelerator,
+                    smoke_accelerator,
                     sky_bin=sky_bin,
                     credentials_checked=True,
                 )
@@ -776,6 +806,7 @@ def _build_provision_plan(
     cpu_preset: str,
     gpu_platform: str,
     gpu_preset: str,
+    capacity_block_group: str,
     preemptible: bool | None,
     agent_exists: bool = False,
 ):
@@ -798,6 +829,7 @@ def _build_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         cpu_disk_gib=cpu_disk_gib,
         gpu_disk_gib=gpu_disk_gib,
@@ -845,6 +877,7 @@ def _build_provision_plan(
         cpu_preset=requested.cpu_preset,
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
+        capacity_block_group=requested.capacity_block_group,
         preemptible=requested.gpu_preemptible,
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
@@ -895,6 +928,7 @@ def resolve_provision_plan(
     cpu_preset: str = "",
     gpu_platform: str = "",
     gpu_preset: str = "",
+    capacity_block_group: str = "",
     preemptible: bool | None = None,
     mutation: bool = False,
 ):
@@ -918,6 +952,7 @@ def resolve_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
     )
 

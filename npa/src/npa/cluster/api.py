@@ -136,8 +136,10 @@ class MK8sClient:
                     config.name,
                     "--control-plane-subnet-id",
                     config.subnet_id,
-                    "--control-plane-endpoints-public-endpoint",
-                    "true",
+                    # Nebius CLI boolean flags are assignment-only. Passing
+                    # the value as the next argv token is parsed as an invalid
+                    # positional argument by current releases.
+                    "--control-plane-endpoints-public-endpoint=true",
                     "--control-plane-etcd-cluster-size",
                     "1",
                     "--control-plane-version",

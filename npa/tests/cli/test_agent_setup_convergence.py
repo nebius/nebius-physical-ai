@@ -22,7 +22,12 @@ def _remote_payload(**overrides):
         "phase": "remote_health_ready",
         "service_fingerprint": "service-sha",
         "credential_fingerprint": "credential-sha",
-        "credential_fingerprint_files": ["llm.env", "s3.env", "nebius.env"],
+        "credential_fingerprint_files": [
+            "llm.env",
+            "s3.env",
+            "artifact-sources.env",
+            "nebius.env",
+        ],
     }
     payload.update(overrides)
     return payload
@@ -173,6 +178,22 @@ def test_identity_refusal_is_never_reconciled_as_transport_success() -> None:
             transport_errors=(ValueError,),
         )
     assert reconciled is False
+
+
+@pytest.mark.parametrize("resuming", [False, True])
+def test_only_interrupted_bootstrap_may_reuse_service_install(resuming) -> None:
+    from unittest.mock import Mock
+
+    bootstrap = Mock()
+    result = agent_setup_convergence.converge_remote_agent_setup(
+        operation=None, resuming=resuming, bootstrap=bootstrap,
+        reconcile=lambda **_kwargs: {"state": "incomplete"},
+        bootstrap_kwargs={"instance_id": "instance-test"}, reconcile_kwargs={},
+        persist_pending=lambda _state: None, status=lambda _text: None,
+        progress=lambda _event: None, transport_errors=(RuntimeError,),
+    )
+    bootstrap.assert_called_once_with(resume_services=resuming)
+    assert result.evidence["state"] == "incomplete"
 
 
 def test_blocking_calls_emit_structured_secret_free_heartbeats(

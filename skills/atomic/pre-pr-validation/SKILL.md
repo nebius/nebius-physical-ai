@@ -5,10 +5,13 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Six checks across five workflows gate every pull request: `Lint / ruff`,
-`Lint / docs-drift`, `Test / test (3.12)`, `harness guardrails`, `gitleaks`, and
-`confidentiality scan`. A seventh, `image-security-scan`, is path-triggered on
-Docker changes.
+Every pull request runs lint and docs drift, unit and browser tests, security
+regressions, harness guardrails, secret scanning, and confidentiality scanning.
+`Security regression / security-regression` requires both the scanner comparison
+and hostile-input runtime tests on every PR, merge queue candidate, and main push.
+Its workflow has no path filters. Verify actual required contexts in branch
+protection before claiming merge enforcement. `image-security-scan` also applies
+to Docker and image-security changes.
 
 All of them are reproducible locally. Run them in cost order so the cheap ones
 catch the common mistakes before you spend minutes on the full suite.
@@ -30,8 +33,8 @@ make test PYTHON=/workspace/npa/.venv/bin/python
 ## The Ladder
 
 ```bash
-# 1. Lint — seconds. This mirrors CI; `make lint` checks all of npa/ instead.
-npa/.venv/bin/python -m ruff check npa/src npa/tests
+# 1. Lint — seconds. This matches CI and `make lint` across all of npa/.
+npa/.venv/bin/python -m ruff check npa
 
 # 2. Onboarding smoke — ~20s.
 make test-smoke PYTHON=/workspace/npa/.venv/bin/python
@@ -65,15 +68,71 @@ after every meaningful edit; save 5 and 6 for before you push.
 | An `npa.workflow` spec | `npa workbench workflow validate-spec <path>`, plus live-matrix registration per the testing conventions |
 | A workbench tool's surface | `test_three_tier_contract`, and the tool's CLI and workbench tests |
 | A Dockerfile or image tag | `npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py`, plus `npa/tests/docker/` |
+| The complete-byte scanner, its dependencies, or publication wiring | `npa/tests/docker/test_image_byte*.py`, plus the actual native integration sequence in `.github/workflows/image-security-scan.yml`; hermetic protocol tests do not replace that native gate |
 | A `SKILL.md` or `skills/index.yaml` | `test_skills_index` and `test_develop_skills` |
+| Security gate code, scanner pins, or its workflow | Follow `docs/security/merge-security-gate.md`: run the actual scanner regression workload and full base/candidate comparison, plus `test_security_source` and `test_security_gate` |
 | Terraform or the agent deploy path | `test_terraform_provisioner_shell`, plus a real destroy/deploy cycle |
 | Docs only | Lint and `pytest --collect-only` as a smoke check |
 
 ## Gate Details Worth Knowing
 
+### Required Security Regressions
+
+The security job exercises hostile inputs and supported paths, including real
+CPU checkpoint decoding, authenticated transports, private staging, storage
+containment, and isolated controller cleanup. Use the clone's own development
+virtualenv with `npa[dev,adapter]`. CI additionally installs the official CPU
+`torch==2.13.0` wheel and asserts the version and CPU runtime before testing, so
+checkpoint cases cannot silently skip. Its exact test command from the repo root
+is:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/clients/test_download_containment.py \
+  npa/tests/clients/test_ssh_private_staging.py \
+  npa/tests/cli/test_agent_source_archive.py \
+  npa/tests/cli/test_service_credential_security.py \
+  npa/tests/cli/test_fiftyone_env_security.py \
+  npa/tests/cli/test_fiftyone_private_access.py \
+  npa/tests/workbench/test_checkpoint_security.py \
+  npa/tests/workbench/test_s3_tree_security.py \
+  npa/tests/workbench/test_storage_scope.py \
+  npa/tests/workbench/test_policy_container_security.py \
+  npa/tests/workbench/test_alpamayo2_super_service_security.py \
+  npa/tests/workbench/test_cosmos3_ray_inputs.py \
+  npa/tests/workbench/test_cosmos3_ray_serve.py \
+  npa/tests/workbench/test_cosmos3_nano_video_server.py \
+  npa/tests/workflows/test_paidf_download_security.py \
+  npa/tests/workflows/test_openpi_gcs.py \
+  npa/tests/workflows/test_rerun_serve_auth.py \
+  npa/tests/orchestration/skypilot/test_controller_clone.py \
+  npa/tests/orchestration/skypilot/test_local_api.py \
+  npa/tests/orchestration/skypilot/test_controller_identity_transaction.py \
+  -q
+```
+
+Run this gate before pushing, in addition to the full suite and applicable live
+workload validation. Workflow registration belongs in
+`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py`; preserve
+read-only permissions and the existing PR concurrency controls.
+
 **`make test` is not identical to CI.** It deselects live and GPU markers and
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
+
+Run the coverage gate from the package directory, matching CI:
+
+```bash
+cd npa
+.venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+```
+
+From the repository root, `--cov=npa` can select the enclosing directory and
+include tests and scripts in the coverage total. That percentage does not prove
+package coverage. Check the report's file population, including package modules
+that no test executed. If correcting a report from retained traces, preserve the
+original data, add no executed lines, and distinguish the report correction from
+a new test run.
 
 **Some local failures are missing host tools, not broken code.** The suite shells
 out to real binaries that CI has and a bare workstation or container may not.

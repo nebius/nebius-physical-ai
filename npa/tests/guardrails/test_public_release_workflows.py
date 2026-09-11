@@ -104,8 +104,8 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
-        "scanners: vuln,secret,license",
-        "format: spdx-json",
+        "--scanners vuln,secret,license",
+        "--format spdx-json",
         "non-root runtime required",
         "cached EULA acceptance",
     ):
@@ -141,31 +141,34 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
 
-def test_large_image_security_gates_have_no_early_scanner_deadline() -> None:
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    trivy_steps = [
-        step
-        for step in steps
-        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
-    ]
-    assert len(trivy_steps) == 2
-    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
-
-
-def test_public_image_workflow_preserves_large_image_security_scans() -> None:
+def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    trivy_steps = [
+    prepare = text.index("Prepare capacity for full-image security scans")
+    scan = text.index("Pre-publication vulnerability, secret, and license scan")
+    sbom = text.index("Generate pre-publication SBOM")
+    push = text.index("Push only after every pre-publication gate passes")
+    assert prepare < scan < sbom < push
+    assert "docker buildx prune --all --force" in text[prepare:scan]
+    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 2
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
+    assert text[scan:push].count("--timeout 2562047h47m16s") == 2
+    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 2
+    trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
+    assert text[scan:push].count(trivy) == 2
+    assert "docker image prune" not in text[scan:push]
+
+
+def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
+    spec = _spec(SECURITY_SCAN)
+    steps = spec["jobs"]["base-image-cve-scan"]["steps"]
+    scans = [
         step
         for step in steps
         if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
     ]
 
-    assert "docker buildx prune --all --force" in text
-    assert text.count("TMPDIR: /mnt/npa-trivy") == 2
-    assert "scanners: vuln,secret,license" in text
-    assert len(trivy_steps) == 2
-    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
+    assert len(scans) == 2
+    assert all(step["with"]["timeout"] == "2562047h47m16s" for step in scans)
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
@@ -194,6 +197,29 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert prepush < push
     assert "Private destination contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
+    verify = text[text.index("Verify pushed bytes") :]
+    assert "pushed-payload-attempt-${payload_attempt}.log" in verify
+    assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
+    assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
+    assert verify.count("while true; do") >= 2
+    assert "if ! grep -Eq" in verify
+
+
+def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    post_push = text[text.index("Verify pushed bytes") :]
+
+    assert 'docker pull "$exact"' in post_push
+    # Two calls bind the pulled digest to the local image; the third binds the
+    # independent cuRobo archive verifier to that same inspected remote image.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
+    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
+            '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
+    assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
+    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
+    assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
+    assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
@@ -228,3 +254,61 @@ def test_public_health_is_anonymous_and_read_only() -> None:
     assert "GITHUB_REPOSITORY" not in run
     assert "auth login" not in run
     assert "--preflight" not in run
+
+
+def test_additive_release_inputs_are_scoped_to_promotion() -> None:
+    spec = _spec(PUBLISH)
+    inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
+    assert inputs["release_tag"]["default"] == ""
+    assert inputs["expected_source_digest"]["default"] == ""
+    assert "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
+    assert spec["concurrency"]["cancel-in-progress"] is False
+    assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
+    resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    assert 'test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0' in resolve["run"]
+    assert resolve["env"]["DEVELOPMENT_SHA"] == "${{ inputs.development_sha }}"
+    assert "--mode plan" in resolve["run"]
+    promote = spec["jobs"]["promote"]
+    assert promote["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
+    assert promote["env"]["EXPECTED_SOURCE_DIGEST"] == "${{ inputs.expected_source_digest }}"
+    for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
+        assert "--release-tag" not in "\n".join(step.get("run", "") for step in spec["jobs"][name]["steps"])
+
+
+def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(tmp_path) -> None:
+    """Run the checked-in trusted shell adapter against an argv-recording executable."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    executable = tmp_path / "npa/.venv/bin/python"
+    executable.parent.mkdir(parents=True)
+    recorder = tmp_path / "argv.jsonl"
+    executable.write_text(
+        f"#!{sys.executable}\nimport json,os,sys\n"
+        "with open(os.environ['ARGV_RECORD'], 'a') as output:\n"
+        "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+    )
+    executable.chmod(0o700)
+    env = {**os.environ, "TARGET": "ghcr.io/nebius/nebius-physical-ai", "DEVELOPMENT_SHA": "b" * 40, "SELECTED_TOOLS": "detection-training", "RELEASE_TAG": "runtime-recovery-1", "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64, "ARGV_RECORD": str(recorder)}
+    steps = _spec(PUBLISH)["jobs"]["promote"]["steps"]
+    scripts = [step["run"] for step in steps if step.get("name") in {"Plan and preflight immutable public development digests", "Promote exact validated digests and verify public parity"}]
+    # These trusted steps have one harmless GitHub expression in the unselected
+    # all-image branch. Render that expression as Actions does before bash parses it.
+    for script in scripts:
+        script = script.replace("${{ inputs.skip_missing && '--skip-missing' || '' }}", "")
+        subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}, check=True, capture_output=True)
+    records = [json.loads(line) for line in recorder.read_text().splitlines()]
+    assert [record[-1] for record in records] == ["plan", "preflight", "publish"]
+    for record in records:
+        assert record == [".github/scripts/publish_selected_public_image.py", "--target", env["TARGET"], "--development-sha", env["DEVELOPMENT_SHA"], "--release-tag", env["RELEASE_TAG"], "--expected-source-digest", env["EXPECTED_SOURCE_DIGEST"], "--tool", "detection-training", "--mode", record[-1]]
+    resolve = next(step for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    for build_count, cleanup_count in [("1", "0"), ("0", "1"), ("1", "1")]:
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", resolve["run"]], cwd=tmp_path,
+            env={**env, "BUILD_COUNT": build_count, "CLEANUP_COUNT": cleanup_count},
+            capture_output=True,
+        )
+        assert result.returncode != 0
+    assert len(recorder.read_text().splitlines()) == 3

@@ -3,15 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
 ROOT = Path(__file__).resolve().parents[4]
-SPEC = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "paidf-cosmos3.yaml"
+SPEC = ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 runner = CliRunner()
 
 
@@ -22,6 +25,7 @@ def _doc() -> dict:
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"
+    assert doc["metadata"]["executionMode"] == "runtime"
     states = doc["states"]
     assert states["prepare-input"]["toolRef"] == "workbench.cosmos3.prepare_video_input"
     assert (
@@ -36,6 +40,16 @@ def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     assert argv[:4] == ["npa", "workbench", "cosmos3", "generate-variants"]
     assert "--input-path" in argv and "--guardrails" in argv
     assert "echo" not in argv
+
+
+def test_paidf_cosmos3_cannot_be_prepared_as_a_one_shot_submit() -> None:
+    with pytest.raises(NpaWorkflowError, match="requires runtime execution"):
+        prepare_npa_workflow_for_submit(
+            SPEC,
+            run_id="paidf-one-shot",
+            assume_decision="promote_checkpoint",
+            config_overrides={"bucket": "example-bucket"},
+        )
 
 
 def test_general_cosmos3_toolref_forwards_conditioning_and_sampling() -> None:
@@ -89,6 +103,8 @@ def test_configuration_surface_and_privacy_defaults() -> None:
     ):
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
+    assert float(config["source_motion_weight"]) == 0.0
+    assert float(config["grade_threshold"]) == 0.75
     assert config["augmentation_seed"] == ""
     assert (
         doc["states"]["generate-configs"]["run"]["argv"][-1]

@@ -19,6 +19,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Iterator, Literal, Mapping
 
+from npa.clients import config
+
 
 SCHEMA_VERSION = "npa.workflow.submission.v1"
 _SECRET_KEY = re.compile(
@@ -64,11 +66,16 @@ def _safe_component(value: str, fallback: str) -> str:
 
 
 def submission_state_path(project: str, run_id: str) -> Path:
-    """Return the per-project/run ledger path below the current user's config."""
+    """Return the per-project/run ledger path below the selected NPA config."""
 
+    # Honor an explicitly selected config, including selection before this
+    # module is imported. Otherwise retain dynamic environment/home resolution.
+    if config.CONFIG_PATH != config.NPA_CONFIG_DIR / "config.yaml":
+        root = config.CONFIG_PATH.parent
+    else:
+        root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
     return (
-        Path.home()
-        / ".npa"
+        root
         / "workflow-submissions"
         / _safe_component(project, "default")
         / f"{_safe_component(run_id, 'workflow')}.json"

@@ -62,7 +62,13 @@ def test_rerun_public_surface() -> None:
     """npa.rerun exposes hosted Rerun sharing commands."""
     from npa import rerun
 
-    assert rerun.__all__ == ["host", "share", "list_shares", "revoke"]
+    assert rerun.__all__ == [
+        "configure_browser_cors",
+        "host",
+        "share",
+        "list_shares",
+        "revoke",
+    ]
     for name in rerun.__all__:
         assert callable(getattr(rerun, name))
 

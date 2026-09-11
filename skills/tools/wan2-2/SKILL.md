@@ -8,8 +8,8 @@ description: Use when packaging, running, reviewing, or extending the Alibaba Wa
 Use this skill for the public Wan 2.2 registry candidate and its verified video
 evidence. Read these files before changing behavior:
 
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml`
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml`
+- `workflows/testing/byof-wan2.2.yaml`
+- `workflows/testing/byof-wan2.2-multigpu.yaml`
 - `npa/src/npa/workflows/wan_rerun.py`
 - `docs/workbench/wan2.2.md`
 
@@ -148,13 +148,13 @@ Use the repository venv, never bare Python:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+  workflows/testing/byof-wan2.2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml --run-id wan22-plan
+  workflows/testing/byof-wan2.2.yaml --run-id wan22-plan
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  workflows/testing/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  workflows/testing/byof-wan2.2-multigpu.yaml \
   --run-id wan22-multigpu-plan
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_wan_rerun.py -q
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q

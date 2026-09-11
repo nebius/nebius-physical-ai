@@ -1,0 +1,4 @@
+interface:
+  display_name: "Emit Reviewable RRD"
+  short_description: "Make workflow progress reviewable in Rerun"
+  default_prompt: "Use $emit-reviewable-rrd to add a run-derived, validated Rerun artifact to this workflow."

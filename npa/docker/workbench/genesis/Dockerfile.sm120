@@ -62,7 +62,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "rich==15.0.0" \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
-      "pyarrow==22.0.0" \
+      "pyarrow==23.0.1" \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test -z "$(find /opt/npa/venv -type f \

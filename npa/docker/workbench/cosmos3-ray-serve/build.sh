@@ -40,6 +40,7 @@ fi
 
 local_ref="npa-cosmos3-ray-serve:${TAG}"
 remote_ref="${REGISTRY}/npa-cosmos3-ray-serve:${TAG}"
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 docker build --platform linux/amd64 \
   -f "${SCRIPT_DIR}/Dockerfile" \
   --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}" \

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -18,6 +18,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.spec import (
     NpaWorkflowSpec,
     load_spec,
+    resolve_trigger_config,
     validate_spec,
 )
 
@@ -56,7 +57,14 @@ def merge_config_overrides(
         run_defaults=dict(spec.run_defaults),
         resources=dict(spec.resources),
         initial=spec.initial,
-        states=dict(spec.states),
+        states={
+            name: replace(
+                state, trigger=resolve_trigger_config(name, state.trigger, merged)
+            )
+            if state.trigger is not None and state.trigger.config_expressions
+            else state
+            for name, state in spec.states.items()
+        },
     )
     # Overrides can change loop bounds, parallel cardinality assertions, and other
     # values that validation resolves. Revalidate here so plan/run/submit all reject
@@ -89,6 +97,24 @@ def _spec_needs_assume_decision(spec: NpaWorkflowSpec) -> bool:
     return any(state.transitions for state in spec.states.values())
 
 
+def spec_requires_runtime(spec: NpaWorkflowSpec) -> bool:
+    """Return whether the workflow forbids one-shot execution.
+
+    A runtime-required workflow may still be flattened for a read-only plan, but
+    live submission must use the orchestrator that reads decision artifacts and
+    replans.  The schema restricts the declaration to the supported ``runtime``
+    value, so an absent declaration retains the legacy one-shot default.
+
+    Args:
+        spec: Parsed workflow specification.
+
+    Returns:
+        True when live submission must use the runtime orchestrator.
+    """
+
+    return spec.metadata.get("executionMode") == "runtime"
+
+
 def prepare_npa_workflow_for_submit(
     yaml_path: Path,
     *,
@@ -96,11 +122,26 @@ def prepare_npa_workflow_for_submit(
     assume_decision: str = "",
     config_overrides: Mapping[str, str] | None = None,
     render_options: SkypilotRenderOptions | None = None,
+    allow_runtime_required: bool = False,
 ) -> PreparedNpaWorkflowSubmit:
     """Load, plan, and render an npa.workflow spec into a temporary SkyPilot YAML.
 
     The returned ``temp_dir`` must be kept alive until ``submit_workflow`` returns;
     callers own cleanup via ``temp_dir.cleanup()``.
+
+    Args:
+        yaml_path: Workflow specification to load.
+        run_id: Run identifier used to resolve output paths.
+        assume_decision: Static decision used only to render a one-shot preview.
+        config_overrides: Values merged into the workflow config.
+        render_options: Optional SkyPilot rendering controls.
+        allow_runtime_required: Permit static rendering for a read-only plan.
+
+    Returns:
+        The parsed spec, execution plan, and temporary rendered YAML.
+
+    Raises:
+        NpaWorkflowError: If live one-shot preparation is unsafe or invalid.
     """
 
     if not run_id.strip():
@@ -110,6 +151,11 @@ def prepare_npa_workflow_for_submit(
 
     spec = load_spec(yaml_path)
     spec = merge_config_overrides(spec, config_overrides)
+    if spec_requires_runtime(spec) and not allow_runtime_required:
+        raise NpaWorkflowError(
+            f"workflow {spec.name!r} requires runtime execution; "
+            "a one-shot submit cannot honor its data-dependent control flow"
+        )
     resolved_assume = _resolve_assume_decision(spec, assume_decision)
     if _spec_needs_assume_decision(spec) and not resolved_assume:
         raise NpaWorkflowError(

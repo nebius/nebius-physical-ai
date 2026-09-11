@@ -8,9 +8,14 @@ description: Use when authoring, validating, or reviewing NPA workflow specs (ap
 ## When To Use
 
 Load when creating or editing **NPA workflow YAML** under
-`npa/workflows/workbench/npa-workflows/`, wiring tool stages, loops, or
+`workflows/`, wiring tool stages, loops, or
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
+
+Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
+`nurec-reconstruct.yaml`.
+Add all other catalog specs under `workflows/testing/`; keep catalog
+documentation in `workflows/README.md`.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 
@@ -34,6 +39,11 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
   driver wait for data before that state runs (the state must also do work).
+  Numeric config expressions are resolved again after `--var` overrides;
+  `pollSeconds` and `minObjects` must be positive, while `maxPolls: 0` retains
+  the supported unbounded setting. Exercise the submitted configuration through
+  the actual watcher when validating overrides: check observed object counts
+  and polling behavior as well as successful spec parsing.
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
@@ -50,6 +60,49 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 | `run.shell` | Resolves config tokens; spec authors are trusted (injection risk if config is untrusted) |
 
 ## Commands
+
+### Validation and execution readiness
+
+For planning-only work, preserve the requested operation in the workflow without
+executing it. A restriction on provider calls during authoring does not require
+replacing a planned inference step with a fixed answer. Use mocks only when the
+user requests a mock or fixture, and label them as such.
+
+Inspect the resolved plan against the task: do its tools or commands consume the
+intended input, perform the requested operation, and produce the stated output?
+Valid syntax alone cannot establish this. Report a mismatch as incomplete work,
+not success, even when validation and planning commands pass.
+
+Preserve failures in authoring and validation commands as well as workflow steps.
+Run checks separately, or stop the command group at the first failure and return
+that exit code. A later successful command must not hide an earlier failure.
+If a search tool is unavailable, report its failure before using an available
+alternative in a separate command.
+
+Check input content with the consuming tool's local reader when available, not
+just file existence or YAML validation. For a step that creates its own input,
+check the generated format and prompt content without executing inference.
+Keep an unchecked input unverified in the readiness record; do not claim task
+fidelity from the workflow hash or planned command alone.
+
+When saving a workflow, read [the readiness template](references/readiness-record.md)
+and save `<workflow-stem>.readiness.json` beside it, within the authorized write
+scope. Bind the record to the final workflow bytes. Record planning results and
+each execution prerequisite separately; unverified prerequisites do not make a
+correct planning-only task fail. Keep out-of-scope checks unverified.
+For read-only reviews, report the same fields inline without creating files.
+The final response can link the record and summarize the unresolved prerequisites.
+Completeness does not establish execution readiness; verified claims need evidence.
+
+An example bucket is a placeholder, not a writable destination. A local input
+on the authoring machine is not automatically available to a remote worker;
+identify its explicit staging, mount, or worker-readable URI. For a planning-only
+task, list those unresolved prerequisites without creating storage, transferring
+inputs, or submitting the workflow. Use
+`skills/atomic/submit-workflow/SKILL.md` for the existing live-submit checks
+when execution is requested.
+
+### CLI commands
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json

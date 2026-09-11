@@ -9,10 +9,18 @@ import yaml
 from npa.cli import agent as agent_module
 from npa.cli import agent_actions
 from npa.cli.agent_chat import (
+    _image_for_tool,
     build_grounded_reply,
     format_sim2real_status,
     match_chat_intent,
 )
+from npa.deploy.images import supported_tool_version
+
+
+def test_agent_isaac_image_guidance_matches_canonical_pin() -> None:
+    assert _image_for_tool("isaac-lab").endswith(
+        f"/npa-isaac-lab:{supported_tool_version('isaac-lab')}"
+    )
 
 
 def _planner(script):
@@ -744,4 +752,23 @@ def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
 
     # Unrelated or too-generic turns must not pull the skill in.
     for text in ("write me a workflow yaml", "what is cosmos3", "run cosmos2 transfer"):
+        assert skill_names_for_keywords(text) == [], text
+
+
+def test_keyword_skill_rules_select_access_approval_without_catching_unrelated_access() -> None:
+    from npa.cli.agent_chat import skill_names_for_keywords
+
+    for text in (
+        "prepare full catalog access",
+        "check HF model approval",
+        "approve the NGC artifact",
+        "audit Hugging Face dataset access",
+    ):
+        assert skill_names_for_keywords(text) == ["access-approval"], text
+
+    for text in (
+        "show cluster access",
+        "prepare a public dataset",
+        "open the dashboard",
+    ):
         assert skill_names_for_keywords(text) == [], text

@@ -11,15 +11,18 @@ Operator-private denylist files must stay outside the repository. For example,
 `CUSTOMER_DENYLIST` falls back to `~/.config/npa/customer-denylist.regex` for
 local scans when the environment variable is not set.
 
-## Local Registry Image Check
+## Public Image Reachability Check
 
-Registry image reachability is environment-dependent, so image existence checks stay out of GitHub CI and can be run from a host with access to the container registry:
+Registry reachability is environment-dependent, so anonymous image existence
+checks stay out of GitHub CI and can be run from a host with internet access:
 
 ```bash
-npa/.venv/bin/python npa/scripts/check_workflow_images.py --registry "$NPA_REGISTRY"
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target ghcr.io/nebius/nebius-physical-ai --verify-accepted-releases
 ```
 
-Current workflow image tags still include operator placeholders, so the script reports `SEAM` until those placeholders are rendered for a specific run or registry.
+BYOF workflow placeholders are intentionally excluded from the supported public
+release inventory and require an explicitly selected operator registry.
 
 ## Proven-Run Drift
 

@@ -142,15 +142,18 @@ resource "nebius_compute_v1_instance" "workbench" {
   }]
 
   cloud_init_user_data = templatefile("${path.module}/cloud_init.yaml.tpl", {
-    ssh_user         = var.ssh_user
-    ssh_public_key   = trimspace(file(pathexpand(var.ssh_public_key_path)))
-    workbench_type   = var.workbench_type
-    server_port      = var.server_port
-    lerobot_version  = var.lerobot_version
-    fiftyone_version = var.fiftyone_version
-    s3_bucket        = var.s3_bucket
-    s3_endpoint      = var.s3_endpoint
-    nebius_region    = var.nebius_region
+    literal_env_loader_b64 = filebase64("${path.module}/load_env.sh")
+    ssh_user               = var.ssh_user
+    ssh_public_key         = trimspace(file(pathexpand(var.ssh_public_key_path)))
+    workbench_type         = var.workbench_type
+    server_port            = var.server_port
+    lerobot_version        = var.lerobot_version
+    fiftyone_version       = var.fiftyone_version
+    s3_bucket              = var.s3_bucket
+    s3_endpoint            = var.s3_endpoint
+    nebius_region          = var.nebius_region
+
+    ssh_host_key_nonce = var.ssh_host_key_nonce
   })
 
   preemptible = var.enable_preemptible ? {
@@ -198,7 +201,8 @@ resource "null_resource" "wait_for_cloud_init" {
       key_path="${pathexpand(trimsuffix(var.ssh_public_key_path, ".pub"))}"
       host="${local.instance_external_ip}"
       user="${var.ssh_user}"
-      ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$key_path" "$user@$host")
+      trust_python="$${NPA_SSH_TRUST_PYTHON:-python3}"
+      known_hosts=""
 
       # A fresh VM answers SSH in well under a minute, so a total window of ~4
       # minutes is generous. The previous 60 x (10s connect + 5s sleep) could
@@ -208,15 +212,35 @@ resource "null_resource" "wait_for_cloud_init" {
       ssh_ok=0
       tcp_ok=0
       for attempt in $(seq 1 $attempts); do
+        if [ -z "$known_hosts" ]; then
+          trust_status=0
+          known_hosts="$("$trust_python" -m npa.deploy.ssh_trust \
+            --project-id "$NPA_SSH_TRUST_PROJECT" --instance-id "$NPA_SSH_TRUST_INSTANCE" \
+            --host "$host" --nonce "$NPA_SSH_TRUST_NONCE")" || trust_status=$?
+          if [ "$trust_status" -eq 75 ]; then
+            echo "  waiting for provider-authenticated SSH host key"
+            sleep 3
+            continue
+          elif [ "$trust_status" -ne 0 ]; then
+            exit "$trust_status"
+          fi
+        fi
+        ssh_cmd=(ssh -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=5 -i "$key_path" "$user@$host")
         # Separate "port never opened" (local reachability) from "SSH refused the
         # key", so the failure below can name the real cause.
         if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/22" >/dev/null 2>&1; then
           tcp_ok=1
         fi
-        if "$${ssh_cmd[@]}" "true" >/dev/null 2>&1; then
+        ssh_error=""
+        if ssh_error="$("$${ssh_cmd[@]}" "true" 2>&1)"; then
           ssh_ok=1
           break
         fi
+        case "$ssh_error" in
+          *"REMOTE HOST IDENTIFICATION HAS CHANGED"*|*"Host key verification failed"*)
+            echo "ERROR: SSH host key did not match provider-authenticated identity." >&2
+            exit 1 ;;
+        esac
         if [ $((attempt % 4)) -eq 0 ]; then
           if [ "$tcp_ok" -eq 1 ]; then
             echo "  still waiting (attempt $attempt/$attempts): tcp/22 is open, SSH not ready yet"
@@ -279,6 +303,12 @@ resource "null_resource" "wait_for_cloud_init" {
         exit 1
       fi
     EOT
+    environment = {
+      NPA_SSH_TRUST_PROJECT  = var.nebius_project_id
+      NPA_SSH_TRUST_INSTANCE = nebius_compute_v1_instance.workbench.id
+      # Read actual boot data: ignore_changes may preserve a prior nonce on resume.
+      NPA_SSH_TRUST_NONCE = try(regex("# NPA_SSH_HOST_KEY_NONCE=([a-f0-9]{64})", nebius_compute_v1_instance.workbench.cloud_init_user_data)[0], "")
+    }
   }
 }
 

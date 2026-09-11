@@ -1178,7 +1178,9 @@ def _copy_videos_lerobot_to_groot(
                     episode_index=episode_index,
                 )
                 timestamps = _episode_video_timestamps(episode_row, original_key)
-                if shared_source:
+                # A selected subset can leave only one episode referencing a
+                # consolidated file; its positive offset still requires slicing.
+                if shared_source or (timestamps is not None and timestamps[0] > 0):
                     if timestamps is None:
                         raise GR00TAdapterError(
                             f"Shared source video {src} lacks episode timestamps for "
