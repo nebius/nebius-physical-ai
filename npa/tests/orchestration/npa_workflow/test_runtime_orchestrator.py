@@ -2812,6 +2812,8 @@ def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> No
 
     task_names = [name for call in submitter.calls for name in call["tasks"]]
     assert report.status == "succeeded"
+    assert sum("generate-variants" in name for name in task_names) == 2
+    assert sum("evaluate" in name for name in task_names) == 2
     assert any("visualize-quality-evidence" in name for name in task_names)
     assert any("reject-quality" in name for name in task_names)
     for forbidden in ("annotate-augmented", "cosmos-curate", "curate", "finalize"):

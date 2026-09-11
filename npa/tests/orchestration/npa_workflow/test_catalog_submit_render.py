@@ -50,6 +50,8 @@ def _prepare_catalog_workflow(spec_path):
             image_overrides=image_overrides,
             materialize_registry_secrets=False,
         ),
+        # Catalog validation renders every branch but never submits the result.
+        allow_runtime_required=True,
     )
 
 

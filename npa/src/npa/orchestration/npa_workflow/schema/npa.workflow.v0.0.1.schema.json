@@ -14,6 +14,7 @@
       "properties": {
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "executionMode": { "enum": ["runtime"] },
         "namespace": { "type": "string" },
         "labels": { "type": "object" }
       },

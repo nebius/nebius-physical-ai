@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
+PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 RUNNER = CliRunner()
 
 
@@ -540,6 +541,58 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "waves: 2" in result.output
     assert "[parallel]" in result.output
     assert "decision: promote_checkpoint" in result.output
+
+
+def test_runtime_required_workflow_selects_runtime_automatically(
+    fake_runtime, tmp_path: Path
+) -> None:
+    runtime_spec = tmp_path / "runtime-required.yaml"
+    runtime_spec.write_text(
+        FANOUT.read_text(encoding="utf-8").replace(
+            "metadata:\n", "metadata:\n  executionMode: runtime\n", 1
+        ),
+        encoding="utf-8",
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(runtime_spec),
+            "--run-id",
+            "paidf-runtime-required",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["spec"].metadata["executionMode"] == "runtime"
+
+
+def test_runtime_required_workflow_rejects_explicit_no_runtime(mocker) -> None:
+    runtime_driver = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(PAIDF_COSMOS3),
+            "--run-id",
+            "paidf-no-runtime",
+            "--no-runtime",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires runtime execution" in result.output
+    runtime_driver.assert_not_called()
 
 
 def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> None:
