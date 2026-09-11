@@ -133,6 +133,10 @@ run: |
   PY
   )"
   test -n "${NPA_BYOF_POD_IMAGE_ID}"
+  # The owner-side receipt contains run-private Kubernetes identifiers. Keep
+  # only its digest result in the public smoke summary and remove the receipt
+  # before any artifact collection can begin.
+  rm -f -- "${POD_IMAGE_RECEIPT}"
 
   SMOKE_EXIT_CODE=0
   if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
@@ -223,7 +227,7 @@ run: |
       prefix = parsed.path.lstrip("/")
       uploaded = 0
       for path in root.rglob("*"):
-          if path.is_file():
+          if path.is_file() and path.name != "npa_pod_image_receipt.json":
               key = prefix + str(path.relative_to(root))
               s3.put_object(
                   Bucket=parsed.netloc,

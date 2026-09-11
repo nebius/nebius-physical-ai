@@ -215,6 +215,11 @@ def test_gymnasium_robotics_profile_is_one_strict_rtxpro_shape() -> None:
     assert "grep -Eq '@sha256:[0-9a-f]{64}$'" in run
     assert "RECEIPT_DEADLINE" in run
     assert "timed out waiting for the owner-side Pod image receipt" in run
+    assert 'rm -f -- "${POD_IMAGE_RECEIPT}"' in run
+    assert 'path.name != "npa_pod_image_receipt.json"' in run
+    assert run.index('rm -f -- "${POD_IMAGE_RECEIPT}"') < run.index(
+        'for path in root.rglob("*")'
+    )
     assert "serviceaccount" not in run
     assert "urllib.request" not in run
     assert "timeout=" not in run
