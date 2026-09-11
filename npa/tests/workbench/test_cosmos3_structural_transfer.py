@@ -32,6 +32,16 @@ def prepared(tmp_path):
     return original, output, recipe
 
 
+@pytest.mark.parametrize("contents", [b"", bytes(range(256)) * 8192 + b"last bytes"],
+                         ids=["empty", "multi-chunk"])
+def test_video_hash_supports_cpu_images_without_file_digest(tmp_path, monkeypatch, contents):
+    path = tmp_path / "video.mp4"
+    path.write_bytes(contents)
+    expected = media.hashlib.sha256(contents).hexdigest()
+    monkeypatch.delattr(media.hashlib, "file_digest", raising=False)
+    assert media.video_sha256(path) == expected
+
+
 def test_normalization_preserves_complete_duration_and_provenance(prepared):
     original, output, recipe = prepared
     assert recipe["original"]["decoded_frames"] == 169
