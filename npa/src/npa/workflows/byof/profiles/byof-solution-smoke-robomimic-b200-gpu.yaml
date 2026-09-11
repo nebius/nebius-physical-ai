@@ -29,6 +29,10 @@ envs:
   # only after checking the manager's STRICT-capacity gate. The private
   # reservation identity stays outside rendered task YAML and repo artifacts.
   NPA_ROBOMIMIC_STRICT_B200_ATTESTED: ""
+  # The live harness fills these only in its run-local copy. The in-pod smoke
+  # verifies them against the mounted namespace and its observed Pod spec.
+  NPA_ROBOMIMIC_EXPECTED_NAMESPACE: ""
+  NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT: ""
   NVIDIA_VISIBLE_DEVICES: "all"
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
@@ -43,6 +47,7 @@ setup: |
   PY
 run: |
   set -euo pipefail
+  export PATH="/opt/conda/bin:${PATH}"
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
