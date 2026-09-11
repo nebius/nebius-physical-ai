@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +52,10 @@ DEFAULT_YAML = (
     / "byof-container-smoke-rtxpro.yaml"
 )
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
+LIBERO_SOLUTION_NAME = "libero"
+LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
+LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
+LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
 
 
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
@@ -150,6 +156,235 @@ TERMINAL_STATUSES = {
     "FAILED_NO_RESOURCE",
     "FAILED_CONTROLLER",
 }
+
+
+def _sha256_json(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _libero_allowed_node(global_config: dict[str, Any]) -> str:
+    kubernetes = global_config.get("kubernetes") or {}
+    allowed = kubernetes.get("allowed_nodes") if isinstance(kubernetes, dict) else None
+    if not isinstance(allowed, dict) or set(allowed) != {"names"}:
+        raise ValueError(
+            "LIBERO requires owner-supplied kubernetes.allowed_nodes.names"
+        )
+    names = allowed.get("names")
+    if (
+        not isinstance(names, list)
+        or len(names) != 1
+        or not isinstance(names[0], str)
+        or not names[0].strip()
+    ):
+        raise ValueError("LIBERO requires exactly one non-empty allowed node name")
+    return names[0].strip()
+
+
+def _kubectl_json(
+    arguments: list[str], *, purpose: str, kubeconfig: Path
+) -> dict[str, Any]:
+    result = subprocess.run(
+        ["kubectl", "--kubeconfig", str(kubeconfig), *arguments, "-o", "json"],
+        env=sky_environment(None),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Kubernetes {purpose} observation failed")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Kubernetes {purpose} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Kubernetes {purpose} did not return an object")
+    return payload
+
+
+def _mode_private_regular_file(value: str, *, label: str) -> Path:
+    if not value:
+        raise ValueError(f"LIBERO requires an owner-supplied {label}")
+    path = Path(value).expanduser()
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+        raise ValueError(f"LIBERO {label} must be a mode-private regular file")
+    return path.resolve()
+
+
+def _libero_payload_kubeconfig() -> Path:
+    return _mode_private_regular_file(
+        os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG", "").strip(),
+        label="payload kubeconfig",
+    )
+
+
+def _libero_global_config_path(args: argparse.Namespace) -> str:
+    configured = args.config_path or os.environ.get(
+        "NPA_LIBERO_SKYPILOT_CONFIG", ""
+    ).strip()
+    return str(
+        _mode_private_regular_file(configured, label="SkyPilot global config")
+    )
+
+
+def _libero_context_contract(
+    kubeconfig: Path, *, expected_context: str = "", require_namespace: bool
+) -> tuple[str, str, str]:
+    config = _kubectl_json(
+        ["config", "view", "--minify", "--flatten", "--raw"],
+        purpose="selected-context",
+        kubeconfig=kubeconfig,
+    )
+    context = str(config.get("current-context") or "").strip()
+    if not context:
+        raise RuntimeError("LIBERO kubeconfig has no current context")
+    if expected_context and context != expected_context:
+        raise RuntimeError("LIBERO kubeconfig differs from its expected context")
+    contexts = config.get("contexts") or []
+    matches = [item for item in contexts if item.get("name") == context]
+    if len(matches) != 1:
+        raise RuntimeError("LIBERO selected context is absent or ambiguous")
+    context_record = matches[0].get("context") or {}
+    namespace = str(context_record.get("namespace") or "").strip()
+    if require_namespace and not namespace:
+        raise RuntimeError("LIBERO selected context has no namespace")
+    selected_cluster = str(context_record.get("cluster") or "").strip()
+    clusters = [
+        item for item in config.get("clusters") or [] if item.get("name") == selected_cluster
+    ]
+    if len(clusters) != 1:
+        raise RuntimeError("LIBERO selected cluster is absent or ambiguous")
+    cluster = clusters[0].get("cluster") or {}
+    server = str(cluster.get("server") or "").strip()
+    certificate_data = str(cluster.get("certificate-authority-data") or "").strip()
+    if not server or not certificate_data or cluster.get("insecure-skip-tls-verify"):
+        raise RuntimeError("LIBERO selected cluster lacks strict TLS identity")
+    cluster_identity_sha256 = _sha256_json(
+        {"server": server, "certificate_authority_data": certificate_data}
+    )
+    return context, namespace, cluster_identity_sha256
+
+
+def _libero_resource(
+    kubeconfig: Path, context: str, namespace: str, kind: str, name: str
+) -> dict[str, Any]:
+    payload = _kubectl_json(
+        ["--context", context, "--namespace", namespace, "get", kind, name],
+        purpose=f"LIBERO {kind}",
+        kubeconfig=kubeconfig,
+    )
+    metadata = payload.get("metadata") or {}
+    if metadata.get("name") != name or metadata.get("namespace") != namespace:
+        raise RuntimeError(f"LIBERO {kind} identity differs from the expected object")
+    if not metadata.get("uid") or not metadata.get("creationTimestamp"):
+        raise RuntimeError(f"LIBERO {kind} has incomplete ownership metadata")
+    return payload
+
+
+def _libero_rbac_evidence(
+    kubeconfig: Path, context: str, namespace: str
+) -> dict[str, str]:
+    account = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "serviceaccount",
+        LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+    )
+    role = _libero_resource(
+        kubeconfig, context, namespace, "role", LIBERO_PAYLOAD_ROLE
+    )
+    binding = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "rolebinding",
+        LIBERO_PAYLOAD_ROLE_BINDING,
+    )
+    rules = [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]
+    subjects = [
+        {
+            "kind": "ServiceAccount",
+            "name": LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            "namespace": namespace,
+        }
+    ]
+    role_ref = {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": LIBERO_PAYLOAD_ROLE,
+    }
+    if role.get("rules") != rules:
+        raise RuntimeError("LIBERO payload Role is broader than pods/get")
+    if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
+        raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
+    return {
+        "service_account_uid_sha256": hashlib.sha256(
+            account["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "role_uid_sha256": hashlib.sha256(
+            role["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "role_binding_uid_sha256": hashlib.sha256(
+            binding["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "rbac_spec_sha256": _sha256_json(
+            {"rules": rules, "subjects": subjects, "roleRef": role_ref}
+        ),
+        "namespace_sha256": hashlib.sha256(namespace.encode()).hexdigest(),
+    }
+
+
+def _bind_libero_runtime_contract(
+    args: argparse.Namespace,
+    documents: list[dict[str, Any]],
+    *,
+    global_config: dict[str, Any],
+    infra: str,
+) -> dict[str, str] | None:
+    if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+        return None
+    if args.direct_launch:
+        raise ValueError("LIBERO requires managed scheduler submission")
+    if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
+        raise ValueError("LIBERO requires one explicit Kubernetes context")
+    allowed_node = _libero_allowed_node(global_config)
+    execution_context = infra.removeprefix("k8s/").strip()
+    payload_kubeconfig = _libero_payload_kubeconfig()
+    payload_context, namespace, payload_cluster_sha256 = _libero_context_contract(
+        payload_kubeconfig, require_namespace=True
+    )
+    if payload_context == execution_context:
+        raise ValueError(
+            "LIBERO payload and execution contexts must remain explicitly separated"
+        )
+    execution_kubeconfig_value = os.environ.get("KUBECONFIG", "").strip()
+    execution_kubeconfig = Path(execution_kubeconfig_value)
+    if not execution_kubeconfig_value or not execution_kubeconfig.is_file():
+        raise ValueError("LIBERO requires the selected NPA execution kubeconfig")
+    _, _, execution_cluster_sha256 = _libero_context_contract(
+        execution_kubeconfig,
+        expected_context=execution_context,
+        require_namespace=False,
+    )
+    if payload_cluster_sha256 != execution_cluster_sha256:
+        raise ValueError("LIBERO payload and execution kubeconfigs select different clusters")
+    evidence = _libero_rbac_evidence(payload_kubeconfig, payload_context, namespace)
+    evidence["cluster_identity_sha256"] = payload_cluster_sha256
+    evidence["allowed_node_sha256"] = hashlib.sha256(allowed_node.encode()).hexdigest()
+    for name, observed in evidence.items():
+        variable = f"NPA_LIBERO_EXPECTED_{name.upper()}"
+        expected = os.environ.get(variable, "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(f"LIBERO requires owner-receipted hash {variable}")
+        if expected != observed:
+            raise ValueError(f"LIBERO owner-receipted hash differs for {name}")
+    for document in documents[1:]:
+        envs = document.setdefault("envs", {})
+        for name, value in evidence.items():
+            envs[f"NPA_LIBERO_EXPECTED_{name.upper()}"] = value
+    return evidence
 
 
 def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
@@ -507,9 +742,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
-            _write_yaml_documents(rendered_yaml, docs)
             infra = args.infra or _default_infra()
-            config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
+            config_path = (
+                _libero_global_config_path(args)
+                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME
+                else args.config_path or _write_default_k8s_config(tmp_path, infra)
+            )
             global_config: dict[str, Any] = {}
             if config_path:
                 loaded_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
@@ -519,6 +757,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             verify_solution_payload_service_accounts(
                 docs, global_config=global_config
             )
+            libero_binding = _bind_libero_runtime_contract(
+                args, docs, global_config=global_config, infra=infra
+            )
+            _write_yaml_documents(rendered_yaml, docs)
             preflight_output_storage(output_root=output_root, run_id=run_id)
             _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
             if args.direct_launch:
@@ -576,6 +818,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "submit": result.__dict__,
                     "outputs": outputs,
                 }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
                 final, wait_diagnostics = _wait_for_terminal(
                     scheduler_job_id,
                     sky_bin=sky_bin,

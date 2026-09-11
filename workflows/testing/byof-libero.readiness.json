@@ -1,11 +1,11 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7496422b21e5d7da3cbb90bb34aadfa01c697a4adb4e37bb6581a371c5972034",
-  "resource_profile_sha256": "608411b7ea7968162ef650e1dfa55a3a9ce3cde8237edc76f4e40661549526b6",
+  "workflow_sha256": "8bfe69cbc73300821eec819ae1b1bc58db7e6ce9c91a086ba4d155e367afc32a",
+  "resource_profile_sha256": "61b9380b03c2896cf3bcd6814c5427ca70522ad2650a1fae26ea13fda3402dbb",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026 after the child runtime context was rebound to its assigned namespace; neither command launched infrastructure.",
+      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026. The LIBERO runner additionally forces managed scheduler-ID polling and refuses an absent or ambiguous owner-only allowed-node binding; neither validation command launched infrastructure.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id <owner-run-id> --json",
@@ -14,9 +14,9 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused static tests prove that the rendered BYOF operation pins one official LIBERO-Spatial demonstration, prunes unused third-party render assets and Git objects in the source clone layer, invokes upstream Sequential.observe with BCRNNPolicy for nonzero steps, reloads a checkpoint, evaluates trajectory-disjoint held-out data, requires one B200, and never invokes rendering.",
+      "reason": "Focused static tests prove that the rendered BYOF operation pins one official LIBERO-Spatial demonstration, prunes unused third-party render assets and Git objects in the source clone layer, runtime-fetches and hash-verifies upstream-equivalent BERT task conditioning, invokes upstream Sequential.observe with BCRNNPolicy for nonzero steps, reloads a checkpoint, evaluates trajectory-disjoint held-out data, binds actual payload Pod/RBAC/allowed-node evidence, requires one B200, and never invokes rendering.",
       "evidence": [
-        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (7 passed)",
+        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (8 passed)",
         "docs/workbench/byof-libero.md#acceptance-artifact"
       ]
     }
@@ -31,7 +31,7 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "The exact 508,779,600-byte official demonstration downloaded from the immutable Hugging Face revision and matched SHA-256 ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead locally. Its HDF5 inventory contains the expected 50 demonstrations and 5,068 samples for the selected BDDL task.",
+      "reason": "The exact 508,779,600-byte official demonstration downloaded from the immutable Hugging Face revision and matched SHA-256 ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead locally. Its HDF5 inventory contains the expected 50 demonstrations and 5,068 samples for the selected BDDL task. The workflow also pins the Apache-2.0 bert-base-cased revision and exact file hashes required by the pinned upstream LIBERO task-conditioning source.",
       "evidence": [
         "owner-only upstream-evidence.json",
         "docs/workbench/byof-libero.md#immutable-inputs-and-licensing"
@@ -39,7 +39,7 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source and dataset require no acceptance token. Launch remains blocked until the manager creates and receipts the isolated namespace's deterministic LIBERO payload ServiceAccount, pods/get-only Role, and exact RoleBinding. The payload preflight refuses SkyPilot's default/engine account while the manager global controller config remains explicitly on the engine-required account.",
+      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source, BERT task model, and dataset require no acceptance token. Launch remains blocked until the manager creates and receipts the isolated namespace's deterministic LIBERO payload ServiceAccount, pods/get-only Role, and exact RoleBinding. The payload preflight uses a distinct mode-private namespace-bound kubeconfig, rejects RBAC drift and any mismatch from owner-receipted UID/namespace/cluster/specification hashes, and refuses SkyPilot's default/engine account while the manager global controller config remains explicitly on the engine-required account.",
       "evidence": [
         "owner-only runtime-context validation",
         "owner-only pull-secret receipt",
@@ -49,7 +49,7 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "The current BYOF generator adds the complete verified SkyPilot bootstrap package set plus APT-bypass and process-tree deadline guards, changing the generated image bytes. The earlier private candidate predates this repair and is retained only as failed-bootstrap evidence. A newly built immutable private digest must pass complete byte, scanner, pullability, and pod-observed identity gates before another live attempt.",
+      "reason": "The current BYOF generator adds the complete verified SkyPilot bootstrap package set plus APT-bypass and process-tree deadline guards and records the immutable base reference/digest in generated build metadata and OCI labels. The old r15 private image is bound to an earlier head and retained only as historical private-stage evidence, never repaired-head or live-qualified evidence. A newly built immutable private digest must pass complete OCI byte/provenance, scanner, pullability, and pod-observed identity gates before another live attempt.",
       "evidence": [
         "focused Python 3.12 bootstrap-guard regression tests",
         "owner-only prior-attempt failure and cleanup receipts",
@@ -58,7 +58,7 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig are verified, but launch is paused for manager creation and revalidation of the payload-only RBAC contract. Live acceptance still requires exactly one observed B200 with sm_100 and a matching Kubernetes Pod imageID.",
+      "reason": "Prior owner-only evidence verified a STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig, but all volatile facts must be freshly revalidated and launch is paused for manager authorization. Live acceptance still requires managed scheduler-ID polling, one exact allowed node, actual payload Pod/service-account/RBAC binding, exactly one observed B200 with sm_100, and a matching Kubernetes Pod imageID.",
       "evidence": [
         "owner-only namespace-binding prelaunch receipt",
         "owner-only payload-RBAC manifest and receipt schema",
