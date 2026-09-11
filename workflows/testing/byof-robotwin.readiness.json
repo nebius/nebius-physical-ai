@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "e130b4e23a21e0df057746a924474b80240bbae78a27f8b63496b5e702866967",
+  "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The checked-in workflow passes schema validation and renders one CPU-only workbench.byof.repo launcher; the delegated inner profile is the sole accelerator request and remains exactly one RTX PRO 6000 Blackwell.",
+      "reason": "The checked-in workflow validates and plans as one CPU-only workbench.byof.repo launcher; the delegated profile remains the sole accelerator request and is exactly one RTX PRO 6000 Blackwell.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-robotwin.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/byof-robotwin.yaml --run-id robotwin-local-plan --json"
@@ -12,41 +12,36 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused Python 3.12 contract tests verify exact normal-submit recognition, pre-side-effect context refusal even with ordinary preflight skipped, value-only secret transport, strict portable configuration schemas, owner-only worker materialization and cleanup, hostile-ambient isolation, neutral scheduler arguments, a CPU outer/one STRICT RTX inner topology, one derived output binding, the pinned task/config, exact 148-distribution CPython 3.10 image lock, pre-launch exact-digest byte scan, official embodiment-path setup, successful-seed replay, native HDF5/video checks, and fail-closed reservation, GPU, Vulkan, image, and artifact requirements. Runtime success remains separately unverified below.",
+      "reason": "Python 3.12 contract tests verify immutable contract recognition, early owner-only authorization parsing, value-only transport, one authorized output, CPU outer/one RTX inner topology, a zero-vendor-payload boundary, and genuine missing-access/incomplete-lock refusal. No simulator success is claimed.",
       "evidence": [
-        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_robotwin.py npa/tests/workflows/test_byof_solution_smokes.py"
+        "npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robotwin_runtime_bootstrap.py npa/tests/workflows/test_byof_robotwin.py"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The checked-in spec and public plans retain example-bucket. Live normal submit derives exactly one summary destination from the manager-authorized output root and inner run ID, binds it only in execution preflight and owner-only state, and still requires live writable-storage proof.",
+      "reason": "Public plans retain example-bucket. A future authorized run derives one summary destination from the manager output root and run ID; no destination was supplied or inferred in Phase A.",
       "evidence": []
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The public RoboTwin source and asset revisions resolve, but the two runtime archives have not yet been downloaded and hash-checked by the workload.",
-      "evidence": [
-        "https://github.com/RoboTwin-Platform/RoboTwin/commit/96c1feab536306b50c26af200044fcdf126e8904",
-        "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
-      ]
+      "reason": "No RoboTwin, CuRobo, Python runtime, or asset payload was fetched. Exact metadata identities alone are recorded in the incomplete lock.",
+      "evidence": []
     },
     "credentials": {
       "status": "unverified",
-      "reason": "A future live run needs an owner-only manager context with portable Kubernetes/SkyPilot configuration bytes, private-registry and S3 coordinates, ownership, STRICT reservation, and authorized NVIDIA/CuRobo/aggregate-asset/output-use decisions. The client now validates it before credentials or scheduling and transports only the validated bytes as a secret value. Credentials and a private registry are not permission. The upstream source and asset dataset are public and ungated.",
+      "reason": "No manager runtime context or credential was used. Credentials and secret transport are mechanisms, never acceptance of runtime or output terms.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The image has not been built, pushed, or byte-scanned. Its exact Python closure is pinned and license-audited, but the image must remain private because baked CuRobo v0.7.8 is licensed only for noncommercial research/evaluation use and CUDA/cuDNN require operator acceptance. The live harness scans the built exact digest before submitting it.",
-      "evidence": [
-        "https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE"
-      ]
+      "reason": "The public bootstrap is versioned -unbuilt and publication-quarantined. Its Ubuntu base/apt/runtime locks are intentionally incomplete, so no build, pull, scan, SBOM, provenance, or anonymous-pull claim exists.",
+      "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No manager runtime-context file is available yet, so the normal-submit live path remains unqualified. The outer launcher is CPU-only; its one delegated workload requires exactly one STRICT-reservation-backed RTX PRO 6000 Blackwell with healthy NVIDIA Vulkan mounts. B200 and fallback placement are invalid.",
+      "reason": "CUDA/cuDNN acceptance, CuRobo v0.7.8 noncommercial research/evaluation use and service boundary, aggregate asset/output rights, exact image bytes, writable storage, and STRICT RTX context remain manager/human gates. B200 is invalid.",
       "evidence": []
     }
   }

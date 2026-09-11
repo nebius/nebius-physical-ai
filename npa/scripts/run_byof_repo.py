@@ -31,6 +31,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_IMAGE_ENV as ROBOTWIN_CHILD_IMAGE_ENV,
     CHILD_OUTPUT_PREFIX_ENV as ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
     CHILD_OUTPUT_ROOT_ENV as ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+    CHILD_RUNTIME_AUTH_ENV as ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
     CHILD_RUN_ID_ENV as ROBOTWIN_CHILD_RUN_ID_ENV,
     CONTEXT_ENV_NAMES as ROBOTWIN_CONTEXT_ENV_NAMES,
     INVOCATION as ROBOTWIN_INVOCATION,
@@ -38,7 +39,9 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     REQUIRED_DECISIONS as ROBOTWIN_REQUIRED_DECISIONS,
     SMOKE_COMMAND_SHA256 as ROBOTWIN_SMOKE_COMMAND_SHA256,
     RobotwinAuthorization as _RuntimeAuthorization,
+    encode_runtime_authorization,
     load_runtime_authorization,
+    require_runtime_lock_complete,
     validate_invocation,
 )
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
@@ -133,14 +136,16 @@ def _load_runtime_authorization(
         raise ValueError(
             f"RoboTwin requires --runtime-context-env {ROBOTWIN_RUNTIME_CONTEXT_ENV}"
         )
-    return load_runtime_authorization()
+    return require_runtime_lock_complete(load_runtime_authorization())
 
 
 def _apply_runtime_authorization(
     args: argparse.Namespace, authorization: _RuntimeAuthorization
 ) -> None:
     args.project = authorization.project
-    args.registry = authorization.registry
+    args.base_image = authorization.bootstrap_image
+    args.image = authorization.bootstrap_image
+    args.registry = _registry_path(authorization.bootstrap_image)
     args.output_root = authorization.output_root
     args.run_id = authorization.run_id
     args.config_path = authorization.skypilot_config_path
@@ -649,6 +654,9 @@ def _authorized_live_env(
             ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: output_prefix,
             ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
             ROBOTWIN_CHILD_RUN_ID_ENV: authorization.run_id,
+            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(
+                authorization
+            ),
             "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": authorization.context_sha256,
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": str(scan_evidence["report_sha256"]),
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": str(
@@ -677,6 +685,7 @@ def _private_runtime_redactions(env: dict[str, str]) -> tuple[str, ...]:
             ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
             ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
             ROBOTWIN_CHILD_RUN_ID_ENV,
+            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
         )
         if (value := env.get(key, "").strip())
     )

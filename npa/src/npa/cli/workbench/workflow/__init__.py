@@ -155,7 +155,15 @@ def _fail(msg: str, code: int = 1) -> None:
     # replace the original failure with a MarkupError while reporting it.
     error.append(str(_redact_submit_private_values(str(msg))))
     console.print(error, soft_wrap=True)
-    raise typer.Exit(code)
+    # Calls made from an ``except`` block would otherwise attach the handled
+    # exception as ``__context__``. That object can retain raw parser input or
+    # owner-only paths even after the displayed message has been redacted.
+    try:
+        raise typer.Exit(code) from None
+    except typer.Exit as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
 
 
 def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
@@ -4199,13 +4207,31 @@ def _execution_target_preflight(
         if len(declared) != 1:
             raise ValueError("RoboTwin declared output binding is not unique")
         destinations = {authorized_output_uri: destinations[declared[0]]}
-    if source_uri:
-        destinations[source_uri.rstrip("/") + "/"] = "directory"
     target = resolve_execution_target(
         project=project, context=context, region=region, output_uris=list(destinations), output_kinds=destinations,
         credentials=credentials,
     )
     report = verify_execution_target(target, verify_cluster=verify_cluster, gpu_check=gpu_check)
+    if source_uri:
+        source_destination = source_uri.rstrip("/") + "/"
+        source_target = resolve_execution_target(
+            project=project,
+            context=context,
+            region=region,
+            output_uris=[source_destination],
+            output_kinds={source_destination: "directory"},
+            credentials=credentials,
+            provenance={"outputs": "control-plane-source-staging"},
+        )
+        source_report = verify_execution_target(
+            source_target,
+            verify_cluster=False,
+        )
+        report["control_plane_source_staging"] = {
+            "presence": source_report.get("presence"),
+            "access": source_report.get("access"),
+            "destination_count": source_report.get("destination_count"),
+        }
     return target, report
 
 

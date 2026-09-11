@@ -42,6 +42,12 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+        "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -58,7 +64,6 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "kubeconfig": "/private/kubeconfig-canary",
         "kubernetes_context": "private-context-canary",
         "skypilot_config_path": "/private/skypilot-canary.yaml",
-        "registry": "registry.example/private-namespace-canary",
         "bucket": "private-bucket-canary",
         "output_root": "s3://private-bucket-canary/robotwin-output",
         "run_id": "robotwin-private-run-canary",
@@ -68,6 +73,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
 
 
 def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
+    monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
     payload = _robotwin_context(**updates)
     for field, filename in (
         ("kubeconfig", "kubeconfig.yaml"),
@@ -159,8 +165,10 @@ def _robotwin_args(module, *extra: str) -> list[str]:
             "license-decision-schema-mismatch",
         ),
         (
-            json.dumps(_robotwin_context(registry="docker.io/example/public")),
-            "registry-not-private",
+            json.dumps(
+                _robotwin_context(bootstrap_image="docker.io/example/public:latest")
+            ),
+            "bootstrap-image-not-immutable",
         ),
     ],
 )
@@ -196,6 +204,46 @@ def test_robotwin_authorization_refuses_before_any_side_effect(
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "failed"
     assert error in output["error"]
+
+
+def test_robotwin_incomplete_runtime_lock_refuses_before_any_side_effect(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        require_runtime_lock_complete,
+    )
+
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module, "require_runtime_lock_complete", require_runtime_lock_complete
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail(
+            "source validation ran before runtime-lock refusal"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail(
+            "registry resolved before runtime-lock refusal"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "command ran before runtime-lock refusal"
+        ),
+    )
+
+    assert module.main(_robotwin_args(module)) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "runtime-lock-incomplete" in output["error"]
 
 
 def test_robotwin_inline_context_refuses_before_any_side_effect(
@@ -375,7 +423,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     def fake_live_env(authorization, scan_evidence, *, project: str, image: str):
         events.append("live-env")
         assert project == payload["project"]
-        assert authorization.registry == payload["registry"]
+        assert authorization.bootstrap_image == payload["bootstrap_image"]
         assert scan_evidence["report_sha256"] == "b" * 64
         assert image.endswith("@sha256:" + "a" * 64)
         return {
@@ -406,7 +454,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         events.append("runner")
         seen_runner_cmd.extend(cmd)
         seen_env.update(environment)
-        assert authorization.registry == payload["registry"]
+        assert authorization.bootstrap_image == payload["bootstrap_image"]
         return subprocess.CompletedProcess(
             cmd, 0, stdout='{"status":"success"}\n', stderr=""
         )
@@ -433,14 +481,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     monkeypatch.setattr(module, "_run", fake_run)
 
     assert module.main(_robotwin_args(module)) == 0
-    assert events == [
-        "build",
-        "push",
-        "inspect",
-        "scan",
-        "live-env",
-        "runner",
-    ]
+    assert events == ["scan", "live-env", "runner"]
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] == "b" * 64
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] == "3"
     assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in seen_env
@@ -460,7 +501,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         "kubeconfig",
         "kubernetes_context",
         "skypilot_config_path",
-        "registry",
+        "bootstrap_image",
         "bucket",
         "output_root",
         "run_id",

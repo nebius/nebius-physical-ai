@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import ast
-import base64
 import hashlib
 import inspect
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -66,14 +63,6 @@ def _profile_task() -> dict[str, object]:
     return task
 
 
-def _embedded_requirements(build: str) -> str:
-    match = re.search(r"printf '%s'\s+(.*?)\s+\| base64 -d", build, re.DOTALL)
-    assert match is not None
-    chunks = re.findall(r"'([A-Za-z0-9+/=]+)'", match.group(1))
-    assert chunks
-    return base64.b64decode("".join(chunks)).decode()
-
-
 def test_robotwin_workflow_validates_and_plans_the_byof_toolref() -> None:
     spec = load_spec(WORKFLOW)
     plan = build_plan(spec, run_id="robotwin-contract")
@@ -93,38 +82,26 @@ def test_robotwin_workflow_validates_and_plans_the_byof_toolref() -> None:
         "kubeconfig",
         "kubernetes_context",
         "skypilot_config_path",
-        "registry",
+        "bootstrap_image",
     ):
         assert private_field not in " ".join(plan.steps[0].argv)
 
 
-def test_robotwin_pins_source_assets_build_inputs_and_private_runtime() -> None:
+def test_robotwin_selects_only_the_quarantined_zero_payload_bootstrap() -> None:
     config = _config()
     build = str(config["build_command"])
-    requirements = _embedded_requirements(build)
     workflow_text = WORKFLOW.read_text(encoding="utf-8")
 
     assert config["repo_url"] == "https://github.com/RoboTwin-Platform/RoboTwin.git"
     assert config["repo_ref"] == SOURCE_REVISION
-    assert config["base_profile"] == "ubuntu"
-    assert config["base_image"] == (
-        "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
-        "sha256:61f6c08f2b59036cb935e56d1e31a6b64e3ae2c7ddb86d33fa0b044c7917b719"
-    )
-    assert CUROBO_REVISION in build
-    assert "torch==2.7.1+cu128" in requirements
-    assert "torchvision==0.22.1+cu128" in requirements
-    assert "nvidia-cudnn-cu12==9.7.1.26" in requirements
-    assert hashlib.sha256(requirements.encode()).hexdigest() == (
-        "5a2b78949b5be3e30089b930e2dfd2197a505f89a3b66cf26def2572306af5b8"
-    )
-    assert "TORCH_CUDA_ARCH_LIST=12.0" in build
-    assert "python3-dev" in build
-    assert "sapien==3.0.0b1" in requirements
-    assert "PyTorch3D" not in build and "pytorch3d" not in build
-    assert "TianxingChen/RoboTwin2.0" not in build
-    assert ASSET_REVISION not in build
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://robotwin"
+    assert build == ""
+    assert config["smoke_command"] == "/opt/npa/robotwin/robotwin-runtime run"
     assert "ghcr.io/nebius" not in workflow_text
+    assert "nvidia/cuda" not in workflow_text
+    assert CUROBO_REVISION not in workflow_text
+    assert ASSET_REVISION not in workflow_text
 
     sys.path.insert(0, str(ROOT / "npa" / "scripts"))
     import run_byof_repo as runner
@@ -137,9 +114,11 @@ def test_robotwin_pins_source_assets_build_inputs_and_private_runtime() -> None:
     ).hexdigest()
 
 
-def test_robotwin_smoke_is_a_real_successful_seed_search_replay_and_collection() -> None:
+def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     config = _config()
-    smoke = str(config["smoke_command"])
+    lock = json.loads(
+        (ROOT / "npa/docker/workbench/robotwin/runtime-lock.json").read_text()
+    )
 
     assert config["workload"] == "solution-smoke"
     assert config["solution_name"] == "robotwin"
@@ -153,56 +132,21 @@ def test_robotwin_smoke_is_a_real_successful_seed_search_replay_and_collection()
     assert config["task"] == "beat_block_hammer"
     assert config["wait_timeout"] == -1
 
-    for required in (
-        ASSET_REVISION,
-        "revision=ASSET_REVISION",
-        'TASK = "beat_block_hammer"',
-        'TASK_CONFIG = "demo_clean"',
-        'task_config["episode_num"] = 1',
-        '"scripts/update_embodiment_config_path.py"',
-        '"official_embodiment_path_configuration"',
-        '"scripts/collect_data.py", TASK, TASK_CONFIG',
-        'episode_root / "seed.txt"',
-        'episode_0000000.hdf5',
-        'episode_0000000.mp4',
-        'episode.attrs.get("source_format") != "RoboTwin"',
-        'episode.attrs.get("source_path") != "native_collection"',
-        'decoded_frames != action_count + 1',
-        '"task_success": True',
-        '"exit_status": 0',
-        'artifact_path.write_text(json.dumps(',
-    ):
-        assert required in smoke
-
-    python_smoke = smoke.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    ast.parse(python_smoke)
+    assert lock["status"] == "incomplete"
+    assert lock["weights"] == []
+    assert lock["runtime_artifacts"] == []
+    assert {item.get("version") for item in lock["sources"]} == {
+        SOURCE_REVISION,
+        "0.7.8",
+    }
+    curobo = next(item for item in lock["sources"] if item["name"] == "CuRobo")
+    assert curobo["revision"] == CUROBO_REVISION
+    assert curobo["use_restriction"] == "noncommercial-research-or-evaluation"
+    assert {item["revision"] for item in lock["assets"]} == {ASSET_REVISION}
+    assert all(item["sha256"] and item["size_bytes"] > 0 for item in lock["assets"])
 
 
-def test_robotwin_smoke_hard_fails_closed_on_gpu_vulkan_image_and_artifacts() -> None:
-    smoke = str(_config()["smoke_command"])
-
-    assert 'len(gpu_rows) != 1' in smoke
-    assert '"RTX PRO 6000" not in gpu_name.upper()' in smoke
-    assert 'compute_capability != "12.0"' in smoke
-    assert 'torch_capability != (12, 0)' in smoke
-    assert "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256" in smoke
-    assert "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256" in smoke
-    assert "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES" in smoke
-    assert '"built_image_asset_cache_output_absence"' in smoke
-    assert '"npa_robotwin_image_byte_scan_v1"' in smoke
-    assert '"policy": "STRICT"' in smoke
-    assert 'vulkan.returncode != 0' in smoke
-    assert '"RTX PRO 6000" not in vulkan_text.upper()' in smoke
-    assert 'sapien.render.get_device_summary()' in smoke
-    assert re.search(r"sha256:\[0-9a-f\]\{64\}", smoke)
-    assert "Kubernetes status.containerStatuses[].imageID" in smoke
-    assert "kubernetes.default.svc" in smoke
-    assert 'item.get("name") == "ray-node"' in smoke
-    assert 'if not hdf5_path.is_file() or not video_path.is_file()' in smoke
-    assert 'if payload["exit_status"] != 0' in smoke
-
-
-def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> None:
+def test_robotwin_profile_requests_one_rtx_and_runs_authorized_bootstrap() -> None:
     task = _profile_task()
     resources = task["resources"]
     envs = task["envs"]
@@ -227,15 +171,15 @@ def test_robotwin_profile_requests_one_rtx_pro_and_uploads_exact_evidence() -> N
         "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX",
         "NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET",
         "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1",
     ):
         assert f'${{{secret_name}:?}}' in run
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     assert envs["VK_ICD_FILENAMES"] == "/usr/share/vulkan/icd.d/nvidia_icd.json"
-    assert 'vulkaninfo --summary' in run
-    assert 'test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"' in run
-    assert 'IfNoneMatch="*"' in run
-    assert 's3.head_object' in run
-    assert 'exit "${SMOKE_EXIT_CODE}"' in run
+    assert '/bin/bash -lc "${BYOF_SMOKE_COMMAND}"' in run
+    assert 'test -s "${NPA_SMOKE_OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"' in run
+    assert "vulkaninfo" not in str(task["setup"])
+    assert "boto3" not in run
 
 
 def test_robotwin_has_exactly_one_accelerator_request_across_both_layers() -> None:
@@ -321,6 +265,12 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
             {
                 "solution": "robotwin",
                 "ownership_provenance": "manager-issued",
+                "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+                "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+                "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+                "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+                "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+                "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
                     "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -337,7 +287,6 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
                 "kubeconfig": str(kubeconfig),
                 "kubernetes_context": "private-context",
                 "skypilot_config_path": str(skypilot),
-                "registry": "registry.example/private/robotwin",
                 "bucket": "private-bucket",
                 "output_root": "s3://private-bucket/robotwin-output",
                 "run_id": "robotwin-private-run",

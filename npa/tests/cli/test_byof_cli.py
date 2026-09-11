@@ -196,6 +196,12 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
             {
                 "solution": "robotwin",
                 "ownership_provenance": "manager-issued",
+                "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+                "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+                "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+                "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+                "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+                "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
                     "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -212,7 +218,6 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
                 "kubeconfig": str(kubeconfig),
                 "kubernetes_context": "robotwin-context",
                 "skypilot_config_path": str(skypilot),
-                "registry": "registry.example/robotwin-private",
                 "bucket": "robotwin-bucket-canary",
                 "output_root": "s3://robotwin-bucket-canary/output",
                 "run_id": "robotwin-run-canary",
