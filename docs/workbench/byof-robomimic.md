@@ -20,7 +20,7 @@ validation and planning do not imply that a B200 result exists.
 | Baked runtime | `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2` | Operator-private derivative only. PyTorch is BSD-3-Clause. CUDA/cuDNN bytes are expected in this base and remain governed by their upstream NVIDIA terms; a private registry is only a delivery destination and supplies no permission to build, use, or redistribute them. This candidate is not selected for public NPA publication. |
 | Weights | None supplied | No pretrained weights are downloaded or baked. The trained BC checkpoint is a run output, not an input weight. |
 | Data and assets | `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, `v1.5/lift/ph/low_dim_v15.hdf5` | The dataset card declares MIT. Bytes are fetched only by the authorized running workload and must match SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes before HDF5 is opened. Dataset bytes and simulator assets are never baked into the image. |
-| Runtime cache | Run-local only | Builds use `--no-cache-dir`. The HDF5, training logs, and checkpoint live under the ephemeral run directory before selected outputs are uploaded. No credential, shared cache, downloaded dataset, or generated checkpoint may survive in image layers. |
+| Runtime cache | Run-local only | Builds use `--no-cache-dir`. The downloaded HDF5 is kept under a separate ephemeral input directory and is never traversed by the output uploader. Training logs and the checkpoint live under the run output directory. No credential, shared cache, downloaded dataset, or generated checkpoint may survive in image layers. |
 | Outputs | Run-scoped checkpoint, config, logs, BYOF summary, provenance, and `robomimic-smoke.json` | These are generated from the authorized run and uploaded only to its manager-issued private S3 prefix. Their production or storage does not derive permission from a runtime fetch, credential, registry, or input license; the operator remains responsible for applicable use and output restrictions. |
 
 The low-dimensional dependency closure is resolved for CPython 3.11 on Linux
@@ -188,13 +188,16 @@ roleRef:
 
 Build and push through the BYOF runner so the mutable build tag is resolved to a
 digest before scheduling. The dedicated live E2E requires
-`NPA_BYOF_LIVE_GPU=1`, `BYOF_ROBOMIMIC_LIVE=1`, the STRICT-capacity
+`NPA_BYOF_LIVE_GPU=1`, `NPA_BYOF_ROBOMIMIC_LIVE_B200=1`, the STRICT-capacity
 attestation, and explicit manager-issued project, private registry (via
 `NPA_BYOF_ROBOMIMIC_REGISTRY`), kubeconfig, context,
-non-default namespace, and output-bucket selectors. It is valid only in that
-assigned context and after the operator has made the NVIDIA-terms decision
-described above. The runner cancels and cleans up its SkyPilot workload after
-the artifact is uploaded. Preserve shared infrastructure.
+non-default namespace, and output-bucket selectors. The harness checks
+`NPA_E2E_MK8S_RESERVED_CAPACITY=1`, then writes the corresponding boolean only
+into its run-local profile copy; the checked-in profile deliberately carries no
+attestation value. The run is valid only in that assigned context and after the
+operator has made the NVIDIA-terms decision described above. The runner cancels
+and cleans up its SkyPilot workload after the artifact is uploaded. Preserve
+shared infrastructure.
 
 ## Scope and deferred work
 

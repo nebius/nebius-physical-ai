@@ -26,9 +26,10 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
-  # Boolean attestation only; the private reservation identity stays outside
-  # rendered task YAML and repository artifacts.
-  NPA_ROBOMIMIC_STRICT_B200_ATTESTED: "${NPA_E2E_MK8S_RESERVED_CAPACITY}"
+  # The authorized live harness materializes this boolean in a run-local copy
+  # only after checking the manager's STRICT-capacity gate. The private
+  # reservation identity stays outside rendered task YAML and repo artifacts.
+  NPA_ROBOMIMIC_STRICT_B200_ATTESTED: ""
   NVIDIA_VISIBLE_DEVICES: "all"
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
@@ -137,11 +138,14 @@ run: |
   uploaded = 0
   for path in root.rglob("*"):
       if path.is_file():
+          if path.suffix.lower() in {".hdf5", ".download"}:
+              raise RuntimeError(f"runtime input must not be uploaded as output: {path}")
           key = prefix + str(path.relative_to(root))
           s3.put_object(Bucket=parsed.netloc, Key=key, Body=path.read_bytes(), IfNoneMatch="*")
           uploaded += 1
-  for required in ("npa_byof_summary.json", os.environ["BYOF_SMOKE_ARTIFACT_NAME"]):
-      s3.head_object(Bucket=parsed.netloc, Key=prefix + required)
+  s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
+  if smoke_exit_code == 0:
+      s3.head_object(Bucket=parsed.netloc, Key=prefix + smoke_artifact_name)
   print(f"uploaded_file_count={uploaded}", flush=True)
   PY
   if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
