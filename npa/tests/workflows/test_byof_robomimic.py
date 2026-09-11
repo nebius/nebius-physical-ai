@@ -13,6 +13,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "byof-robomimic.yaml"
 READINESS = ROOT / "workflows" / "testing" / "byof-robomimic.readiness.json"
+DOC = ROOT / "docs" / "workbench" / "byof-robomimic.md"
 PROFILE = (
     ROOT
     / "npa"
@@ -182,3 +183,32 @@ def test_robomimic_readiness_binds_exact_workflow_bytes() -> None:
         "source_image",
         "target_runtime",
     }
+
+
+def test_robomimic_delivery_boundaries_do_not_invent_runtime_consent() -> None:
+    doc = DOC.read_text(encoding="utf-8")
+    normalized_doc = " ".join(doc.split())
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    profile = PROFILE.read_text(encoding="utf-8")
+
+    for boundary in (
+        "| Source |",
+        "| Baked runtime |",
+        "| Weights |",
+        "| Data and assets |",
+        "| Runtime cache |",
+        "| Outputs |",
+    ):
+        assert boundary in doc
+
+    assert "changes delivery, not permission" in normalized_doc
+    assert "No image has been built" in doc
+    assert "pretrained weights" in doc
+    assert "every layer and image history entry" in doc
+    combined = "\n".join((doc, workflow, profile))
+    for invented_proxy in (
+        "NPA_ROBOMIMIC_ACCEPT",
+        "NPA_ACCEPT_CUDA",
+        "NPA_ACCEPT_CUDNN",
+    ):
+        assert invented_proxy not in combined
