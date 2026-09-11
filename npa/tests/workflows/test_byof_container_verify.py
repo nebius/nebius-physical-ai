@@ -237,6 +237,23 @@ def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
         )
 
 
+def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
+    args = SimpleNamespace(
+        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False, cleanup=True,
+    )
+
+    with pytest.raises(ValueError, match="verified isolated Sky API shutdown"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"name": "task"}],
+            global_config={},
+            infra="k8s/context",
+        )
+
+
 def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
     monkeypatch, tmp_path
 ) -> None:
@@ -294,6 +311,8 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         (True, {"names": ["worker"]}),
         (False, None),
         (False, {"names": ["worker-a", "worker-b"]}),
+        (False, {"names": [" worker"]}),
+        (False, {"names": ["worker "]}),
     ):
         args.direct_launch = direct
         with pytest.raises(ValueError):
@@ -370,11 +389,15 @@ def test_libero_payload_kubeconfig_must_be_private_regular_file(
     kubeconfig.chmod(0o644)
     monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(kubeconfig))
 
-    with pytest.raises(ValueError, match="mode-private regular file"):
+    with pytest.raises(ValueError, match="owner-private regular file"):
         module._libero_payload_kubeconfig()
 
     kubeconfig.chmod(0o600)
     assert module._libero_payload_kubeconfig() == kubeconfig.resolve()
+
+    monkeypatch.setattr(module.os, "getuid", lambda: kubeconfig.stat().st_uid + 1)
+    with pytest.raises(ValueError, match="owner-private regular file"):
+        module._libero_payload_kubeconfig()
 
 
 def test_libero_sky_config_uses_only_explicit_mode_private_owner_input(
@@ -387,7 +410,7 @@ def test_libero_sky_config_uses_only_explicit_mode_private_owner_input(
     config.chmod(0o644)
     monkeypatch.setenv("NPA_LIBERO_SKYPILOT_CONFIG", str(config))
 
-    with pytest.raises(ValueError, match="mode-private regular file"):
+    with pytest.raises(ValueError, match="owner-private regular file"):
         module._libero_global_config_path(args)
 
     config.chmod(0o600)
@@ -1144,6 +1167,9 @@ def test_managed_cleanup_cancels_on_malformed_or_unlisted_status_failure(
             '[{"name": "unrelated", "error": "permission denied"}]',
             "contradictory error metadata",
         ),
+        ('[{"name": "unrelated", "error": ""}]', "contradictory error metadata"),
+        ('[{"name": "unrelated", "errors": []}]', "contradictory error metadata"),
+        ('[{"name": "unrelated", "exception": null}]', "contradictory error metadata"),
         ('[{"name": "human-run-name-worker"}]', "still contains"),
     ],
 )
@@ -1306,7 +1332,7 @@ def test_submit_waits_on_scheduler_id_not_human_run_name(
     }
 
 
-def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path) -> None:
+def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path, capsys) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -1320,8 +1346,104 @@ def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path) -> None:
         lambda *_a, **_k: pytest.fail("waiter must not run without a scheduler ID"),
     )
 
-    with pytest.raises(RuntimeError, match="no scheduler job ID"):
-        module._submit_and_wait(args)
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["submit"] == {
+        "error_type": "ValueError",
+        "scheduler_job_id_recovered": False,
+        "status": "failed",
+    }
+
+
+@pytest.mark.parametrize("job_id", [" 73", "73 ", "human-run-name", "0", -1])
+def test_submit_refuses_nonexact_numeric_scheduler_id(
+    monkeypatch, tmp_path, capsys, job_id
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id=job_id, log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: pytest.fail("waiter must receive only an exact job ID"),
+    )
+
+    assert module._submit_and_wait(args) == 2
+    assert json.loads(capsys.readouterr().out)["submit"]["status"] == "failed"
+
+
+def test_submit_error_recovers_exact_scheduler_id_and_config_for_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    generated_config = tmp_path / "generated-skypilot.yaml"
+    generated_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+    transaction = SimpleNamespace(job_id="73")
+
+    def submit(*_args, **_kwargs):
+        raise module.SkyPilotSubmitError(
+            "reconciled failure",
+            transaction=transaction,
+            config_path=generated_config,
+        )
+
+    def cleanup(scheduler_job_id, **kwargs):
+        observed.update(job_id=scheduler_job_id, config_path=kwargs["config_path"])
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == {"job_id": "73", "config_path": generated_config}
+    assert summary["submit"]["scheduler_job_id_recovered"] is True
+    assert summary["cleanup"]["verified"] is True
+    assert summary["cleanup"]["remote_absence_verified"] is True
+
+
+def test_wait_exception_emits_failure_and_cleans_exact_scheduler_id(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    observed: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("status failed")),
+    )
+
+    def cleanup(scheduler_job_id, **_kwargs):
+        observed.append(scheduler_job_id)
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == ["73"]
+    assert summary["submit"]["error_type"] == "RuntimeError"
+    assert summary["cleanup"]["verified"] is True
 
 
 def test_submit_returns_failure_when_exact_cleanup_is_not_verified(
@@ -1496,11 +1618,11 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
     module = _load_module()
     seen: list[list[str]] = []
-    environments: list[Path | None] = []
+    environments: list[tuple[Path | None, dict[str, str]]] = []
 
     def fake_run(cmd, **kwargs):
-        del kwargs
         seen.append(list(cmd))
+        environments.append((isolated, dict(kwargs["env"])))
         return subprocess.CompletedProcess(
             cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr=""
         )
@@ -1509,7 +1631,7 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
     monkeypatch.setattr(
         module,
         "sky_environment",
-        lambda isolated: environments.append(isolated) or {},
+        lambda _isolated: {},
     )
     isolated = Path("/owner/isolated-sky-state")
     module._ensure_infra_enabled(
@@ -1531,7 +1653,35 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
             "/tmp/skypilot.yaml",
         ],
     ]
-    assert environments == [isolated, isolated]
+    assert [root for root, _env in environments] == [isolated, isolated]
+    assert environments[0][1]["SKYPILOT_GLOBAL_CONFIG"] == "/tmp/skypilot.yaml"
+
+
+def test_stop_sky_api_fails_closed_and_binds_exact_config(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "generated.yaml"
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(module, "sky_environment", lambda root: {"ROOT": str(root)})
+
+    def fail(cmd, **kwargs):
+        observed.update(cmd=list(cmd), env=dict(kwargs["env"]))
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="failed")
+
+    monkeypatch.setattr(module.subprocess, "run", fail)
+    with pytest.raises(module.SkyPilotConfigError, match="absence is unverified"):
+        module._stop_sky_api(
+            sky_bin="/opt/sky",
+            isolated_config_dir=isolated,
+            config_path=config,
+        )
+    assert observed["cmd"] == ["/opt/sky", "api", "stop"]
+    assert observed["env"] == {
+        "ROOT": str(isolated),
+        "SKYPILOT_GLOBAL_CONFIG": str(config),
+    }
 
 
 def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:

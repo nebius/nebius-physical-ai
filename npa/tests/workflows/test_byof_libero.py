@@ -132,6 +132,9 @@ def test_libero_workflow_pins_reviewed_source_data_and_base_image() -> None:
     assert '"source_prune_path": SOURCE_PRUNE_PATH' in smoke
     assert '"git_objects_removed": True' in smoke
     assert "observed_source_revision != SOURCE_REF" in smoke
+    assert "source_prune_path_absent = not (repo_root / SOURCE_PRUNE_PATH).exists()" in smoke
+    assert 'git_objects_absent = not (repo_root / ".git").exists()' in smoke
+    assert '"layer_scan_required_before_live_use": True' in smoke
     assert "build_metadata.get(\"build_command_sha256\") != BUILD_COMMAND_SHA256" in smoke
     assert 'build_metadata.get("base_image_reference") != BASE_IMAGE_REFERENCE' in smoke
     assert 'build_metadata.get("base_image_digest") != BASE_IMAGE_DIGEST' in smoke

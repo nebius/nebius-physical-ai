@@ -390,6 +390,12 @@ config:
         observed_source_revision = str(source_metadata["commit"])
         if observed_source_revision != SOURCE_REF:
             raise RuntimeError("built LIBERO checkout does not match the pinned source revision")
+        source_prune_path_absent = not (repo_root / SOURCE_PRUNE_PATH).exists()
+        git_objects_absent = not (repo_root / ".git").exists()
+        if not source_prune_path_absent or not git_objects_absent:
+            raise RuntimeError(
+                "pruned render assets or Git objects remain in the final filesystem"
+            )
         build_metadata = json.loads(
             (repo_root / "npa_build_metadata.json").read_text(encoding="utf-8")
         )
@@ -657,6 +663,10 @@ config:
                 "source": {
                     **result["source"],
                     "observed_revision": observed_source_revision,
+                    "source_prune_path": SOURCE_PRUNE_PATH,
+                    "source_prune_path_absent": source_prune_path_absent,
+                    "git_objects_absent": git_objects_absent,
+                    "layer_scan_required_before_live_use": True,
                 },
                 "task_assets": {
                     "bddl_path": BDDL_RELATIVE,
