@@ -260,7 +260,11 @@ def test_secret_in_raw_layer_and_eula_in_history_fail(tmp_path: Path) -> None:
 
 
 def test_model_and_cache_paths_fail(tmp_path: Path) -> None:
-    for name in ("opt/model.safetensors", "root/.cache/pip/wheel"):
+    for name in (
+        "opt/model.safetensors",
+        "root/.cache/pip/wheel",
+        "usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.1",
+    ):
         archive = tmp_path / (name.replace("/", "-") + ".tar")
         _docker_save(archive, {**REQUIRED, name: b"payload"})
         try:
@@ -269,6 +273,19 @@ def test_model_and_cache_paths_fail(tmp_path: Path) -> None:
             assert "forbidden image path" in str(error)
         else:
             raise AssertionError(f"forbidden path accepted: {name}")
+
+
+def test_notice_files_do_not_bypass_vendor_signature_scan(tmp_path: Path) -> None:
+    archive = tmp_path / "notice-vendor.tar"
+    files = {
+        **REQUIRED,
+        "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
+            b"unexpected registry: " + b"nvcr.io/vendor/image"
+        ),
+    }
+    _docker_save(archive, files)
+    with pytest.raises(ValueError, match="forbidden vendor payload signature"):
+        SCAN.scan(archive)
 
 
 def test_nested_archive_members_are_scanned(tmp_path: Path) -> None:
