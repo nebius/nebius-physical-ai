@@ -26,6 +26,7 @@ PROFILE_PATH = (
     / "byof-solution-smoke-libero-b200-gpu.yaml"
 )
 BYOF_RUNNER_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+LIVE_E2E_PATH = ROOT / "npa" / "tests" / "e2e" / "test_byof_onboarding_live_e2e.py"
 
 SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 DATASET_REF = "f13aa24a3da8c43c7225569f28c562979fa0e35a"
@@ -34,6 +35,9 @@ BASE_IMAGE_SHA256 = "ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3f
 LANGUAGE_MODEL_REF = "cd5ef92a9fb2f889e972770a36d4ed042daf221e"
 LANGUAGE_MODEL_MODEL_SHA256 = (
     "d6992b8cd27d7a132eafce6a8210272329a371b1c762d453588795dd3835593e"
+)
+LANGUAGE_MODEL_SOURCE_SHA256 = (
+    "d1df48c6984a2938d60eebf70ba1c61cd2ea512e859fa0ed11abfc550beee3f1"
 )
 CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
 PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
@@ -172,6 +176,7 @@ def test_libero_smoke_uses_real_upstream_bc_training_and_heldout_evaluation() ->
 
 def test_libero_smoke_uses_pinned_upstream_task_language_conditioning() -> None:
     smoke = _smoke_source()
+    live_validator = LIVE_E2E_PATH.read_text(encoding="utf-8")
 
     assert 'LANGUAGE_MODEL_REPOSITORY = "google-bert/bert-base-cased"' in smoke
     assert f'LANGUAGE_MODEL_REVISION = "{LANGUAGE_MODEL_REF}"' in smoke
@@ -184,6 +189,9 @@ def test_libero_smoke_uses_pinned_upstream_task_language_conditioning() -> None:
     assert "cfg.data.max_word_len" in smoke
     assert "upstream_LIBERO_bert_pooler_output" in smoke
     assert "TASK_EMBEDDING_SOURCE_SHA256" in smoke
+    assert f'TASK_EMBEDDING_SOURCE_SHA256 = "{LANGUAGE_MODEL_SOURCE_SHA256}"' in smoke
+    assert LANGUAGE_MODEL_SOURCE_SHA256 in live_validator
+    assert LANGUAGE_MODEL_SOURCE_SHA256 + "c" not in live_validator
     assert "observed_task_embedding_source_sha256" in smoke
     assert "embedding_bytes" not in smoke
     assert "np.resize" not in smoke

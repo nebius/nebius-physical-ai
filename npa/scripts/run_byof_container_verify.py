@@ -35,12 +35,13 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotVersionError,
     resolve_sky_bin,
 )
-from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
     restore_signal_handlers,
 )
+from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
@@ -56,6 +57,7 @@ LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
+LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
 
 
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
@@ -148,6 +150,7 @@ DEFAULT_OUTPUT_ROOT = _normalize_output_root(
     os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof"
 )
 TERMINAL_STATUSES = {
+    "ABSENT",
     "SUCCEEDED",
     "CANCELLED",
     "FAILED",
@@ -156,6 +159,31 @@ TERMINAL_STATUSES = {
     "FAILED_NO_RESOURCE",
     "FAILED_CONTROLLER",
 }
+
+
+def _is_libero_invocation(
+    args: argparse.Namespace, documents: list[dict[str, Any]]
+) -> bool:
+    if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+        return True
+    if Path(args.yaml_path).name == LIBERO_PROFILE_FILENAME:
+        return True
+    for document in documents:
+        config = document.get("config")
+        if not isinstance(config, dict):
+            continue
+        kubernetes = config.get("kubernetes")
+        if not isinstance(kubernetes, dict):
+            continue
+        pod_config = kubernetes.get("pod_config")
+        if not isinstance(pod_config, dict):
+            continue
+        pod_spec = pod_config.get("spec")
+        if not isinstance(pod_spec, dict):
+            continue
+        if pod_spec.get("serviceAccountName") == LIBERO_PAYLOAD_SERVICE_ACCOUNT:
+            return True
+    return False
 
 
 def _sha256_json(value: Any) -> str:
@@ -343,8 +371,10 @@ def _bind_libero_runtime_contract(
     global_config: dict[str, Any],
     infra: str,
 ) -> dict[str, str] | None:
-    if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+    if not _is_libero_invocation(args, documents):
         return None
+    if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+        raise ValueError("the LIBERO profile requires --solution-name libero")
     if args.direct_launch:
         raise ValueError("LIBERO requires managed scheduler submission")
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
@@ -652,6 +682,8 @@ def _wait_for_terminal(
     scheduler_job_id: str,
     *,
     sky_bin: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     wait_timeout: int,
     poll_interval: int,
 ) -> tuple[Any, dict[str, Any]]:
@@ -666,7 +698,12 @@ def _wait_for_terminal(
     )
     deadline = None if wait_timeout == -1 else time.time() + wait_timeout
     statuses: list[str] = []
-    final = workflow_status(scheduler_job_id, sky_bin=sky_bin)
+    status_kwargs = {
+        "isolated_config_dir": isolated_config_dir,
+        "config_path": config_path,
+        "sky_bin": sky_bin,
+    }
+    final = workflow_status(scheduler_job_id, **status_kwargs)
     statuses.append(final.status)
     polls = 1
     while (
@@ -675,7 +712,7 @@ def _wait_for_terminal(
         and (deadline is None or time.time() < deadline)
     ):
         time.sleep(max(poll_interval, 1))
-        final = workflow_status(scheduler_job_id, sky_bin=sky_bin)
+        final = workflow_status(scheduler_job_id, **status_kwargs)
         statuses.append(final.status)
         polls += 1
     diagnostics = {
@@ -698,6 +735,85 @@ def _wait_for_terminal(
     return final, diagnostics
 
 
+def _cancel_exact_managed_job(
+    scheduler_job_id: str,
+    *,
+    teardown_guard: SignalTeardown,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    poll_interval: int,
+) -> CleanupResult:
+    """Cancel one exact managed job in its submitted scheduler state."""
+
+    cleanup = CleanupResult()
+    cancel = cancel_workflow_job(
+        sky_bin=sky_bin,
+        job_id=scheduler_job_id,
+        run_id=teardown_guard.run_id,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        timeout=max(int(teardown_guard.timeout), 1),
+        poll_seconds=max(float(poll_interval), 0.1),
+        also_down_cluster=False,
+    )
+    cleanup.commands.append([sky_bin, "jobs", "cancel", "--yes", scheduler_job_id])
+    if cancel["cancel_returncode"] != 0:
+        cleanup.errors.append("exact managed-job cancellation failed")
+    else:
+        cleanup.resources_removed.append(f"managed-job:{scheduler_job_id}")
+    return cleanup
+
+
+def _cancel_then_teardown_managed_job(
+    scheduler_job_id: str,
+    *,
+    teardown_guard: SignalTeardown,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    poll_interval: int,
+) -> CleanupResult:
+    """Cancel and drain one exact managed job before tearing down its clusters."""
+
+    cleanup = CleanupResult()
+    if not scheduler_job_id:
+        cleanup.errors.append(
+            "scheduler job ID is unavailable; preserving possible managed resources"
+        )
+        return cleanup
+    status_kwargs = {
+        "sky_bin": sky_bin,
+        "isolated_config_dir": isolated_config_dir,
+        "config_path": config_path,
+        "poll_interval": poll_interval,
+    }
+    final, _ = _wait_for_terminal(scheduler_job_id, wait_timeout=0, **status_kwargs)
+    if final.status not in TERMINAL_STATUSES:
+        cleanup.extend(
+            _cancel_exact_managed_job(
+                scheduler_job_id,
+                teardown_guard=teardown_guard,
+                **status_kwargs,
+            )
+        )
+        if not cleanup.ok:
+            return cleanup
+        final, _ = _wait_for_terminal(
+            scheduler_job_id,
+            wait_timeout=max(int(teardown_guard.timeout), 1),
+            **status_kwargs,
+        )
+    if final.status not in TERMINAL_STATUSES:
+        cleanup.errors.append(
+            "managed job did not reach a verified terminal or absent state; "
+            "preserving its clusters"
+        )
+        return cleanup
+    cleanup.extend(teardown_guard.teardown())
+    return cleanup
+
+
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     output_root = _normalize_output_root(args.output_root)
@@ -712,6 +828,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         capability_name=args.capability_name,
         smoke_artifact_name=args.smoke_artifact_name,
     )
+    is_libero = _is_libero_invocation(args, docs)
+    if is_libero and args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+        raise ValueError("the LIBERO profile requires --solution-name libero")
     outputs = {
         "root": output_root.rstrip("/") + f"/{run_id}/",
         "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
@@ -745,7 +864,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             infra = args.infra or _default_infra()
             config_path = (
                 _libero_global_config_path(args)
-                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME
+                if is_libero
                 else args.config_path or _write_default_k8s_config(tmp_path, infra)
             )
             global_config: dict[str, Any] = {}
@@ -778,13 +897,33 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
-                isolated_config_dir=args.isolated_config_dir,
+                isolated_config_dir=(
+                    Path(args.isolated_config_dir) if args.isolated_config_dir else None
+                ),
                 sky_bin=sky_bin,
                 poll_interval=max(float(args.poll_interval), 0.0),
             )
-            previous_handlers = install_teardown_signal_handlers(
-                teardown_guard.teardown
-            )
+            scheduler_job_id = ""
+            submitted_config_path = Path(config_path) if config_path else None
+            cleanup_result: CleanupResult | None = None
+            cleanup_started = False
+
+            def cleanup_submission() -> CleanupResult:
+                nonlocal cleanup_result, cleanup_started
+                if cleanup_started:
+                    return cleanup_result or CleanupResult()
+                cleanup_started = True
+                cleanup_result = _cancel_then_teardown_managed_job(
+                    scheduler_job_id,
+                    teardown_guard=teardown_guard,
+                    sky_bin=sky_bin,
+                    isolated_config_dir=teardown_guard.isolated_config_dir,
+                    config_path=submitted_config_path,
+                    poll_interval=args.poll_interval,
+                )
+                return cleanup_result
+
+            previous_handlers = install_teardown_signal_handlers(cleanup_submission)
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
@@ -810,7 +949,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
-                    else None
+                    else submit_config_path
                 )
                 teardown_guard.mark_launched(config_path=submitted_config_path)
                 summary = {
@@ -823,6 +962,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 final, wait_diagnostics = _wait_for_terminal(
                     scheduler_job_id,
                     sky_bin=sky_bin,
+                    isolated_config_dir=teardown_guard.isolated_config_dir,
+                    config_path=submitted_config_path,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
                 )
@@ -837,7 +978,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             finally:
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
-                    teardown_guard.teardown()
+                    cleanup_result = cleanup_submission()
+            if summary is not None and cleanup_result is not None:
+                summary["cleanup"] = {
+                    "ok": cleanup_result.ok,
+                    "errors": cleanup_result.errors,
+                    "resources_removed": cleanup_result.resources_removed,
+                }
+                if not cleanup_result.ok:
+                    return_code = 1
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:
