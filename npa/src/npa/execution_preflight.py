@@ -30,6 +30,11 @@ class ExecutionPreflightError(RuntimeError):
         super().__init__(f"execution preflight {check}: {reason}")
 
 
+LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
+LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
+SKYPILOT_ENGINE_SERVICE_ACCOUNT = "skypilot-service-account"
+
+
 @dataclass(frozen=True)
 class ExecutionTarget:
     project: str = field(repr=False)
@@ -395,6 +400,79 @@ def skypilot_output_destinations(documents: Sequence[Mapping[str, Any]]) -> dict
     return destinations
 
 
+def verify_solution_payload_service_accounts(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    global_config: Mapping[str, Any] | None,
+) -> None:
+    """Keep LIBERO's payload identity separate from SkyPilot's controller.
+
+    SkyPilot's engine account needs to create and manage task resources.  The
+    LIBERO payload only calls ``get`` for its own Pod imageID attestation and
+    must never inherit that engine identity.  Both identities are explicit so
+    a missing task override cannot silently fall back to SkyPilot's default.
+    """
+
+    def pod_spec(value: object, *, check: str) -> Mapping[str, Any]:
+        if value in (None, {}):
+            return {}
+        if not isinstance(value, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod configuration must be a mapping", status="unknown"
+            )
+        pod_config = value.get("pod_config") or {}
+        if not isinstance(pod_config, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod configuration must be a mapping", status="unknown"
+            )
+        spec = pod_config.get("spec") or {}
+        if not isinstance(spec, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod spec must be a mapping", status="unknown"
+            )
+        return spec
+
+    global_kubernetes = (global_config or {}).get("kubernetes") or {}
+    global_spec = pod_spec(global_kubernetes, check="controller_service_account")
+
+    for document in skypilot_task_documents(documents):
+        envs = document.get("envs") or {}
+        is_libero = document.get("name") == LIBERO_PROFILE_NAME or (
+            isinstance(envs, Mapping) and envs.get("BYOF_SOLUTION_NAME") == "libero"
+        )
+        if not is_libero:
+            continue
+
+        resources = document.get("resources") or {}
+        resource_kubernetes = (
+            resources.get("kubernetes") if isinstance(resources, Mapping) else {}
+        ) or {}
+        task_config = document.get("config") or {}
+        config_kubernetes = (
+            task_config.get("kubernetes") if isinstance(task_config, Mapping) else {}
+        ) or {}
+        resource_spec = pod_spec(
+            resource_kubernetes, check="payload_service_account"
+        )
+        config_spec = pod_spec(config_kubernetes, check="payload_service_account")
+        declared = {
+            str(spec.get("serviceAccountName") or "")
+            for spec in (resource_spec, config_spec)
+            if spec.get("serviceAccountName")
+        }
+        if len(declared) != 1 or declared != {LIBERO_PAYLOAD_SERVICE_ACCOUNT}:
+            raise ExecutionPreflightError(
+                "payload_service_account",
+                "LIBERO requires its deterministic solution-scoped payload account; "
+                "default and SkyPilot engine accounts are refused",
+            )
+        if global_spec.get("serviceAccountName") != SKYPILOT_ENGINE_SERVICE_ACCOUNT:
+            raise ExecutionPreflightError(
+                "controller_service_account",
+                "LIBERO requires the manager SkyPilot config to select the engine account explicitly",
+            )
+
+
 def preflight_skypilot_submission(
     documents: Sequence[dict[str, Any]], *, project: str = "", infra: str = "",
     extra_env: Mapping[str, str] | None = None,
@@ -425,6 +503,9 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError("worker_environment", "implicit SkyPilot project overrides require an explicit --config-path and removal of the implicit override", status="unknown")
     documents = skypilot_task_documents(documents)
     workflow_env = skypilot_workflow_environment(documents)
+    verify_solution_payload_service_accounts(
+        documents, global_config=global_config
+    )
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
         raise ExecutionPreflightError("gpu", "alternative resource targets are ambiguous; select one effective resource mapping")
     selected = target.credentials if target is not None else resolve_submit_credentials(

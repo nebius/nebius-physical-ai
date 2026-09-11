@@ -14,6 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = ROOT / "workflows" / "testing" / "byof-libero.yaml"
 READINESS_PATH = ROOT / "workflows" / "testing" / "byof-libero.readiness.json"
+DOC_PATH = ROOT / "docs" / "workbench" / "byof-libero.md"
 PROFILE_PATH = (
     ROOT
     / "npa"
@@ -31,6 +32,7 @@ DATASET_REF = "f13aa24a3da8c43c7225569f28c562979fa0e35a"
 DATASET_SHA256 = "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
 BASE_IMAGE_SHA256 = "ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
 CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
+PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 
 
 def _workflow() -> dict[str, object]:
@@ -195,6 +197,11 @@ def test_libero_smoke_requires_one_observed_b200_digest_and_never_renders() -> N
     profile_text = PROFILE_PATH.read_text(encoding="utf-8")
     profile_docs = list(yaml.safe_load_all(profile_text))
     assert profile_docs[1]["resources"]["accelerators"] == "B200:1"
+    payload_service_account = profile_docs[1]["resources"]["kubernetes"][
+        "pod_config"
+    ]["spec"]["serviceAccountName"]
+    assert payload_service_account == PAYLOAD_SERVICE_ACCOUNT
+    assert payload_service_account not in {"default", "skypilot-service-account"}
     assert "NVIDIA_VISIBLE_DEVICES" not in profile_docs[1]["envs"]
     assert profile_docs[1]["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert "missing required smoke artifact" in profile_text
@@ -213,6 +220,13 @@ def test_libero_smoke_requires_one_observed_b200_digest_and_never_renders() -> N
     assert "evaluate_one_task_success" not in smoke
     assert "OffScreenRenderEnv" not in smoke
     assert '"rendering_invoked": False' in smoke
+
+    documentation = DOC_PATH.read_text(encoding="utf-8")
+    assert PAYLOAD_SERVICE_ACCOUNT in documentation
+    assert '`apiGroups: [""]`' in documentation
+    assert '`resources: ["pods"]`' in documentation
+    assert '`verbs: ["get"]`' in documentation
+    assert "refuses a missing, `default`, or" in documentation
 
 
 def test_libero_artifact_contract_is_fail_closed_and_scoped() -> None:
@@ -256,9 +270,11 @@ def test_libero_artifact_contract_is_fail_closed_and_scoped() -> None:
 def test_libero_readiness_record_tracks_final_workflow_bytes() -> None:
     readiness = json.loads(READINESS_PATH.read_text(encoding="utf-8"))
     workflow_sha256 = hashlib.sha256(WORKFLOW_PATH.read_bytes()).hexdigest()
+    profile_sha256 = hashlib.sha256(PROFILE_PATH.read_bytes()).hexdigest()
 
     assert readiness["schema_version"] == "workflow-readiness/v1"
     assert readiness["workflow_sha256"] == workflow_sha256
+    assert readiness["resource_profile_sha256"] == profile_sha256
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] in {
@@ -271,3 +287,4 @@ def test_libero_readiness_record_tracks_final_workflow_bytes() -> None:
         "verified",
     }
     assert re.fullmatch(r"[0-9a-f]{64}", readiness["workflow_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", readiness["resource_profile_sha256"])

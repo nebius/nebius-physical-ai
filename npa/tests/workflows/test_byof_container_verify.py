@@ -22,6 +22,9 @@ YAML_PATH = (
     / "profiles"
     / "byof-container-smoke-rtxpro.yaml"
 )
+LIBERO_YAML_PATH = YAML_PATH.with_name(
+    "byof-solution-smoke-libero-b200-gpu.yaml"
+)
 
 
 def _load_module():
@@ -75,6 +78,24 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert "AWS_SESSION_TOKEN" not in envs
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in envs
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_render_workflow_materializes_libero_payload_account(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
+
+    docs = module.render_workflow(
+        LIBERO_YAML_PATH,
+        run_id="libero-demo",
+        output_root="s3://bucket/prefix",
+        solution_name="libero",
+    )
+
+    task = docs[1]
+    assert "kubernetes" not in task["resources"]
+    assert task["config"]["kubernetes"]["pod_config"]["spec"][
+        "serviceAccountName"
+    ] == "npa-byof-libero-payload"
 
 
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:
@@ -635,6 +656,7 @@ def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
     text = Path(config_path).read_text(encoding="utf-8")
     assert "imagePullSecrets" in text
     assert "agent-sa" in text
+    assert "serviceAccountName: skypilot-service-account" in text
     assert "kubectl create secret docker-registry" not in text
     assert "allowed_contexts" in text
     assert "customer-mk8s" in text
@@ -696,8 +718,10 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
         module, "_normalize_kubeconfig_current_context", _leak_kubeconfig
     )
     monkeypatch.setattr(module, "_default_infra", lambda: "k8s/demo")
+    config_path = tmp_path / "skypilot.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
-        module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml"
+        module, "_write_default_k8s_config", lambda *_a, **_k: str(config_path)
     )
     monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
     monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
