@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,8 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
@@ -41,6 +44,27 @@ ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
+ROBOMIMIC_REPO_URL = "https://github.com/ARISE-Initiative/robomimic.git"
+ROBOMIMIC_REPO_REF = "d309eaecc18acf4152a830a895a6984b8ac71b05"
+ROBOMIMIC_BASE_IMAGE = (
+    "pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@"
+    "sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2"
+)
+ROBOMIMIC_BUILD_COMMAND_SHA256 = (
+    "40934ad75e79127e2b494adf73c59e0cd2164dda71dac2a142891cdda7a43bf6"
+)
+ROBOMIMIC_SMOKE_COMMAND_SHA256 = (
+    "1ca5d3527915c44654e6be3f84b13988c4438f391334fa81391d9641e4bd60e1"
+)
+ROBOMIMIC_PROFILE = (
+    SCRIPT_DIR.parent
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-solution-smoke-robomimic-b200-gpu.yaml"
+)
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -99,6 +123,96 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
     return args.solution_name.strip().lower() == "robomimic" or repo == "robomimic"
 
 
+def _robomimic_observer_name(run_id: str) -> str:
+    digest = hashlib.sha256(run_id.encode()).hexdigest()[:12]
+    return f"npa-robomimic-{digest}"
+
+
+def _robomimic_expected_profile(
+    *, run_id: str, namespace: str
+) -> list[dict[str, Any]]:
+    documents = list(yaml.safe_load_all(ROBOMIMIC_PROFILE.read_text(encoding="utf-8")))
+    if len(documents) != 2 or not all(isinstance(doc, dict) for doc in documents):
+        raise ValueError("checked-in robomimic resource profile is malformed")
+    task = documents[1]
+    service_account = _robomimic_observer_name(run_id)
+    task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = "1"
+    task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] = namespace
+    task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] = service_account
+    task["config"]["kubernetes"]["pod_config"]["spec"][
+        "serviceAccountName"
+    ] = service_account
+    return documents
+
+
+def _require_robomimic_profile(args: argparse.Namespace, *, namespace: str) -> None:
+    profile = Path(args.yaml)
+    if not profile.is_file():
+        raise ValueError("robomimic requires its run-local attested resource profile")
+    try:
+        observed = list(yaml.safe_load_all(profile.read_text(encoding="utf-8")))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError("robomimic attested resource profile is unreadable") from exc
+    expected = _robomimic_expected_profile(run_id=args.run_id, namespace=namespace)
+    if observed != expected:
+        raise ValueError(
+            "robomimic resource profile does not match the immutable attested profile"
+        )
+
+
+def _require_robomimic_immutable_inputs(
+    args: argparse.Namespace,
+    *,
+    registry: str,
+    image: str,
+    namespace: str,
+    accepted_image: str,
+) -> None:
+    fresh_image = f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
+    expected_image = accepted_image or fresh_image
+    accepted_pattern = re.compile(
+        re.escape(f"{registry.rstrip('/')}/npa-byof@sha256:") + r"[0-9a-f]{64}"
+    )
+    if accepted_image and accepted_pattern.fullmatch(accepted_image) is None:
+        raise ValueError(
+            "manager-published robomimic image must be the exact private npa-byof digest"
+        )
+    values = {
+        "repository": (args.repo_url, ROBOMIMIC_REPO_URL),
+        "source revision": (args.repo_ref, ROBOMIMIC_REPO_REF),
+        "base image": (_normalize_optional(args.base_image), ROBOMIMIC_BASE_IMAGE),
+        "workload": (args.workload, "solution-smoke"),
+        "solution": (args.solution_name, "robomimic"),
+        "capability": (args.capability_name, "lift_ph_lowdim_checkpoint_reload_action"),
+        "smoke artifact": (args.smoke_artifact_name, "robomimic-smoke.json"),
+        "image": (image, expected_image),
+    }
+    mismatched = sorted(name for name, pair in values.items() if pair[0] != pair[1])
+    if mismatched:
+        raise ValueError(
+            "robomimic immutable inputs do not match: " + ", ".join(mismatched)
+        )
+    if args.repo_auth != "none":
+        raise ValueError("robomimic public source requires repo-auth=none")
+    if args.skip_run or args.skip_push or not args.cleanup:
+        raise ValueError("robomimic forbids skip-push, skip-run, and no-cleanup")
+    if args.skip_build is not bool(accepted_image):
+        raise ValueError(
+            "robomimic skip-build requires the exact manager-published candidate digest"
+        )
+    hashes = {
+        "build command": hashlib.sha256(args.build_command.encode()).hexdigest(),
+        "smoke command": hashlib.sha256(args.smoke_command.encode()).hexdigest(),
+    }
+    expected_hashes = {
+        "build command": ROBOMIMIC_BUILD_COMMAND_SHA256,
+        "smoke command": ROBOMIMIC_SMOKE_COMMAND_SHA256,
+    }
+    if hashes != expected_hashes:
+        raise ValueError("robomimic build or smoke command is not the immutable contract")
+    _require_robomimic_profile(args, namespace=namespace)
+
+
 def _require_robomimic_manager_context(
     args: argparse.Namespace, *, registry: str, image: str, base_profile: str
 ) -> None:
@@ -133,6 +247,7 @@ def _require_robomimic_manager_context(
             "NPA_BYOF_ROBOMIMIC_LIVE_B200", ""
         ).strip(),
     }
+    accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
     missing = sorted(name for name, value in selectors.items() if not value)
     if missing:
         raise ValueError(
@@ -179,6 +294,13 @@ def _require_robomimic_manager_context(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200"
     ] != "1":
         raise ValueError("robomimic requires explicit selection of its dedicated live gate")
+    _require_robomimic_immutable_inputs(
+        args,
+        registry=selected_registry,
+        image=image,
+        namespace=selectors["NPA_BYOF_K8S_NAMESPACE"],
+        accepted_image=accepted_image,
+    )
 
 
 def _image_repository_name(image_ref: str) -> str:

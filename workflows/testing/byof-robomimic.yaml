@@ -158,6 +158,16 @@ config:
     service_account_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
     pod_name = os.environ.get("HOSTNAME", "").strip()
     namespace = (service_account_root / "namespace").read_text(encoding="utf-8").strip()
+    expected_namespace = os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()
+    expected_service_account = os.environ.get(
+        "NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT", ""
+    ).strip()
+    if namespace != expected_namespace or not expected_service_account:
+        raise RuntimeError(
+            "robomimic workload identity selectors do not match the observed namespace: "
+            f"observed={namespace!r} expected={expected_namespace!r} "
+            f"service_account_set={bool(expected_service_account)}"
+        )
     bearer_token = (service_account_root / "token").read_text(encoding="utf-8").strip()
     pod_request = urllib.request.Request(
         f"https://kubernetes.default.svc/api/v1/namespaces/{namespace}/pods/{pod_name}",
@@ -166,6 +176,20 @@ config:
     pod_ssl = ssl.create_default_context(cafile=str(service_account_root / "ca.crt"))
     with urllib.request.urlopen(pod_request, context=pod_ssl) as response:
         pod_status = json.load(response)
+    observed_service_account = str(
+        pod_status.get("spec", {}).get("serviceAccountName", "")
+    )
+    if (
+        pod_status.get("metadata", {}).get("name") != pod_name
+        or pod_status.get("metadata", {}).get("namespace") != expected_namespace
+        or observed_service_account != expected_service_account
+    ):
+        raise RuntimeError(
+            "Kubernetes Pod identity does not match the run-owned observer: "
+            f"pod={pod_status.get('metadata', {})!r} "
+            f"service_account={observed_service_account!r} "
+            f"expected_service_account={expected_service_account!r}"
+        )
     expected_image_digest = image_match.group(1)
     matching_statuses = [
         status
@@ -322,11 +346,16 @@ config:
     if not math.isfinite(train_loss) or not math.isfinite(validation_loss):
         raise RuntimeError(f"non-finite losses: train={train_loss} validation={validation_loss}")
 
-    checkpoints = list(train_root.glob("lift_ph_lowdim_bc_smoke/*/last.pth"))
+    # save.every_n_epochs=1 makes pinned upstream train.py write this explicit
+    # epoch checkpoint under <time_dir>/models before the unconditional latest copy.
+    checkpoints = list(
+        train_root.glob("lift_ph_lowdim_bc_smoke/*/models/model_epoch_1.pth")
+    )
     if len(checkpoints) != 1:
         raise RuntimeError(
             "expected exactly one pinned-upstream checkpoint at "
-            f"<output>/lift_ph_lowdim_bc_smoke/<timestamp>/last.pth, got {checkpoints!r}"
+            "<output>/lift_ph_lowdim_bc_smoke/<timestamp>/models/model_epoch_1.pth, "
+            f"got {checkpoints!r}"
         )
     checkpoint_path = checkpoints[0]
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
@@ -444,6 +473,13 @@ config:
             "image_id": pod_image_id,
             "container_name": matching_statuses[0].get("name", ""),
             "observation_source": "Kubernetes Pod status.containerStatuses[].imageID",
+        },
+        "workload_identity": {
+            "namespace": namespace,
+            "service_account": observed_service_account,
+            "observation_source": (
+                "mounted service-account namespace and Kubernetes Pod spec.serviceAccountName"
+            ),
         },
         "deferred": [
             "image_policy_sweeps",

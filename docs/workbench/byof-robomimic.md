@@ -86,18 +86,30 @@ registry property; it is not CUDA/cuDNN consent or permission. In the current
 child state, authorization is false and no robomimic context is published, so
 no build, runtime download, RBAC mutation, or GPU submission is permitted.
 
-The runner also binds the effective `--image` repository to that exact private
-registry and binds `--output-root` to
+The runner also binds the fresh build image to the exact run-scoped repository
+and tag under that private registry and binds `--output-root` to
 `s3://<manager-bucket>/oss-solutions/robomimic`. Known public-registry hosts are
 rejected even when written with a standard port. The ordinary workflow-submit
 path identifies this checked-in candidate by its immutable workflow name, so
 overriding mutable config values cannot bypass the plan-only boundary.
-The local `run-spec --execute` surface enforces the same boundary, and the
-robomimic runner forbids `prebuilt` mode so profile resolution cannot replace
-the checked image after target validation.
+The local `run-spec --execute` surface enforces the same boundary. The
+robomimic runner forbids the generic `prebuilt` profile, `--skip-push`,
+`--skip-run`, and `--no-cleanup`. `--skip-build` is accepted only for the exact
+private `npa-byof@sha256:...` digest published by the manager after its separate
+build and byte scan; the CLI image must equal that selector. This operational
+identity is not CUDA/cuDNN permission. Both fresh-build and accepted-digest
+modes require the exact source revision, CUDA base digest, build command, smoke
+command, capability, artifact, and semantic contents of the run-local attested
+profile before any runtime pull.
 Run-scoped observer objects carry a per-invocation ownership token; cleanup
-verifies that token before deleting each object and checks every object for
-absence even when another cleanup operation fails.
+verifies that token and uses the observed object UID and resource-version as
+server-side deletion preconditions. It checks every object for absence even
+when another cleanup operation fails. Before the workload starts, a
+SelfSubjectRulesReview must show no namespaced resource authority beyond Pod
+`get` (apart from Kubernetes' standard self-review resources), and the selected
+kubeconfig context must resolve to the manager-issued namespace. The workload
+then observes its own Pod and requires both that namespace and the exact
+run-owned ServiceAccount before training.
 
 After authorization, qualification must scan the exact pushed image digest,
 including every layer and image history entry. It must prove the absence of the

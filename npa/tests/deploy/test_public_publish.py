@@ -676,6 +676,16 @@ def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
     assert not is_public_registry("ghcr.io/example/private")
 
 
+def test_public_release_override_is_normalized_symmetrically(monkeypatch) -> None:
+    monkeypatch.setattr(
+        images,
+        "public_container_registry",
+        lambda: "ghcr.io.:443/example/workbench/",
+    )
+    assert is_public_registry("ghcr.io/example/workbench")
+    assert is_public_registry("ghcr.io:443/example/workbench")
+
+
 def test_restricted_tool_refuses_default_official_namespace_after_override(
     monkeypatch,
 ) -> None:

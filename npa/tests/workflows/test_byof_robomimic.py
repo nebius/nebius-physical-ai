@@ -1,14 +1,18 @@
+"""Contract tests for the immutable, authorization-gated robomimic BYOF path."""
+
 from __future__ import annotations
 
 import ast
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -66,19 +70,37 @@ def _live_e2e_module():
         sys.path.remove(tests_root)
 
 
+def _byof_runner_module():
+    path = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+    specification = importlib.util.spec_from_file_location(
+        "robomimic_byof_runner_contract", path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def _fake_robomimic_kubectl(
     *,
     create_failure: bool = False,
     foreign_owner_after_create: bool = False,
     delete_failure: str = "",
     delete_oserror: str = "",
+    ownership_get_oserror: str = "",
+    absence_get_oserror: str = "",
+    replace_before_delete: str = "",
+    extra_permission: bool = False,
 ) -> tuple[list[list[str]], Callable[..., subprocess.CompletedProcess[str]]]:
     calls: list[list[str]] = []
     objects: dict[str, dict[str, object]] = {}
+    cleanup_started = False
+    replacement_done = False
 
     def fake_run(
         command: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:
+        nonlocal cleanup_started, replacement_done
         calls.append(command)
         if "auth" in command:
             verb = command[command.index("can-i") + 1]
@@ -87,11 +109,47 @@ def _fake_robomimic_kubectl(
             return subprocess.CompletedProcess(
                 command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
             )
+        if "selfsubjectrulesreviews" in " ".join(command):
+            payload = {
+                "status": {
+                    "resourceRules": [
+                        {
+                            "apiGroups": [""],
+                            "resources": ["pods"],
+                            "verbs": ["get"],
+                        },
+                        {
+                            "apiGroups": ["authorization.k8s.io"],
+                            "resources": [
+                                "selfsubjectaccessreviews",
+                                "selfsubjectrulesreviews",
+                            ],
+                            "verbs": ["create"],
+                        },
+                        {
+                            "apiGroups": ["authentication.k8s.io"],
+                            "resources": ["selfsubjectreviews"],
+                            "verbs": ["create"],
+                        },
+                    ]
+                }
+            }
+            if extra_permission:
+                payload["status"]["resourceRules"].append(
+                    {
+                        "apiGroups": [""],
+                        "resources": ["secrets"],
+                        "verbs": ["get"],
+                    }
+                )
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if "create" in command:
             manifest = yaml.safe_load(str(kwargs.get("input") or ""))
             resource = (
                 f"{str(manifest['kind']).lower()}/{manifest['metadata']['name']}"
             )
+            manifest["metadata"]["uid"] = f"uid-{len(objects)}"
+            manifest["metadata"]["resourceVersion"] = f"rv-{len(objects)}"
             objects[resource] = manifest
             if create_failure:
                 if foreign_owner_after_create:
@@ -101,21 +159,63 @@ def _fake_robomimic_kubectl(
                 return subprocess.CompletedProcess(command, 1, "", "response lost")
             return subprocess.CompletedProcess(command, 0, "", "")
         if "delete" in command:
-            resource = command[-1]
+            raw_path = command[command.index("--raw") + 1]
+            plural, name = raw_path.rsplit("/", 2)[-2:]
+            kind = {
+                "serviceaccounts": "serviceaccount",
+                "roles": "role",
+                "rolebindings": "rolebinding",
+            }[plural]
+            resource = f"{kind}/{name}"
             if delete_oserror and resource.startswith(delete_oserror):
                 raise FileNotFoundError("simulated kubectl launch failure")
             if delete_failure and resource.startswith(delete_failure):
                 return subprocess.CompletedProcess(
                     command, 1, "", "simulated delete error"
                 )
+            manifest = objects.get(resource)
+            if (
+                manifest is not None
+                and replace_before_delete
+                and resource.startswith(replace_before_delete)
+                and not replacement_done
+            ):
+                replacement_done = True
+                manifest["metadata"]["uid"] = "foreign-uid"
+                manifest["metadata"]["resourceVersion"] = "foreign-rv"
+                manifest["metadata"]["annotations"][
+                    "npa.nebius.ai/owner-token"
+                ] = "another-invocation"
+            delete_options = json.loads(str(kwargs.get("input") or "{}"))
+            preconditions = delete_options.get("preconditions", {})
+            if manifest is not None and (
+                preconditions.get("uid") != manifest["metadata"].get("uid")
+                or preconditions.get("resourceVersion")
+                != manifest["metadata"].get("resourceVersion")
+            ):
+                return subprocess.CompletedProcess(
+                    command, 1, "", "delete precondition failed"
+                )
             objects.pop(resource, None)
             return subprocess.CompletedProcess(command, 0, "", "")
         if "get" in command:
             resource = command[command.index("--namespace") + 2]
             manifest = objects.get(resource)
+            output_format = command[command.index("-o") + 1]
+            if output_format == "json":
+                cleanup_started = True
+                if ownership_get_oserror and resource.startswith(
+                    ownership_get_oserror
+                ):
+                    raise FileNotFoundError("simulated ownership lookup failure")
+            elif (
+                cleanup_started
+                and absence_get_oserror
+                and resource.startswith(absence_get_oserror)
+            ):
+                raise FileNotFoundError("simulated absence lookup failure")
             if manifest is None:
                 return subprocess.CompletedProcess(command, 0, "", "")
-            output_format = command[command.index("-o") + 1]
             stdout = json.dumps(manifest) if output_format == "json" else f"{resource}\n"
             return subprocess.CompletedProcess(command, 0, stdout, "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -172,6 +272,7 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
     module = _live_e2e_module()
     rendered = module._materialize_robomimic_attested_profile(
         tmp_path / "robomimic-attested.yaml",
+        namespace="robomimic-validation",
         service_account="npa-robomimic-run-scoped",
     )
 
@@ -179,6 +280,14 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
     rendered_task = list(yaml.safe_load_all(rendered.read_text(encoding="utf-8")))[1]
     assert source_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
     assert rendered_task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == "1"
+    assert (
+        rendered_task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"]
+        == "robomimic-validation"
+    )
+    assert (
+        rendered_task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"]
+        == "npa-robomimic-run-scoped"
+    )
     assert (
         rendered_task["config"]["kubernetes"]["pod_config"]["spec"][
             "serviceAccountName"
@@ -210,6 +319,14 @@ def test_robomimic_observer_manifest_is_run_scoped_and_least_privilege() -> None
         == "unit-owner-token"
         for manifest in manifests
     )
+    manifests[0]["metadata"]["annotations"]["npa.nebius.ai/owner-token"] = (
+        "mutated-service-account-token"
+    )
+    assert all(
+        manifest["metadata"]["annotations"]["npa.nebius.ai/owner-token"]
+        == "unit-owner-token"
+        for manifest in manifests[1:]
+    )
     role = next(manifest for manifest in manifests if manifest["kind"] == "Role")
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
@@ -225,6 +342,57 @@ def test_robomimic_observer_manifest_is_run_scoped_and_least_privilege() -> None
             "namespace": "robomimic-validation",
         }
     ]
+
+
+def test_robomimic_observer_refuses_any_extra_resource_permission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls, fake_run = _fake_robomimic_kubectl(extra_permission=True)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(AssertionError, match="unexpected"):
+        with module._robomimic_observer_rbac(
+            run_id="extra-permission-contract", selectors=selectors, env={}
+        ):
+            pytest.fail("an overprivileged observer must not reach the workload")
+
+    assert sum("delete" in command for command in calls) == 3
+
+
+@pytest.mark.parametrize("observed_namespace", ("default", "other-validation"))
+def test_robomimic_target_refuses_context_namespace_mismatch(
+    monkeypatch: pytest.MonkeyPatch, observed_namespace: str
+) -> None:
+    module = _live_e2e_module()
+    target = SimpleNamespace(
+        kubeconfig="/owner-only/kubeconfig",
+        context="manager-context",
+        namespace="robomimic-validation",
+    )
+    monkeypatch.setattr(module, "skypilot_config_for_project", lambda _: "")
+    monkeypatch.setattr(module, "resolve_byof_kubernetes_target", lambda _: target)
+    monkeypatch.setattr(module, "resolve_skypilot_bin", lambda: None)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, observed_namespace, ""
+        ),
+    )
+    selectors = {
+        "kubeconfig": target.kubeconfig,
+        "context": target.context,
+        "namespace": target.namespace,
+    }
+
+    with pytest.raises(AssertionError, match="namespace does not match"):
+        module._robomimic_target_env("manager-project", selectors, [])
 
 
 def test_robomimic_observer_cleanup_runs_after_gate_failure(
@@ -293,7 +461,7 @@ def test_robomimic_observer_cleanup_covers_ambiguous_create_failure(
 
     deleted = [command for command in calls if "delete" in command]
     assert len(deleted) == 1
-    assert "serviceaccount/" in " ".join(deleted[0])
+    assert "/serviceaccounts/" in " ".join(deleted[0])
 
 
 def test_robomimic_observer_cleanup_never_deletes_foreign_owner(
@@ -341,6 +509,126 @@ def test_robomimic_observer_cleanup_continues_after_kubectl_launch_error(
     assert any("FileNotFoundError" in note for note in raised.value.__notes__)
     assert sum("delete" in command for command in calls) == 3
     assert sum("-o" in command and "name" in command for command in calls) == 6
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_note"),
+    (
+        ("ownership", "inspect rolebinding/"),
+        ("absence", "verify rolebinding/"),
+    ),
+)
+def test_robomimic_observer_cleanup_contains_every_lookup_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+    expected_note: str,
+) -> None:
+    module = _live_e2e_module()
+    options = (
+        {"ownership_get_oserror": "rolebinding/"}
+        if failure_kind == "ownership"
+        else {
+            "delete_failure": "rolebinding/",
+            "absence_get_oserror": "rolebinding/",
+        }
+    )
+    calls, fake_run = _fake_robomimic_kubectl(**options)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(RuntimeError, match="simulated gate failure") as raised:
+        with module._robomimic_observer_rbac(
+            run_id=f"{failure_kind}-oserror-contract", selectors=selectors, env={}
+        ):
+            raise RuntimeError("simulated gate failure")
+
+    assert any(expected_note in note for note in raised.value.__notes__)
+    assert sum("-o" in command and "name" in command for command in calls) == 6
+
+
+def test_robomimic_observer_delete_uses_object_identity_preconditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls, fake_run = _fake_robomimic_kubectl(
+        replace_before_delete="rolebinding/"
+    )
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(AssertionError, match="cleanup failed") as raised:
+        with module._robomimic_observer_rbac(
+            run_id="delete-precondition-contract", selectors=selectors, env={}
+        ):
+            pass
+
+    assert "delete precondition failed" in str(raised.value)
+    raw_deletes = [command for command in calls if "delete" in command]
+    assert raw_deletes and all("--raw" in command for command in raw_deletes)
+
+
+def test_robomimic_observer_generates_a_fresh_owner_token_per_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    calls, fake_run = _fake_robomimic_kubectl()
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    observed_tokens: list[str] = []
+    original = module._robomimic_observer_manifests
+
+    def capture_token(**kwargs: object):
+        observed_tokens.append(str(kwargs["owner_token"]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(module, "_robomimic_observer_manifests", capture_token)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    for run_id in ("token-contract-one", "token-contract-two"):
+        with module._robomimic_observer_rbac(
+            run_id=run_id, selectors=selectors, env={}
+        ):
+            pass
+
+    assert len(observed_tokens) == 2
+    assert observed_tokens[0] != observed_tokens[1]
+    assert all(len(token) == 64 for token in observed_tokens)
+    assert sum("create" in command for command in calls) == 8
+
+
+def test_robomimic_observer_preserves_primary_error_without_add_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Python310Error(RuntimeError):
+        add_note = None
+
+    module = _live_e2e_module()
+    _, fake_run = _fake_robomimic_kubectl(delete_failure="rolebinding/")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    selectors = {
+        "kubeconfig": "/owner-only/kubeconfig",
+        "context": "manager-context",
+        "namespace": "robomimic-validation",
+    }
+
+    with pytest.raises(Python310Error, match="simulated Python 3.10 failure") as raised:
+        with module._robomimic_observer_rbac(
+            run_id="python310-contract", selectors=selectors, env={}
+        ):
+            raise Python310Error("simulated Python 3.10 failure")
+
+    assert any("cleanup failed" in str(arg) for arg in raised.value.args)
 
 
 @pytest.mark.parametrize(
@@ -544,6 +832,241 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
     assert payload["run_started"] is False
 
 
+def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_BYOF_ROBOMIMIC_IMAGE", raising=False)
+    selectors = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_KUBECONFIG": str(tmp_path / "kubeconfig"),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+    }
+    for variable, value in selectors.items():
+        monkeypatch.setenv(variable, value)
+    Path(selectors["NPA_BYOF_KUBECONFIG"]).write_text(
+        "apiVersion: v1\n", encoding="utf-8"
+    )
+    run_id = "exact-contract"
+    live_module = _live_e2e_module()
+    profile = live_module._materialize_robomimic_attested_profile(
+        tmp_path / "attested.yaml",
+        namespace=selectors["NPA_BYOF_K8S_NAMESPACE"],
+        service_account=live_module._robomimic_observer_name(run_id),
+    )
+    config = _workflow_config()
+    runner = _byof_runner_module()
+    args = runner._parse_args(
+        [
+            "--repo-url",
+            str(config["repo_url"]),
+            "--repo-ref",
+            str(config["repo_ref"]),
+            "--repo-auth",
+            "none",
+            "--project",
+            selectors["NPA_E2E_PROJECT"],
+            "--registry",
+            selectors["NPA_BYOF_ROBOMIMIC_REGISTRY"],
+            "--base-profile",
+            "ubuntu",
+            "--base-image",
+            str(config["base_image"]),
+            "--build-command",
+            str(config["build_command"]),
+            "--workload",
+            "solution-smoke",
+            "--smoke-command",
+            str(config["smoke_command"]),
+            "--solution-name",
+            "robomimic",
+            "--capability-name",
+            str(config["capability_name"]),
+            "--smoke-artifact-name",
+            "robomimic-smoke.json",
+            "--yaml",
+            str(profile),
+            "--output-root",
+            "s3://manager-bucket/oss-solutions/robomimic",
+            "--wait-timeout",
+            "-1",
+            "--run-id",
+            run_id,
+        ]
+    )
+    image = f"{args.registry}/npa-byof:{run_id}"
+    runner._require_robomimic_manager_context(
+        args, registry=args.registry, image=image, base_profile=args.base_profile
+    )
+    assert runner.ROBOMIMIC_BUILD_COMMAND_SHA256 == hashlib.sha256(
+        str(config["build_command"]).encode()
+    ).hexdigest()
+    assert runner.ROBOMIMIC_SMOKE_COMMAND_SHA256 == hashlib.sha256(
+        str(config["smoke_command"]).encode()
+    ).hexdigest()
+    accepted_image = (
+        "private.invalid/robomimic/npa-byof@sha256:" + "a" * 64
+    )
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_IMAGE", accepted_image)
+    args.image = accepted_image
+    args.skip_build = True
+    runner._require_robomimic_manager_context(
+        args,
+        registry=args.registry,
+        image=accepted_image,
+        base_profile=args.base_profile,
+    )
+    wrong_image = "private.invalid/robomimic/npa-byof@sha256:" + "b" * 64
+    with pytest.raises(ValueError, match="immutable inputs"):
+        runner._require_robomimic_manager_context(
+            args,
+            registry=args.registry,
+            image=wrong_image,
+            base_profile=args.base_profile,
+        )
+    malformed_image = (
+        "private.invalid/robomimic/unreviewed@sha256:" + "c" * 64
+    )
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_IMAGE", malformed_image)
+    args.image = malformed_image
+    with pytest.raises(ValueError, match="exact private npa-byof digest"):
+        runner._require_robomimic_manager_context(
+            args,
+            registry=args.registry,
+            image=malformed_image,
+            base_profile=args.base_profile,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "skip-build",
+        "skip-push",
+        "skip-run",
+        "no-cleanup",
+        "repository",
+        "source-revision",
+        "base-image",
+        "build-command",
+        "smoke-command",
+        "workload",
+        "solution",
+        "capability",
+        "smoke-artifact",
+        "image",
+        "profile",
+    ),
+)
+def test_robomimic_runner_rejects_every_immutable_contract_bypass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    monkeypatch.delenv("NPA_BYOF_ROBOMIMIC_IMAGE", raising=False)
+    module = _live_e2e_module()
+    monkeypatch_env = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_KUBECONFIG": str(tmp_path / "kubeconfig"),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+    }
+    Path(monkeypatch_env["NPA_BYOF_KUBECONFIG"]).write_text(
+        "apiVersion: v1\n", encoding="utf-8"
+    )
+    for variable, value in monkeypatch_env.items():
+        monkeypatch.setenv(variable, value)
+    run_id = "immutable-contract"
+    profile = module._materialize_robomimic_attested_profile(
+        tmp_path / "attested.yaml",
+        namespace="robomimic-validation",
+        service_account=module._robomimic_observer_name(run_id),
+    )
+    config = _workflow_config()
+    options = {
+        "repository": ("--repo-url", "https://github.com/example/robomimic.git"),
+        "source-revision": ("--repo-ref", "main"),
+        "base-image": ("--base-image", "ubuntu:24.04"),
+        "build-command": ("--build-command", "true"),
+        "smoke-command": ("--smoke-command", "true"),
+        "workload": ("--workload", "container-verify"),
+        "solution": ("--solution-name", "renamed"),
+        "capability": ("--capability-name", "renamed"),
+        "smoke-artifact": ("--smoke-artifact-name", "renamed.json"),
+        "image": ("--image", "private.invalid/robomimic/other:tag"),
+    }
+    flag = (f"--{mutation}",) if mutation in {
+        "skip-build",
+        "skip-push",
+        "skip-run",
+        "no-cleanup",
+    } else options.get(mutation, ())
+    if mutation == "profile":
+        profile.write_text("name: unrelated\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        str(ROOT / "npa" / "scripts" / "run_byof_repo.py"),
+        "--repo-url",
+        str(config["repo_url"]),
+        "--repo-ref",
+        str(config["repo_ref"]),
+        "--repo-auth",
+        "none",
+        "--project",
+        "manager-project",
+        "--registry",
+        "private.invalid/robomimic",
+        "--base-profile",
+        "ubuntu",
+        "--base-image",
+        str(config["base_image"]),
+        "--build-command",
+        str(config["build_command"]),
+        "--workload",
+        "solution-smoke",
+        "--smoke-command",
+        str(config["smoke_command"]),
+        "--solution-name",
+        "robomimic",
+        "--capability-name",
+        str(config["capability_name"]),
+        "--smoke-artifact-name",
+        "robomimic-smoke.json",
+        "--yaml",
+        str(profile),
+        "--output-root",
+        "s3://manager-bucket/oss-solutions/robomimic",
+        "--wait-timeout",
+        "-1",
+        "--run-id",
+        run_id,
+        *flag,
+    ]
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **monkeypatch_env},
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 64, result.stdout + result.stderr
+    assert payload["status"] == "refused"
+    assert payload["build_started"] is False
+    assert payload["push_started"] is False
+    assert payload["run_started"] is False
+
+
 def test_robomimic_workflow_direct_submit_refuses_before_preflight() -> None:
     for extra_args in (
         [],
@@ -652,12 +1175,15 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         f'DEPENDENCY_LOCK_SHA256 = "{DEPENDENCY_LOCK_SHA256}"',
         "dependency_lock_hash != DEPENDENCY_LOCK_SHA256",
         "dependency_artifact_count != DEPENDENCY_ARTIFACT_COUNT",
+        'models/model_epoch_1.pth',
         "policy_from_checkpoint(",
         "optimizer_step_count != TRAIN_STEPS",
         "action.shape != (7,)",
         '"B200" not in gpu_name.upper()',
         'architecture != "sm_100"',
         'os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1"',
+        'os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()',
+        'pod_status.get("spec", {}).get("serviceAccountName", "")',
         '"architecture": architecture',
         '"strict_reserved_capacity_attested": True',
         '"observed_head": source_head',
@@ -678,6 +1204,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"image_id": pod_image_id',
         '"observation_source": "Kubernetes Pod status.containerStatuses[].imageID"',
         '"pod_image"',
+        '"workload_identity"',
     ):
         assert required in smoke
 
@@ -699,6 +1226,9 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert task["envs"]["BYOF_IMAGE"] == ""
     assert task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] == ""
+    assert 'export PATH="/opt/conda/bin:${PATH}"' in task["run"]
     assert "${NPA_E2E_MK8S_RESERVED_CAPACITY}" not in PROFILE.read_text(
         encoding="utf-8"
     )
