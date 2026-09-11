@@ -57,12 +57,12 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "checkpoint_or_weight",
-        # Upstream's robomimic/models tree is Python source. Keep the generic
-        # model-directory rule everywhere else; file extensions still catch a
-        # weight placed inside that exact source package.
+        # Upstream's robomimic/models directory contains direct Python modules.
+        # Exempt only that directory and those direct .py files; nested paths
+        # and every other file type retain the generic model-directory rule.
         re.compile(
             r"(?:\.(?:safetensors|ckpt|pth|pt|bin\.index\.json)$|"
-            r"^(?!opt/robomimic/robomimic/models(?:/|$)).*"
+            r"^(?!opt/robomimic/robomimic/models(?:$|/[^/]+\.py$)).*"
             r"(?:^|/)(?:models?|weights?|checkpoints?)(?:/|$))",
             re.I,
         ),
