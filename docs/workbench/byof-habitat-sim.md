@@ -22,7 +22,11 @@ passes the live gate on the run-owned STRICT target.
 - Packaging: the linux/amd64 Ubuntu 22.04 base is pinned to immutable manifest
   digest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
   Both the generic BYOF bootstrap and the solution packages resolve through the
-  Ubuntu snapshot `20260801T053000Z`. The Python 3.10 closure contains 35 exact
+  Ubuntu snapshot `20260903T121500Z`, selected just after the immutable base's
+  creation so its signed Perl-family candidates match the base exactly. The
+  generic builder refuses a snapshot whose `perl`/`perl-base` candidates do not
+  match its installed `perl-base`; it does not force a solution-specific
+  downgrade. The Python 3.10 closure contains 35 exact
   wheels with reviewed SHA-256 hashes and installs with `--require-hashes`,
   `--only-binary=:all:`, and `--no-deps`; the source build also disables build
   isolation and dependency resolution, including the S3 upload client. The
