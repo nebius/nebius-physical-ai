@@ -9,7 +9,7 @@ resources:
   cpus: 8+
   memory: 32+
   disk_size: 100
-  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+  image_id: "docker:<your-registry>/<namespace>/npa-robomimic@sha256:<digest>"
 config:
   kubernetes:
     pod_config:
@@ -17,6 +17,30 @@ config:
         # The dedicated live gate replaces this inert checked-in name with a
         # run-scoped ServiceAccount that it creates, verifies, and removes.
         serviceAccountName: npa-robomimic-observer-placeholder
+        securityContext:
+          fsGroup: 1000
+          fsGroupChangePolicy: OnRootMismatch
+        containers:
+          - name: ray-node
+            volumeMounts:
+              - name: robomimic-runtime
+                mountPath: /opt/npa-runtime/robomimic
+                readOnly: true
+              - name: robomimic-inputs
+                mountPath: /workspace/byof-inputs
+              - name: robomimic-outputs
+                mountPath: /workspace/byof-runs
+        volumes:
+          # The live materializer replaces only this inert name. Population of
+          # this PVC is a separate authorized operator transaction.
+          - name: robomimic-runtime
+            persistentVolumeClaim:
+              claimName: npa-robomimic-runtime-placeholder
+              readOnly: true
+          - name: robomimic-inputs
+            emptyDir: {}
+          - name: robomimic-outputs
+            emptyDir: {}
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
@@ -25,6 +49,7 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
+  NPA_ROBOMIMIC_RUNTIME_ROOT: "/opt/npa-runtime/robomimic"
   # The authorized live harness materializes this boolean in a run-local copy
   # only after checking the manager's STRICT-capacity gate. The private
   # reservation identity stays outside rendered task YAML and repo artifacts.
@@ -41,18 +66,18 @@ setup: |
   set -euo pipefail
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
-  test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"
+  test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/.ready.json"
+  test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/inventory.json"
+  robomimic-entrypoint verify-runtime
   python3 - <<'PY'
   import boto3
   PY
 run: |
   set -euo pipefail
-  export PATH="/opt/conda/bin:${PATH}"
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
-  cp "${BYOF_REPO_ROOT}/npa_build_metadata.json" "${OUTPUT_DIR}/npa_build_metadata.json"
   nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
   nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
   SMOKE_EXIT_CODE=0
