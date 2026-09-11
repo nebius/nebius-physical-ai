@@ -98,6 +98,12 @@ def test_local_builder_outputs_attested_oci_without_push_or_load() -> None:
     assert "^[0-9a-f]{40}$" in script
 
 
+def test_verifier_requires_reviewed_complete_runtime_closure_hashes() -> None:
+    verifier = (PACKAGE / "verify_image.py").read_text(encoding="utf-8")
+    assert '"--expected-dpkg-inventory-sha256", required=True' in verifier
+    assert '"--expected-native-closure-sha256", required=True' in verifier
+
+
 def test_trusted_public_workflow_refuses_phase_a_candidate() -> None:
     workflow = (ROOT / ".github/workflows/publish-public-images.yml").read_text()
     assert 'if tool == "habitat-sim":' in workflow

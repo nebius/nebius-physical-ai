@@ -1,5 +1,8 @@
 {
   "schema_version": "npa.habitat-sim.runtime-payload.v1",
+  "required_base_diff_ids": [
+    "sha256:ea16cace89338c84eb6bcb91a7efdfcae6838fff359efe951858227436486c34"
+  ],
   "required_final_paths": [
     "/opt/venv",
     "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py",

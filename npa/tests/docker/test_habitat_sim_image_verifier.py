@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import struct
 import sys
 import tarfile
 
@@ -44,7 +45,7 @@ def _oci(
     user: str = "ubuntu",
     diff_ids: list[str] | None = None,
     source_revision: str = SOURCE_REVISION,
-) -> tuple[Path, str]:
+) -> tuple[Path, str, list[str]]:
     blobs: dict[str, bytes] = {}
 
     def blob(data: bytes, media: str) -> dict[str, object]:
@@ -56,6 +57,8 @@ def _oci(
     packed_layers = [blob(gzip.compress(raw, mtime=0), LAYER) for raw in raw_layers]
     labels = copy.deepcopy(CONTRACT["required_labels"])
     labels["org.opencontainers.image.revision"] = source_revision
+    actual_diff_ids = ["sha256:" + _digest(raw) for raw in raw_layers]
+    configured_diff_ids = diff_ids or actual_diff_ids
     config = blob(
         js(
             {
@@ -63,8 +66,7 @@ def _oci(
                 "os": "linux",
                 "rootfs": {
                     "type": "layers",
-                    "diff_ids": diff_ids
-                    or ["sha256:" + _digest(raw) for raw in raw_layers],
+                    "diff_ids": configured_diff_ids,
                 },
                 "config": {
                     "User": user,
@@ -131,7 +133,7 @@ def _oci(
     }
     archive = tmp_path / "habitat.oci.tar"
     archive.write_bytes(tar_data([file(name, data) for name, data in files.items()]))
-    return archive, expected
+    return archive, expected, configured_diff_ids
 
 
 def _json(payload: dict[str, object]) -> bytes:
@@ -141,6 +143,70 @@ def _json(payload: dict[str, object]) -> bytes:
 def _record_hash(payload: bytes) -> str:
     digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
     return "sha256=" + digest.decode().rstrip("=")
+
+
+def _elf64(
+    *, needed: tuple[str, ...] = (), soname: str = "", runpath: str = ""
+) -> bytes:
+    strings = bytearray(b"\0")
+
+    def add(value: str) -> int:
+        offset = len(strings)
+        strings.extend(value.encode() + b"\0")
+        return offset
+
+    needed_offsets = [add(value) for value in needed]
+    soname_offset = add(soname) if soname else None
+    runpath_offset = add(runpath) if runpath else None
+    string_offset = 0x200
+    dynamic_rows = [(5, 0x400000 + string_offset), (10, len(strings))]
+    dynamic_rows.extend((1, offset) for offset in needed_offsets)
+    if soname_offset is not None:
+        dynamic_rows.append((14, soname_offset))
+    if runpath_offset is not None:
+        dynamic_rows.append((29, runpath_offset))
+    dynamic_rows.append((0, 0))
+    dynamic = b"".join(struct.pack("<qQ", *row) for row in dynamic_rows)
+    size = string_offset + len(strings)
+    payload = bytearray(size)
+    payload[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
+    struct.pack_into(
+        "<HHIQQQIHHHHHH",
+        payload,
+        16,
+        3,
+        62,
+        1,
+        0,
+        64,
+        0,
+        0,
+        64,
+        56,
+        2,
+        0,
+        0,
+        0,
+    )
+    struct.pack_into(
+        "<IIQQQQQQ", payload, 64, 1, 5, 0, 0x400000, 0x400000, size, size, 0x1000
+    )
+    struct.pack_into(
+        "<IIQQQQQQ",
+        payload,
+        120,
+        2,
+        6,
+        0x100,
+        0x400100,
+        0x400100,
+        len(dynamic),
+        len(dynamic),
+        8,
+    )
+    payload[0x100 : 0x100 + len(dynamic)] = dynamic
+    payload[string_offset:] = strings
+    return bytes(payload)
 
 
 def _fixture() -> tuple[dict[str, object], list[tuple]]:
@@ -171,7 +237,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         "source: python3-defaults, sha256: " + "1" * 64 + "}\n"
     ).encode()
     python_lock = ("fixture==1.0 --hash=sha256:" + "2" * 64 + "\n").encode()
-    native = b"\x7fELFfixture-native"
+    native = _elf64(soname="native.so")
     controls = {
         "opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": b"smoke\n",
         "usr/share/doc/npa-habitat-sim/source-manifest.json": _json(manifest),
@@ -236,18 +302,34 @@ def _verify(
     layers: list[list[tuple]],
     *,
     contract: dict[str, object] | None = None,
+    expected_dpkg_inventory_sha256: str | None = None,
+    expected_native_closure_sha256: str | None = None,
     **kwargs,
 ) -> dict[str, object]:
-    archive, expected = _oci(tmp_path, layers, **kwargs)
+    archive, expected, diff_ids = _oci(tmp_path, layers, **kwargs)
+    selected_contract = copy.deepcopy(contract or _fixture()[0])
+    selected_contract["required_base_diff_ids"] = [diff_ids[0]]
     fd = os.open(archive, os.O_RDONLY)
     try:
+        probe = H.verify(
+            fd,
+            archive.stat().st_size,
+            expected,
+            selected_contract,
+            _digest(archive.read_bytes()),
+            SOURCE_REVISION,
+            "0" * 64,
+            "0" * 64,
+        )
         return H.verify(
             fd,
             archive.stat().st_size,
             expected,
-            contract or _fixture()[0],
+            selected_contract,
             _digest(archive.read_bytes()),
             SOURCE_REVISION,
+            expected_dpkg_inventory_sha256 or probe["dpkg_inventory_sha256"],
+            expected_native_closure_sha256 or probe["native_elf_closure_sha256"],
         )
     finally:
         os.close(fd)
@@ -263,18 +345,109 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     assert report["layer_count"] == 1
     assert report["regular_files_read"] == 20
     assert report["installed_package_count"] == 1
+    assert report["dpkg_inventory"]["python3"] == {
+        "version": "3.10.6-1~22.04.1",
+        "architecture": "",
+        "source": "python3-defaults",
+        "source_version": "3.10.6-1~22.04.1",
+        "copyright_path": "usr/share/doc/python3/copyright",
+        "copyright_sha256": _digest(b"python license\n"),
+    }
     assert report["projected_source_file_count"] == 2
     assert report["python_distribution_count"] == 4
     assert report["python_record_files_verified"] == 1
     assert report["native_elf_count"] == 1
+    assert report["dpkg_inventory_sha256"] == report["expected_dpkg_inventory_sha256"]
+    assert (
+        report["native_elf_closure_sha256"] == report["expected_native_closure_sha256"]
+    )
+    assert report["native_elf_closure"][0]["owners"] == ["python-wheel-record"]
     assert report["expected_source_revision"] == SOURCE_REVISION
     assert report["oci_graph"]["attestation_manifest_count"] == 1
+
+
+def test_complete_runtime_inventory_hashes_are_required(tmp_path) -> None:
+    report = _verify(
+        tmp_path,
+        [_required_entries()],
+        expected_dpkg_inventory_sha256="0" * 64,
+        expected_native_closure_sha256="0" * 64,
+    )
+    assert {
+        "runtime_dpkg_inventory_lock_mismatch",
+        "native_elf_closure_lock_mismatch",
+    } <= _codes(report)
+
+
+def test_every_installed_package_requires_copyright_bytes(tmp_path) -> None:
+    entries = _required_entries()
+    status = next(
+        index for index, row in enumerate(entries) if row[0].endswith("dpkg/status")
+    )
+    entries[status] = file(
+        "var/lib/dpkg/status",
+        entries[status][1] + b"Package: transitive\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: transitive-source\n\n",
+    )
+    assert "runtime_package_copyright_missing" in _codes(_verify(tmp_path, [entries]))
+
+
+def test_native_needed_resolution_and_dpkg_ownership_are_closed(tmp_path) -> None:
+    entries = _required_entries()
+    status = next(
+        index for index, row in enumerate(entries) if row[0].endswith("dpkg/status")
+    )
+    entries[status] = file(
+        "var/lib/dpkg/status",
+        entries[status][1] + b"Package: fixture-lib\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: fixture-source\n\n"
+        b"Package: fixture-tool\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: fixture-source\n\n",
+    )
+    entries.extend(
+        [
+            file("usr/share/doc/fixture-lib/copyright", b"fixture license\n"),
+            file("usr/share/doc/fixture-tool/copyright", b"fixture license\n"),
+            file(
+                "var/lib/dpkg/info/fixture-lib.list",
+                b"/usr/lib/x86_64-linux-gnu/libfixture.so.1\n",
+            ),
+            file("var/lib/dpkg/info/fixture-tool.list", b"/usr/bin/fixture-tool\n"),
+            file(
+                "usr/lib/x86_64-linux-gnu/libfixture.so.1",
+                _elf64(soname="libfixture.so.1"),
+            ),
+            file(
+                "usr/bin/fixture-tool",
+                _elf64(needed=("libfixture.so.1",)),
+            ),
+        ]
+    )
+    report = _verify(tmp_path, [entries])
+    assert report["valid"] is True
+    tool = next(
+        row
+        for row in report["native_elf_closure"]
+        if row["path"] == "usr/bin/fixture-tool"
+    )
+    assert tool["owners"] == ["fixture-tool"]
+    assert tool["needed"] == {
+        "libfixture.so.1": "usr/lib/x86_64-linux-gnu/libfixture.so.1"
+    }
+
+
+def test_unresolved_or_unowned_native_elf_fails_closed(tmp_path) -> None:
+    entries = _required_entries()
+    entries.append(file("usr/bin/unowned", _elf64(needed=("missing.so",))))
+    assert {"native_elf_unowned", "native_elf_dependency_unresolved"} <= _codes(
+        _verify(tmp_path, [entries])
+    )
 
 
 def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> None:
     contract = _fixture()[0]
     contract["forbidden_content_sha256"].append(_digest(b"scene payload"))
-    archive, expected = _oci(
+    archive, expected, diff_ids = _oci(
         tmp_path,
         [
             [
@@ -283,6 +456,7 @@ def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> N
             ]
         ],
     )
+    contract["required_base_diff_ids"] = [diff_ids[0]]
     fd = os.open(archive, os.O_RDONLY)
     try:
         report = H.verify(
@@ -292,6 +466,8 @@ def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> N
             contract,
             _digest(archive.read_bytes()),
             SOURCE_REVISION,
+            "0" * 64,
+            "0" * 64,
         )
     finally:
         os.close(fd)
@@ -391,6 +567,12 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
     assert set(expected) == set(mappings)
     for image_path, source_path in mappings.items():
         assert expected[image_path] == _digest(source_path.read_bytes())
+
+
+def test_runtime_payload_pins_the_selected_ubuntu_base_diff_id() -> None:
+    assert CONTRACT["required_base_diff_ids"] == [
+        "sha256:ea16cace89338c84eb6bcb91a7efdfcae6838fff359efe951858227436486c34"
+    ]
 
 
 def test_runtime_copyright_resolution_accepts_only_a_resolved_package_link() -> None:
