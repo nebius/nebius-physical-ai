@@ -8,6 +8,8 @@ import io
 import json
 from pathlib import Path
 import re
+import runpy
+import tempfile
 import zipfile
 import zlib
 
@@ -94,12 +96,13 @@ def _asset_fetch_namespace() -> dict[str, object]:
             selected.append(node)
         elif isinstance(node, ast.FunctionDef) and node.name in functions:
             selected.append(node)
-    namespace: dict[str, object] = {}
-    exec(
-        compile(ast.Module(selected, type_ignores=[]), "<habitat-assets>", "exec"),
-        namespace,
-    )
-    return namespace
+    module = ast.Module(selected, type_ignores=[])
+    with tempfile.TemporaryDirectory() as directory:
+        module_path = Path(directory) / "habitat_assets.py"
+        module_path.write_text(ast.unparse(module), encoding="utf-8")
+        # run_path sees only AST-selected definitions from the fixed workflow literal.
+        namespace = runpy.run_path(str(module_path))
+        return namespace["fetch_scene_assets"].__globals__
 
 
 def _test_archive(scene: bytes = b"scene", navmesh: bytes = b"navmesh") -> bytes:
