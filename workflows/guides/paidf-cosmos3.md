@@ -505,7 +505,8 @@ preview, and R3 to execute.
 
 For your own video, add **one** of these input options to the submit command:
 
-- `--input-video /absolute/path/source.mp4` for a local H.264 MP4.
+- `--input-video /absolute/path/source.mp4` for a local H.264 MP4; R3b provides
+  a complete example.
 - `--input-uri 's3://<your-bucket>/<your-prefix>/source.mp4'` for a stored MP4.
 - `--lerobot-uri 's3://<your-bucket>/<dataset-prefix>/'` with the episode and
   camera options in R3a for a LeRobot dataset.
@@ -592,6 +593,82 @@ actions/states onto generated observations. It processes one episode/camera per
 run; use a fresh run ID for each further selection. Physical fidelity and
 training suitability still require review, and a complete quality rejection
 can stop a run.
+
+### R3b. Run the full pipeline from a local MP4
+
+Complete S1–S8 and R1, then set `INPUT_VIDEO` to your own H.264 MP4:
+
+```bash
+INPUT_VIDEO='/absolute/path/source.mp4'
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration \
+  -of json "$INPUT_VIDEO"
+ffmpeg -v error -xerror -i "$INPUT_VIDEO" -map 0:v:0 -f null -
+```
+
+Both commands must succeed. To try the public robot capture instead, the
+following downloads a new copy into a new directory and verifies its pinned
+SHA-256. It does not fetch a previous workflow's input or generated output.
+The [RoboPro dataset card](https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/README.md)
+declares [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); retain the
+downloaded card for attribution when sharing the sample or derivatives.
+
+```bash
+MP4_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-mp4.XXXXXX")"
+INPUT_VIDEO="$MP4_DIR/source.mp4"
+MP4_BASE='https://huggingface.co/datasets/Hoshipu/RoboPro/resolve/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0'
+curl --fail --location "$MP4_BASE/README.md" --output "$MP4_DIR/README.md"
+curl --fail --location \
+  "$MP4_BASE/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4" \
+  --output "$INPUT_VIDEO"
+python3.12 - "$INPUT_VIDEO" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+expected = "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
+actual = hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest()
+if actual != expected:
+    raise SystemExit("MP4 checksum mismatch; stop before submission")
+print("Verified fresh public MP4:", actual)
+PY
+```
+
+Stop if either download or verification fails. This sample is 3.38 seconds at
+50 fps, with 169 frames. Run the two media checks above against it as well.
+
+Run R2 now to reserve a **new** `RUN_ID`, select its separate SkyPilot directory,
+and validate the workflow and images. Use this full command in place of R3:
+
+```bash
+npa workbench workflow submit "$SPEC" \
+  --run-id "$RUN_ID" \
+  --input-video "$INPUT_VIDEO" \
+  --var bucket="$BUCKET" \
+  --var caption_model="$CAPTION_MODEL" \
+  --runtime \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --project "$PROJECT_ALIAS" \
+  --durable-s3
+```
+
+This starts every stage from the selected MP4. For a fresh experiment, do not
+use `--resume-run`, reuse an earlier run ID, or copy earlier outputs into its
+prefix. Keep the submit process running through finalization. Follow R4 and
+[Check every stage](#check-every-stage-and-full-pipeline-completion) to inspect
+the current run's runtime record, generated videos, evaluations, captions,
+curated clips, and both recordings.
+
+The worker preserves the submitted file as `input/original_source.mp4` and
+creates `input/source.mp4` as the generation reference. For the public sample,
+the reference and both generated variants should each contain 81 frames at
+24 fps (3.375 seconds); the original retains its 169 frames at 50 fps. Compare
+generated media against the **prepared reference**, and inspect the actual
+action and appearance before using accepted data for training.
 
 ### R4. Monitor and recover
 
