@@ -16,7 +16,7 @@ validation and planning do not imply that a B200 result exists.
 
 | Input | Immutable identity | Packaging boundary |
 | --- | --- | --- |
-| Source | `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05` | MIT source is cloned into the private BYOF image. The exact commit's `LICENSE` was checked before build preparation. |
+| Source | `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05` | MIT source is cloned into the private BYOF image. The exact commit's `LICENSE` was checked before build preparation and has SHA-256 `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. |
 | Dataset | `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, `v1.5/lift/ph/low_dim_v15.hdf5` | The dataset card declares MIT. Bytes are fetched only by the running operator workload and must match SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes before HDF5 is opened. Dataset bytes are never baked into the image. |
 | Base runtime | `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2` | Operator-private derivative only. PyTorch is BSD-3-Clause; CUDA/cuDNN components remain governed by their upstream NVIDIA terms. This candidate is not selected for public NPA publication. |
 
@@ -36,11 +36,16 @@ decision still requires scanning the built image bytes and reviewing the
 installed inventory.
 
 The public Lift dataset needs no model entitlement or Hugging Face token. The
-CUDA/cuDNN-derived base does require the operator to review and explicitly
-accept the applicable NVIDIA Deep Learning Container terms for this private
-build and one-run validation scope. Registry credentials or a prior image pull
-do not constitute that acceptance. Do not pull, build, or submit until the
-manager records the operator's acceptance.
+CUDA/cuDNN-derived base remains subject to the current
+[NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html) and
+[NVIDIA cuDNN Software License Agreement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html),
+including their use and redistribution conditions. Neither agreement exposes a
+vendor entitlement probe or documented environment-variable acceptance
+mechanism, so NPA does not invent a local consent proxy. An authorized operator
+must review and accept those terms under its own authority before the private
+build or run; registry credentials and a local boolean cannot prove that legal
+decision. This candidate is build-your-own and operator-private, and NPA does
+not publish its CUDA/cuDNN-derived image.
 
 ## Hard gate
 
@@ -53,8 +58,9 @@ are true:
 - the Kubernetes API reports the same immutable digest in the executing Pod's
   `status.containerStatuses[].imageID`; the configured image reference alone is
   not accepted as observation;
-- PyTorch and `nvidia-smi` independently expose exactly one B200 with compute
-  capability 10.0 (`sm_100`);
+- the operator-provided target carries the explicit STRICT reserved-capacity
+  attestation, and PyTorch and `nvidia-smi` independently expose exactly one
+  B200 with compute capability 10.0 (`sm_100`);
 - the downloaded dataset matches the immutable file hash and contains the
   official 200 trajectories plus a nonzero sample inventory;
 - upstream `robomimic/scripts/split_train_val.py` produces nonempty,
@@ -87,8 +93,11 @@ npa workbench workflow plan-spec workflows/testing/byof-robomimic.yaml \
 
 Before submission, replace `config.bucket` only in a run-local copy, select the
 manager-assigned private registry and Kubernetes context, and verify that the
-capacity policy is STRICT with exactly `B200:1`. Record explicit operator
-acceptance of the NVIDIA terms before pulling the base. Create the temporary
+capacity policy is STRICT with exactly `B200:1`. The operator must confirm its
+authority to use the governed CUDA/cuDNN runtime before pulling or building;
+that decision stays outside workflow arguments and environment-variable
+self-attestation. Export `NPA_E2E_MK8S_RESERVED_CAPACITY=1` only in the reviewed
+run environment. Create the temporary
 `npa-robomimic-observer` ServiceAccount, Role, and RoleBinding in the assigned
 namespace immediately before launch. The Role grants only `get` on `pods`; this
 lets the workload read its own Pod status using its mounted service-account
@@ -134,9 +143,13 @@ roleRef:
 ```
 
 Build and push through the BYOF runner so the mutable build tag is resolved to a
-digest before scheduling. The dedicated live E2E requires both
-`NPA_BYOF_LIVE_GPU=1` and `BYOF_ROBOMIMIC_LIVE=1`; it is valid only in that
-assigned context. The runner cancels and cleans up its SkyPilot workload after
+digest before scheduling. The dedicated live E2E requires
+`NPA_BYOF_LIVE_GPU=1`, `BYOF_ROBOMIMIC_LIVE=1`, the STRICT-capacity
+attestation, and explicit manager-issued project, private registry (via
+`NPA_BYOF_ROBOMIMIC_REGISTRY`), kubeconfig, context,
+non-default namespace, and output-bucket selectors. It is valid only in that
+assigned context and after the operator has made the NVIDIA-terms decision
+described above. The runner cancels and cleans up its SkyPilot workload after
 the artifact is uploaded. Preserve shared infrastructure.
 
 ## Scope and deferred work
