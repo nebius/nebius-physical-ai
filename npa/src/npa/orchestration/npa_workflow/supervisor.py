@@ -70,10 +70,11 @@ CONFIGURATION_REASON_CODES = frozenset(
         "CHECKPOINT_INCOMPATIBLE",
     }
 )
-TRANSIENT_REASON_CODES = frozenset(
+CAPACITY_REASON_CODES = frozenset(
+    {"CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"}
+)
+TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
     {
-        "CAPACITY_OR_QUOTA",
-        "GANG_CAPACITY_UNAVAILABLE",
         "NODE_NOT_READY",
         "PREEMPTED",
         "PROVIDER_INTERRUPTION",
@@ -363,6 +364,16 @@ def decide_recovery(
             "IMMUTABLE_IDENTITY_MISMATCH",
             "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
+    if (
+        observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        and code in CAPACITY_REASON_CODES
+    ):
+        return RecoveryDecision(
+            RecoveryAction.ADOPT_EXACT_ATTEMPT,
+            failure_class,
+            code,
+            "Keep the exact provider attempt while its scheduler waits for capacity.",
+        )
     if context.infrastructure_recoveries >= context.max_infrastructure_recoveries:
         action = (
             RecoveryAction.CANCEL_AND_TERMINALIZE
@@ -581,6 +592,19 @@ class WorkflowRunSupervisor:
         return base
 
 
+def _primary_blocker(blockers: list[dict[str, Any]]) -> dict[str, Any]:
+    # A capacity wait must not hide a fatal error from another pod in the job.
+    for codes in (
+        CONFIGURATION_REASON_CODES,
+        PAYLOAD_REASON_CODES,
+        TRANSIENT_REASON_CODES,
+    ):
+        for blocker in blockers:
+            if blocker["reason_code"] in codes:
+                return blocker
+    return blockers[0]
+
+
 class SkyPilotSupervisorAdapter:
     runtime = "skypilot"
     # SkyPilot provider creation remains inside the runtime's existing
@@ -655,19 +679,7 @@ class SkyPilotSupervisorAdapter:
                     }
                 )
             if blocker_payload:
-                typed_codes = (
-                    CONFIGURATION_REASON_CODES
-                    | TRANSIENT_REASON_CODES
-                    | PAYLOAD_REASON_CODES
-                )
-                selected = next(
-                    (
-                        blocker
-                        for blocker in blocker_payload
-                        if blocker["reason_code"] in typed_codes
-                    ),
-                    blocker_payload[0],
-                )
+                selected = _primary_blocker(blocker_payload)
                 reason = selected["reason_code"]
                 message = selected["message"]
             elif getattr(report, "unready_nodes", None):

@@ -550,6 +550,14 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   <the same --var and --secret-env arguments>
 ```
 
+
+When Kubernetes reports insufficient CPU or GPU resources, the supervisor keeps
+observing the exact queued job while SkyPilot waits for capacity. This waiting
+does not consume an infrastructure recovery attempt, even when that budget is
+already exhausted. A failed attempt still follows the configured recovery
+policy. An accelerator mismatch, image access failure, or payload failure takes
+precedence over another pod's capacity wait.
+
 Completion must include `reports/sim2real-report.json`, non-empty
 `reports/sim2real.rrd` and `reports/sim2real.mcap`, the selected checkpoint, and
 exact validation/gold lineage. Pipeline completion proves orchestration, not
