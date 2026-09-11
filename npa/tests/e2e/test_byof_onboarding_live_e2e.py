@@ -717,7 +717,14 @@ def _gymnasium_live_command(
     assert parsed_output_root.netloc and parsed_output_root.path.strip("/"), (
         "the manager-authorized output root must include a bucket and prefix"
     )
+    preset = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
+    assert preset, (
+        "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned, "
+        "task-private immutable image reference"
+    )
+    _immutable_image_digest(preset)
     spec.config["output_root"] = authorized_output_root.rstrip("/")
+    spec.config["base_image"] = preset
     plan = build_plan(spec, run_id=run_id)
     assert len(plan.steps) == 1
     argv = list(plan.steps[0].argv)
@@ -728,6 +735,7 @@ def _gymnasium_live_command(
     assert _plan_flag(argv, "--yaml") == (
         "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu"
     )
+    assert _plan_flag(argv, "--base-image") == preset
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
@@ -737,12 +745,6 @@ def _gymnasium_live_command(
         "--project",
         e2e_project or "",
     ]
-    preset = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
-    assert preset, (
-        "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE must be the already scanned, "
-        "task-private immutable image reference"
-    )
-    _immutable_image_digest(preset)
     cmd.extend(["--image", preset, "--skip-build"])
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:

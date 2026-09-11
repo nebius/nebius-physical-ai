@@ -38,7 +38,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
-| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **qualification pending** | Requires the task-private immutable image on one strictly reserved RTX PRO 6000 Blackwell: real 120-step MuJoCo state/contact/touch evolution, EGL RGB frames, pod-observed digest, and `gymnasium-robotics-smoke.json` |
+| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; Phase A public candidate unbuilt** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has no image/current-head/public proof and remains pre-registration quarantined. |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -88,16 +88,18 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `registered_shadow_hand_environment` | qualification pending | Upstream `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` registration at exact source commit |
-| `mujoco_physics_steps` / `mujoco_contacts` | qualification pending | 120 upstream `env.step` calls, runtime-measured MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
-| `continuous_touch_sensor_response` | qualification pending | Official 92-site Shadow Hand `sensordata` vector with nonzero live readings |
-| `egl_rgb_rendering` | qualification pending | Actual 240×320 RGB frames, distinct hashes, measured rate, and loaded NVIDIA EGL library |
-| `rtx_pro_6000_blackwell_execution` | qualification pending | One strict RTX PRO 6000 Blackwell (`sm_120`) plus pushed/pod-observed immutable digest equality |
+| `registered_shadow_hand_environment` | historical private proof only | Upstream `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` registration at exact source commit |
+| `mujoco_physics_steps` / `mujoco_contacts` | historical private proof only | 120 upstream `env.step` calls, 2,400 MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
+| `continuous_touch_sensor_response` | historical private proof only | Official 92-site Shadow Hand `sensordata` vector with nonzero live readings |
+| `egl_rgb_rendering` | historical private proof only | Actual 240×320 RGB frames, distinct hashes, measured rate, and loaded NVIDIA EGL library |
+| `rtx_pro_6000_blackwell_execution` | historical private proof only | One strict RTX PRO 6000 Blackwell (`sm_120`) plus private pushed/pod-observed immutable digest equality |
 
 This remains a minimal BYOF candidate. It has no model, external dataset,
 gated asset, terms acceptance, RL training claim, expert score, other
 environment-family claim, or physical-robot transfer claim. See
 [`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
+The Phase A direct-public design is unbuilt and pre-registration quarantined;
+historical private evidence does not transfer to redesigned bytes.
 
 ### RoboCasa
 

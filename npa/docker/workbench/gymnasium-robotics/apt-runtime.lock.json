@@ -1,0 +1,30 @@
+{
+  "schema": "npa.gymnasium-robotics.apt-runtime-lock.v1",
+  "status": "phase-a-incomplete",
+  "reason": "The immutable Ubuntu snapshot binary/source closure requires a separately authorized resolver transaction.",
+  "base": {
+    "config_digest": "sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c",
+    "image": "ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
+    "layer_digest": "sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58"
+  },
+  "snapshot": {
+    "inrelease_sha256": null,
+    "timestamp": null,
+    "url": null
+  },
+  "requested_runtime_packages": [
+    "ca-certificates",
+    "libegl1",
+    "libgl1",
+    "libgles2",
+    "libglvnd0",
+    "libglx0",
+    "openssh-server",
+    "python3.12",
+    "python3.12-venv",
+    "rsync",
+    "sudo"
+  ],
+  "resolved_binary_packages": [],
+  "resolved_source_packages": []
+}

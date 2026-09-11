@@ -28,10 +28,10 @@ envs:
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
   set -euo pipefail
-  test -d "${BYOF_REPO_ROOT}"
-  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
-  test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"
   test -x /opt/venv/bin/python
+  test -f /opt/npa/gymnasium-robotics/capability_smoke.py
+  test -f /opt/npa/gymnasium-robotics/source-lock.json
+  /opt/venv/bin/python -I -B /opt/npa/gymnasium-robotics/verify_image.py
   /opt/venv/bin/python - <<'PY'
   import gymnasium_robotics
   import mujoco
@@ -44,8 +44,6 @@ run: |
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
-  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
-  cp "${BYOF_REPO_ROOT}/npa_build_metadata.json" "${OUTPUT_DIR}/npa_build_metadata.json"
   test -n "${BYOF_IMAGE}"
   if ! printf '%s\n' "${BYOF_IMAGE}" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
     echo "BYOF_IMAGE must be an immutable sha256 reference" >&2
@@ -185,9 +183,7 @@ run: |
           "sha256": hashlib.sha256(payload).hexdigest(),
       }
   metadata = json.loads(
-      (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(
-          encoding="utf-8"
-      )
+      Path("/opt/npa/gymnasium-robotics/source-lock.json").read_text(encoding="utf-8")
   )
   summary = {
       "status": "success" if smoke_exit_code == 0 else "failed",

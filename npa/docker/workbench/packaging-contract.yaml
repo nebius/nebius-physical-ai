@@ -428,6 +428,21 @@ images:
       identifies the committed NPA tree. Public-eligible but quarantined until
       exact built-image scans and real conversion evidence are accepted;
       no supported public release is declared. See ncore/REDISTRIBUTION.md.
+  gymnasium-robotics:
+    dockerfile: gymnasium-robotics/Dockerfile
+    tier: interactive
+    redistribution: public
+    final_user: ubuntu
+    phase: pre-registration-quarantine
+    notes: >-
+      Phase A direct-public design for Farama Gymnasium-Robotics 1.4.2 and
+      open-source MuJoCo 3.12.0. The Dockerfile refuses before network access
+      while the immutable Ubuntu/Python closure and actual corresponding source
+      for GPL/LGPL runtime bytes and Shadow-derived assets remain incomplete.
+      No image has been built, scanned, GPU-qualified, or published; no supported
+      tag, accepted manifest, or SM120 compatibility claim exists. No model,
+      dataset, cache, output, credential, CUDA, NGC, Isaac, or Omniverse payload
+      is baked. Host NVIDIA EGL is outside the OCI artifact.
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true
