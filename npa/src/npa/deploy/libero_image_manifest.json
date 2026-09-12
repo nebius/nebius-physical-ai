@@ -25,5 +25,8 @@
   },
   "runtime_payloads_baked": false,
   "runtime_use_decision_required": true,
+  "runtime_manifest_sha256": "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712",
+  "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+  "governing_terms_count": 7,
   "catalog_release": false
 }

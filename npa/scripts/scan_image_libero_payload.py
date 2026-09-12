@@ -11,6 +11,7 @@ import io
 import json
 import lzma
 import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -33,6 +34,16 @@ BASE_PROVENANCE_SHA256 = (
     "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b"
 )
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
+RUNTIME_MANIFEST_SHA256 = (
+    "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712"
+)
+RUNTIME_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "docker"
+    / "workbench"
+    / "libero"
+    / "runtime-manifest.json"
+)
 
 FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -155,6 +166,31 @@ SECRET_CONTENT: tuple[re.Pattern[bytes], ...] = (
     re.compile(rb"(?i)(?:aws_secret_access_key|hf_token)\s*[=:]\s*[^$<\s][^\s]{7,}"),
 )
 
+# These signatures detect renamed pure-Python payloads independently of their
+# archive path. The exact NPA smoke driver legitimately imports these projects,
+# so its path is exempt only when its bytes retain the reviewed digest.
+FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
+    re.compile(
+        rb"(?m)^(?:from|import)\s+libero(?:\.|\s)|^class\s+(?:BCRNNPolicy|SequenceVLDataset)\b"
+    ),
+    re.compile(
+        rb"(?m)^(?:from|import)\s+robomimic(?:\.|\s)|^class\s+RolloutPolicy\b"
+    ),
+    re.compile(
+        rb"(?m)^(?:from|import)\s+(?:torch|torchvision|mujoco|robosuite)(?:\.|\s)|"
+        rb"^class\s+Tensor\b|^__all__\s*=.*['\"]Tensor['\"]"
+    ),
+)
+NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
+    "opt/npa/libero/libero_smoke.py": (
+        "eee8a9bd9e89019e8f0f913c60eff31370dce1685e016ccd6fbb5e99c83772f8"
+    )
+}
+NEVER_MATCH_ELF = re.compile(rb"(?!)")
+RUNTIME_INJECTED_EXPORT_PATHS = frozenset(
+    {".dockerenv", "etc/hostname", "etc/hosts", "etc/resolv.conf"}
+)
+
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
     rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
     rb"cupti|cufile|cusparse|cusolver|curand|cufft|nvidia)[A-Za-z0-9_.-]*\.so",
@@ -209,35 +245,96 @@ def _config_findings(config: dict[str, Any]) -> list[walker.Finding]:
 
 
 def _metadata_findings(
-    metadata: dict[str, Any], config: dict[str, Any]
+    metadata: dict[str, Any],
+    observed_config_digest: str,
 ) -> list[walker.Finding]:
     findings: list[walker.Finding] = []
     provenance = metadata.get("buildx.build.provenance")
-    serialized = json.dumps(provenance, sort_keys=True, separators=(",", ":"))
-    labels = (config.get("config") or {}).get("Labels") or {}
-    revision = labels.get("org.opencontainers.image.revision")
-    for label, expected in (
-        ("base manifest", BASE_MANIFEST),
-        ("source revision", revision),
-    ):
-        if not expected or str(expected) not in serialized:
-            findings.append(
-                walker.Finding(
-                    "independent_build_lineage",
-                    "<buildx-metadata>",
-                    f"independently observed {label} is absent",
-                )
-            )
-    config_digest = str(metadata.get("containerimage.config.digest") or "")
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", config_digest) is None:
+    materials = provenance.get("materials") if isinstance(provenance, dict) else None
+    base_sha256 = BASE_MANIFEST.removeprefix("sha256:")
+    base_observed = False
+    if isinstance(materials, list):
+        for material in materials:
+            if not isinstance(material, dict):
+                continue
+            uri = str(material.get("uri") or "")
+            digests = material.get("digest") or {}
+            if isinstance(digests, dict) and (
+                digests.get("sha256") == base_sha256
+                or uri.endswith(f"@sha256:{base_sha256}")
+            ):
+                base_observed = True
+                break
+    if not base_observed:
         findings.append(
             walker.Finding(
                 "independent_build_lineage",
                 "<buildx-metadata>",
-                "container config digest is absent",
+                "structured provenance materials do not bind the base manifest",
+            )
+        )
+    config_digest = str(metadata.get("containerimage.config.digest") or "")
+    if (
+        re.fullmatch(r"sha256:[0-9a-f]{64}", observed_config_digest) is None
+        or config_digest != observed_config_digest
+    ):
+        findings.append(
+            walker.Finding(
+                "independent_build_lineage",
+                "<buildx-metadata>",
+                "metadata config digest does not equal the scanned OCI config",
             )
         )
     return findings
+
+
+def _runtime_payload_hashes() -> frozenset[str]:
+    payload = RUNTIME_MANIFEST.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != RUNTIME_MANIFEST_SHA256:
+        raise RuntimeError("scanner runtime manifest differs from its reviewed bytes")
+    manifest = json.loads(payload)
+    source = manifest["source"]
+    task = manifest["task"]
+    hashes = {
+        source["license_sha256"],
+        task["bddl"]["sha256"],
+        task["initial_states"]["sha256"],
+        task["embedding_source"]["sha256"],
+        manifest["demonstration"]["sha256"],
+        *(item["sha256"] for item in manifest["language_model"]["files"]),
+        *(item["sha256"] for item in manifest["runtime_artifacts"]),
+    }
+    return frozenset(hashes)
+
+
+def _renamed_payload_content_findings(
+    tars: list[Path], config: dict[str, Any]
+) -> list[walker.Finding]:
+    original_secret_content = walker.SECRET_CONTENT
+    original_elf_dependency = walker.FORBIDDEN_ELF_DEPENDENCY
+    try:
+        walker.SECRET_CONTENT = FORBIDDEN_PAYLOAD_CONTENT
+        walker.FORBIDDEN_ELF_DEPENDENCY = NEVER_MATCH_ELF
+        with walker.payload_policy(
+            forbidden_paths=(),
+            forbidden_history=(),
+            audited_secret_files={},
+            audited_libraries={},
+        ):
+            raw = walker.scan_tars(tars, config)
+    finally:
+        walker.SECRET_CONTENT = original_secret_content
+        walker.FORBIDDEN_ELF_DEPENDENCY = original_elf_dependency
+    return [
+        walker.Finding(
+            "renamed_runtime_payload_content",
+            finding.path,
+            "forbidden LIBERO, robomimic, or PyTorch source signature",
+        )
+        for finding in raw
+        if finding.kind == "credential_content"
+        and finding.path not in NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST
+    ]
 
 
 def _base_provenance_findings(
@@ -318,6 +415,9 @@ def _uncompressed_tar_bytes(path: Path) -> bytes:
 
 def _archive_records(
     path: Path,
+    *,
+    payload_hashes: frozenset[str] = frozenset(),
+    scan_payload_content: bool = False,
 ) -> tuple[list[tuple[tarfile.TarInfo, str, tuple[object, ...]]], list[walker.Finding]]:
     payload = _uncompressed_tar_bytes(path)
     findings: list[walker.Finding] = []
@@ -380,7 +480,30 @@ def _archive_records(
             descriptor: tuple[object, ...]
             if member.isfile():
                 content = payload[member.offset_data:data_end]
-                descriptor = ("file", member.size, hashlib.sha256(content).hexdigest())
+                content_sha256 = hashlib.sha256(content).hexdigest()
+                descriptor = ("file", member.size, content_sha256)
+                if scan_payload_content and any(
+                    pattern.search(content) for pattern in FORBIDDEN_PAYLOAD_CONTENT
+                ):
+                    if (
+                        NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST.get(normalized)
+                        != content_sha256
+                    ):
+                        findings.append(
+                            walker.Finding(
+                                "renamed_runtime_payload_content",
+                                normalized,
+                                "forbidden source signature is not the reviewed neutral smoke driver",
+                            )
+                        )
+                if content_sha256 in payload_hashes:
+                    findings.append(
+                        walker.Finding(
+                            "exact_runtime_payload_bytes",
+                            normalized,
+                            "file bytes equal a runtime-only source, package, model, or data artifact",
+                        )
+                    )
             elif member.isdir():
                 descriptor = ("directory",)
             elif member.issym():
@@ -511,8 +634,11 @@ def _layer_graph_findings(
 ) -> list[walker.Finding]:
     findings: list[walker.Finding] = []
     state: dict[str, tuple[object, ...]] = {}
+    payload_hashes = _runtime_payload_hashes()
     for layer in layer_tars:
-        records, archive_findings = _archive_records(layer)
+        records, archive_findings = _archive_records(
+            layer, payload_hashes=payload_hashes, scan_payload_content=True
+        )
         findings.extend(archive_findings)
         findings.extend(_apply_layer_records(records, state, source=layer.name))
     flattened, hardlink_findings = _resolve_hardlinks(state)
@@ -528,7 +654,11 @@ def _layer_graph_findings(
                     )
                 )
     if exported_rootfs is not None:
-        records, archive_findings = _archive_records(exported_rootfs)
+        records, archive_findings = _archive_records(
+            exported_rootfs,
+            payload_hashes=payload_hashes,
+            scan_payload_content=True,
+        )
         findings.extend(archive_findings)
         exported: dict[str, tuple[object, ...]] = {}
         findings.extend(
@@ -537,10 +667,14 @@ def _layer_graph_findings(
         exported, hardlink_findings = _resolve_hardlinks(exported)
         findings.extend(hardlink_findings)
         comparable = {
-            path: value for path, value in flattened.items() if value[0] != "directory"
+            path: value
+            for path, value in flattened.items()
+            if value[0] != "directory" and path not in RUNTIME_INJECTED_EXPORT_PATHS
         }
         exported_comparable = {
-            path: value for path, value in exported.items() if value[0] != "directory"
+            path: value
+            for path, value in exported.items()
+            if value[0] != "directory" and path not in RUNTIME_INJECTED_EXPORT_PATHS
         }
         if comparable != exported_comparable:
             findings.append(
@@ -588,6 +722,36 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
     return findings
 
 
+def _docker_save_config_digest(path: Path) -> str:
+    with tarfile.open(path, "r:*") as archive:
+        manifest_stream = archive.extractfile(archive.getmember("manifest.json"))
+        if manifest_stream is None:
+            raise RuntimeError("docker save archive has no readable manifest.json")
+        manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
+        if not isinstance(manifests, list) or len(manifests) != 1:
+            raise RuntimeError("docker save archive must contain exactly one image")
+        config_name = str(manifests[0].get("Config") or "")
+        config_stream = archive.extractfile(archive.getmember(config_name))
+        if config_stream is None:
+            raise RuntimeError("docker save archive has no readable image config")
+        return "sha256:" + hashlib.sha256(config_stream.read()).hexdigest()
+
+
+def _remote_config_digest(image: str) -> str:
+    completed = subprocess.run(
+        ["crane", "manifest", "--platform", "linux/amd64", image],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError("cannot read remote manifest for config identity")
+    digest = str((json.loads(completed.stdout).get("config") or {}).get("digest") or "")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+        raise RuntimeError("remote manifest has no immutable config digest")
+    return digest
+
+
 def scan_tars(
     tars: list[Path],
     config: dict[str, Any],
@@ -597,6 +761,7 @@ def scan_tars(
     *,
     exported_rootfs: Path | None = None,
     docker_save: Path | None = None,
+    observed_config_digest: str = "",
 ) -> list[walker.Finding]:
     original_secret_content = walker.SECRET_CONTENT
     original_elf_dependency = walker.FORBIDDEN_ELF_DEPENDENCY
@@ -620,10 +785,11 @@ def scan_tars(
     )
     return [
         *findings,
+        *_renamed_payload_content_findings(layer_tars, config),
         *_layer_graph_findings(layer_tars, exported_rootfs),
         *(_docker_save_outer_findings(docker_save) if docker_save else []),
         *_config_findings(config),
-        *_metadata_findings(build_metadata, config),
+        *_metadata_findings(build_metadata, observed_config_digest),
         *_base_provenance_findings(base_provenance_bytes, base_provenance),
     ]
 
@@ -648,6 +814,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
     parser.add_argument("--docker-save", type=Path)
+    parser.add_argument("--exported-rootfs", type=Path)
     parser.add_argument("--rootfs-tar", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--build-metadata", type=Path, required=True)
@@ -658,6 +825,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide exactly one IMAGE, --docker-save, or --rootfs-tar")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
+    if bool(args.exported_rootfs) != bool(args.docker_save):
+        parser.error("--docker-save and --exported-rootfs are required together")
     try:
         metadata = json.loads(args.build_metadata.read_text(encoding="utf-8"))
         base_provenance_bytes = args.base_provenance.read_bytes()
@@ -667,12 +836,14 @@ def main(argv: list[str] | None = None) -> int:
                 tars, config = walker.remote_material(args.image, Path(temporary))
                 exported_rootfs = tars[0]
                 docker_save = None
+                observed_config_digest = _remote_config_digest(args.image)
             elif args.docker_save:
                 tars, config = walker.docker_save_material(
                     args.docker_save, Path(temporary)
                 )
-                exported_rootfs = None
+                exported_rootfs = args.exported_rootfs
                 docker_save = args.docker_save
+                observed_config_digest = _docker_save_config_digest(args.docker_save)
             else:
                 tars = [args.rootfs_tar]
                 exported_rootfs = None
@@ -682,6 +853,11 @@ def main(argv: list[str] | None = None) -> int:
                     if args.config_json
                     else {}
                 )
+                observed_config_digest = (
+                    "sha256:" + hashlib.sha256(args.config_json.read_bytes()).hexdigest()
+                    if args.config_json
+                    else ""
+                )
             findings = scan_tars(
                 tars,
                 config,
@@ -690,6 +866,7 @@ def main(argv: list[str] | None = None) -> int:
                 base_provenance,
                 exported_rootfs=exported_rootfs,
                 docker_save=docker_save,
+                observed_config_digest=observed_config_digest,
             )
     except Exception as exc:  # noqa: BLE001 - every unreadable byte fails closed
         print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))

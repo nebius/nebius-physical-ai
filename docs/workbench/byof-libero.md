@@ -23,8 +23,8 @@ tag or digest and the public image table remains unchanged.
 | Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, and NPA-owned files. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
-| Runtime cache | `/workspace/.cache/npa/libero/<runtime-manifest-sha256>` is non-root, manifest-addressed, atomically completed, sealed read-only, and separate from output. Its complete-file inventory revalidates every source/runtime/data/model byte before offline warm reuse; writable or changed trees refuse. The qualification gate additionally requires the current run's cold-fetch receipt. The cache is never uploaded. Missing, mismatched, overbroad, or locally invented acceptance decisions refuse before cache creation or network access. Runtime fetch changes delivery, not permission. |
-| Outputs | Only regular, single-link files confined beneath `$NPA_SMOKE_OUTPUT_DIR` may enter the unique run output prefix; symlinks and special or multiply linked files refuse. The allowed set includes `libero-smoke.json`, the produced checkpoint, summary, and sanitized logs. Credentials, source, models, packages, input data, and caches are never output artifacts. |
+| Runtime cache | `/workspace/.cache/npa/libero/<runtime-manifest-sha256>` is non-root, manifest-addressed, atomically completed, sealed read-only, and separate from output. Its complete-file inventory revalidates every source/runtime/data/model byte before warm reuse; writable or changed trees refuse. The qualification gate additionally requires the current run's cold-fetch receipt. The cache is never uploaded. Missing, mismatched, overbroad, or locally invented acceptance decisions refuse before cache creation or network access. After the decision passes, all seven hash-bound official governing-terms sources must resolve before the first cache mutation. Runtime fetch changes delivery, not permission. |
+| Outputs | Only regular, single-link files reached beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR` may enter the unique run output prefix. Every parent directory is traversed relative to an already opened descriptor with `O_NOFOLLOW`; symlinks, parent replacement, and special or multiply linked files refuse. The allowed set includes `libero-smoke.json`, the produced checkpoint, summary, and sanitized logs. Credentials, source, models, packages, input data, and caches are never output artifacts. |
 
 The task mentions Google Scanned Objects and a HOPE distractor, but their meshes
 and textures are neither fetched nor needed for stored-observation behavior
@@ -48,8 +48,10 @@ Before any public byte is disclosed, a separately authorized trusted build must:
 1. build the exact reviewed full SHA with Buildx SBOM and maximum provenance;
 2. fetch and hash-verify Docker Official Images' exact published provenance
    metadata, without using Docker history;
-3. inspect every OCI config and layer, including nested archives, with
-   `scan_image_libero_payload.py` and the general restricted-payload scanner;
+3. inspect every OCI config and ordered layer, nested archive, exact runtime
+   payload hash, renamed source signature, and an independently exported
+   flattened rootfs with `scan_image_libero_payload.py` plus the general
+   restricted-payload scanner;
 4. prove non-root/config/bootstrap identity and independently bind the base
    manifest, rootfs material, and source revision;
 5. pass package-license, corresponding-source, Trivy fixed-critical,
@@ -69,11 +71,17 @@ only and cannot prove public-byte equivalence or live capability.
 
 The runtime materializer reads `runtime-manifest.json`, which pins the source
 tree, MIT license, sparse task files, CC BY 4.0 demonstration, Apache-2.0 BERT
-files, and 135 runtime artifacts by URL and SHA-256. It requires an owner-private
-regular JSON decision whose own hash, source revision, runtime-manifest hash,
+files, seven official governing-terms documents, and 135 runtime artifacts by
+URL, size where applicable, and SHA-256. `runtime-requirements.txt` is itself
+hash-bound and must match the ordered artifact manifest exactly; both bootstrap
+and remaining installs use `pip --require-hashes --no-deps --no-index`. It
+requires an owner-private regular JSON decision whose own hash, source revision,
+runtime-manifest hash,
 five exact authorized boundaries, and manager receipt all match. It rejects any
-`ACCEPT_*` proxy. Network availability, registry access, a credential, or a
-successful download is never treated as permission.
+`ACCEPT_*` proxy. Only after that decision passes does it resolve and hash all
+official terms into ephemeral storage; any changed or unavailable terms source
+refuses before cache mutation. Network availability, registry access, a
+credential, or a successful download is never treated as permission.
 
 The workflow uses `base_profile: prebuilt`, an empty build command, and the
 dedicated B200 profile. `run_byof_repo.py` rejects an empty or mutable candidate,
