@@ -15,5 +15,9 @@ trap 'rm -rf -- "${context}"' EXIT
 # Build only the exact committed image context named by the immutable tag.
 git -C "${repo_root}" archive "${revision}:npa/docker/workbench/robomimic" \
   | tar -x --same-permissions -C "${context}"
-docker build --pull=false --tag "${image}" "${context}"
+python3 "${context}/verify_image.py" prepare-build-inputs \
+  --output-root "${context}/build-inputs" \
+  --debian-lock "${context}/debian-packages.lock" \
+  --source-manifest "${context}/source-manifest.json"
+docker build --platform linux/amd64 --pull=false --tag "${image}" "${context}"
 echo "built local candidate ${image}; this helper does not push or publish"
