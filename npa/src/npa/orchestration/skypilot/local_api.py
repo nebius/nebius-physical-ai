@@ -417,6 +417,7 @@ def ensure_isolated_api(
                          "SKYPILOT_GLOBAL_CONFIG", "SKYPILOT_SERVER_PLUGINS_CONFIG", "PYTHONPATH", _ENDPOINT, _MARKER)
         binding = {key: hashlib.sha256(daemon_env.get(key, "").encode()).hexdigest() for key in identity_keys}
         files = _identity_files(daemon_env, config=parsed_config)
+        spawned = None
         process = _process(record) if record.get("interpreter") else None
         if process:
             if record.get("interpreter") != interpreter or record.get("config_sha256") != config_hash:
@@ -453,13 +454,18 @@ def ensure_isolated_api(
                           pid=None, start_ticks=None, state="starting")
             _write(root / "daemon.json", record)
             with open(root / "server.log", "ab", opener=lambda p, flags: os.open(p, flags, 0o600)) as log:
-                subprocess.Popen([interpreter, "-m", "sky.server.server", "--host", "127.0.0.1",
+                spawned = subprocess.Popen([interpreter, "-m", "sky.server.server", "--host", "127.0.0.1",
                                   "--port", str(record["port"]), "--metrics-port", str(record["metrics_port"])],
                                  env=daemon_env, cwd=cwd, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=log, start_new_session=True)
         while True:
             process = _process(record)
             if process is None:
+                # A fresh /proc scan can miss the child during startup. Its
+                # absence is not exit evidence while our Popen handle is alive.
+                if spawned is not None and spawned.poll() is None:
+                    time.sleep(0.2)
+                    continue
                 raise IsolatedApiError("owned SkyPilot API exited before readiness; inspect its private server log")
             record.update(process)
             _write(root / "daemon.json", record)
