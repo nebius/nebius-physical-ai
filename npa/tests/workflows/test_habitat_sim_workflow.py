@@ -175,6 +175,63 @@ def test_runtime_cache_cleanup_is_verified(tmp_path, monkeypatch) -> None:
     assert cache.exists()
 
 
+def test_runtime_cache_cleanup_refuses_preexisting_or_replaced_path(tmp_path) -> None:
+    preexisting = tmp_path / ".outputs-scene-cache"
+    preexisting.mkdir()
+    sentinel = preexisting / "keep"
+    sentinel.write_text("not run owned", encoding="utf-8")
+    with pytest.raises(H.SmokeFailure, match="already exists"):
+        H.main(
+            [
+                "--output-dir",
+                str(tmp_path / "outputs"),
+                "--output-uri",
+                "s3://fixture/output",
+            ]
+        )
+    assert sentinel.read_text(encoding="utf-8") == "not run owned"
+
+    owned = tmp_path / "owned-cache"
+    identity = H._claim_runtime_cache(owned)
+    (owned / ".npa-run-owner").unlink()
+    owned.rmdir()
+    owned.mkdir()
+    replacement = owned / "replacement"
+    replacement.write_text("preserve", encoding="utf-8")
+    with pytest.raises(H.SmokeFailure, match="identity changed"):
+        H._remove_runtime_cache(owned, identity)
+    assert replacement.read_text(encoding="utf-8") == "preserve"
+
+
+def test_main_removes_its_claimed_cache_after_fetch_failure(
+    tmp_path, monkeypatch
+) -> None:
+    output = tmp_path / "outputs"
+    cache = tmp_path / ".outputs-scene-cache"
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(output))
+    monkeypatch.setattr(H, "_source_provenance", lambda: {})
+    monkeypatch.setattr(H, "_immutable_image", lambda: ("image", "digest"))
+    monkeypatch.setattr(H, "query_gpu", lambda: {})
+
+    def fail_fetch(root, _opener=H.urllib.request.urlopen, *, create_root=True):
+        assert root == cache and create_root is False
+        assert (root / ".npa-run-owner").is_file()
+        (root / "partial").write_bytes(b"partial")
+        raise H.SmokeFailure("fixture fetch failed")
+
+    monkeypatch.setattr(H, "fetch_scene_assets", fail_fetch)
+    with pytest.raises(H.SmokeFailure, match="fixture fetch failed"):
+        H.main(
+            [
+                "--output-dir",
+                str(output),
+                "--output-uri",
+                "s3://fixture/output",
+            ]
+        )
+    assert not cache.exists()
+
+
 def _live_receipt(tmp_path: Path) -> dict[str, object]:
     owner = tmp_path / "owner-only"
     owner.mkdir(mode=0o700)
@@ -284,6 +341,7 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
 
     for registry in (
         "GHCR.IO:443/nebius/nebius-physical-ai",
+        "GHCR.IO.:443/nebius/nebius-physical-ai",
         "docker.io/task-owned",
         "quay.io/task-owned",
         "public.ecr.aws/task-owned",
@@ -319,15 +377,17 @@ def test_live_selector_binds_pod_node_to_provider_receipt(tmp_path) -> None:
 def test_live_selector_requires_exact_digest_and_terminated_zero_exit() -> None:
     image = "private.invalid/task/npa-habitat-sim@sha256:" + "a" * 64
     pod = {
+        "spec": {"containers": [{"name": "smoke", "image": image}]},
         "status": {
             "phase": "Succeeded",
             "containerStatuses": [
                 {
+                    "name": "smoke",
                     "imageID": "docker-pullable://" + image,
                     "state": {"terminated": {"exitCode": 0}},
                 }
             ],
-        }
+        },
     }
     assert LIVE._assert_pod_completion(pod, image).endswith("@sha256:" + "a" * 64)
     pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] = 1
@@ -339,6 +399,32 @@ def test_live_selector_requires_exact_digest_and_terminated_zero_exit() -> None:
     )
     with pytest.raises(AssertionError):
         LIVE._assert_pod_completion(pod, image)
+    pod["status"]["containerStatuses"][0]["imageID"] = "docker-pullable://" + image
+    pod["spec"]["containers"][0]["image"] = (
+        "private.invalid/task/npa-habitat-sim@sha256:" + "b" * 64
+    )
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, image)
+
+
+def test_live_receipt_reader_rejects_symlink_and_foreign_owner(
+    tmp_path, monkeypatch
+) -> None:
+    owner = tmp_path / "owner-only"
+    owner.mkdir(mode=0o700)
+    receipt = owner / "receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    receipt.chmod(0o600)
+    linked = owner / "linked.json"
+    linked.symlink_to(receipt)
+
+    with pytest.raises(OSError):
+        LIVE._private_json(linked)
+
+    current_uid = LIVE.os.geteuid()
+    monkeypatch.setattr(LIVE.os, "geteuid", lambda: current_uid + 1)
+    with pytest.raises(AssertionError):
+        LIVE._private_json(receipt)
 
 
 def test_member_hash_duplicate_encryption_and_link_refuse(

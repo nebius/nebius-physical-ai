@@ -205,6 +205,7 @@ def _json_bytes(
 
 
 def _source_projection_findings(
+    final_paths: dict[str, str],
     final_files: dict[str, dict[str, object]],
     tracked: dict[str, bytes],
     contract: dict[str, object],
@@ -247,7 +248,11 @@ def _source_projection_findings(
             "bytes"
         ):
             findings.append({"code": "source_projection_file_mismatch", "path": safe})
-    observed = {path for path in final_files if path.startswith(root + "/")}
+    observed = {
+        path
+        for path, kind in final_paths.items()
+        if path.startswith(root + "/") and kind != "directory"
+    }
     if observed != declared:
         findings.append({"code": "source_projection_population_mismatch"})
     return findings, len(declared)
@@ -612,6 +617,7 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
         "machine": machine,
         "needed": [],
         "soname": "",
+        "rpath": [],
         "runpath": [],
     }
     if dynamic is None:
@@ -643,25 +649,36 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
     sonames = _elf_strings(payload, tags.get(14, []), string_offset, string_size)
     W.require(len(sonames) <= 1, "habitat_elf_soname")
     metadata["soname"] = sonames[0] if sonames else ""
-    paths = tags.get(29, tags.get(15, []))
-    runpaths = _elf_strings(payload, paths, string_offset, string_size)
+    rpaths = _elf_strings(payload, tags.get(15, []), string_offset, string_size)
+    runpaths = _elf_strings(payload, tags.get(29, []), string_offset, string_size)
+    W.require(len(rpaths) <= 1, "habitat_elf_rpath")
     W.require(len(runpaths) <= 1, "habitat_elf_runpath")
+    metadata["rpath"] = rpaths[0].split(":") if rpaths else []
     metadata["runpath"] = runpaths[0].split(":") if runpaths else []
     return metadata
 
 
-def _runtime_library_dirs(path: str, runpath: list[str]) -> set[str]:
+_DEFAULT_LIBRARY_DIRS = (
+    "lib/x86_64-linux-gnu",
+    "usr/lib/x86_64-linux-gnu",
+    "lib64",
+    "usr/lib64",
+    "lib",
+    "usr/lib",
+    "usr/local/lib",
+)
+
+
+def _runtime_library_dirs(path: str, rpath: list[str], runpath: list[str]) -> list[str]:
     origin = posixpath.dirname(path)
-    directories = {
-        "lib",
-        "lib64",
-        "lib/x86_64-linux-gnu",
-        "usr/lib",
-        "usr/lib64",
-        "usr/lib/x86_64-linux-gnu",
-        "usr/local/lib",
-    }
-    for value in runpath:
+    selected = runpath if runpath else rpath
+    directories: list[str] = []
+    for value in [*selected, *_DEFAULT_LIBRARY_DIRS]:
+        W.require(
+            value.startswith(("/", "$ORIGIN", "${ORIGIN}"))
+            or value in _DEFAULT_LIBRARY_DIRS,
+            "habitat_elf_relative_runtime_path",
+        )
         expanded = value.replace("${ORIGIN}", origin).replace("$ORIGIN", origin)
         W.require("$" not in expanded, "habitat_elf_unsupported_runpath")
         normalized = posixpath.normpath(expanded.lstrip("/"))
@@ -669,12 +686,72 @@ def _runtime_library_dirs(path: str, runpath: list[str]) -> set[str]:
             normalized not in {"", ".", ".."} and not normalized.startswith("../"),
             "habitat_elf_runpath_escape",
         )
-        directories.add(normalized)
+        if normalized not in directories:
+            directories.append(normalized)
     return directories
+
+
+def _compatible_elf_target(
+    logical_path: str,
+    row: dict[str, object],
+    metadata: dict[str, dict[str, object]],
+    final_paths: dict[str, str],
+    final_links: dict[str, tuple[str, str]],
+) -> str | None:
+    target = _resolve_final_path(logical_path, final_paths, final_links)
+    candidate = metadata.get(target or "")
+    if candidate is None:
+        return None
+    if candidate["class"] != row["class"] or candidate["machine"] != row["machine"]:
+        return None
+    return target
+
+
+def _needed_binding(
+    needed: str,
+    row: dict[str, object],
+    search: list[str],
+    metadata: dict[str, dict[str, object]],
+    final_paths: dict[str, str],
+    final_links: dict[str, tuple[str, str]],
+) -> tuple[dict[str, object] | None, str | None]:
+    matches: list[tuple[int, str, str]] = []
+    for index, directory in enumerate(search):
+        logical = posixpath.join(directory, needed)
+        target = _compatible_elf_target(
+            logical, row, metadata, final_paths, final_links
+        )
+        if target is not None:
+            matches.append((index, logical, target))
+    all_targets = {
+        target
+        for candidate in final_paths
+        if posixpath.basename(candidate) == needed
+        and (
+            target := _compatible_elf_target(
+                candidate, row, metadata, final_paths, final_links
+            )
+        )
+        is not None
+    }
+    if len(all_targets) > 1:
+        return None, "native_elf_dependency_ambiguous"
+    if not matches:
+        return None, "native_elf_dependency_unresolved"
+    target = matches[0][2]
+    if all_targets != {target}:
+        return None, "native_elf_dependency_unresolved"
+    return {
+        "path": target,
+        "lookup_path": matches[0][1],
+        "search_index": matches[0][0],
+    }, None
 
 
 def _native_findings(
     elf_payloads: dict[str, bytes],
+    final_paths: dict[str, str],
+    final_links: dict[str, tuple[str, str]],
     final_files: dict[str, dict[str, object]],
     dpkg_owners: dict[str, set[str]],
     python_covered: set[str],
@@ -695,30 +772,33 @@ def _native_findings(
         if not owners:
             findings.append({"code": "native_elf_unowned", "path": path})
         resolved: dict[str, str] = {}
-        search = _runtime_library_dirs(path, row["runpath"])
+        resolution: dict[str, dict[str, object]] = {}
+        search = _runtime_library_dirs(path, row["rpath"], row["runpath"])
         for needed in row["needed"]:
             W.require(
                 needed == posixpath.basename(needed) and needed not in {"", ".", ".."},
                 "habitat_elf_needed_name",
             )
-            candidates = [
-                candidate
-                for candidate, target in metadata.items()
-                if posixpath.basename(candidate) == needed
-                and posixpath.dirname(candidate) in search
-                and target["class"] == row["class"]
-                and target["machine"] == row["machine"]
-            ]
-            if not candidates:
+            binding, failure = _needed_binding(
+                needed,
+                row,
+                search,
+                metadata,
+                final_paths,
+                final_links,
+            )
+            if failure is not None:
                 findings.append(
                     {
-                        "code": "native_elf_dependency_unresolved",
+                        "code": failure,
                         "path": path,
                         "needed": needed,
                     }
                 )
                 continue
-            resolved[needed] = sorted(candidates)[0]
+            W.require(binding is not None, "habitat_elf_dependency_binding")
+            resolved[needed] = str(binding["path"])
+            resolution[needed] = binding
         closure.append(
             {
                 "path": path,
@@ -726,7 +806,11 @@ def _native_findings(
                 "class": row["class"],
                 "machine": row["machine"],
                 "soname": row["soname"],
+                "rpath": row["rpath"],
+                "runpath": row["runpath"],
+                "effective_search_path": search,
                 "needed": resolved,
+                "needed_resolution": resolution,
                 "owners": owners,
             }
         )
@@ -878,7 +962,7 @@ def _scan_layers(
     findings.extend({"code": "required_path_missing", "path": path} for path in missing)
     findings.extend(_required_file_findings(final_files, contract))
     projection_findings, projection_count = _source_projection_findings(
-        final_files, tracked_files, contract
+        final_paths, final_files, tracked_files, contract
     )
     findings.extend(projection_findings)
     (
@@ -903,6 +987,8 @@ def _scan_layers(
     findings.extend(python_findings)
     native_findings, native_closure_sha, native_closure = _native_findings(
         elf_payloads,
+        final_paths,
+        final_links,
         final_files,
         dpkg_owners,
         covered,

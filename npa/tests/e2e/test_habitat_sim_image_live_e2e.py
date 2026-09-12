@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import urllib.parse
 
@@ -29,15 +30,66 @@ PUBLIC_REGISTRY_HOSTS = {
     "registry-1.docker.io",
     "registry.k8s.io",
 }
+MAX_PRIVATE_RECEIPT_BYTES = 1024 * 1024
 
 
-def _private_json(path_value: object) -> tuple[dict[str, object], Path]:
+def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _read_bounded(file_fd: int) -> bytes:
+    payload = bytearray()
+    while chunk := os.read(
+        file_fd, min(65536, MAX_PRIVATE_RECEIPT_BYTES + 1 - len(payload))
+    ):
+        payload.extend(chunk)
+        assert len(payload) <= MAX_PRIVATE_RECEIPT_BYTES
+    return bytes(payload)
+
+
+def _private_bytes(path_value: object) -> tuple[bytes, Path]:
     supplied = Path(str(path_value))
-    path = supplied.resolve(strict=True)
-    assert supplied.is_absolute() and supplied == path
-    assert path.is_file() and path.stat().st_mode & 0o077 == 0
-    assert path.parent.stat().st_mode & 0o077 == 0
-    return json.loads(path.read_text(encoding="utf-8")), path
+    assert (
+        supplied.is_absolute()
+        and supplied.parent.resolve(strict=True) == supplied.parent
+    )
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    directory_fd = os.open(supplied.parent, directory_flags)
+    try:
+        directory = os.fstat(directory_fd)
+        assert stat.S_ISDIR(directory.st_mode)
+        assert directory.st_uid == os.geteuid() and directory.st_mode & 0o077 == 0
+        file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        file_fd = os.open(supplied.name, file_flags, dir_fd=directory_fd)
+        try:
+            before = os.fstat(file_fd)
+            assert stat.S_ISREG(before.st_mode)
+            assert before.st_uid == os.geteuid() and before.st_mode & 0o077 == 0
+            assert before.st_size <= MAX_PRIVATE_RECEIPT_BYTES
+            payload = _read_bounded(file_fd)
+            after = os.fstat(file_fd)
+            named = os.stat(supplied.name, dir_fd=directory_fd, follow_symlinks=False)
+            assert (
+                _file_identity(before) == _file_identity(after) == _file_identity(named)
+            )
+            return payload, supplied
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _private_json(path_value: object) -> tuple[dict[str, object], Path, bytes]:
+    payload, path = _private_bytes(path_value)
+    value = json.loads(payload)
+    assert isinstance(value, dict)
+    return value, path, payload
 
 
 def _assert_private_image(receipt: dict[str, object]) -> None:
@@ -52,15 +104,12 @@ def _assert_private_image(receipt: dict[str, object]) -> None:
         and not parsed.query
         and not parsed.fragment
     )
-    host = parsed.hostname.lower()
+    host = parsed.hostname.lower().rstrip(".")
     assert host not in PUBLIC_REGISTRY_HOSTS
     assert image.startswith(registry + "/")
-    evidence, path = _private_json(receipt["registry_evidence"]["path"])
+    evidence, _path, payload = _private_json(receipt["registry_evidence"]["path"])
     assert SHA256.fullmatch(str(receipt["registry_evidence"]["sha256"]))
-    assert (
-        hashlib.sha256(path.read_bytes()).hexdigest()
-        == receipt["registry_evidence"]["sha256"]
-    )
+    assert hashlib.sha256(payload).hexdigest() == receipt["registry_evidence"]["sha256"]
     assert evidence == {
         **evidence,
         "schema_version": "npa.registry.private-pull-refusal.v1",
@@ -76,8 +125,8 @@ def _assert_private_image(receipt: dict[str, object]) -> None:
 
 def _assert_provider_binding(receipt: dict[str, object]) -> dict[str, object]:
     reservation = receipt["reservation"]
-    provider, path = _private_json(reservation["provider_receipt_path"])
-    provider_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    provider, _path, payload = _private_json(reservation["provider_receipt_path"])
+    provider_hash = hashlib.sha256(payload).hexdigest()
     assert SHA256.fullmatch(str(reservation["provider_receipt_sha256"]))
     assert provider_hash == reservation["provider_receipt_sha256"]
     assert provider["schema_version"] == "npa.nebius.strict-capacity-binding.v1"
@@ -112,9 +161,12 @@ def _assert_provider_binding(receipt: dict[str, object]) -> dict[str, object]:
 
 def _assert_pod_completion(pod: dict[str, object], image: str) -> str:
     digest = image.rsplit("@", 1)[1]
+    containers = pod["spec"].get("containers", [])
     statuses = pod["status"].get("containerStatuses", [])
     assert pod["status"].get("phase") == "Succeeded"
-    assert len(statuses) == 1
+    assert len(containers) == len(statuses) == 1
+    assert containers[0].get("image") == image
+    assert containers[0].get("name") == statuses[0].get("name")
     image_id = str(statuses[0].get("imageID", ""))
     assert re.fullmatch(r"(?:docker-pullable://)?.+@" + re.escape(digest), image_id)
     terminated = statuses[0].get("state", {}).get("terminated")
@@ -123,7 +175,7 @@ def _assert_pod_completion(pod: dict[str, object], image: str) -> str:
 
 
 def _private_receipt() -> dict[str, object]:
-    receipt, _ = _private_json(os.environ["NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT"])
+    receipt, _, _ = _private_json(os.environ["NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT"])
     assert receipt["schema_version"] == "npa.habitat-sim.image-live.v1"
     assert (
         receipt["head"]
