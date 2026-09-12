@@ -50,6 +50,12 @@ def test_capabilities_are_complete_and_honest() -> None:
     assert "live_validated" not in replay["npa_status"]
     assert payload["live_validation"]["scope"] == "digest_bound_external_evidence"
     assert payload["live_validation"]["embedded_claims"] is False
+    assert payload["live_validation"]["readiness_sources"] == [
+        "workflows/testing/isaac-arena-evaluation-rtxpro.readiness.json",
+        "workflows/testing/isaac-arena-evaluation-b200.readiness.json",
+        "npa/docker/workbench/blackwell-dc-images.json",
+        "npa/src/npa/deploy/public_release_manifest.json",
+    ]
     assert len(payload["environments"]) == 18
     assert {
         "cube_goal_pose",

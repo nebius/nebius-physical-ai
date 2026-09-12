@@ -351,8 +351,10 @@ def capabilities() -> dict[str, Any]:
             "scope": "digest_bound_external_evidence",
             "embedded_claims": False,
             "readiness_sources": [
-                "npa/src/npa/deploy/gpu-readiness.yaml",
-                "npa/src/npa/deploy/public-image-release-manifest.yaml",
+                "workflows/testing/isaac-arena-evaluation-rtxpro.readiness.json",
+                "workflows/testing/isaac-arena-evaluation-b200.readiness.json",
+                "npa/docker/workbench/blackwell-dc-images.json",
+                "npa/src/npa/deploy/public_release_manifest.json",
             ],
             "reason": (
                 "A container cannot truthfully pre-assert qualification of its own "
