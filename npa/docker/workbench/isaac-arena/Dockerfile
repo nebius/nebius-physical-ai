@@ -23,6 +23,7 @@ LABEL npa.tool="isaac-arena" \
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_LIGHT_WORKBENCH_TOOL=isaac-arena \
+    NPA_ISAAC_BOOTSTRAP=/opt/npa/bin/isaac-bootstrap \
     ISAAC_ARENA_VERSION=${ISAAC_ARENA_VERSION} \
     ISAAC_ARENA_REVISION=${ISAAC_ARENA_REVISION} \
     ISAAC_ARENA_ROOT=/opt/isaac-arena \
@@ -39,6 +40,7 @@ SHELL ["/bin/bash", "-lc"]
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY --chmod=0755 docker/workbench/common/isaac_bootstrap.sh /opt/npa/bin/isaac-bootstrap
 COPY docker/workbench/isaac-arena/npa-cli-requirements.txt /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt
 COPY docker/workbench/isaac-arena/runtime-requirements.txt /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
@@ -82,6 +84,8 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt \
     && /opt/npa/sim/venv/bin/python -c \
       "import importlib.metadata as m; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual)" \
+    && bash -n /opt/npa/bin/isaac-bootstrap \
+    && grep -q '_npa_image_hooks.pth' /opt/npa/bin/isaac-bootstrap \
     && env -u ACCEPT_EULA /usr/local/bin/npa workbench isaac-arena evaluate \
       --output-path /tmp/npa-arena-build-probe --dry-run --output-format json \
       | grep -q '"status": "dry_run"' \

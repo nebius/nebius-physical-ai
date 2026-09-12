@@ -26,6 +26,9 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "a96f7b2afe874037ad7738166f124b2eca6eae0e35daec377d7786c26274660c" in text
     assert "npa-cli-requirements.txt" in text
     assert "runtime-requirements.txt" in text
+    assert "NPA_ISAAC_BOOTSTRAP=/opt/npa/bin/isaac-bootstrap" in text
+    assert "common/isaac_bootstrap.sh /opt/npa/bin/isaac-bootstrap" in text
+    assert "_npa_image_hooks.pth" in text
     assert "--require-hashes" in text
     assert "import onnxruntime, pinocchio, pink" in text
     assert "'pin':'4.0.0'" in text
