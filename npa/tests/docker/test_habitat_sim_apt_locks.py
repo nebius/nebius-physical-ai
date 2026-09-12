@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import subprocess
 
 import yaml
 
@@ -172,3 +173,188 @@ def test_no_floating_upgrade_or_unverified_apt_transport() -> None:
     )
     assert dockerfile.count("Suites: jammy jammy-updates jammy-security") == 2
     assert "Suites: ${APT_SNAPSHOT}" not in dockerfile
+
+
+def test_build_python_family_is_fully_bound_to_signed_snapshot() -> None:
+    build = _lock("apt-build.lock")
+    expected = "3.10.6-1~22.04.1"
+    required_candidates = {
+        "candidate_python3": expected,
+        "candidate_libpython3_dev": expected,
+        "candidate_python3_dev": expected,
+        "candidate_python3_venv": expected,
+    }
+    assert build["compatibility"].items() >= required_candidates.items()
+
+    packages = {row["binary"]: row for row in build["packages"]}
+    assert {
+        name: (packages[name]["version"], packages[name]["sha256"])
+        for name in ("python3", "libpython3-dev", "python3-dev", "python3-venv")
+    } == {
+        "python3": (
+            expected,
+            "43dbcc12d790ed9360be4a1dc690ac0a7464a5e7c3170785886df84811a3f5a5",
+        ),
+        "libpython3-dev": (
+            expected,
+            "7692175a21453d3cf15b66ed5a9a661b160113a99cb24eeb6a3b9acd43afa642",
+        ),
+        "python3-dev": (
+            expected,
+            "f7d6f5a0eb31d36f7fcba156b16da91035128c0edd1e643f07e7bbbecf5c6c7f",
+        ),
+        "python3-venv": (
+            expected,
+            "ee8d678c61b0721aff196ab1320e41cf4f5ebe3fcd22363b82e22c733b105866",
+        ),
+    }
+
+
+def _build_fixture_deb(
+    root: Path, name: str, version: str, *, depends: str = ""
+) -> Path:
+    package_root = root / f"{name}-{version}"
+    control_dir = package_root / "DEBIAN"
+    control_dir.mkdir(parents=True)
+    control_dir.chmod(0o755)
+    control = [
+        f"Package: {name}",
+        f"Version: {version}",
+        "Architecture: amd64",
+        "Maintainer: NPA test <noreply@example.invalid>",
+        "Description: hermetic Python-family resolver fixture",
+    ]
+    if depends:
+        control.append(f"Depends: {depends}")
+    (control_dir / "control").write_text("\n".join(control) + "\n", encoding="utf-8")
+    output = root / f"{name}_{version}_amd64.deb"
+    result = subprocess.run(
+        ["dpkg-deb", "--build", str(package_root), str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return output
+
+
+def _simulate_python_family_resolution(
+    tmp_path: Path, *, python_dev_version: str, family_version: str
+) -> subprocess.CompletedProcess[str]:
+    packages = [
+        _build_fixture_deb(tmp_path, "python3", family_version),
+        _build_fixture_deb(tmp_path, "libpython3-dev", family_version),
+        _build_fixture_deb(
+            tmp_path,
+            "python3-dev",
+            python_dev_version,
+            depends=(
+                f"python3 (= {python_dev_version}), "
+                f"libpython3-dev (= {python_dev_version})"
+            ),
+        ),
+        _build_fixture_deb(
+            tmp_path,
+            "python3-venv",
+            family_version,
+            depends=f"python3 (= {family_version})",
+        ),
+    ]
+    state = tmp_path / "state"
+    (state / "lists/partial").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    (cache / "archives/partial").mkdir(parents=True)
+    sources = tmp_path / "sources.list"
+    sources.write_text("", encoding="utf-8")
+    source_parts = tmp_path / "source-parts"
+    source_parts.mkdir()
+    return subprocess.run(
+        [
+            "apt-get",
+            "-o",
+            f"Dir::State={state}",
+            "-o",
+            f"Dir::Cache={cache}",
+            "-o",
+            "Dir::State::status=/dev/null",
+            "-o",
+            f"Dir::Etc::sourcelist={sources}",
+            "-o",
+            f"Dir::Etc::sourceparts={source_parts}",
+            "-o",
+            "Debug::NoLocking=1",
+            "--simulate",
+            "--no-install-recommends",
+            "install",
+            *(str(package) for package in packages),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_apt_resolver_accepts_exact_family_and_rejects_old_mixed_family(
+    tmp_path: Path,
+) -> None:
+    expected = "3.10.6-1~22.04.1"
+    exact = _simulate_python_family_resolution(
+        tmp_path / "exact",
+        python_dev_version=expected,
+        family_version=expected,
+    )
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+
+    mixed = _simulate_python_family_resolution(
+        tmp_path / "mixed",
+        python_dev_version="3.10.6-1~22.04",
+        family_version=expected,
+    )
+    output = mixed.stdout + mixed.stderr
+    assert mixed.returncode != 0
+    assert "python3-dev : Depends: python3 (= 3.10.6-1~22.04)" in output
+    assert "Unable to correct problems" in output
+
+
+def test_executed_candidate_gate_rejects_mixed_or_drifting_family() -> None:
+    dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+    start = dockerfile.index("npa_require_python_family()")
+    end = dockerfile.index(
+        "    npa_require_python_family '3.10.6-1~22.04.1'", start
+    )
+    function = dockerfile[start:end].replace("\\\n", "\n")
+
+    def run(candidates: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        cases = "\n".join(
+            f"{name}) printf '%s\\n' '  Candidate: {version}' ;;"
+            for name, version in candidates.items()
+        )
+        fake_apt_cache = (
+            "apt-cache() {\n"
+            '  test "$1" = policy\n'
+            '  case "$2" in\n'
+            f"{cases}\n"
+            "  esac\n"
+            "}\n"
+        )
+        return subprocess.run(
+            [
+                "bash",
+                "-ceu",
+                fake_apt_cache
+                + function
+                + "\nnpa_require_python_family '3.10.6-1~22.04.1' "
+                "python3 libpython3-dev python3-dev python3-venv",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    exact = {
+        name: "3.10.6-1~22.04.1"
+        for name in ("python3", "libpython3-dev", "python3-dev", "python3-venv")
+    }
+    assert run(exact).returncode == 0
+    assert run(exact | {"python3-dev": "3.10.6-1~22.04"}).returncode != 0
+    assert run({name: "3.10.6-1~22.04.2" for name in exact}).returncode != 0

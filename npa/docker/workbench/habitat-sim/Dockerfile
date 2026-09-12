@@ -97,6 +97,16 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
     test "$installed_perl" = '5.34.0-3ubuntu1.8' && \
     test "$installed_perl" = "$candidate_perl_base" && \
     test "$installed_perl" = "$candidate_perl" && \
+    npa_require_python_family() { \
+      expected="$1"; \
+      shift; \
+      for package in "$@"; do \
+        candidate="$(apt-cache policy "$package" | sed -n 's/^  Candidate: //p')"; \
+        test "$candidate" = "$expected" || return 1; \
+      done; \
+    }; \
+    npa_require_python_family '3.10.6-1~22.04.1' \
+      python3 libpython3-dev python3-dev python3-venv && \
     apt-get install -y --no-install-recommends \
       build-essential=12.9ubuntu3 \
       ca-certificates=20260601~22.04.1 \
@@ -107,9 +117,11 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
       libglm-dev=0.9.9.8+ds-2 \
       libglvnd-dev=1.4.0-1 \
       libjpeg-dev=8c-2ubuntu10 \
+      libpython3-dev=3.10.6-1~22.04.1 \
       libomp-dev=1:14.0-55~exp2 \
       pkg-config=0.29.2-1ubuntu3 \
-      python3-dev=3.10.6-1~22.04 \
+      python3=3.10.6-1~22.04.1 \
+      python3-dev=3.10.6-1~22.04.1 \
       python3-venv=3.10.6-1~22.04.1 && \
     install -d -m 0755 /opt/rsync-source && \
     cd /opt/rsync-source && \
