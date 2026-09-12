@@ -16,6 +16,7 @@
   "requested_runtime_packages": [
     "ca-certificates",
     "openssh-server",
+    "python3-boto3",
     "python3.12",
     "python3.12-venv",
     "rsync",

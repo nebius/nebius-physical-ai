@@ -68,6 +68,7 @@ def test_runtime_and_neutral_baked_closures_stay_incomplete() -> None:
     assert source["mujoco_version"] == "3.12.0"
     assert source["components"]["shadow_sr_common"]["preferred_form_complete"] is False
     assert apt["resolved_binary_packages"] == apt["resolved_source_packages"] == []
+    assert "python3-boto3" in apt["requested_runtime_packages"]
     assert corresponding["scope"] == "candidate-image-layers-only"
     assert corresponding["runtime_fetched_material_excluded"]
     assert source["requirements_lock_sha256"] is None
