@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 from pathlib import Path
+import re
 
 import pytest
 
@@ -47,6 +48,18 @@ def _transition_guard():
     return namespace["_require_state_transition"]
 
 
+def _digest_parser():
+    tree = ast.parse(SMOKE.read_text(encoding="utf-8"))
+    body = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_digest_from_reference"
+    ]
+    namespace: dict[str, object] = {"re": re}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(SMOKE), "exec"), namespace)
+    return namespace["_digest_from_reference"]
+
+
 def test_fixed_capability_identity_and_trajectory() -> None:
     assert (
         _constant("ENV_ID") == "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
@@ -55,6 +68,23 @@ def test_fixed_capability_identity_and_trajectory() -> None:
     assert _constant("MIN_TRANSITION_DELTA") == 1e-6
     assert _constant("RESET_SEED") == 20260910
     assert _constant("ACTION_SEED") == 11092026
+
+
+def test_image_digest_parser_requires_one_anchored_digest() -> None:
+    parse = _digest_parser()
+    digest = "sha256:" + "a" * 64
+    assert parse(f"registry.example.invalid/image@{digest}", "image") == digest
+    assert (
+        parse(f"docker-pullable://registry.example.invalid/image@{digest}", "image")
+        == digest
+    )
+    for value in (
+        digest,
+        f"registry.example.invalid/image@{digest}-suffix",
+        f"registry.example.invalid/image@sha256:{'b' * 64}@{digest}",
+    ):
+        with pytest.raises(RuntimeError, match="not digest-pinned"):
+            parse(value, "image")
 
 
 def test_every_runtime_verifier_binds_the_exact_asset_lock_bytes() -> None:

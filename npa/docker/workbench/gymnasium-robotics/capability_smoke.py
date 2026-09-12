@@ -48,10 +48,14 @@ def _exact_files(root: Path, expected: dict[str, str]) -> dict[str, str]:
 
 
 def _digest_from_reference(value: str, field: str) -> str:
-    matches = re.findall(r"sha256:[0-9a-f]{64}", value.lower())
-    if not matches:
+    match = re.fullmatch(
+        r"(?:(?:docker-pullable|docker)://)?[^@\s]+@"
+        r"(?P<digest>sha256:[0-9a-f]{64})",
+        value.lower(),
+    )
+    if match is None:
         raise RuntimeError(f"{field} is not digest-pinned")
-    return matches[-1]
+    return match.group("digest")
 
 
 def _gpu() -> dict[str, Any]:

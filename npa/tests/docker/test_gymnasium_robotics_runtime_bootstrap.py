@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import tarfile
 from typing import BinaryIO
@@ -197,7 +198,7 @@ def test_verified_runtime_is_atomically_published_and_reused(tmp_path: Path) -> 
     assert (cache / "current").resolve() == target
     assert json.loads((target / "receipt.json").read_text())["status"] == "ready"
     assert (target / "source/pyproject.toml").read_bytes() == b"[build-system]\n"
-    assert list((cache / ".staging").iterdir()) == []
+    assert not any(path.name.startswith(".") for path in (cache / "versions").iterdir())
     assert cache.stat().st_uid == os.geteuid()
     assert cache.stat().st_mode & 0o077 == 0
     assert target.stat().st_mode & 0o222 == 0
@@ -291,7 +292,36 @@ def test_unsafe_installer_tree_is_removed_before_publication(tmp_path: Path) -> 
         )
     assert not (cache / "current").exists()
     assert list((cache / "versions").iterdir()) == []
-    assert list((cache / ".staging").iterdir()) == []
+    assert not any(path.name.startswith(".") for path in (cache / "versions").iterdir())
+
+
+def test_failed_post_publish_validation_removes_only_the_exact_sealed_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    observed_modes: list[int] = []
+
+    def reject_published(target: Path, runtime_lock: object) -> dict[str, object]:
+        del runtime_lock
+        observed_modes.append(stat.S_IMODE(target.lstat().st_mode))
+        raise BOOTSTRAP.BootstrapRefusal("injected post-publish validation failure")
+
+    monkeypatch.setattr(BOOTSTRAP, "_validated_existing", reject_published)
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="post-publish validation failure"
+    ):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, []),
+            installer=_installer,
+        )
+    assert observed_modes == [0o500]
+    assert not (cache / "current").exists()
+    assert list((cache / "versions").iterdir()) == []
+    assert not any(path.name.startswith(".") for path in (cache / "versions").iterdir())
 
 
 @pytest.mark.parametrize(
@@ -372,7 +402,6 @@ def test_mismatched_artifact_leaves_no_published_or_partial_runtime(
         )
     assert not (tmp_path / "cache/current").exists()
     assert list((tmp_path / "cache/versions").iterdir()) == []
-    assert list((tmp_path / "cache/.staging").iterdir()) == []
 
 
 def test_changed_redirect_refuses_and_publishes_nothing(tmp_path: Path) -> None:
