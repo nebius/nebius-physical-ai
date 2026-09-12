@@ -137,6 +137,7 @@ SECRET_CONTENT = (
         rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'
     ),
 )
+MAX_IMAGE_REFERENCE_BYTES = 2048
 
 
 def scan(rootfs_tar: Path, config: dict[str, Any]) -> list[walker.Finding]:
@@ -162,24 +163,43 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
 docker_save_material = walker.docker_save_material
 
 
+def _read_image_stdin() -> str:
+    """Read one bounded private image reference without placing it in argv."""
+
+    raw = sys.stdin.buffer.read(MAX_IMAGE_REFERENCE_BYTES + 1)
+    if len(raw) > MAX_IMAGE_REFERENCE_BYTES:
+        raise ValueError("private image reference is too large")
+    try:
+        image = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("private image reference is not UTF-8") from exc
+    if not image or image != image.strip() or "\x00" in image:
+        raise ValueError("private image reference is malformed")
+    return image
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
+    parser.add_argument("--image-stdin", action="store_true")
     parser.add_argument("--rootfs-tar", type=Path)
     parser.add_argument("--docker-save", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    choices = (args.image, args.rootfs_tar, args.docker_save)
+    choices = (args.image, args.image_stdin, args.rootfs_tar, args.docker_save)
     if sum(bool(value) for value in choices) != 1:
         parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
 
+    selected_image = args.image
     try:
+        if args.image_stdin:
+            selected_image = _read_image_stdin()
         with tempfile.TemporaryDirectory(prefix="npa-robotwin-byte-scan-") as tmp:
-            if args.image:
-                tars, config = walker.remote_material(args.image, Path(tmp))
+            if selected_image:
+                tars, config = walker.remote_material(selected_image, Path(tmp))
             elif args.docker_save:
                 tars, config = docker_save_material(args.docker_save, Path(tmp))
             else:
@@ -189,12 +209,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
             findings = scan_tars(tars, config)
     except Exception as exc:  # noqa: BLE001 - every scan failure is fatal
-        print(json.dumps({"status": "error", "error": str(exc)}, indent=2))
+        error = "private image scan failed" if args.image_stdin else str(exc)
+        print(json.dumps({"status": "error", "error": error}, indent=2))
         return 2
 
     result = {
         "format": "npa_robotwin_image_byte_scan_v1",
-        "image": args.image or ("docker-save" if args.docker_save else "offline-rootfs"),
+        "image": selected_image or (
+            "docker-save" if args.docker_save else "offline-rootfs"
+        ),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],
