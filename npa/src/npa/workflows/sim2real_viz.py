@@ -521,24 +521,41 @@ def _inner_evidence_payloads(
     return payloads
 
 
+def _validation_iteration(value: Any) -> int:
+    """Reject coerced identities before joining canonical validation evidence."""
+
+    if type(value) is not int or value < 1:
+        raise Sim2RealVizError("Validation iteration must be a positive integer")
+    return value
+
+
 def _validation_candidates(
     payload: dict[str, Any], outer: int
 ) -> dict[int, dict[str, Any]] | None:
     """Require one validation candidate for every pass in canonical evidence."""
 
     if "checkpoint_candidates" not in payload:
+        if any(
+            "vlm_eval_uri" in record or "signal_uri" in record
+            for record in payload.get("iterations") or []
+        ):
+            raise Sim2RealVizError("Canonical validation candidates are missing")
         return None
+    if _validation_iteration(payload.get("outer_iteration")) != outer:
+        raise Sim2RealVizError("Validation outer iteration does not match its evidence")
     candidates = {}
     for candidate in payload["checkpoint_candidates"]:
-        iteration = int(candidate.get("inner_iteration") or 0)
+        iteration = _validation_iteration(candidate.get("inner_iteration"))
         if (
-            int(candidate.get("outer_iteration") or 0) != outer
-            or iteration < 1
+            _validation_iteration(candidate.get("outer_iteration")) != outer
             or iteration in candidates
         ):
             raise Sim2RealVizError("Validation candidate identity is ambiguous")
         candidates[iteration] = candidate
-    expected = [int(record.get("iteration") or 0) for record in payload["iterations"]]
+    expected = [
+        _validation_iteration(record.get("iteration"))
+        for record in payload["iterations"]
+    ]
     if len(set(expected)) != len(expected) or set(candidates) != set(expected):
         raise Sim2RealVizError("Validation candidates do not cover the exact passes")
     return candidates
@@ -550,15 +567,18 @@ def _candidate_validation_report(
     """Bind displayed validation facts to the checkpoint produced by this pass."""
 
     checkpoint = (record.get("update") or {}).get("checkpoint_path")
-    digest = str(candidate.get("checkpoint_sha256") or "")
+    digest = candidate.get("checkpoint_sha256")
     report = candidate.get("validation_report") or {}
     if (
-        not checkpoint
+        not isinstance(checkpoint, str)
+        or not checkpoint.startswith("s3://")
         or candidate.get("checkpoint_uri") != checkpoint
         or report.get("policy_checkpoint") != checkpoint
+        or not isinstance(digest, str)
         or len(digest) != 64
         or any(character not in "0123456789abcdef" for character in digest)
         or report.get("policy_checkpoint_sha256") != digest
+        or (record.get("update") or {}).get("checkpoint_sha256", digest) != digest
         or candidate.get("evaluation_split") != "validation"
         or report.get("evaluation_split", "validation") != "validation"
     ):

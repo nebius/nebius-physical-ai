@@ -530,6 +530,7 @@ def test_iteration_validation_uses_each_checkpoint_without_mutating_evidence(
     tmp_path: Path,
 ) -> None:
     evidence = _checkpoint_validation_evidence()
+    evidence["iterations"][0]["update"]["checkpoint_sha256"] = "1" * 64
     original = json.dumps(evidence, sort_keys=True)
     path = tmp_path / "inner_loop" / "outer-02" / "evidence.json"
     path.parent.mkdir(parents=True)
@@ -558,6 +559,7 @@ def test_iteration_validation_uses_each_checkpoint_without_mutating_evidence(
         "candidate_uri",
         "report_uri",
         "report_sha",
+        "update_sha",
         "non_validation",
         "conflicting_report",
     ],
@@ -583,6 +585,8 @@ def test_iteration_validation_rejects_ambiguous_or_mismatched_lineage(
         candidate["validation_report"]["policy_checkpoint"] = "s3://unit/other/model.pt"
     elif corruption == "report_sha":
         candidate["validation_report"]["policy_checkpoint_sha256"] = "f" * 64
+    elif corruption == "update_sha":
+        evidence["iterations"][1]["update"]["checkpoint_sha256"] = "f" * 64
     elif corruption == "non_validation":
         candidate["evaluation_split"] = "gold-heldout"
     else:
@@ -613,6 +617,55 @@ def _decoded_validation_metrics(path: Path) -> tuple[list[float], dict[str, str]
             ][0]
     assert [time for time, _value in sorted(samples)] == [0, 1_000_000_000]
     return [value for _time, value in sorted(samples)], labels
+
+
+@pytest.mark.parametrize("marker", ["vlm_eval_uri", "signal_uri"])
+def test_canonical_validation_cannot_fall_back_to_legacy_without_candidates(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    del evidence["checkpoint_candidates"]
+    evidence["iterations"][0][marker] = "s3://unit/run/signals/"
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("outer_iteration",), 2.5),
+        (("checkpoint_candidates", 0, "outer_iteration"), 2.5),
+        (("checkpoint_candidates", 0, "inner_iteration"), 2.5),
+        (("checkpoint_candidates", 1, "inner_iteration"), True),
+        (("iterations", 0, "iteration"), True),
+        (("iterations", 1, "iteration"), "2"),
+        (("checkpoint_candidates", 0, "checkpoint_sha256"), int("2" * 64)),
+    ],
+)
+def test_validation_identity_rejects_coercion(
+    tmp_path: Path,
+    path: tuple[str | int, ...],
+    value: Any,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    target = evidence
+    for field in path[:-1]:
+        target = target[field]
+    target[path[-1]] = value
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def test_validation_checkpoint_identity_requires_uri_strings(tmp_path: Path) -> None:
+    evidence = _checkpoint_validation_evidence()
+    checkpoint = {"uri": "s3://unit/run/model_latest.pt"}
+    candidate = evidence["checkpoint_candidates"][0]
+    candidate["checkpoint_uri"] = checkpoint
+    candidate["validation_report"]["policy_checkpoint"] = checkpoint
+    evidence["iterations"][1]["update"]["checkpoint_path"] = checkpoint
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
 
 
 def test_rrd_validation_rates_and_checkpoint_labels_roundtrip(tmp_path: Path) -> None:
