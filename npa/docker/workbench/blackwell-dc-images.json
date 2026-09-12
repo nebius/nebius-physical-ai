@@ -837,6 +837,18 @@
       "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
     },
     {
+      "name": "npa-robomimic",
+      "dockerfile": "robomimic/Dockerfile",
+      "build_script": "robomimic/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "torch": "not baked; the CUDA-capable PyTorch closure is a separately authorized, exact-inventory, read-only operator runtime mount",
+      "source_compiled_extensions": [],
+      "smoke": "after authoritative CUDA/cuDNN runtime-use authorization, run the real upstream Lift PH low-dimensional behavior-cloning train, held-out validation, checkpoint reload, and finite held-out action inference gate on exactly one B200",
+      "notes": "Quarantined Phase A neutral candidate only. No image has been built, byte-qualified, published, or run, so this compatibility declaration supplies no B200/B300 execution evidence or public acceptance. CUDA/cuDNN distribution, use, derivative, service, and output rights remain unresolved; the bootstrap cannot fetch or install the runtime, accept terms, or turn a credential or private registry into permission."
+    },
+    {
       "name": "npa-curobo",
       "dockerfile": "curobo/Dockerfile",
       "build_script": "curobo/build.sh",
