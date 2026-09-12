@@ -57,11 +57,11 @@ states:
       seed: "43"
       output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/"
     outputs:
-      - uri: "{{config.output_uri}}result.json"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/result.json"
         schema: npa.workbench.isaac_arena.evaluation.v1
-      - uri: "{{config.output_uri}}evaluation.log"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/evaluation.log"
         schema: text/plain
-      - uri: "{{config.output_uri}}upstream/"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/upstream/"
         schema: npa.isaac_arena.upstream_evaluation.v1
     next: evaluate-seed-44
 
@@ -73,11 +73,11 @@ states:
       seed: "44"
       output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/"
     outputs:
-      - uri: "{{config.output_uri}}result.json"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/result.json"
         schema: npa.workbench.isaac_arena.evaluation.v1
-      - uri: "{{config.output_uri}}evaluation.log"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/evaluation.log"
         schema: text/plain
-      - uri: "{{config.output_uri}}upstream/"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/upstream/"
         schema: npa.isaac_arena.upstream_evaluation.v1
     next: evaluate-seed-45
 
@@ -89,10 +89,10 @@ states:
       seed: "45"
       output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/"
     outputs:
-      - uri: "{{config.output_uri}}result.json"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/result.json"
         schema: npa.workbench.isaac_arena.evaluation.v1
-      - uri: "{{config.output_uri}}evaluation.log"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/evaluation.log"
         schema: text/plain
-      - uri: "{{config.output_uri}}upstream/"
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/upstream/"
         schema: npa.isaac_arena.upstream_evaluation.v1
     terminal: true
