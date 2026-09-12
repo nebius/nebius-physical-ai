@@ -58,8 +58,8 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
         "sha256": "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245",
         "source": "ca-certificates",
         "certificate_count": 121,
-        "config_bytes": 4930,
-        "config_sha256": "bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d",
+        "config_bytes": 4809,
+        "config_sha256": "fe407f6205ff90c56d4f073ffaa2a8abde7835558919c19367a7cd4fd6312dad",
         "bundle_bytes": 182140,
         "bundle_sha256": "9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd",
         "x509_parser": {
@@ -89,7 +89,10 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
     assert f"ARG CA_BUNDLE_BYTES={ca['bundle_bytes']}" in dockerfile
     assert f"ARG CA_BUNDLE_SHA256={ca['bundle_sha256']}" in dockerfile
     for package in ca["x509_parser"]["packages"]:
-        assert f"ARG {package['binary'].upper()}_DEB_SHA256={package['sha256']}" in dockerfile
+        assert (
+            f"ARG {package['binary'].upper()}_DEB_SHA256={package['sha256']}"
+            in dockerfile
+        )
         assert f"{package['binary']}_{package['version']}_amd64.deb" in dockerfile
         assert f"source=/{package['binary']}.deb" in dockerfile
     assert "${APT_SNAPSHOT}/pool/main/c/ca-certificates/" in dockerfile
@@ -163,8 +166,9 @@ def test_no_floating_upgrade_or_unverified_apt_transport() -> None:
     assert "Acquire::https::Verify" not in dockerfile
     assert "trusted=yes" not in dockerfile
     assert "update-ca-certificates" not in dockerfile
-    assert dockerfile.count(
-        "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/"
-    ) == 2
+    assert (
+        dockerfile.count("URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/")
+        == 2
+    )
     assert dockerfile.count("Suites: jammy jammy-updates jammy-security") == 2
     assert "Suites: ${APT_SNAPSHOT}" not in dockerfile

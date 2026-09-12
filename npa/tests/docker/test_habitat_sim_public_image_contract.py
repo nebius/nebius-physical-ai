@@ -115,15 +115,13 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
         "http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/"
         in DOCKERFILE
     )
-    assert (
-        "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" in DOCKERFILE
-    )
+    assert "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" in DOCKERFILE
     assert "Suites: jammy jammy-updates jammy-security" in DOCKERFILE
     assert "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in DOCKERFILE
     for expected in (
         "ARG CA_CERT_COUNT=121",
-        "ARG CA_CONFIG_BYTES=4930",
-        "ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d",
+        "ARG CA_CONFIG_BYTES=4809",
+        "ARG CA_CONFIG_SHA256=fe407f6205ff90c56d4f073ffaa2a8abde7835558919c19367a7cd4fd6312dad",
         "ARG CA_BUNDLE_BYTES=182140",
         "ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd",
     ):
@@ -155,9 +153,11 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     assert DOCKERFILE.index("dpkg-deb -x /tmp/openssl.deb") < DOCKERFILE.index(
         "/usr/bin/openssl x509"
     )
-    assert DOCKERFILE.count("openssl x509") == DOCKERFILE.count(
-        "/usr/bin/openssl x509"
-    ) == 1
+    assert (
+        DOCKERFILE.count("openssl x509")
+        == DOCKERFILE.count("/usr/bin/openssl x509")
+        == 1
+    )
     assert "COPY --from=npa-ca-bootstrap" not in DOCKERFILE
     assert not re.search(r"URIs:\s+http://", DOCKERFILE)
 
@@ -247,6 +247,38 @@ def test_ca_bootstrap_refuses_hash_or_incomplete_certificate_input(
     assert missing_newline.returncode != 0
 
 
+def test_ca_bootstrap_refuses_misbound_config_size_then_accepts_exact(
+    tmp_path: Path,
+) -> None:
+    cert_dir = tmp_path / "usr/share/ca-certificates/mozilla"
+    cert_dir.mkdir(parents=True)
+    certificate = _create_ca(tmp_path, "config-size-fixture")
+    (cert_dir / "Fixture.crt").write_bytes(certificate)
+    config = b"mozilla/Fixture.crt\n"
+
+    stale_contract = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config) + 1,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate),
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+
+    assert stale_contract.returncode != 0
+    assert not (tmp_path / "etc/ssl/certs/ca-certificates.crt").exists()
+
+    repaired_contract = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config),
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate),
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+    assert repaired_contract.returncode == 0, repaired_contract.stderr
+
+
 def test_ca_bootstrap_refuses_malformed_certificate_and_bundle_drift(
     tmp_path: Path,
 ) -> None:
@@ -297,9 +329,7 @@ def test_https_and_repository_signature_failures_have_no_bypass() -> None:
             continue
         assert (
             stage.index("COPY --from=npa-ca-trust")
-            < stage.index(
-                "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/"
-            )
+            < stage.index("URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/")
             < stage.index("apt-get update")
         )
     for forbidden in (
