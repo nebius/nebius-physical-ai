@@ -53,12 +53,16 @@ case "${1:-}" in
       local signal_name="$1"
       local signal_status="$2"
       local target_pid="${child_pid}"
-      local attempt
+      local grace_started grace_now
       trap '' HUP INT TERM
       child_pid=""
       kill -s "${signal_name}" -- "-${target_pid}" 2>/dev/null || true
-      for ((attempt = 0; attempt < 50; attempt += 1)); do
-        process_group_running "${target_pid}" || break
+      grace_started="${EPOCHREALTIME/./}"
+      while process_group_running "${target_pid}"; do
+        grace_now="${EPOCHREALTIME/./}"
+        # Bound the grace period by elapsed time, not by the cost of scanning a
+        # busy process table. Bash 5's microsecond clock avoids a helper process.
+        ((10#${grace_now} - 10#${grace_started} >= 5000000)) && break
         sleep 0.1
       done
       process_group_running "${target_pid}" \

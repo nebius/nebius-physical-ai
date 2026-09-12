@@ -921,14 +921,25 @@ def test_payload_observes_snapshot_until_supervisor_reaps_it(tmp_path: Path) -> 
 
 def test_repeated_signal_escalates_and_reaps_ignoring_group(tmp_path: Path) -> None:
     script = _bootstrap_with_fake_snapshot(tmp_path)
+    slow_bin = tmp_path / "slow-bin"
+    slow_bin.mkdir()
+    real_ps = shutil.which("ps")
+    assert real_ps is not None
+    slow_ps = slow_bin / "ps"
+    slow_ps.write_text(
+        f'#!/bin/sh\nsleep 0.15\nexec "{real_ps}" "$@"\n', encoding="utf-8"
+    )
+    slow_ps.chmod(0o755)
+    environment = _exec_environment(
+        tmp_path, import_mode="success", exec_mode="ignore"
+    )
+    environment["PATH"] = f"{slow_bin}:{environment['PATH']}"
     process = subprocess.Popen(
         ["bash", str(script), "exec", "smoke.py"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", exec_mode="ignore"
-        ),
+        env=environment,
         start_new_session=True,
     )
     snapshot_root: Path | None = None
