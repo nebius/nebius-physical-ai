@@ -1280,9 +1280,12 @@ def submit_workflow(
             for name in CONTEXT_ENV_NAMES:
                 environment.pop(name, None)
             environment["KUBECONFIG"] = str(kubeconfig_path)
-        env = sky_environment(
-            runtime_config.isolated_config_dir, environment=environment
-        )
+        if environment is None:
+            env = sky_environment(runtime_config.isolated_config_dir)
+        else:
+            env = sky_environment(
+                runtime_config.isolated_config_dir, environment=environment
+            )
         for key, value in (extra_env or {}).items():
             if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                 env[key] = value
