@@ -10,9 +10,22 @@
 The upstream documentation and tests are not included in this image. The
 official immutable source archive is checksum-verified during the build.
 
+## Lightwheel SDK 1.0.3
+
+- Distribution: <https://pypi.org/project/lightwheel-sdk/1.0.3/>
+- License: Apache License 2.0
+- Wheel SHA-256: `841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd`
+- License evidence: the installed distribution metadata carries the complete
+  Apache-2.0 grant and the installed modules carry Apache-2.0 headers
+
+The SDK is the upstream-declared client needed to resolve certain Arena assets.
+The public image includes the SDK but no Lightwheel registry object. Registry
+USDs and generated layouts are provider-controlled runtime downloads; NPA does
+not redistribute them or grant rights to them.
+
 ## Open-source evaluation dependencies
 
-Arena imports its embodiment registry before selecting an evaluation policy.
+Arena imports its asset and embodiment registries before selecting an evaluation policy.
 The image therefore includes a hash-locked Python dependency closure for
 Pinocchio (`pin`), Pink (`pin-pink`), ONNX Runtime, DAQP, and QPSolvers. Their
 transitive open-source packages and installed license metadata are retained in

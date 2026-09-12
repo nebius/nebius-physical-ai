@@ -11,6 +11,9 @@ RUNTIME_REQUIREMENTS = (
 SMOKE_SCRIPT = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "smoke_functional.sh"
 )
+THIRD_PARTY_NOTICES = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "THIRD_PARTY_NOTICES.md"
+)
 
 
 def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -> None:
@@ -26,7 +29,7 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "grep -q 'Apache License' /opt/isaac-arena/LICENSE.md" in text
     assert "grep -q 'Version 2.0, January 2004' /opt/isaac-arena/LICENSE.md" in text
     assert "NPA_LIGHT_WORKBENCH_TOOL=isaac-arena" in text
-    assert "a96f7b2afe874037ad7738166f124b2eca6eae0e35daec377d7786c26274660c" in text
+    assert "fffbafcc0cd39e54c394b7caccffc45a24a8584a64234f7c556ad830b4619afe" in text
     assert "npa-cli-requirements.txt" in text
     assert "runtime-requirements.txt" in text
     assert "NPA_ISAAC_BOOTSTRAP=/opt/npa/bin/isaac-bootstrap" in text
@@ -34,11 +37,16 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "_npa_image_hooks.pth" in text
     assert "--require-hashes" in text
     assert "import onnxruntime, pinocchio, pink" in text
+    assert "import lightwheel_sdk.loader" in text
     assert "'pin':'4.0.0'" in text
     assert "'pin-pink':'3.3.0'" in text
     assert "'onnxruntime':'1.27.0'" in text
     assert "'daqp':'0.8.5'" in text
     assert "'qpsolvers':'4.12.0'" in text
+    assert "'lightwheel-sdk':'1.0.3'" in text
+    assert "'termcolor':'3.3.0'" in text
+    assert "Licensed under the Apache License, Version 2.0" in text
+    assert "test ! -e /home/ubuntu/.cache/lightwheel_sdk" in text
     assert "npa workbench isaac-arena evaluate" in text
     assert "--dry-run" in text
     assert 'test -z "$(find /opt/isaac-arena' in text
@@ -56,6 +64,8 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
         "pin": "4.0.0",
         "pin-pink": "3.3.0",
         "qpsolvers": "4.12.0",
+        "lightwheel-sdk": "1.0.3",
+        "termcolor": "3.3.0",
     }
     for distribution, version in expected.items():
         assert f"{distribution}=={version} \\" in text
@@ -65,6 +75,10 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
     assert requirement_lines
     assert all(line.endswith(" \\") for line in requirement_lines)
     assert text.count("--hash=sha256:") >= len(requirement_lines)
+    notices = THIRD_PARTY_NOTICES.read_text(encoding="utf-8")
+    assert "Lightwheel SDK 1.0.3" in notices
+    assert "841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd" in notices
+    assert "no Lightwheel registry object" in notices
 
 
 def test_isaac_arena_image_catalog_identity() -> None:

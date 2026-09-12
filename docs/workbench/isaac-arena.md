@@ -14,9 +14,11 @@ that the broader upstream project is production-ready.
 ## What the image contains
 
 The public `npa-isaac-arena` image adds the Apache-2.0 Arena source at commit
-`ed0fd12be862078be316c73eb7cf423ba9b1c5cd` to the accepted payload-clean Isaac
-Lab image. Its source archive is SHA-256 verified. Upstream tests, sample
-checkpoints, demonstration data, and documentation media are removed.
+`ed0fd12be862078be316c73eb7cf423ba9b1c5cd` and the upstream-declared
+Apache-2.0 `lightwheel-sdk==1.0.3` client to the accepted payload-clean Isaac
+Lab image. The source archive and Python wheels are SHA-256 verified. Upstream
+tests, sample checkpoints, demonstration data, and documentation media are
+removed.
 
 The accepted release is
 `npa-isaac-arena:0.3.0-isaaclab3-20260912`, manifest
@@ -26,10 +28,20 @@ It was promoted without rebuilding from source revision
 SBOM, provenance, bootstrap, anonymous-pull, and two-platform workload gates.
 
 The image contains no Isaac Sim/Lab/Omniverse Kit payload, weights, replay data,
-operator checkpoints, credentials, results, or populated runtime cache. On
+operator checkpoints, Lightwheel registry assets, credentials, results, or
+populated runtime cache. On
 first use, `/isaac-sim/python.sh` fetches the pinned Isaac runtime from NVIDIA
 under the operator's `ACCEPT_EULA` setting. The compatible NPA baseline is Isaac
 Lab `3.0.0b2.post1` with Isaac Sim `6.0.1.0`.
+
+The SDK is not the asset license. `gr1_open_microwave`,
+`franka_put_and_close_door`, and `press_button` use Lightwheel-backed fixtures;
+`put_item_in_fridge_and_close_door` uses a Lightwheel kitchen. Those bytes are
+resolved only during the operator's run. The upstream provider controls access,
+selectors, and terms; NPA supplies no Lightwheel credential, redistributes no
+registry asset, and makes no claim that other Lightwheel objects are available
+or licensed. The capability JSON exposes this requirement on each applicable
+environment.
 
 ## Supported policies
 
@@ -117,18 +129,18 @@ has been live-qualified.
 | `cube_goal_pose` | goal pose | `franka_ik` / `dex_cube` | success, object moved | implemented; historical live baseline |
 | `dexsuite_lift` | DexSuite lift | `kuka_allegro` / task object | success | implemented; unvalidated |
 | `droid_table_multi_object_placement` | no scored task | `droid_abs_joint_pos` / object pool | none | unsupported as evaluation |
-| `franka_put_and_close_door` | sequential pick/place + close door | `franka_ik` / `dex_cube` | success, movement, subtask | implemented; unvalidated |
+| `franka_put_and_close_door` | sequential pick/place + close door | `franka_ik` / `dex_cube`; Lightwheel microwave required | success, movement, subtask | implemented; input required; unvalidated |
 | `galileo_g1_locomanip_pick_and_place` | pick/place | `g1_wbc_pink` / `brown_box` | success, object moved | implemented; unvalidated |
 | `galileo_pick_and_place` | pick/place | `gr1_pink` / `power_drill` | success, object moved | implemented; unvalidated |
-| `gr1_open_microwave` | open door | `gr1_pink` / none | success, joint moved | implemented; replay qualification is digest-bound in readiness evidence |
+| `gr1_open_microwave` | open door | `gr1_pink` / none; Lightwheel microwave required | success, joint moved | implemented; input required; replay qualification is digest-bound in readiness evidence |
 | `gr1_table_multi_object_no_collision` | no scored task | `gr1_joint` / object pool | none | unsupported as evaluation |
 | `gr1_turn_stand_mixer_knob` | turn knob | `gr1_pink` / none | success, joint moved | implemented; unvalidated |
 | `kitchen_pick_and_place` | pick/place | `franka_ik` / `cracker_box` | success, object moved | implemented; unvalidated |
 | `lift_object` | lift / RL lift | `franka_joint_pos` / `dex_cube` | success | implemented; unvalidated |
 | `peg_insert` | assembly | `franka_ik` / `peg` → `hole` | success, object moved | implemented; unvalidated |
 | `pick_and_place_maple_table` | pick/place | `droid_abs_joint_pos` / RoboLab cube | success, object moved | defaults only; unvalidated |
-| `press_button` | press | `franka_ik` / selected pressable | success | implemented; unvalidated |
-| `put_item_in_fridge_and_close_door` | sequential pick/place + close door | `gr1_pink` / HOPE dressing bottle | success, movement, subtask | implemented; unvalidated |
+| `press_button` | press | `franka_ik` / selected pressable; Lightwheel coffee machine required | success | implemented; input required; unvalidated |
+| `put_item_in_fridge_and_close_door` | sequential pick/place + close door | `gr1_pink` / HOPE dressing bottle; Lightwheel kitchen required | success, movement, subtask | implemented; input required; unvalidated |
 | `gear_mesh` | assembly | `franka_ik` / medium gear | success, object moved | implemented; unvalidated |
 | `tabletop_place_upright` | place upright | `agibot` / `mug` | success, object moved | implemented; unvalidated |
 | `tabletop_sort_cubes` | sort | `franka_ik` / red + green cubes | success | implemented; unvalidated |
@@ -156,8 +168,9 @@ external-plugin support claim.
 
 Validate and plan before submission, substitute an operator-owned bucket, and
 pass the standard S3 credentials through workflow secret handling. No model
-credential is required for this replay, but its exact HDF5 input must already
-exist in operator-owned storage.
+credential is required for this replay. Its exact HDF5 input must already exist
+in operator-owned storage, and the worker needs outbound access to the upstream
+Lightwheel registry for the runtime-only microwave asset.
 
 ```bash
 npa workbench health preflight --checks nebius,s3

@@ -20,6 +20,13 @@ and retain the upstream JSONL plus HTML report. Imports, `--help`, a simulator
 launch, or an incomplete fixed-step rollout do not establish evaluation.
 
 - Arena source: Apache-2.0, baked from the checksum-verified release commit.
+- Lightwheel SDK 1.0.3: upstream-declared Apache-2.0 client, baked from the
+  exact wheel and SHA-256 in Arena's `uv.lock`. Its package metadata and module
+  headers carry the Apache-2.0 grant.
+- Lightwheel registry assets: provider-controlled runtime inputs, never baked
+  or redistributed by NPA. Applicable environments name their exact selector
+  or layout requirement in the capability payload. NPA supplies no Lightwheel
+  credential or asset-license grant; confirm upstream access before GPU spend.
 - Isaac Sim/Lab: NVIDIA-proprietary wheels, absent from the image and fetched
   into the operator cache by `/isaac-sim/python.sh` after the shared
   `ACCEPT_EULA` preflight.
@@ -112,6 +119,11 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
 - Exit 78 before download: explicit EULA opt-out; do not bypass it.
 - No episode JSONL: use `--num-episodes`, not an incomplete step-only smoke.
 - Missing `params/agent.yaml`: stage the complete RSL-RL checkpoint directory.
+- Missing `lightwheel_sdk`: reject that image as incomplete; the accepted image
+  must contain hash-locked SDK 1.0.3 while retaining an empty asset cache.
+- Lightwheel registry denial or changed selector: treat it as an external
+  input/access failure. Do not bake the returned USD or substitute another
+  object while claiming the requested environment.
 - Missing MP4 on RTX: inspect camera enablement, Vulkan/RT drivers, and the
   upstream viewport recorder; do not downgrade the artifact requirement.
 - B200 render failure: the workload is misrouted. Keep B200 state-only and move

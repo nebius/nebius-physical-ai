@@ -26,6 +26,7 @@ from npa.clients.storage import StorageClient
 
 ISAAC_ARENA_VERSION = "0.3.0"
 ISAAC_ARENA_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
+LIGHTWHEEL_SDK_VERSION = "1.0.3"
 ISAAC_ARENA_ROOT = "/opt/isaac-arena"
 ARTIFACT_SCHEMA = "npa.workbench.isaac_arena.evaluation.v1"
 CAPABILITIES_SCHEMA = "npa.workbench.isaac_arena.capabilities.v1"
@@ -105,7 +106,15 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
             "revolute_joint_moved_rate",
             "subtask_success_rate",
         ],
-        "npa_status": ["implemented", "upstream_alpha"],
+        "npa_status": ["implemented", "input_required", "upstream_alpha"],
+        "runtime_assets": [
+            {
+                "provider": "Lightwheel registry",
+                "selector": "fixtures/Microwave039/USD",
+                "delivery": "runtime_fetch",
+                "baked": False,
+            }
+        ],
     },
     {
         "name": "galileo_g1_locomanip_pick_and_place",
@@ -132,7 +141,16 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "metrics": ["success_rate", "revolute_joint_moved_rate"],
         "npa_status": [
             "implemented",
+            "input_required",
             "upstream_alpha",
+        ],
+        "runtime_assets": [
+            {
+                "provider": "Lightwheel registry",
+                "selector": "fixtures/Microwave039/USD",
+                "delivery": "runtime_fetch",
+                "baked": False,
+            }
         ],
     },
     {
@@ -191,7 +209,15 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "default_embodiment": "franka_ik",
         "default_object": None,
         "metrics": ["success_rate"],
-        "npa_status": ["implemented", "upstream_alpha"],
+        "npa_status": ["implemented", "input_required", "upstream_alpha"],
+        "runtime_assets": [
+            {
+                "provider": "Lightwheel registry",
+                "selector": "fixtures/CoffeeMachine108/USD",
+                "delivery": "runtime_fetch",
+                "baked": False,
+            }
+        ],
     },
     {
         "name": "put_item_in_fridge_and_close_door",
@@ -204,7 +230,15 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
             "revolute_joint_moved_rate",
             "subtask_success_rate",
         ],
-        "npa_status": ["implemented", "upstream_alpha"],
+        "npa_status": ["implemented", "input_required", "upstream_alpha"],
+        "runtime_assets": [
+            {
+                "provider": "Lightwheel registry",
+                "selector": "Robocasa kitchen layout/style plus task objects",
+                "delivery": "runtime_fetch",
+                "baked": False,
+            }
+        ],
     },
     {
         "name": "gear_mesh",
@@ -252,7 +286,7 @@ def capabilities() -> dict[str, Any]:
         "status_vocabulary": {
             "implemented": "The pinned NPA runner can invoke this upstream path.",
             "live_validated": "Digest-scoped readiness evidence proves this path completed on physical target hardware; this tag is never inferred from implementation alone.",
-            "input_required": "Operator-owned policy or trajectory input is mandatory.",
+            "input_required": "A named operator policy/trajectory or separately delivered runtime asset is mandatory.",
             "unsupported": "Present upstream but intentionally outside the current NPA execution contract.",
             "upstream_alpha": "Upstream marks 0.3.0 pre-release and its APIs unstable.",
         },
@@ -335,6 +369,26 @@ def capabilities() -> dict[str, Any]:
                 "limitation": "Arbitrary Python import paths are not accepted by the public NPA runner.",
             },
         },
+        "runtime_dependencies": [
+            {
+                "name": "lightwheel-sdk",
+                "version": LIGHTWHEEL_SDK_VERSION,
+                "purpose": "Resolve the Lightwheel-backed assets named by applicable upstream environments.",
+                "license": "Apache-2.0",
+                "baked": True,
+                "source_lock": "upstream uv.lock wheel SHA-256",
+            },
+            {
+                "name": "Lightwheel registry assets",
+                "purpose": "USD fixtures, objects, and generated kitchen layouts used by applicable environments.",
+                "license": "upstream-provider-controlled",
+                "baked": False,
+                "delivery": "runtime_fetch",
+                "redistribution": False,
+                "access": "The operator must be authorized by the upstream service; NPA supplies no Lightwheel credential or license grant.",
+                "stability": "Selectors and service responses are external runtime state, not pinned NPA payload.",
+            },
+        ],
         "embodiment_constraints": {
             "registered": [
                 "agibot",
@@ -944,6 +998,23 @@ def evaluate(
             "runtime": {
                 "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
                 "isaac_runtime_fetch": True,
+                "lightwheel_sdk": {
+                    "version": LIGHTWHEEL_SDK_VERSION,
+                    "baked": True,
+                    "license": "Apache-2.0",
+                },
+                "lightwheel_registry_assets": {
+                    "baked": False,
+                    "runtime_fetch": request.environment
+                    in {
+                        "franka_put_and_close_door",
+                        "gr1_open_microwave",
+                        "press_button",
+                        "put_item_in_fridge_and_close_door",
+                    },
+                    "license": "upstream-provider-controlled",
+                    "redistribution": False,
+                },
                 "model_baked": False,
                 "dataset_baked": False,
             },

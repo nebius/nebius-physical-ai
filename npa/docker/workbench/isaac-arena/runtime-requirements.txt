@@ -247,6 +247,9 @@ libpinocchio==4.0.0 \
     --hash=sha256:c497750021075ca95715d478314970a82d7b9d0ce0e9138800378db8cbd4ac3d \
     --hash=sha256:c6d617a36b0a0c60774b321f1662d86aeb7161cf88581ae5c2ca4665d765ea16
     # via pin
+lightwheel-sdk==1.0.3 \
+    --hash=sha256:841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd
+    # via isaac-lab-arena
 loop-rate-limiters==1.2.0 \
     --hash=sha256:482f720f409e05dfca8b7b63df180217afa9a51564def681853cb7370a020b74 \
     --hash=sha256:7187ec1f76f282ee7166d85c8e29eb13dd850422577decaf7e6bfc803173b421
@@ -441,6 +444,9 @@ scipy==1.17.0 \
     --hash=sha256:fc02c37a5639ee67d8fb646ffded6d793c06c5622d36b35cfa8fe5ececb8f042 \
     --hash=sha256:fe508b5690e9eaaa9467fc047f833af58f1152ae51a0d0aed67aa5801f4dd7d6
     # via qpsolvers
+termcolor==3.3.0 \
+    --hash=sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5
+    # via lightwheel-sdk
 tomli==2.4.1 \
     --hash=sha256:01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853 \
     --hash=sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe \

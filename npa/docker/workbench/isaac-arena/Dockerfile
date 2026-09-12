@@ -1,7 +1,7 @@
-# Public Isaac Lab-Arena worker. The exact Apache-2.0 Arena source is baked;
-# NVIDIA Isaac Sim/Lab remains an operator-authorized runtime fetch inherited
-# from npa-isaac-lab. No model, dataset, generated result, or populated cache is
-# present in the image.
+# Public Isaac Lab-Arena worker. The exact Apache-2.0 Arena source and its
+# Apache-2.0 Lightwheel client dependency are baked; NVIDIA Isaac Sim/Lab and
+# Lightwheel registry assets remain operator runtime fetches. No model, dataset,
+# generated result, registry asset, or populated cache is present in the image.
 FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
 
 ARG ISAAC_ARENA_VERSION=0.3.0
@@ -13,9 +13,9 @@ LABEL npa.tool="isaac-arena" \
       npa.version="${ISAAC_ARENA_VERSION}" \
       npa.isaac_arena_revision="${ISAAC_ARENA_REVISION}" \
       npa.isaac_arena_release_channel="alpha" \
-      npa.isaac_arena_dependency_lock_sha256="a96f7b2afe874037ad7738166f124b2eca6eae0e35daec377d7786c26274660c" \
+      npa.isaac_arena_dependency_lock_sha256="fffbafcc0cd39e54c394b7caccffc45a24a8584a64234f7c556ad830b4619afe" \
       npa.isaac_provisioning="runtime-fetch" \
-      npa.architecture="arena-source-no-baked-omniverse-kit" \
+      npa.architecture="arena-source-and-oss-client-no-baked-runtime-assets" \
       org.opencontainers.image.source="https://github.com/isaac-sim/IsaacLab-Arena" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
@@ -83,7 +83,10 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt \
     && /opt/npa/sim/venv/bin/python -c \
-      "import importlib.metadata as m; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual)" \
+      "import importlib.metadata as m; import lightwheel_sdk.loader; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0','lightwheel-sdk':'1.0.3','termcolor':'3.3.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual); metadata=m.distribution('lightwheel-sdk').read_text('METADATA') or ''; assert 'Licensed under the Apache License, Version 2.0' in metadata" \
+    && rm -rf /root/.cache/lightwheel_sdk \
+    && test ! -e /root/.cache/lightwheel_sdk \
+    && test ! -e /home/ubuntu/.cache/lightwheel_sdk \
     && bash -n /opt/npa/bin/isaac-bootstrap \
     && grep -q '_npa_image_hooks.pth' /opt/npa/bin/isaac-bootstrap \
     && env -u ACCEPT_EULA /usr/local/bin/npa workbench isaac-arena evaluate \

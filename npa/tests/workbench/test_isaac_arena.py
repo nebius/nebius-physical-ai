@@ -58,6 +58,33 @@ def test_capabilities_are_complete_and_honest() -> None:
     assert payload["environment_sources"]["graph_specs"]["npa_status"][0] == (
         "unsupported"
     )
+    microwave = next(
+        item for item in payload["environments"] if item["name"] == "gr1_open_microwave"
+    )
+    assert "input_required" in microwave["npa_status"]
+    assert microwave["runtime_assets"] == [
+        {
+            "provider": "Lightwheel registry",
+            "selector": "fixtures/Microwave039/USD",
+            "delivery": "runtime_fetch",
+            "baked": False,
+        }
+    ]
+    lightwheel_sdk = next(
+        item
+        for item in payload["runtime_dependencies"]
+        if item["name"] == "lightwheel-sdk"
+    )
+    assert lightwheel_sdk["version"] == "1.0.3"
+    assert lightwheel_sdk["license"] == "Apache-2.0"
+    assert lightwheel_sdk["baked"] is True
+    lightwheel_assets = next(
+        item
+        for item in payload["runtime_dependencies"]
+        if item["name"] == "Lightwheel registry assets"
+    )
+    assert lightwheel_assets["baked"] is False
+    assert lightwheel_assets["redistribution"] is False
     assert payload["outputs"]["rerun_rrd"] is False
 
     cli = CliRunner().invoke(app, ["workbench", "isaac-arena", "capabilities"])
@@ -291,6 +318,13 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
         runner=_fake_moving_upstream,
     )
     assert result["behavior"]["meaningful"] is True
+    assert result["runtime"]["lightwheel_sdk"] == {
+        "version": "1.0.3",
+        "baked": True,
+        "license": "Apache-2.0",
+    }
+    assert result["runtime"]["lightwheel_registry_assets"]["runtime_fetch"] is True
+    assert result["runtime"]["lightwheel_registry_assets"]["redistribution"] is False
     assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0
     video = next(
         entry for entry in result["artifacts"] if entry["path"].endswith(".mp4")
@@ -402,3 +436,10 @@ def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:
     assert payload["arena_source"]["license"] == "Apache-2.0"
     assert payload["arena_source"]["release_channel"] == "alpha"
     assert payload["isaac_sim_and_lab"]["baked"] is False
+    assert payload["lightwheel_sdk"] == {
+        "baked": True,
+        "license": "Apache-2.0",
+        "version": "1.0.3",
+    }
+    assert payload["lightwheel_registry_assets"]["baked"] is False
+    assert payload["lightwheel_registry_assets"]["redistribution"] is False

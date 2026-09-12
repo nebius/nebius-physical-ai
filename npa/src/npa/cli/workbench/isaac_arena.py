@@ -114,6 +114,20 @@ def terms_cmd() -> None:
                     "runtime_fetch": True,
                     "acceptance_environment": "ACCEPT_EULA",
                 },
+                "lightwheel_sdk": {
+                    "license": "Apache-2.0",
+                    "version": "1.0.3",
+                    "baked": True,
+                },
+                "lightwheel_registry_assets": {
+                    "license": "upstream-provider-controlled",
+                    "baked": False,
+                    "runtime_fetch": True,
+                    "redistribution": False,
+                    "authorization": (
+                        "operator responsibility; NPA supplies no credential or license grant"
+                    ),
+                },
                 "operator_inputs": {"baked": False, "redistribution": False},
             },
             indent=2,
