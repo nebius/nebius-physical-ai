@@ -57,10 +57,13 @@ discarding unrelated capabilities that can be packaged and proven safely.
 4. Fetch from the upstream provider on first run. Pin the repository revision
    and the expected file set or digest; download to a unique temporary path,
    verify it, then atomically publish a ready marker into the selected cache.
-5. Pass tokens and any product-specific acceptance value only through NPA
-   runtime secret plumbing. Never put credentials, acceptance values, signed
-   URLs, restricted bytes, or populated caches in Docker arguments, layers,
-   image config, YAML, source metadata, logs, output manifests, or PR text.
+5. Pass tokens and secret acceptance material only through NPA runtime secret
+   plumbing. Follow the documented product policy for non-secret acceptance
+   controls: for example, the Isaac default and explicit opt-out may appear in
+   profiles or YAML where the canonical Isaac policy requires it. Never put
+   credentials, secret acceptance material, signed URLs, restricted bytes, or
+   populated caches in Docker arguments, layers, image config, YAML, source
+   metadata, logs, output manifests, or PR text.
 6. Prefer upstream-verifiable entitlement such as a gated-repository token or
    vendor license key. A token normally proves access only; treat it as terms
    acceptance only when the provider's gate demonstrably records acceptance of
@@ -87,10 +90,14 @@ Before calling the container or capability ready, prove all of the following:
 - **Byte absence:** inspect the built image's files, layers, history, OCI
   configuration, SBOM, and caches. A Dockerfile review is not evidence that
   restricted payloads are absent.
-- **Negative gate:** with access/acceptance deliberately absent, the exact
-  artifact-dependent command refuses before download or model import, names
-  which gate refused, and leaves the cache empty. Mutation-test independent
-  gates that share an exit code so one refusal cannot mask another.
+- **Applicable negative gate:** exercise the refusal that the product policy
+  actually defines: missing entitlement for a gated artifact, an explicit
+  opt-out from a documented default-on policy such as Isaac, or missing exact
+  opt-in for a product-specific policy such as OpenPI. A genuinely anonymous
+  artifact has no missing-access gate. The exact guarded command refuses before
+  download or model import, names which gate refused, and leaves the cache
+  empty. Mutation-test independent gates that share an exit code so one refusal
+  cannot mask another.
 - **Positive fetch:** using operator-authorized access, the container downloads
   the exact immutable artifact directly from upstream, verifies identity and
   checksums, and records non-secret provenance.
@@ -137,7 +144,7 @@ documentation, planning, and test task that does not depend on that decision.
 ## Verify
 
 ```bash
-python3 /home/ubuntu/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+npa/.venv/bin/python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" \
   skills/workflows/runtime-fetch-onboard
 npa/.venv/bin/python -m pytest \
   npa/tests/guardrails/test_runtime_fetch_onboard_skill.py \
