@@ -106,19 +106,21 @@ Pinned bimanual SAPIEN simulation and native data-collection candidate. The
 source is `RoboTwin-Platform/RoboTwin`
 `96c1feab536306b50c26af200044fcdf126e8904`; required runtime assets come from
 `TianxingChen/RoboTwin2.0`
-`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. The clean smoke fetches and
-hash-checks only the aggregate objects and embodiments archives, then uses the
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. A future authorized clean smoke
+would fetch and hash-check only the aggregate objects and embodiments archives,
+then use the
 ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
 into the image: the live harness scans the exact private image digest's rootfs
 and every layer before it may submit the GPU run.
 
-The registry candidate now uses normal `npa workflow submit` with a CPU-only
+The registry candidate now uses normal `npa workbench workflow submit` with a CPU-only
 outer launcher. Before any credential, image, storage, scheduler, network, or
-GPU action, the client validates the exact immutable public workflow plus one
+GPU action, the client will validate the exact immutable public workflow plus one
 owner-only manager context, converts its validated bytes to an internal value
-secret, and binds the public summary declaration to the manager-derived output
-in owner-only state. The worker revalidates owner-only temporary files and
-delegates the sole accelerator request to the fixed one-RTX inner profile.
+secret, and binds the live workload output to the manager-derived destination
+without persisting that destination or authorization evidence. The worker will
+revalidate owner-only temporary files and delegate the sole accelerator request
+to the fixed one-RTX inner profile.
 Plans and rendered YAML retain sanitized placeholders; qualification remains
 pending until that normal-submit path produces genuine private live evidence.
 

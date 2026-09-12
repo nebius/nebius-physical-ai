@@ -145,6 +145,11 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --cleanup
 ```
 
+This generic direct CLI/script route is not an authorization boundary. RoboTwin
+therefore refuses it: only normal `npa workbench workflow submit` may validate
+the manager context, start the CPU outer launcher, and enter RoboTwin's internal
+worker bridge.
+
 SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
 YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
 

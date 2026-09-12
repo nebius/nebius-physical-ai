@@ -40,6 +40,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     SMOKE_COMMAND_SHA256 as ROBOTWIN_SMOKE_COMMAND_SHA256,
     RobotwinAuthorization as _RuntimeAuthorization,
     encode_runtime_authorization,
+    is_robotwin_request,
     load_runtime_authorization,
     require_runtime_lock_complete,
     validate_invocation,
@@ -126,9 +127,8 @@ def _redact_payload(value: Any, redactions: tuple[str, ...]) -> Any:
 def _load_runtime_authorization(
     args: argparse.Namespace,
 ) -> _RuntimeAuthorization | None:
-    solution = args.solution_name.strip().lower()
     reference = args.runtime_context_env.strip()
-    if solution != "robotwin":
+    if not _is_robotwin_request(args):
         if reference:
             raise ValueError("runtime authorization is not supported for this solution")
         return None
@@ -153,6 +153,18 @@ def _apply_runtime_authorization(
 
 def _validate_robotwin_invocation(args: argparse.Namespace) -> None:
     validate_invocation(args)
+
+
+def _is_robotwin_request(args: argparse.Namespace) -> bool:
+    return is_robotwin_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        base_image=args.base_image,
+        image=args.image,
+        smoke_command=args.smoke_command,
+        capability_name=args.capability_name,
+        yaml_path=args.yaml,
+    )
 
 
 def _utc_stamp() -> str:
@@ -839,25 +851,64 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _authorization_failure(
+    args: argparse.Namespace, exc: Exception, redactions: tuple[str, ...]
+) -> int:
+    """Emit one sanitized authorization refusal."""
+
+    payload = {
+        "status": "failed",
+        "solution_name": args.solution_name,
+        "error": _redact_text(str(exc), redactions),
+    }
+    print(json.dumps(_redact_payload(payload, redactions), indent=2, sort_keys=True))
+    return 1
+
+
+def _run_authorized_robotwin(
+    argv: list[str], *, authorization: _RuntimeAuthorization
+) -> int:
+    """Run RoboTwin only from the validated normal-submit worker bridge.
+
+    Args:
+        argv: Exact public toolRef arguments already recognized by preflight.
+        authorization: Validated manager context materialized by the CPU worker.
+
+    Returns:
+        The standard BYOF process exit status.
+    """
+
+    args = _parse_args(argv)
+    redactions = authorization.redactions
+    try:
+        require_runtime_lock_complete(authorization)
+        _validate_robotwin_invocation(args)
+        _apply_runtime_authorization(args, authorization)
+    except Exception as exc:
+        return _authorization_failure(args, exc, redactions)
+    return _run_parsed(args, authorization=authorization, redactions=redactions)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    redactions: tuple[str, ...] = ()
-    try:
-        authorization = _load_runtime_authorization(args)
-        if authorization is not None:
-            redactions = authorization.redactions
-            _validate_robotwin_invocation(args)
-            _apply_runtime_authorization(args, authorization)
-    except Exception as exc:
-        payload = {
-            "status": "failed",
-            "solution_name": args.solution_name,
-            "error": _redact_text(str(exc), redactions),
-        }
-        print(
-            json.dumps(_redact_payload(payload, redactions), indent=2, sort_keys=True)
+    if _is_robotwin_request(args):
+        return _authorization_failure(
+            args,
+            ValueError(
+                "RoboTwin requires the normal npa workbench workflow submit "
+                "CPU launcher"
+            ),
+            (),
         )
-        return 1
+    return _run_parsed(args, authorization=None, redactions=())
+
+
+def _run_parsed(
+    args: argparse.Namespace,
+    *,
+    authorization: _RuntimeAuthorization | None,
+    redactions: tuple[str, ...],
+) -> int:
     private_source = args.repo_auth == "github"
     try:
         validate_repository_url(args.repo_url, private=private_source)
@@ -1289,9 +1340,18 @@ def _run_byof(
         print(json.dumps(_redact_payload(summary, redactions), indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        # Do not retain an unsanitized exception as ``__cause__``: callers may
-        # serialize the exception chain even though the top-level message is safe.
-        raise RuntimeError(_redact_text(str(exc), redactions)) from None
+        _raise_sanitized_runtime_error(_redact_text(str(exc), redactions))
+
+
+def _raise_sanitized_runtime_error(message: str) -> None:
+    """Raise without retaining any exception handled by the BYOF boundary."""
+
+    try:
+        raise RuntimeError(message) from None
+    except RuntimeError as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
 
 
 if __name__ == "__main__":
