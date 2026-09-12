@@ -1675,6 +1675,9 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert "path.read_bytes()" not in profile_text
     assert "MAX_OUTPUT_FILE_BYTES" in profile_text
     assert "MAX_OUTPUT_TOTAL_BYTES" in profile_text
+    assert "RESERVED_JSON_MAX_BYTES" in profile_text
+    assert "smoke_artifact_path.read_text" not in profile_text
+    assert '(root / "npa_byof_summary.json").write_text' not in profile_text
     assert "ContentLength=size" in profile_text
     for endpoint_gate in (
         'endpoint_parts.scheme != "https"',
@@ -1765,6 +1768,42 @@ def test_robomimic_profile_detects_output_growth_during_upload(
 
     with pytest.raises(RuntimeError, match="size changed during upload"):
         module.upload_outputs(GrowingS3(), "bucket", "prefix/", root)
+
+
+def test_robomimic_profile_refuses_symlinked_smoke_artifact(
+    tmp_path: Path,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    outside = tmp_path / "outside-smoke.json"
+    outside.write_text('{"preserve": true}\n', encoding="utf-8")
+    output_root = tmp_path / "outputs"
+    output_root.mkdir()
+    smoke = output_root / "robomimic-smoke.json"
+    smoke.symlink_to(outside)
+
+    with pytest.raises(RuntimeError, match="not a safe regular file"):
+        module.read_reserved_json_object(smoke)
+
+    assert smoke.is_symlink()
+    assert outside.read_text(encoding="utf-8") == '{"preserve": true}\n'
+
+
+def test_robomimic_profile_atomically_replaces_symlinked_summary(
+    tmp_path: Path,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    outside = tmp_path / "outside-summary.json"
+    outside.write_text('{"preserve": true}\n', encoding="utf-8")
+    output_root = tmp_path / "outputs"
+    output_root.mkdir()
+    summary = output_root / "npa_byof_summary.json"
+    summary.symlink_to(outside)
+
+    module.atomic_write_json_object(summary, {"status": "failed"})
+
+    assert not summary.is_symlink()
+    assert json.loads(summary.read_text(encoding="utf-8")) == {"status": "failed"}
+    assert outside.read_text(encoding="utf-8") == '{"preserve": true}\n'
 
 
 def test_robomimic_download_refuses_a_malformed_allowed_host_port(
