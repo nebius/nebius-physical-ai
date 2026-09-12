@@ -3,6 +3,10 @@
 ARG BASE_IMAGE=ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
 ARG APT_SNAPSHOT=20260903T121500Z
 ARG CA_DEB_SHA256=6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
+ARG CA_CERT_COUNT=121
+ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d
+ARG CA_BUNDLE_BYTES=182140
+ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
 
 FROM scratch AS npa-ca-bootstrap
 ARG APT_SNAPSHOT
@@ -11,14 +15,52 @@ ADD --checksum=sha256:${CA_DEB_SHA256} \
     http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb \
     /ca-certificates.deb
 
-FROM ${BASE_IMAGE} AS build
-ARG APT_SNAPSHOT
-ARG NPA_SOURCE_SHA
+FROM ${BASE_IMAGE} AS npa-ca-trust
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
 USER root
 RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-certificates.deb,ro \
-    test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
     dpkg-deb -x /tmp/ca-certificates.deb / && \
-    update-ca-certificates && \
+    npa_bootstrap_ca() { \
+      ca_root="${1%/}"; \
+      ca_cert_dir="${ca_root}/usr/share/ca-certificates"; \
+      ca_config="${ca_root}/etc/ca-certificates.conf"; \
+      ca_bundle="${ca_root}/etc/ssl/certs/ca-certificates.crt"; \
+      test -d "${ca_cert_dir}" && \
+      install -d -m 0755 "${ca_root}/etc/ssl/certs" && \
+      find "${ca_cert_dir}" -type f -name '*.crt' -printf '%P\n' | \
+        LC_ALL=C sort -u > "${ca_config}" && \
+      test "$(wc -l < "${ca_config}")" -eq "${CA_CERT_COUNT}" && \
+      printf '%s  %s\n' "${CA_CONFIG_SHA256}" "${ca_config}" | sha256sum -c - && \
+      : > "${ca_bundle}" && \
+      while IFS= read -r certificate; do \
+        certificate_path="${ca_cert_dir}/${certificate}"; \
+        test -f "${certificate_path}" || return 1; \
+        test "$(tail -c 1 "${certificate_path}" | od -An -t u1 | tr -d ' ')" = 10 || return 1; \
+        cat "${certificate_path}" >> "${ca_bundle}" || return 1; \
+      done < "${ca_config}" && \
+      test "$(stat -c %s "${ca_bundle}")" -eq "${CA_BUNDLE_BYTES}" && \
+      printf '%s  %s\n' "${CA_BUNDLE_SHA256}" "${ca_bundle}" | sha256sum -c -; \
+    }; \
+    npa_bootstrap_ca /
+
+FROM ${BASE_IMAGE} AS build
+ARG APT_SNAPSHOT
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
+ARG NPA_SOURCE_SHA
+USER root
+COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
+COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
+    test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
+    printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
     printf '%s\n' \
       'Types: deb' \
       'URIs: https://snapshot.ubuntu.com/ubuntu/' \
@@ -103,11 +145,18 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
 
 FROM ${BASE_IMAGE} AS runtime
 ARG APT_SNAPSHOT
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
 ARG NPA_SOURCE_SHA
 USER root
-RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-certificates.deb,ro \
-    dpkg-deb -x /tmp/ca-certificates.deb / && \
-    update-ca-certificates && \
+COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
+COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
+    test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
+    printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
     printf '%s\n' \
       'Types: deb' \
       'URIs: https://snapshot.ubuntu.com/ubuntu/' \

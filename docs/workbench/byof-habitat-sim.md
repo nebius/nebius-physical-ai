@@ -14,9 +14,10 @@ satisfy its hard gate.
   [`LICENSE`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/LICENSE).
 - Image base: `ubuntu:22.04` at manifest digest
   `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
-- Ubuntu snapshot: `20260903T121500Z`, with a checksum-pinned CA-only bootstrap,
-  HTTPS package transport, Ubuntu archive `Signed-By`, and exact Perl-family
-  compatibility refusal.
+- Ubuntu snapshot: `20260903T121500Z`, with a checksum-pinned CA-only bootstrap
+  whose sorted 121-certificate configuration and bundle are separately
+  size/hash bound before HTTPS package transport, Ubuntu archive `Signed-By`,
+  and exact Perl-family compatibility refusal.
 
 The build obtains only official GitHub codeload archives bound by size and SHA-256.
 It materializes an allowlisted projection, excludes unused audio and GUI gitlinks,
