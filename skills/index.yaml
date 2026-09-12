@@ -593,6 +593,20 @@ skills:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+  - name: isaac-arena
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."
+    path: skills/tools/isaac-arena/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "isaac-arena", "evaluate", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/isaac-arena-evaluation-b200.yaml
+          - workflows/testing/isaac-arena-evaluation-rtxpro.yaml
+      - type: file_exists
+        path: npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
   - name: lancedb
     category: tools
     when_to_use: "LanceDB tables, vector queries, LeRobot/BDD100K imports, UDF backfills, and materialized views."

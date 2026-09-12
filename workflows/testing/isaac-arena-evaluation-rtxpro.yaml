@@ -1,0 +1,48 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: isaac-arena-evaluation-rtxpro
+  description: >-
+    Run a complete scored Isaac Lab-Arena cube_goal_pose episode with the real
+    upstream policy runner on RTX PRO 6000 and require its viewport recorder to
+    emit an MP4. The run also retains episode JSONL, the upstream HTML report,
+    logs, hashes, and aggregate metrics.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/isaac-arena/rtxpro"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: ""
+  environment: cube_goal_pose
+  policy_type: zero_action
+  num_episodes: "1"
+  num_envs: "1"
+  seed: "42"
+  embodiment: franka_ik
+  object: ""
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Arena's viewport recorder requires rasterization/RT hardware. B200 is not
+    # an interchangeable fallback for this workload.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 64Gi
+
+initial: evaluate
+
+states:
+  evaluate:
+    description: Complete and score one real Arena episode and retain a real MP4.
+    toolRef: workbench.isaac_arena.evaluate_video
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    terminal: true

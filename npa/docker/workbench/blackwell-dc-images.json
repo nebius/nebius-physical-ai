@@ -530,6 +530,15 @@
       "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
     },
     {
+      "name": "npa-isaac-arena",
+      "dockerfile": "isaac-arena/Dockerfile",
+      "build_script": "isaac-arena/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "complete one scored cube_goal_pose episode with upstream policy_runner and retain JSONL/report artifacts",
+      "notes": "Public-eligible payload-clean candidate. B200 is limited to headless state-based evaluation; viewport or camera recording requires RTX PRO 6000. No architecture verdict is claimed until the exact image is built, scanned, and run on both requested GPU classes."
+    },
+    {
       "name": "npa-leisaac",
       "dockerfile": "leisaac/Dockerfile",
       "verdict": "blocked",

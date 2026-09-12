@@ -202,6 +202,15 @@ published, and anonymously pullable status for this exact digest only.
 
 ## Candidates outside the supported public release plan
 
+`npa-isaac-arena` is a public-eligible, payload-clean candidate built from the
+official Isaac Lab-Arena 0.3.0 release commit. It remains outside the supported
+release plan until the exact development digest passes the built-layer payload
+scan and real completed-episode evaluation independently on B200 and RTX PRO
+6000; the RTX run must also retain upstream's viewport MP4. Isaac Sim/Lab is an
+operator-authorized runtime fetch, never an image layer. Upstream calls 0.3.0
+alpha and explicitly warns against production use, so the NPA support boundary
+is the pinned evaluation runner rather than the broader unstable API.
+
 `npa-openpi` is a zero-weight, zero-dataset public-image candidate for the
 pinned pi0.5 full-DROID runtime. It includes `rerun-sdk==0.31.4` in an isolated
 RRD-worker environment solely to turn the actual run's rank-zero training journal

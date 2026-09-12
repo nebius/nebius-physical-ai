@@ -248,6 +248,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.isaac_arena.evaluate": ToolEntry(
+        name="workbench.isaac_arena.evaluate",
+        description=(
+            "Run Isaac Lab-Arena's genuine policy_runner with a completed-episode "
+            "result journal and static evaluation report."
+        ),
+        argv_template=[
+            "npa", "workbench", "isaac-arena", "evaluate",
+            "--output-path", "{{config.output_uri}}",
+            "--input-path", "{{config.input_uri}}",
+            "--environment", "{{config.environment}}",
+            "--policy-type", "{{config.policy_type}}",
+            "--num-episodes", "{{config.num_episodes}}",
+            "--num-envs", "{{config.num_envs}}",
+            "--seed", "{{config.seed}}",
+            "--embodiment", "{{config.embodiment}}",
+            "--object", "{{config.object}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workbench.isaac_arena.evaluate_video": ToolEntry(
+        name="workbench.isaac_arena.evaluate_video",
+        description=(
+            "Run Isaac Lab-Arena policy evaluation with a required real viewport MP4."
+        ),
+        argv_template=[
+            "npa", "workbench", "isaac-arena", "evaluate",
+            "--output-path", "{{config.output_uri}}",
+            "--input-path", "{{config.input_uri}}",
+            "--environment", "{{config.environment}}",
+            "--policy-type", "{{config.policy_type}}",
+            "--num-episodes", "{{config.num_episodes}}",
+            "--num-envs", "{{config.num_envs}}",
+            "--seed", "{{config.seed}}",
+            "--embodiment", "{{config.embodiment}}",
+            "--object", "{{config.object}}",
+            "--record-video",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(

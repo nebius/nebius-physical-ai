@@ -1,0 +1,15 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9065820deb37199a48d606680bb63ba550d8df1d6ab1b8181198c3f71dd86a53",
+  "planning": {
+    "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real Isaac Arena evaluate command and requires upstream viewport video in addition to scored episode artifacts.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
+  },
+  "prerequisites": {
+    "output_storage": {"status": "unverified", "reason": "Operator storage is selected at submission time.", "evidence": []},
+    "worker_input": {"status": "not_applicable", "reason": "The zero-action evaluation uses the procedural upstream cube_goal_pose environment and no checkpoint input.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius and S3 preflight must pass before submission; no model credential is required.", "evidence": []},
+    "source_image": {"status": "unverified", "reason": "The public development image has not been built yet.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile"]},
+    "target_runtime": {"status": "unverified", "reason": "Reserved RTX PRO 6000 placement, evaluation, and viewport recording remain to be verified.", "evidence": []}
+  }
+}

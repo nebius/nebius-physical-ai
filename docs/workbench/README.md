@@ -49,6 +49,7 @@ For Python or HTTP integration, start with the
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
 | [ncore-oci-publication.md](ncore-oci-publication.md) | NCore committed OCI builds, prepublication gates, exact graph transfer, and pending RTX acceptance |
 | [isaac-lab-3.md](isaac-lab-3.md) | Isaac Lab 3 beta pin, payload-clean runtime bootstrap, hardened RL sweep, and generation 2 comparison method |
+| [isaac-arena.md](isaac-arena.md) | Isaac Lab-Arena 0.3.0 evaluation, runtime-fetch licensing boundary, policy inputs, B200 state-only and RTX video workflows |
 | [model-weight-cache.md](model-weight-cache.md) | Durable cache for model weights and reviewed SDKs the public images do not bake, so a second run is a cache hit |
 | [rerun-sharing.md](rerun-sharing.md) | Time-boxed Rerun browser shares, one-time least-privilege bucket CORS setup, and native local fallback |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |

@@ -491,6 +491,21 @@ images:
       fetches after EULA preflight.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  isaac-arena:
+    dockerfile: isaac-arena/Dockerfile
+    isaac_runtime_fetch: true
+    tier: job
+    notes: >-
+      Inherits the exact accepted payload-clean npa-isaac-lab digest and adds
+      only Isaac Lab-Arena 0.3.0 Apache-2.0 source from its checksum-verified
+      release commit. Upstream tests, sample checkpoints, demonstration data,
+      and documentation media are removed. Isaac Sim/Lab, operator replay data,
+      RSL-RL checkpoints, generated evaluation artifacts, credentials, and
+      populated caches remain runtime-only. The inherited non-root SkyPilot
+      bootstrap contract is retained. Built-image byte/layer scanning and real
+      B200 plus RTX PRO 6000 evaluation are required before release promotion.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   leisaac:
     dockerfile: leisaac/Dockerfile
     isaac_runtime_fetch: true

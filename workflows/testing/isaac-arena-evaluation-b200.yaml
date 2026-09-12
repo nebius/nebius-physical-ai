@@ -1,0 +1,47 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: isaac-arena-evaluation-b200
+  description: >-
+    Run a complete scored Isaac Lab-Arena cube_goal_pose episode with the real
+    upstream policy runner on B200. This state-only path records episode JSONL,
+    the upstream HTML evaluation report, logs, hashes, and aggregate metrics;
+    it deliberately does not claim camera or viewport rendering on a GPU with
+    no RT cores.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/isaac-arena/b200"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: ""
+  environment: cube_goal_pose
+  policy_type: zero_action
+  num_episodes: "1"
+  num_envs: "1"
+  seed: "42"
+  embodiment: franka_ik
+  object: ""
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 64Gi
+
+initial: evaluate
+
+states:
+  evaluate:
+    description: Complete and score one real Arena episode without a render claim.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    terminal: true

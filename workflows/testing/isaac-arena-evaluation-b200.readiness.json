@@ -1,0 +1,15 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "63d9710b6dfda46caa10adb302e7356e01a190f0ef9076e434be1a863ffd9f79",
+  "planning": {
+    "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real Isaac Arena evaluate command with completed-episode, environment, seed, and output arguments.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
+  },
+  "prerequisites": {
+    "output_storage": {"status": "unverified", "reason": "Operator storage is selected at submission time.", "evidence": []},
+    "worker_input": {"status": "not_applicable", "reason": "The zero-action evaluation uses the procedural upstream cube_goal_pose environment and no checkpoint input.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius and S3 preflight must pass before submission; no model credential is required.", "evidence": []},
+    "source_image": {"status": "unverified", "reason": "The public development image has not been built yet.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile"]},
+    "target_runtime": {"status": "unverified", "reason": "Reserved B200 placement and real evaluation remain to be verified.", "evidence": []}
+  }
+}

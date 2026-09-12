@@ -75,6 +75,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "manipulation env create",
         "env step loop",
     ],
+    "isaac-arena": [
+        "pinned official Isaac Lab-Arena 0.3.0 policy_runner starts through runtime-fetched Isaac",
+        "cube_goal_pose completes at least one scored zero-action episode on CUDA",
+        "episode JSONL and the upstream static HTML evaluation report are non-empty",
+        "RTX qualification additionally requires a non-empty viewport MP4",
+        "NPA result manifest hashes every retained artifact and reports measured success rate",
+    ],
     "leisaac": [
         "real LeIsaac-SO101-PickOrange-v0 environment starts",
         "upstream SO101Keyboard teleoperation device active",
