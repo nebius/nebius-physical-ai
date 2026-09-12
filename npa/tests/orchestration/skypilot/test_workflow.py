@@ -131,8 +131,13 @@ def _robotwin_bridge_fixture(
         },
     )
     transport = encode_transport(authorization)
+    source_uri = "s3://control-source-bucket/npa-src/npa/" + "a" * 64
     submit_context = RobotwinSubmitContext(
-        authorization.context_sha256, authorization, transport
+        authorization.context_sha256,
+        authorization,
+        transport,
+        private_values=(source_uri,),
+        rendered_private_values=(source_uri,),
     )
     summary = f"{output_root}/{run_id}/npa_byof_summary.json"
     target = ExecutionTarget(
@@ -162,7 +167,7 @@ def _robotwin_bridge_fixture(
             "storage_write_read": "pass",
         },
     }
-    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/public")
+    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
     spec_path = Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
     spec = load_spec(spec_path)
     rendered = render_skypilot_yaml(
@@ -1411,6 +1416,12 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     private_values = (
         *authorization.redactions,
         submit_context.transport_value,
+        *submit_context.private_values,
+        authorization.summary_uri,
+    )
+    prepared_forbidden_values = (
+        *authorization.redactions,
+        submit_context.transport_value,
         authorization.summary_uri,
     )
     calls: list[tuple[list[str], dict[str, object]]] = []
@@ -1498,7 +1509,11 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
         for private in private_values
     )
     prepared = str(captured_files["prepared"])
-    assert all(private not in prepared for private in private_values)
+    assert all(private not in prepared for private in prepared_forbidden_values)
+    prepared_environment = list(yaml.safe_load_all(prepared))[1]["envs"]
+    assert prepared_environment["NPA_SRC_S3_URI"] == (
+        submit_context.rendered_private_values[0]
+    )
     assert "region:" not in prepared
     assert not Path(captured_files["submission_dir"]).exists()
     assert result.log_paths == {}
@@ -1751,6 +1766,25 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
     )
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+def test_robotwin_control_plane_source_is_allowed_only_in_its_task_env() -> None:
+    source = "s3://control-source-bucket/npa-src/npa/" + "a" * 64
+    documents = [
+        {
+            "name": "outer",
+            "envs": {"NPA_SRC_S3_URI": source},
+            "metadata": {"copied-source": source},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="source binding changed"):
+        workflow_module._strip_confidential_task_context(
+            documents,
+            "",
+            (source,),
+            allowed_rendered_values=(source,),
+        )
 
 
 def test_robotwin_gpu_catalog_error_discards_private_exception_graph(

@@ -34,6 +34,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     read_owner_context,
     recognize_contract,
     validate_context_bytes,
+    validate_control_plane_source,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 
@@ -148,6 +149,9 @@ def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> Non
             "repo_url",
             "https://github.com:443/RoboTwin-Platform/RoboTwin.git/",
         ),
+        ("repo_url", "http://github.com:80/RoboTwin-Platform/RoboTwin.git"),
+        ("repo_url", "ssh://git@github.com:22/RoboTwin-Platform/RoboTwin.git"),
+        ("repo_url", "git://github.com:9418/RoboTwin-Platform/RoboTwin.git"),
         ("repo_url", "https://github.com./RoboTwin-Platform/RoboTwin.git"),
         ("repo_url", "git@github.com:RoboTwin-Platform/RoboTwin.git"),
         ("base_image", "tool://robotwin"),
@@ -186,6 +190,54 @@ def test_owner_context_read_is_byte_exact_bounded_owner_only_and_no_follow(
     oversized.chmod(0o600)
     with pytest.raises(RobotwinPreflightError, match="context-too-large"):
         read_owner_context({PUBLIC_CONTEXT_ENV: str(oversized)})
+
+
+def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path) -> None:
+    authorization = validate_context_bytes(_context_file(tmp_path)[1])
+    fingerprint = "a" * 64
+    source = f"s3://control-source-bucket/npa-src/npa/{fingerprint}/"
+
+    assert (
+        validate_control_plane_source(
+            authorization,
+            source_uri=source,
+            source_origin="environment",
+            local_fingerprint=fingerprint,
+        )
+        == source
+    )
+    invalid = (
+        ("", "environment", fingerprint, "explicit-uri-required"),
+        (source, "saved", fingerprint, "explicit-uri-required"),
+        (
+            f"s3://{authorization.bucket}/npa-src/npa/{fingerprint}/",
+            "environment",
+            fingerprint,
+            "output-bucket-reuse",
+        ),
+        (
+            "s3://control-source-bucket/npa-src/npa/current/",
+            "environment",
+            fingerprint,
+            "not-immutable",
+        ),
+    )
+    for value, origin, local, category in invalid:
+        with pytest.raises(RobotwinPreflightError, match=category):
+            validate_control_plane_source(
+                authorization,
+                source_uri=value,
+                source_origin=origin,
+                local_fingerprint=local,
+            )
+    with pytest.raises(RobotwinPreflightError, match="source-staging-forbidden"):
+        validate_control_plane_source(
+            authorization,
+            source_uri=source,
+            source_origin="environment",
+            local_fingerprint=fingerprint,
+            source_staging_requested=True,
+        )
 
 
 @pytest.mark.parametrize(

@@ -276,9 +276,11 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
         return_value=credentials,
     )
-    mocker.patch(
+    source_uri = "s3://public-source-bucket/npa-src/npa/" + "a" * 64
+    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
+    saved_source_resolver = mocker.patch(
         "npa.cli.workbench.workflow._resolve_submit_src_s3_uri_with_origin",
-        return_value=("s3://public-source-bucket/npa-src/current", "environment"),
+        return_value=(source_uri, "environment"),
     )
     mocker.patch(
         "npa.cli.workbench.workflow._local_source_fingerprint",
@@ -292,8 +294,9 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     )
     mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
     mocker.patch("npa.execution_preflight.verify_execution_scope", return_value={})
-    mocker.patch(
-        "npa.provisioning_journal.current_operation", return_value=object()
+    mocker.patch("npa.provisioning_journal.current_operation", return_value=None)
+    operation_prepare = mocker.patch(
+        "npa.provisioning_journal.ProvisioningOperation.prepare"
     )
     mocker.patch(
         "npa.orchestration.npa_workflow.submission_state.submission_lock",
@@ -303,6 +306,8 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "npa.orchestration.npa_workflow.submission_state.update_submission_state",
         side_effect=lambda _project, _run_id, value, **_kwargs: receipts.append(value),
     )
+    mocker.patch("npa.orchestration.npa_workflow.src_staging._storage_client")
+    mocker.patch("npa.orchestration.npa_workflow.src_staging.verify_staged_source")
 
     def execution_target(*_args, **kwargs):
         captured["authorized_output_uri"] = kwargs["authorized_output_uri"]
@@ -373,13 +378,59 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         assert value not in result.output
     assert summary_uri not in result.output
     assert "<redacted>" in json.loads(result.stdout)["stdout"]
-    serialized_receipts = json.dumps(receipts, sort_keys=True)
-    assert "authorization" not in serialized_receipts
-    assert summary_uri not in serialized_receipts
-    assert private["run_id"] not in serialized_receipts
-    assert private["output_root"] not in serialized_receipts
-    assert "s3://example-bucket/oss-solutions/robotwin" in serialized_receipts
+    assert receipts == []
+    operation_prepare.assert_not_called()
+    saved_source_resolver.assert_not_called()
+    assert source_uri not in result.output
     stage.assert_not_called()
+
+
+def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    _install_robotwin_submit_context(monkeypatch, tmp_path)
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=SimpleNamespace(
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            secret_values={},
+            missing=(),
+            access_key_id="test-access-key",
+            secret_access_key="test-secret-key",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_src_s3_uri_with_origin",
+        return_value=("", "default"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._local_source_fingerprint",
+        return_value="a" * 64,
+    )
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    state = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    operation = mocker.patch("npa.provisioning_journal.ProvisioningOperation.prepare")
+
+    result = _submit_robotwin(
+        "--secret-env",
+        ROBOTWIN_CONTEXT_ENV,
+        "--skip-preflight",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code != 0
+    assert "control-plane-source-explicit-uri-required" in result.output
+    stage.assert_not_called()
+    state.assert_not_called()
+    launch.assert_not_called()
+    operation.assert_not_called()
 
 
 def test_robotwin_authorized_output_stays_runtime_only_not_in_submission_receipt(

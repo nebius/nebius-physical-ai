@@ -59,6 +59,8 @@ def test_source_vendor_runtime_and_cuda_are_all_refused(tmp_path: Path) -> None:
             "opt/robotwin/script/collect_data.py": b"official source",
             "usr/local/lib/python3.10/site-packages/curobo/__init__.py": b"",
             "usr/local/cuda/lib64/libcudart.so.12": b"authorized private runtime",
+            "usr/lib/libnvidia-ml.so.1": b"vendor driver runtime",
+            "opaque/extension.bin": b"\x7fELF\x00libnvjitlink.so.12\x00",
         },
     )
     config = {
@@ -72,6 +74,8 @@ def test_source_vendor_runtime_and_cuda_are_all_refused(tmp_path: Path) -> None:
         "robotwin_source",
         "curobo_source_or_runtime",
         "cuda_or_cudnn_runtime",
+        "cuda_library",
+        "cuda_elf_dependency",
         "nvidia_or_pytorch_base",
     } <= kinds
 
@@ -104,7 +108,10 @@ def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> No
     rootfs = _tar(
         tmp_path / "rootfs.tar",
         {
-            "opaque/source/script/collect_data.py": b"official source",
+            "opaque/source-payload.bin": (
+                b"from envs._base_task import Base_Task\n"
+                b"class beat_block_hammer(Base_Task):\n    pass\n"
+            ),
             "opaque/metadata/.git/config": b"repository metadata",
             "renamed/credential.bin": b"AKIAABCDEFGHIJKLMNOP",
             "renamed/evidence.bin": (
@@ -113,13 +120,16 @@ def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> No
                 b'"project":"private-project-canary",'
                 b'"output_root":"s3://private-bucket-canary/output"}'
             ),
+            "renamed/runtime-envelope.bin": (
+                b'{"context_base64":"eyJwcml2YXRlIjoiYnl0ZXMifQ==",'
+                b'"schema_version":"npa.byof.robotwin.runtime-authorization.v1"}'
+            ),
         },
     )
 
     findings = scanner.scan(rootfs, {})
     kinds = _kinds(findings)
     assert {
-        "robotwin_source",
         "source_control_metadata",
         "credential_content",
     } <= kinds
@@ -127,8 +137,10 @@ def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> No
         finding.path for finding in findings if finding.kind == "credential_content"
     }
     assert credential_paths == {
+        "opaque/source-payload.bin",
         "renamed/credential.bin",
         "renamed/evidence.bin",
+        "renamed/runtime-envelope.bin",
     }
 
 
@@ -237,14 +249,34 @@ def test_private_registry_transport_downloads_exact_oci_bytes_without_child_imag
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layer = _tar_bytes({"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA notice"})
-    config = json.dumps({"history": []}, separators=(",", ":")).encode()
+    diff_id = _digest(layer)
+    config = json.dumps(
+        {
+            "architecture": "amd64",
+            "history": [],
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+        },
+        separators=(",", ":"),
+    ).encode()
     layer_digest = _digest(layer)
     config_digest = _digest(config)
     platform_manifest = json.dumps(
         {
             "schemaVersion": 2,
-            "config": {"digest": config_digest, "size": len(config)},
-            "layers": [{"digest": layer_digest, "size": len(layer)}],
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {
+                "digest": config_digest,
+                "size": len(config),
+                "mediaType": "application/vnd.oci.image.config.v1+json",
+            },
+            "layers": [
+                {
+                    "digest": layer_digest,
+                    "size": len(layer),
+                    "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                }
+            ],
         },
         separators=(",", ":"),
     ).encode()
@@ -252,10 +284,12 @@ def test_private_registry_transport_downloads_exact_oci_bytes_without_child_imag
     index = json.dumps(
         {
             "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
             "manifests": [
                 {
                     "digest": platform_digest,
                     "size": len(platform_manifest),
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
                     "platform": {"os": "linux", "architecture": "amd64"},
                 }
             ],
@@ -287,8 +321,106 @@ def test_private_registry_transport_downloads_exact_oci_bytes_without_child_imag
     tars, parsed_config = scanner._private_remote_material(image, tmp_path)
 
     assert len(tars) == 2
-    assert parsed_config == {"history": []}
+    assert parsed_config == {
+        "architecture": "amd64",
+        "history": [],
+        "os": "linux",
+        "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+    }
     assert scanner.scan_tars(tars, parsed_config) == []
+
+
+def test_private_oci_graph_requires_sizes_media_platform_and_diff_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layer = _tar_bytes({"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA notice"})
+    layer_digest = _digest(layer)
+
+    def attempt(config_record: dict, manifest_updates: dict | None = None) -> None:
+        config = json.dumps(config_record, separators=(",", ":")).encode()
+        config_digest = _digest(config)
+        manifest: dict = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {
+                "digest": config_digest,
+                "size": len(config),
+                "mediaType": "application/vnd.oci.image.config.v1+json",
+            },
+            "layers": [
+                {
+                    "digest": layer_digest,
+                    "size": len(layer),
+                    "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                }
+            ],
+        }
+        manifest.update(manifest_updates or {})
+        raw_manifest = json.dumps(manifest, separators=(",", ":")).encode()
+        manifest_digest = _digest(raw_manifest)
+        payloads = {
+            f"manifests/{manifest_digest}": raw_manifest,
+            f"blobs/{config_digest}": config,
+            f"blobs/{layer_digest}": layer,
+        }
+
+        class FakeOpener:
+            def open(self, request, **_kwargs):
+                suffix = request.full_url.split("/v2/private/npa-robotwin/", 1)[1]
+                return _RegistryResponse(payloads[suffix])
+
+        monkeypatch.setattr(scanner, "_URL_OPENER", FakeOpener())
+        monkeypatch.setattr(scanner, "_docker_credentials", lambda _registry: {})
+        image = f"registry.example/private/npa-robotwin@{manifest_digest}"
+        destination = tmp_path / manifest_digest[-8:]
+        destination.mkdir()
+        scanner._private_remote_material(image, destination)
+
+    valid_config = {
+        "architecture": "amd64",
+        "history": [],
+        "os": "linux",
+        "rootfs": {"type": "layers", "diff_ids": [_digest(layer)]},
+    }
+    with pytest.raises(RuntimeError, match="size is invalid"):
+        attempt(
+            valid_config,
+            {
+                "config": {
+                    "digest": "sha256:" + "a" * 64,
+                    "mediaType": "application/vnd.oci.image.config.v1+json",
+                }
+            },
+        )
+    with pytest.raises(RuntimeError, match="not linux/amd64"):
+        attempt({**valid_config, "architecture": "arm64"})
+    with pytest.raises(RuntimeError, match="diff IDs do not match"):
+        attempt(
+            {
+                **valid_config,
+                "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "b" * 64]},
+            }
+        )
+    with pytest.raises(RuntimeError, match="media type is invalid"):
+        attempt(valid_config, {"mediaType": "application/json"})
+
+
+def test_private_image_cannot_enter_positional_or_descendant_argv(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    private = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
+    monkeypatch.setattr(
+        scanner.walker,
+        "remote_material",
+        lambda *_args, **_kwargs: pytest.fail("private image reached descendant argv"),
+    )
+
+    with pytest.raises(SystemExit):
+        scanner.main([private])
+    assert private not in capsys.readouterr().err
+    assert scanner._is_public_image_reference(
+        "ghcr.io/nebius/nebius-physical-ai/npa-robotwin@sha256:" + "b" * 64
+    )
 
 
 def test_docker_credential_helper_receives_registry_only_on_stdin(

@@ -88,7 +88,18 @@ rootfs, every layer, nested archives, ELF dependencies, and build history. Its
 private exact-digest input is read with a byte bound and pulled through the OCI
 Distribution API in-process. Docker credential helpers, when configured, receive
 only the registry name over standard input; no private image or repository value
-is placed in a child-process argument vector.
+is placed in a child-process argument vector. Positional remote input is limited
+to an immutable `ghcr.io/nebius/nebius-physical-ai/npa-robotwin` public identity. The
+solution-specific policy extends the complete shared NVIDIA/CUDA path and ELF
+detectors rather than replacing them, and content signatures reject renamed or
+nested RoboTwin source and manager transport/authorization envelopes.
+
+For an in-process private pull, every selected OCI descriptor must declare an
+allowed media type and exact size. The scanner verifies the top-level and child
+manifest digests, requires one Linux/amd64 selection, rechecks Linux/amd64 in the
+image config, and matches the config's complete `rootfs.diff_ids` list to the
+uncompressed layer bytes before scanning the whiteout-aware rootfs and every
+historical layer. Missing or inconsistent graph metadata is a fatal scan error.
 
 The scanner's
 Phase A public-native policy intentionally carries unresolved detector identities

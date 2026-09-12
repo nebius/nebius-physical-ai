@@ -52,6 +52,16 @@ on every exit. The public YAML and plan retain `tool://robotwin`,
 CPU-only and the inner profile contains the sole accelerator request:
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`.
 
+A future live submit must receive an already verified, content-addressed
+`NPA_SRC_S3_URI` from the operator environment. Its final path component must
+equal the current local source fingerprint, and its bucket must differ from the
+manager-authorized workload-output bucket. RoboTwin rejects saved source
+coordinates and `--stage-src`: it neither uploads nor persists a source URI.
+The confidential path also bypasses the generic first-run, submission, launch,
+and provisioning journals, so the manager-selected project, context, and
+destination remain in process memory and are absent from CLI results and local
+submission state. Non-RoboTwin workflows retain the normal durable-state path.
+
 The image bootstrap independently validates the transported context and
 run/image/output bindings. Phase A then exits 78 with
 `ROBOTWIN_RUNTIME_REFUSED:runtime-lock-incomplete` before it can create source,
@@ -75,7 +85,7 @@ npa/.venv/bin/python -m pytest -q \
 
 Do not build, publish, pull, submit, or attempt live qualification while the
 locks/readiness record remain incomplete. After separate authorization, the
-sequence is private-stage build and exact-byte scans, exact-digest RTX gate,
+sequence would be private-stage build and exact-byte scans, exact-digest RTX gate,
 trusted public-development build, anonymous pull proof, and a repeat of the
 same capability on byte-identical public bytes. Only then may an accepted-image
 manifest, GPU digest inventory, or public catalog row be added.
