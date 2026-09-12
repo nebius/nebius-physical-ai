@@ -36,7 +36,7 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert 'org.nebius.npa.redistribution="public-neutral-bootstrap"' in text
     assert 'org.nebius.npa.validation-status="quarantined-unvalidated"' in text
     assert "USER ubuntu" in text
-    assert "useradd --uid 1000" in text
+    assert "useradd --no-log-init --uid 1000" in text
     assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH" in text
     assert "/usr/local/bin/ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub" in text
@@ -46,6 +46,19 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "/usr/sbin/sshd" not in text
     assert "NOPASSWD:ALL" not in text.replace(" ", "")
     assert "apt-get upgrade" not in text
+    assert "ARG SOURCE_DATE_EPOCH" in text
+    assert "case \"${SOURCE_DATE_EPOCH}\" in ''|*[!0-9]*) exit 64" in text
+    assert 'chage --lastday "$((SOURCE_DATE_EPOCH / 86400))" ubuntu' in text
+    for volatile_path in (
+        "/var/log/apt/*",
+        "/var/cache/apt/archives/*",
+        "/var/log/dpkg.log",
+        "/var/log/alternatives.log",
+        "/var/log/lastlog",
+        "/var/log/faillog",
+        "/var/cache/ldconfig/aux-cache",
+    ):
+        assert volatile_path in text
     assert "$1 ~ /^(base|dependency|direct)$/" in text
     assert "base|dependency|direct)" in text
     assert "pip install" not in text

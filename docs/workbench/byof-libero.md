@@ -54,7 +54,9 @@ its pre-push scanner then requires complete image and config equality. Finite
 path and content signatures remain defense in depth, not the proof that
 arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Both build paths derive `SOURCE_DATE_EPOCH` from that exact source commit so the
-identity comparison cannot depend on the wall-clock build time.
+identity comparison cannot depend on the wall-clock build time. The package
+transaction removes APT/dpkg/account logs and normalizes the non-root account's
+shadow day to the same epoch in its creation layer.
 
 The trusted build must then:
 

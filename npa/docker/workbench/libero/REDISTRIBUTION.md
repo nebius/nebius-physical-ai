@@ -54,6 +54,7 @@ layer tar and the canonical flattened-rootfs records. The public workflow
 refuses before building unless those exact accepted identities are supplied,
 and its dedicated complete-byte/layer/exported-rootfs scanner requires equality
 before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
-commit. It must also pass the SBOM/provenance/security gates, anonymous pull
-proof, and an exact-digest B200 hard gate before any supported release or public
-catalog claim.
+commit; the package layer removes APT/dpkg/account logs and normalizes the
+non-root account's shadow day to that epoch. It must also pass the
+SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
+hard gate before any supported release or public catalog claim.
