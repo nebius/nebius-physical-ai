@@ -445,6 +445,25 @@ build hook.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
 
+### Neutral robomimic candidate
+
+`npa-robomimic` is a quarantined example of a split runtime boundary. The
+intended image bakes pinned MIT robomimic source and a 40-entry hash-locked
+non-CUDA dependency closure on a digest-pinned Python base. It must contain no
+torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
+credential, or output. `scan_image_robomimic_payload.py` must inspect every
+layer and OCI history after a future authorized build.
+
+The CUDA-capable Python environment is not a runtime downloader. It is an exact
+file/package/ABI inventory prepared outside the image and mounted read-only.
+The bootstrap can verify, execute with, or prove refusal of that inventory; it
+cannot populate it or accept terms. This packaging split does not supply
+distribution, use, or service rights. Until an authoritative rights decision,
+manager transaction authorization, built-byte/security/SBOM/provenance gates,
+private exact-digest B200 qualification, and anonymous pull proof all pass, the
+tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
+`PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
+
 ## Operator checklist (new or changed image)
 
 - [ ] Dockerfile under `npa/docker/workbench/<tool>/`

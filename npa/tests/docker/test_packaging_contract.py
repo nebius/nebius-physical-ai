@@ -300,8 +300,7 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
         assert (
-            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"'
-            in dockerfile_text
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in dockerfile_text
         ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
@@ -335,6 +334,37 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
         if item.get("skypilot_bootstrap_contract")
     }
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
+
+
+def test_robomimic_is_a_public_eligible_but_quarantined_neutral_contract() -> None:
+    entry = _load_contract()["images"]["robomimic"]
+    assert entry["dockerfile"] == "robomimic/Dockerfile"
+    assert entry["tier"] == "job"
+    assert entry["redistribution"] == "public"
+    assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
+    notes = entry["notes"].lower()
+    for boundary in (
+        "torch",
+        "cuda",
+        "weight",
+        "dataset",
+        "runtime cache",
+        "credential",
+        "output",
+        "read-only",
+        "quarantined",
+    ):
+        assert boundary in notes
+    declared_count = re.search(
+        r"(\d+) hash-locked non-cuda python distributions", notes
+    )
+    assert declared_count is not None
+    lock = WORKBENCH_DOCKER / "robomimic" / "baked-requirements.lock"
+    observed_count = sum(
+        bool(re.match(r"^[A-Za-z0-9_.-]+==", line))
+        for line in lock.read_text(encoding="utf-8").splitlines()
+    )
+    assert int(declared_count.group(1)) == observed_count
 
 
 def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> None:
@@ -472,9 +502,7 @@ def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
     assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
     assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
     assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
-    assert (
-        "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
-    )
+    assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
     assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
     assert "dpkg --purge --force-depends linux-libc-dev" not in text
 

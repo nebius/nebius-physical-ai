@@ -25,6 +25,9 @@ WAN_RUNTIME_REQUIREMENTS_PATH = (
 WAN_RUNTIME_SCRIPT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 )
+ROBOMIMIC_SMOKE_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
+)
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -84,6 +87,16 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "droid_100_config_gen",
         ],
     },
+    "robomimic": {
+        "capability_name": "lift_ph_lowdim_checkpoint_reload_action",
+        "smoke_artifact_name": "robomimic-smoke.json",
+        "spec": "byof-robomimic.yaml",
+        "must_exercise": [
+            "lift_ph_lowdim_bc_train",
+            "lift_ph_lowdim_heldout_validate",
+            "lift_ph_lowdim_checkpoint_reload_action",
+        ],
+    },
     "open-dreamer": {
         "capability_name": "dreamer4_tokenizer_train_two_gpu",
         "smoke_artifact_name": "open_dreamer_world_model_2gpu.json",
@@ -137,6 +150,14 @@ def _load_config(path: Path) -> dict[str, object]:
     return config
 
 
+def _smoke_contract(path: Path, config: dict[str, object]) -> str:
+    command = str(config.get("smoke_command") or "")
+    if path.name == "byof-robomimic.yaml":
+        assert command == "robomimic-entrypoint smoke"
+        return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
+    return command
+
+
 def _load_wan_input_contract():
     spec = importlib.util.spec_from_file_location(
         "npa_wan_input_contract_test", WAN_INPUT_CONTRACT_PATH
@@ -156,7 +177,7 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
         assert str(config.get("solution_name") or "").strip(), path.name
         assert str(config.get("capability_name") or "").strip(), path.name
         artifact = str(config.get("smoke_artifact_name") or "").strip()
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract(path, config)
         assert artifact.endswith(".json"), path.name
         assert "NPA_SMOKE_OUTPUT_DIR" in smoke, path.name
         assert artifact in smoke, path.name
@@ -164,7 +185,8 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
 
 def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
-        smoke = str(_load_config(path).get("smoke_command") or "")
+        config = _load_config(path)
+        smoke = _smoke_contract(path, config)
         assert ".write_text(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
@@ -266,7 +288,7 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert path.name == expected["spec"]
         assert config.get("capability_name") == expected["capability_name"]
         assert config.get("smoke_artifact_name") == expected["smoke_artifact_name"]
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract(path, config)
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:

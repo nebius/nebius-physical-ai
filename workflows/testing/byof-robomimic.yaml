@@ -1,0 +1,67 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-robomimic
+  description: >
+    Quarantined neutral robomimic BYOF candidate. After separate runtime-use and
+    transaction authorization, the dedicated gate mounts a pre-populated,
+    independently verified CUDA runtime and runs real upstream low-dimensional
+    behavior cloning on the immutable official Lift PH dataset. It retains a
+    genuine held-out split, reloads the produced checkpoint, and infers one
+    held-out action on exactly one STRICT-bound B200 without rendering.
+config:
+  # Ordinary submission remains plan-only. The dedicated runner first requires
+  # a manager-accepted private image digest, immutable target selectors, and the
+  # name of a pre-populated read-only runtime PVC. The operator-host harness
+  # consumes this exact config; do not lift ordinary nested-controller execution
+  # without separately authorizing its Kubernetes identity and RBAC. None of
+  # these selectors grants runtime-use rights.
+  execution_policy: dedicated-live-gate-only
+  bucket: example-bucket
+  repo_url: "https://github.com/ARISE-Initiative/robomimic.git"
+  repo_ref: "d309eaecc18acf4152a830a895a6984b8ac71b05"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  # This proposed public tag is deliberately absent and unaccepted in Phase A.
+  # It keeps offline workflow rendering deterministic without claiming a pullable
+  # image. Actual execution requires an exact manager-approved private digest.
+  controller_image: "ghcr.io/nebius/nebius-physical-ai/npa-robomimic:0.1.0-neutral-unbuilt"
+  base_image: "tool://robomimic"
+  build_command: ""
+  workload: solution-smoke
+  smoke_command: "robomimic-entrypoint smoke"
+  solution_name: "robomimic"
+  capability_name: "lift_ph_lowdim_checkpoint_reload_action"
+  smoke_artifact_name: "robomimic-smoke.json"
+  resource_profile_yaml: "byof-solution-smoke-robomimic-b200-gpu"
+  task: "Lift-PH-lowdim-BC"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 60
+  output_root: s3://{{config.bucket}}/oss-solutions/robomimic
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+  smoke_uri: "{{config.output_root}}/{{run.id}}/robomimic-smoke.json"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.controller_image}}"
+    accelerators: B200:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Use the exact manager-accepted private neutral image plus a separately
+      prepared, immutable, read-only CUDA runtime. After the independent legal
+      and transaction gates pass, hard-gate upstream BC training, held-out
+      validation, checkpoint reload, and held-out action inference on one B200.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.smoke_uri}}"
+        schema: npa.workbench.robomimic.smoke.v1
+    terminal: true

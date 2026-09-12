@@ -1,0 +1,68 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "84de8aa4b6c14fce5e688c5d7e776cb548b19ea42415624d93dc5a04f040c4bf",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The redesigned Phase A workflow passed the repository schema validator under Python 3.12.",
+      "evidence": [
+        "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid",
+        "config.base_profile=prebuilt; config.controller_image is explicitly neutral-unbuilt; config.base_image=tool://robomimic; config.build_command is empty"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The Python 3.12 planner produced one B200 workbench.byof.repo step with both declared outputs; static tests preserve the real four-step held-out checkpoint-reload contract. The exact spec is consumed by the dedicated operator-host harness; ordinary workflow submission remains refused because its nested controller identity/RBAC path is not authorized. No image, external CUDA runtime, dataset, workflow execution, or GPU was used.",
+      "evidence": [
+        "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, tool://robomimic, two outputs",
+        "npa/docker/workbench/robomimic/smoke.py",
+        "npa/tests/workflows/test_byof_robomimic.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "No child runtime context or transaction authority was published; the checked-in bucket is inert.",
+      "evidence": [
+        "config.bucket=example-bucket",
+        "Phase A forbids storage and cloud mutation"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Immutable public metadata records the official Lift PH hash and size, but Phase A fetched no dataset bytes.",
+      "evidence": [
+        "dataset revision 74fa018461f479cd9fd15b924a16103012096203",
+        "expected SHA-256 2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540; 21084088 bytes"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "A credential, environment flag, private registry, runtime fetch, or click-through proxy is not legal acceptance. An authorized Nebius/operator representative must record the applicable CUDA/cuDNN distribution, use, and service-rights decision before a separate manager transaction authorization.",
+      "evidence": [
+        "runtime bootstrap contains no acceptance proxy",
+        "production runner refuses the exact registered source revision and every recognized robomimic identity during Phase A"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The neutral Dockerfile and byte scanner are implemented but Phase A authorized neither source fetch nor image build, scan, push, pull, SBOM, provenance, or anonymous availability proof.",
+      "evidence": [
+        "pinned intended base python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84",
+        "40-entry non-CUDA lock SHA-256 65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504",
+        "no accepted image digest exists"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The exact-inventory read-only runtime contract exists only as code. No runtime bytes or cache were populated, and the applicable runtime-use decision and B200 authorization remain absent.",
+      "evidence": [
+        "profile requires one B200 and a read-only external runtime PVC",
+        "missing or mismatched manager-selected runtime inventory exits 78 before workload execution",
+        "execution uses an atomically published independently reverified run-private snapshot",
+        "no B200 or live capability claim is made"
+      ]
+    }
+  }
+}

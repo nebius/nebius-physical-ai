@@ -60,6 +60,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
     "robocasa": "npa-robocasa",
+    "robomimic": "npa-robomimic",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -98,6 +99,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "rerun-viewer",
         "sim2real-control",
         "envgen",
+        "robomimic",
     }
 )
 
@@ -148,11 +150,20 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robomimic"})
+# Display-only sentinels for inventory commands. These are deliberately outside
+# SUPPORTED_TOOL_VERSIONS: resolution still refuses every neutral candidate
+# before consulting a tag, so an unbuilt label cannot become an image default.
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "robomimic": "0.1.0-neutral-unbuilt",
+}
 # Compatibility view used by publication callers and public imports. Derive it
-# from the two canonical validation-state inventories; never maintain it
+# from the canonical validation-state inventories; never maintain it
 # independently.
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
-    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    UNVALIDATED_PUBLICATION_TOOLS
+    | VALIDATION_CANDIDATE_TOOLS
+    | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
@@ -336,7 +347,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -538,7 +551,9 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -550,12 +565,17 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -579,6 +599,8 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
 def supported_tool_version(tool: str) -> str:
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
     try:
         import tomllib
@@ -590,7 +612,10 @@ def supported_tool_version(tool: str) -> str:
         if pyproject.is_file():
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
-            return str(data["tool"]["npa"]["supported-tools"][tool])
+            configured = data["tool"]["npa"]["supported-tools"]
+            if tool in configured:
+                return str(configured[tool])
+            break
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
@@ -682,7 +707,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:
@@ -780,11 +808,29 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
-    if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if (
+        tool == "robomimic"
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and is_public_registry(resolved_registry)
+    ):
         raise ValueError(
-            "NCore has no accepted release image. Supply the validated immutable "
-            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
-            "or explicitly select a dev-<full-source-sha> tag for validation."
+            "robomimic has no accepted release image, remains publication-quarantined, "
+            "and cannot resolve from a public registry, including an explicit "
+            "development tag. Stage a "
+            "full-source-SHA tag only in an operator-private registry, then resolve "
+            "its accepted digest through --image-override after authorization."
+        )
+    if (
+        tool in {"ncore", "robomimic"}
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and not tag
+    ):
+        display_tool = "NCore" if tool == "ncore" else tool
+        raise ValueError(
+            f"{display_tool} has no accepted release image. Supply the validated immutable "
+            "private image with --image-override TOOL_REF=IMAGE@sha256:DIGEST or "
+            "explicitly select a dev-<full-source-sha> tag in an operator-private "
+            "registry for validation."
         )
     if tool == "sonic":
         entry = sonic_image_entry(
@@ -977,6 +1023,11 @@ def development_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return an official public development reference for redistributable bytes."""
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        raise ValueError(
+            f"{tool!r} remains publication-quarantined and has no official "
+            "public development image"
+        )
     if not is_publicly_redistributable(tool):
         raise ValueError(
             f"{tool!r} is restricted/build-your-own and cannot be pushed to "
@@ -994,6 +1045,17 @@ def development_image_for_tool(
     )
 
 
+def _normalized_registry(registry: str) -> str:
+    candidate = str(registry or "").strip().rstrip("/")
+    host, separator, path = candidate.partition("/")
+    if not host.startswith("[") and ":" in host:
+        hostname, port = host.rsplit(":", 1)
+        if port.isdigit():
+            host = hostname
+    host = host.rstrip(".")
+    return f"{host}{separator}{path}".lower()
+
+
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
@@ -1001,16 +1063,16 @@ def is_public_registry(registry: str) -> bool:
     namespace, and the configured public release namespace. GHCR is package-
     scoped, so an arbitrary operator GHCR namespace is not assumed public.
     """
-    candidate = registry.strip().rstrip("/")
+    candidate = _normalized_registry(registry)
     if not candidate:
         return False
-    host = candidate.split("/", 1)[0].lower()
+    host = candidate.split("/", 1)[0]
     if host in PUBLIC_REGISTRY_HOSTS:
         return True
-    if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():
+    if candidate == _normalized_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY):
         return True
-    mirror = public_container_registry().strip().rstrip("/")
-    return bool(mirror) and candidate.lower() == mirror.lower()
+    mirror = _normalized_registry(public_container_registry())
+    return bool(mirror) and candidate == mirror
 
 
 def is_official_container_registry(registry: str) -> bool:

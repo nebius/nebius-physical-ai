@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 DEFAULT_LOG_OUTPUT_CHARS = 32_768
 MAX_LOG_OUTPUT_CHARS = 262_144
+ROBOMIMIC_SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
+_IMMUTABLE_IMAGE_DIGEST_RE = re.compile(r".+@(sha256:[0-9a-f]{64})", re.I)
 
 
 class OutputFormat(str, Enum):
@@ -55,6 +57,52 @@ class ActionSpace(str, Enum):
 class ControllerBackendOption(str, Enum):
     kubernetes = "kubernetes"
     nebius = "nebius"
+
+
+def _immutable_image_digest(value: object) -> str:
+    match = _IMMUTABLE_IMAGE_DIGEST_RE.fullmatch(
+        str(value or "").strip().removeprefix("docker:")
+    )
+    return match.group(1).lower() if match else ""
+
+
+def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
+    """Recognize specs that may execute only through their owned live harness."""
+
+    config_repo = (
+        str(spec.config.get("repo_url") or "")
+        .rstrip("/")
+        .removesuffix(".git")
+        .rsplit("/", 1)[-1]
+        .lower()
+    )
+    manager_digest = _immutable_image_digest(
+        os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "")
+    )
+    image_digests = {
+        _immutable_image_digest(spec.config.get(key))
+        for key in ("controller_image", "image", "base_image")
+    }
+    return (
+        spec.name == "byof-robomimic"
+        or str(spec.config.get("solution_name") or "").strip().lower()
+        == "robomimic"
+        or config_repo == "robomimic"
+        or str(spec.config.get("repo_ref") or "").strip().lower()
+        == ROBOMIMIC_SOURCE_REVISION
+        or bool(manager_digest and manager_digest in image_digests)
+        or str(spec.config.get("execution_policy") or "").strip()
+        == "dedicated-live-gate-only"
+    )
+
+
+def _refuse_dedicated_live_gate_execution(spec) -> None:  # noqa: ANN001
+    _fail(
+        f"workflow {spec.name!r} is executable only through its dedicated live "
+        "gate, which verifies manager-issued selectors and run-owned cleanup "
+        "before any image/runtime pull, data fetch, or GPU submission; the "
+        "robomimic CUDA runtime-use decision remains deferred, so use planning mode"
+    )
 
 
 def _bounded_log_text(
@@ -868,6 +916,9 @@ def submit_cmd(
             )
         except Exception as exc:
             _fail(str(exc))
+            return
+        if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
+            _refuse_dedicated_live_gate_execution(merged_npa_spec)
             return
         from npa.orchestration.npa_workflow.submit import spec_requires_runtime
 
@@ -7196,6 +7247,9 @@ def run_spec_cmd(
     resolved_assume = assume_decision or str(
         spec.config.get("plan_assume_decision") or ""
     )
+    if execute and _is_dedicated_live_gate_spec(spec):
+        _refuse_dedicated_live_gate_execution(spec)
+        return
     if execute:
         _enforce_workflow_access(
             spec,

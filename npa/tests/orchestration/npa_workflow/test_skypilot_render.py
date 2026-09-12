@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow.detect import (
     detect_submit_format,
     is_npa_workflow_spec,
@@ -75,6 +76,44 @@ def test_non_isaac_byof_specs_render_their_declared_runtime_image(
     assert "ACCEPT_EULA" not in task["envs"]
 
 
+def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/exact")
+    spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
+    plan = build_plan(spec, run_id="robomimic-private-plan")
+
+    with pytest.raises(ValueError, match="no accepted release image"):
+        container_image_for_tool("robomimic")
+
+    placeholder = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    placeholder_task = [doc for doc in yaml.safe_load_all(placeholder) if doc][-1]
+    assert placeholder_task["resources"]["image_id"].endswith(
+        "/npa-robomimic:0.1.0-neutral-unbuilt"
+    )
+
+    private_image = "private.invalid/npa-robomimic@sha256:" + "a" * 64
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(
+            image_overrides={"workbench.byof.repo": private_image},
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["image_id"] == f"docker:{private_image}"
+    assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/exact"
+    assert "npa CLI not found" in task["setup"]
+    assert "npa workbench byof run" in task["run"]
+
+
 def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
     spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
     plan = build_plan(spec, run_id="disk-contract")
@@ -97,13 +136,18 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 10
+    assert len(paths) == 11
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
+        image_config = (
+            "controller_image" if path.name == "byof-robomimic.yaml" else "base_image"
+        )
+        outer_image = raw["config"].get(image_config)
+        assert isinstance(outer_image, str) and outer_image, path.name
         for profile in raw["resources"].values():
-            assert profile["image"] == "{{config.base_image}}", path.name
+            assert profile["image"] == f"{{{{config.{image_config}}}}}", path.name
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
@@ -348,16 +392,22 @@ def test_gpu_memory_override_targets_only_accelerator_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "384Gi")
-    assert normalize_resources(
-        {
-            "cloud": "kubernetes",
-            "accelerators": "RTXPRO6000:4",
-            "memory": "128Gi",
-        }
-    )["memory"] == "384+"
-    assert normalize_resources(
-        {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
-    )["memory"] == "16+"
+    assert (
+        normalize_resources(
+            {
+                "cloud": "kubernetes",
+                "accelerators": "RTXPRO6000:4",
+                "memory": "128Gi",
+            }
+        )["memory"]
+        == "384+"
+    )
+    assert (
+        normalize_resources({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"})[
+            "memory"
+        ]
+        == "16+"
+    )
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
@@ -440,9 +490,7 @@ def test_render_public_image_ignores_unrelated_private_registry_credentials(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(
-            registry="ghcr.io/nebius/nebius-physical-ai"
-        ),
+        options=SkypilotRenderOptions(registry="ghcr.io/nebius/nebius-physical-ai"),
     )
 
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
@@ -536,11 +584,14 @@ def test_alpamayo2_super_resolves_configured_image() -> None:
     tool_ref = "workbench.alpamayo2_super.infer"
 
     assert tool_image_key(tool_ref) == "alpamayo2-super"
-    assert resolve_task_image(
-        tool_ref,
-        {},
-        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
-    ) == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128"
+    assert (
+        resolve_task_image(
+            tool_ref,
+            {},
+            options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        )
+        == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128"
+    )
 
 
 def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
@@ -591,8 +642,7 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
-        REPO_ROOT
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        REPO_ROOT / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,
@@ -714,9 +764,7 @@ def test_paidf_refinement_iterations_use_append_only_artifact_prefixes() -> None
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "cosmos_augmented/iteration-2/manifest.json",
     ]
-    assert [
-        step.argv[step.argv.index("--output-uri") + 1] for step in evaluates
-    ] == [
+    assert [step.argv[step.argv.index("--output-uri") + 1] for step in evaluates] == [
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "grade/iteration-1/ranking/",
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
@@ -749,9 +797,11 @@ def test_paidf_bare_static_plan_previews_promoted_path_with_fail_closed_guard(
     states = [step.state for step in plan.steps]
 
     assert plan.assume_decision == "promote_checkpoint"
-    assert states.index("quality-disposition") < states.index(
-        "require-accepted-quality"
-    ) < states.index("annotate-augmented")
+    assert (
+        states.index("quality-disposition")
+        < states.index("require-accepted-quality")
+        < states.index("annotate-augmented")
+    )
     assert states[-2:] == ["visualize", "finalize"]
     assert "visualize-rejected" not in states
     assert "reject-quality" not in states
@@ -1146,7 +1196,10 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
     # This test replaces the runtime; provider boundary coverage lives in
     # test_execution_preflight and must not be bypassed by --skip-preflight.
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
@@ -1289,7 +1342,10 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

@@ -199,6 +199,24 @@ images:
       terms are baked. Built-image byte/layer scanning is mandatory before
       publication. Workflow toolRefs are service clients and therefore run in
       the standard task image; this service image grants no passwordless sudo.
+  robomimic:
+    dockerfile: robomimic/Dockerfile
+    tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
+      no sshd service is enabled by default, and no credentials are baked.
+    redistribution: public
+    notes: >-
+      Phase A neutral candidate only: pinned MIT robomimic source and 40
+      hash-locked non-CUDA Python distributions on a pinned Python base. It
+      bakes no torch, torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distribution,
+      weight, dataset, runtime cache, credential, or output. The separately
+      classified CUDA runtime is an externally prepared, exact-inventory,
+      read-only mount and remains unusable until an authoritative runtime-use
+      decision and manager transaction authorization. Publication stays
+      quarantined until built-image scanning, license/security/SBOM/provenance,
+      exact-digest private B200 qualification, and anonymous pull proofs pass.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job

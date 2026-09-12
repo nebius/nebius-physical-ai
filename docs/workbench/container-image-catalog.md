@@ -302,6 +302,18 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
+  published image. Its intended bytes are pinned MIT robomimic source plus 40
+  hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
+  torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
+  Lift PH data, populated runtime cache, credentials, and outputs are excluded.
+  The CUDA runtime is a separate exact-inventory read-only operator mount whose
+  use remains deferred pending an authoritative rights decision and manager
+  transaction authorization. No accepted digest, built-byte scan, SBOM,
+  provenance, private B200 result, anonymous pull proof, or public availability
+  is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
+  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine.
+
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

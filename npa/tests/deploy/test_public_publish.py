@@ -34,6 +34,7 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
@@ -302,6 +303,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"robomimic"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3",
         "cosmos3-ray-serve",
@@ -517,7 +519,11 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # redistributable image does not silently drift this gate.
     assert len(plan) == len(publicly_publishable_tools()) - len(
         set(publicly_publishable_tools())
-        & (set(UNVALIDATED_PUBLICATION_TOOLS) | set(VALIDATION_CANDIDATE_TOOLS))
+        & (
+            set(UNVALIDATED_PUBLICATION_TOOLS)
+            | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+        )
     )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
@@ -528,6 +534,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
             set(RESTRICTED_PUBLICATION_TOOLS)
             | set(UNVALIDATED_PUBLICATION_TOOLS)
             | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
         )
     )
     for item in plan:
@@ -658,6 +665,11 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
 
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
+    assert is_public_registry("docker.io:443/example")
+    assert is_public_registry("quay.io:443/example")
+    assert is_public_registry("public.ecr.aws:80/example")
+    assert is_public_registry("docker.io./example")
+    assert is_public_registry("quay.io:5000/example")
     assert not is_public_registry("GHCR.IO/Operator/Private-Package")
     assert not is_public_registry("registry.example/e00example")
     assert not is_public_registry("")
@@ -669,6 +681,16 @@ def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
     assert is_public_registry("ghcr.io/example/workbench")
     assert is_public_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY)
     assert not is_public_registry("ghcr.io/example/private")
+
+
+def test_public_release_override_is_normalized_symmetrically(monkeypatch) -> None:
+    monkeypatch.setattr(
+        images,
+        "public_container_registry",
+        lambda: "ghcr.io.:443/example/workbench/",
+    )
+    assert is_public_registry("ghcr.io/example/workbench")
+    assert is_public_registry("ghcr.io:443/example/workbench")
 
 
 def test_restricted_tool_refuses_default_official_namespace_after_override(

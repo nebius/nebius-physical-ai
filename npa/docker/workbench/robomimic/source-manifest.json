@@ -1,0 +1,26 @@
+{
+  "schema": "npa.robomimic.source.v2",
+  "repository": "https://github.com/ARISE-Initiative/robomimic.git",
+  "revision": "d309eaecc18acf4152a830a895a6984b8ac71b05",
+  "git_tree_sha1": "4c8ebe35dbef16126dadf59cf8b771b9203753ab",
+  "archive": {
+    "format": "git-archive-tar",
+    "path": "source/robomimic.tar",
+    "size": 57907200,
+    "sha256": "8dd695200bba3ca6043693a7db4b15713a740d5d6a91787984d4c0053f77fd8b",
+    "member_count": 226,
+    "regular_file_count": 201
+  },
+  "license": {
+    "path": "LICENSE",
+    "spdx": "MIT",
+    "sha256": "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556",
+    "url": "https://github.com/ARISE-Initiative/robomimic/blob/d309eaecc18acf4152a830a895a6984b8ac71b05/LICENSE"
+  },
+  "fetch_policy": {
+    "method": "git-fetch-and-canonical-archive",
+    "credentialless": true,
+    "submodules": false,
+    "lfs": false
+  }
+}
