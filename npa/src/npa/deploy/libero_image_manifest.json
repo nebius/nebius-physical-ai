@@ -28,5 +28,67 @@
   "runtime_manifest_sha256": "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
+  "runtime_artifact_review": {
+    "status": "incomplete",
+    "pending_size_artifacts": 135,
+    "pending_license_artifacts": 65,
+    "report_sha256": ""
+  },
+  "acceptance": {
+    "schema": "npa.libero.qualification-acceptance.v2",
+    "status": "not_accepted",
+    "acceptance_id": "",
+    "accepted_at": "",
+    "expires_at": "",
+    "candidate_image": "",
+    "oci_digest": "",
+    "platform_manifest_digest": "",
+    "config_digest": "",
+    "canonical_build_metadata_sha256": "",
+    "attestation_manifest_digest": "",
+    "attestation_config_digest": "",
+    "attestation_layers": [
+      {
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "digest": "",
+        "size_bytes": 0
+      },
+      {
+        "predicate_type": "https://spdx.dev/Document",
+        "digest": "",
+        "size_bytes": 0
+      }
+    ],
+    "package_version_digests": [],
+    "complete_image_inventory_sha256": "",
+    "base_provenance_sha256": "",
+    "publication_bundle_sha256": "",
+    "development_sha": "",
+    "upstream_source_revision": "",
+    "build_input_bundle_sha256": "",
+    "publication_enforcement_bundle_sha256": "",
+    "package_writer_repository": "",
+    "runtime_manifest_sha256": "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712",
+    "runtime_use_decision_sha256": "",
+    "infrastructure_bundle_sha256": "",
+    "infrastructure": {
+      "run_id": "",
+      "allowed_node_sha256": "",
+      "cluster_identity_sha256": "",
+      "namespace_sha256": "",
+      "namespace_uid_sha256": "",
+      "namespace_inventory_sha256": "",
+      "rbac_spec_sha256": "",
+      "role_binding_uid_sha256": "",
+      "role_uid_sha256": "",
+      "service_account_uid_sha256": "",
+      "payload_kubeconfig_sha256": "",
+      "execution_kubeconfig_sha256": "",
+      "skypilot_config_sha256": "",
+      "output_storage_authorization_sha256": "",
+      "output_storage_prefix_sha256": "",
+      "output_storage_policy_sha256": ""
+    }
+  },
   "catalog_release": false
 }

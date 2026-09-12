@@ -31,8 +31,10 @@ At run time the operator must supply a manager-issued, exact-manifest-bound
 use decision. Missing or mismatched decisions refuse before cache creation or
 network access. Runtime fetch changes delivery only; it is not consent and
 does not grant use, redistribution, commercial, service, or output rights.
-The fetched cache stays non-root, atomic, sealed read-only, and separate from
-`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. Warm reuse
+The fetched cache stays non-root, atomic, and separate from
+`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. A bootstrap
+owner seals it group-readable/non-writable, while fetched code executes as a
+different unprivileged UID under a shared lock and stable descriptor. Warm reuse
 revalidates the canonical governing-terms identity from the pinned manifest
 plus a complete source/runtime/data/model file inventory without network
 access, and refuses manifest drift, writable trees, or changed bytes. Cold
@@ -45,16 +47,28 @@ size, and SHA-256. They are resolved into ephemeral storage only after the
 manager decision passes and before any cache mutation; drift or unavailability
 refuses. The image-shipped runtime requirements lock must exactly match all 135
 artifact identities, and installation uses `--require-hashes --no-deps` from a
-read-only wheelhouse. These controls prove identity and refusal, not consent.
+read-only wheelhouse. Materialization additionally requires a positive reviewed
+size and license expression for all 135 artifacts plus a bounded total download;
+the current manifest is incomplete and therefore cannot run. These controls
+prove identity and refusal, not consent.
 
 The candidate remains unbuilt, unvalidated, and quarantined. A private stage
 must first emit a canonical complete-image inventory and OCI config digest for
 manager review. The inventory binds every byte in each ordered uncompressed
 layer tar and the canonical flattened-rootfs records. The public workflow
-refuses before building unless those exact accepted identities are supplied,
-and its dedicated complete-byte/layer/exported-rootfs scanner requires equality
-before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
+refuses before building unless a current strict checked-in acceptance record
+binds those exact identities and the exact development source revision. Dispatch
+inputs cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
+scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
 commit; the package layer removes APT/dpkg/account logs and normalizes the
 non-root account's shadow day to that epoch. It must also pass the
 SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
 hard gate before any supported release or public catalog claim.
+The first package visibility transition requires exactly the manager-accepted,
+repository-bound package-version digest set for one OCI index. Every version
+starts untagged; the index contains the accepted linux/amd64 manifest plus the
+exact embedded provenance and SBOM manifests. The trusted workflow adds only
+`dev-<accepted-sha>` to the accepted root, then re-reads the complete package
+version set and every accepted graph byte immediately before making the package
+public. A failed private publication deletes the exact run-owned graph before
+retry.

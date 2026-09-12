@@ -10,13 +10,18 @@ first cache mutation unless a manager-issued decision is present and hash-bound.
 from __future__ import annotations
 
 import argparse
+import base64
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import fcntl
+import grp
 import hashlib
+import hmac
 import http.client
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -27,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
-DECISION_SCHEMA = "npa.libero.runtime-use-decision.v1"
+DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
@@ -46,6 +51,20 @@ ALLOWED_DOWNLOAD_HOSTS = frozenset(
         "huggingface.co",
     }
 )
+ALLOWED_DOWNLOAD_REDIRECT_HOSTS = frozenset(
+    {
+        "cdn-lfs.huggingface.co",
+        "cdn-lfs-us-1.hf.co",
+        "cdn-lfs-eu-1.hf.co",
+        "cas-bridge.xethub.hf.co",
+        "us.aws.cdn.hf.co",
+        "us.gcp.cdn.hf.co",
+    }
+)
+SEALED_DIRECTORY_MODE = stat.S_IRUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP
+SEALED_EXECUTABLE_MODE = SEALED_DIRECTORY_MODE
+SEALED_REGULAR_MODE = stat.S_IRUSR | stat.S_IRGRP
+CACHE_ROOT_MODE = SEALED_DIRECTORY_MODE | stat.S_IWUSR
 ALLOWED_TERMS_HOSTS = frozenset(
     {
         "raw.githubusercontent.com",
@@ -69,6 +88,42 @@ EXPECTED_GOVERNING_TERMS = frozenset(
         "cudnn-eula",
     }
 )
+MAX_RUNTIME_CACHE_DOWNLOAD_BYTES = 32 * 1024 * 1024 * 1024
+RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
+STORAGE_SECRET_ENV_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+    }
+)
+RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES = frozenset(
+    {
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "PATH",
+        "SOURCE_DATE_EPOCH",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "TMPDIR",
+        "TZ",
+    }
+)
+OUTPUT_SIZE_LIMITS = {
+    "libero-bc-rnn-smoke.pth": 256 * 1024 * 1024,
+    "libero-smoke.json": 8 * 1024 * 1024,
+    "npa_byof_summary.json": 1024 * 1024,
+    "npa_runtime_bootstrap.json": 8 * 1024 * 1024,
+    "npa_runtime_metadata.json": 8 * 1024 * 1024,
+    "nvidia_smi.txt": 1024 * 1024,
+    "nvidia_smi_list.txt": 1024 * 1024,
+    "solution_smoke_stderr.log": 16 * 1024 * 1024,
+    "solution_smoke_stdout.log": 16 * 1024 * 1024,
+}
+MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 
 
 class BootstrapRefusal(RuntimeError):
@@ -106,7 +161,9 @@ def _is_private_regular_file(path: Path) -> bool:
     )
 
 
-def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
+def _validate_manifest(
+    path: Path, *, require_runtime_closure: bool = True
+) -> tuple[dict[str, Any], str]:
     if not path.is_file() or path.is_symlink():
         raise BootstrapRefusal("runtime manifest must be a regular image file")
     manifest_sha256 = _sha256(path)
@@ -236,6 +293,7 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
         )
     names: set[str] = set()
     filenames: set[str] = set()
+    total_size_bytes = 0
     for item in artifacts:
         if not isinstance(item, dict):
             raise BootstrapRefusal("runtime artifact entry is not an object")
@@ -250,6 +308,20 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
         _validate_download_url(str(item.get("url") or ""))
         if not _is_hex(item.get("sha256"), 64):
             raise BootstrapRefusal(f"invalid runtime artifact hash for {name}")
+        size_bytes = item.get("size_bytes")
+        license_expression = str(item.get("license_expression") or "").strip()
+        if require_runtime_closure and (
+            not isinstance(size_bytes, int)
+            or size_bytes <= 0
+            or not license_expression
+        ):
+            raise BootstrapRefusal(
+                f"runtime artifact size/license review is incomplete for {name}"
+            )
+        if isinstance(size_bytes, int) and size_bytes > 0:
+            total_size_bytes += size_bytes
+    if require_runtime_closure and total_size_bytes > MAX_RUNTIME_CACHE_DOWNLOAD_BYTES:
+        raise BootstrapRefusal("runtime artifact inventory exceeds the cache budget")
     return manifest, manifest_sha256
 
 
@@ -328,12 +400,7 @@ def _validate_redirect_url(
         or parsed.password is not None
         or not (
             hostname in allowed_hosts
-            or (
-                not terms
-                and (
-                    hostname.endswith(".hf.co") or hostname.endswith(".huggingface.co")
-                )
-            )
+            or (not terms and hostname in ALLOWED_DOWNLOAD_REDIRECT_HOSTS)
         )
         or parsed.fragment
     ):
@@ -482,23 +549,72 @@ def _validate_decision(
     decision = _load_json(path)
     source = manifest["source"]
     boundaries = decision.get("authorized_boundaries")
+    expected_keys = {
+        "schema",
+        "solution",
+        "decision",
+        "runtime_fetch_authorized",
+        "acceptance_id",
+        "candidate_image",
+        "publication_bundle_sha256",
+        "infrastructure_bundle_sha256",
+        "runtime_manifest_sha256",
+        "upstream_source_revision",
+        "authorized_boundaries",
+        "run_id",
+        "namespace_sha256",
+        "issuer",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
     if (
-        decision.get("schema") != DECISION_SCHEMA
+        set(decision) != expected_keys
+        or decision.get("schema") != DECISION_SCHEMA
         or decision.get("solution") != "libero"
         or decision.get("decision") != "authorized"
         or decision.get("runtime_fetch_authorized") is not True
+        or decision.get("acceptance_id")
+        != os.environ.get("NPA_LIBERO_EXPECTED_ACCEPTANCE_ID")
+        or decision.get("candidate_image") != os.environ.get("BYOF_IMAGE")
+        or decision.get("publication_bundle_sha256")
+        != os.environ.get("NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256")
+        or decision.get("infrastructure_bundle_sha256")
+        != os.environ.get("NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256")
         or decision.get("runtime_manifest_sha256") != manifest_sha256
-        or decision.get("source_revision") != source["revision"]
+        or decision.get("upstream_source_revision") != source["revision"]
+        or decision.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
+        or decision.get("namespace_sha256")
+        != os.environ.get("NPA_LIBERO_EXPECTED_NAMESPACE_SHA256")
+        or decision.get("issuer") != "npa-manager"
         or not isinstance(boundaries, list)
         or frozenset(boundaries) != EXPECTED_DECISION_BOUNDARIES
         or len(boundaries) != len(EXPECTED_DECISION_BOUNDARIES)
-        or not str(decision.get("manager_receipt_sha256") or "").startswith("sha256:")
-        or not _is_hex(str(decision.get("manager_receipt_sha256"))[7:], 64)
+        or not 32 <= len(str(decision.get("nonce") or "")) <= 128
+        or not all(
+            character.isalnum() or character in "_-"
+            for character in str(decision.get("nonce") or "")
+        )
     ):
         raise BootstrapRefusal("runtime-use decision does not bind the exact contract")
-    forbidden = {key for key in decision if key.startswith("ACCEPT_")}
-    if forbidden:
-        raise BootstrapRefusal("invented acceptance proxy is forbidden")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(decision["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(decision["expires_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise BootstrapRefusal("runtime-use decision timestamps are invalid") from exc
+    now = datetime.now(timezone.utc)
+    if (
+        issued_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or issued_at > now + timedelta(minutes=5)
+        or expires_at <= now
+        or expires_at - issued_at > timedelta(hours=24)
+    ):
+        raise BootstrapRefusal("runtime-use decision is expired or replayable")
     return decision, observed
 
 
@@ -507,9 +623,11 @@ def _download_verified(
     *,
     url: str,
     sha256: str,
-    size: int | None,
+    size: int,
     terms: bool = False,
 ) -> None:
+    if size <= 0 or size > MAX_RUNTIME_CACHE_DOWNLOAD_BYTES:
+        raise BootstrapRefusal("runtime download has no valid expected size")
     (_validate_terms_url if terms else _validate_download_url)(url)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.partial")
@@ -520,12 +638,21 @@ def _download_verified(
     response: http.client.HTTPResponse | None = None
     try:
         connection, response = _open_https_download(url, terms=terms)
+        content_length = response.getheader("Content-Length")
+        if content_length is not None and (
+            not content_length.isdigit() or int(content_length) != size
+        ):
+            raise BootstrapRefusal(
+                "runtime download Content-Length differs from expected size"
+            )
         with temporary.open("xb") as stream:
             os.chmod(temporary, 0o600)
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
                     break
+                if observed_size + len(chunk) > size:
+                    raise BootstrapRefusal("runtime download exceeded expected size")
                 stream.write(chunk)
                 digest.update(chunk)
                 observed_size += len(chunk)
@@ -539,7 +666,7 @@ def _download_verified(
             response.close()
         if connection is not None:
             connection.close()
-    if digest.hexdigest() != sha256 or (size is not None and observed_size != size):
+    if digest.hexdigest() != sha256 or observed_size != size:
         temporary.unlink(missing_ok=True)
         raise BootstrapRefusal(
             "runtime download bytes do not match their immutable identity"
@@ -579,12 +706,19 @@ def _verify_governing_terms(manifest: dict[str, Any]) -> str:
     return _governing_terms_identity(manifest)
 
 
-def _run(command: list[str], *, cwd: Path | None = None) -> None:
+def _run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> None:
+    selected_environment = dict(os.environ if environment is None else environment)
+    selected_environment["GIT_TERMINAL_PROMPT"] = "0"
     subprocess.run(
         command,
         cwd=cwd,
         check=True,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env=selected_environment,
         stdout=sys.stderr,
     )
 
@@ -641,6 +775,20 @@ def _install_runtime(
     artifacts: list[dict[str, Any]],
     requirement_lines: list[str],
 ) -> None:
+    materialization_environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name in RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES
+    }
+    materialization_environment.update(
+        {
+            "GIT_ASKPASS": "/bin/false",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "HOME": str(root),
+        }
+    )
     wheelhouse = root / "downloads"
     wheelhouse.mkdir(mode=0o700)
     for item in artifacts:
@@ -648,10 +796,13 @@ def _install_runtime(
             wheelhouse / item["filename"],
             url=item["url"],
             sha256=item["sha256"],
-            size=None,
+            size=int(item["size_bytes"]),
         )
     venv = root / "venv"
-    _run([sys.executable, "-m", "venv", str(venv)])
+    _run(
+        [sys.executable, "-m", "venv", str(venv)],
+        environment=materialization_environment,
+    )
     bootstrap_names = {"pip", "setuptools", "wheel"}
     bootstrap_lock = root / ".bootstrap-requirements.txt"
     runtime_lock = root / ".runtime-requirements.txt"
@@ -691,10 +842,18 @@ def _install_runtime(
         "--find-links",
         str(wheelhouse),
     ]
-    _run([*common, "-r", str(bootstrap_lock)])
-    _run([*common, "--no-build-isolation", "-r", str(runtime_lock)])
+    _run(
+        [*common, "-r", str(bootstrap_lock)],
+        environment=materialization_environment,
+    )
+    _run(
+        [*common, "--no-build-isolation", "-r", str(runtime_lock)],
+        environment=materialization_environment,
+    )
     site_packages = subprocess.check_output(
-        [pip, "-c", "import site; print(site.getsitepackages()[0])"], text=True
+        [pip, "-c", "import site; print(site.getsitepackages()[0])"],
+        text=True,
+        env=materialization_environment,
     ).strip()
     Path(site_packages, "npa-libero-source.pth").write_text(
         str(root / "source") + "\n", encoding="utf-8"
@@ -790,6 +949,10 @@ def _write_content_inventory(root: Path) -> tuple[str, int]:
 
 
 def _seal_cache_tree(root: Path) -> None:
+    try:
+        execution_gid = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
+    except KeyError as exc:
+        raise BootstrapRefusal("runtime execution group is unavailable") from exc
     paths = sorted(
         (root, *root.rglob("*")),
         key=lambda item: len(item.relative_to(root).parts),
@@ -799,7 +962,18 @@ def _seal_cache_tree(root: Path) -> None:
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
             continue
-        os.chmod(path, stat.S_IMODE(info.st_mode) & ~0o222)
+        os.chown(path, -1, execution_gid)
+        if stat.S_ISDIR(info.st_mode):
+            os.chmod(path, SEALED_DIRECTORY_MODE)
+        elif stat.S_ISREG(info.st_mode):
+            os.chmod(
+                path,
+                SEALED_EXECUTABLE_MODE
+                if info.st_mode & 0o111
+                else SEALED_REGULAR_MODE,
+            )
+        else:
+            raise BootstrapRefusal("runtime cache contains an unsupported entry")
 
 
 def _validate_read_only_tree(root: Path) -> None:
@@ -1002,11 +1176,16 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
         if initial_identity is not None
         else _verify_governing_terms(manifest)
     )
-    cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(cache_root, 0o700)
+    cache_root.mkdir(mode=CACHE_ROOT_MODE, parents=True, exist_ok=True)
+    try:
+        os.chown(cache_root, -1, grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid)
+    except KeyError as exc:
+        raise BootstrapRefusal("runtime execution group is unavailable") from exc
+    os.chmod(cache_root, CACHE_ROOT_MODE)
     lock_path = cache_root / ".bootstrap.lock"
     with lock_path.open("a+b") as lock:
-        os.chmod(lock_path, 0o600)
+        os.chown(lock_path, -1, grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid)
+        os.chmod(lock_path, 0o640)
         fcntl.flock(lock, fcntl.LOCK_EX)
         locked_identity = _cache_entry_identity(final)
         if initial_identity is not None and locked_identity != initial_identity:
@@ -1066,7 +1245,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def status(args: argparse.Namespace) -> dict[str, Any]:
-    manifest, manifest_sha256 = _validate_manifest(Path(args.manifest))
+    manifest, manifest_sha256 = _validate_manifest(
+        Path(args.manifest), require_runtime_closure=False
+    )
     _validate_requirements(Path(args.requirements), manifest)
     cache_root = _validate_cache_root(Path(args.cache_root), None)
     final = cache_root / manifest_sha256
@@ -1085,22 +1266,528 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _runtime_execution_environment(stable_root: Path) -> dict[str, str]:
+    return {
+        **{
+            name: value
+            for name, value in os.environ.items()
+            if name not in STORAGE_SECRET_ENV_NAMES
+        },
+        "LIBERO_RUNTIME_ROOT": str(stable_root),
+    }
+
+
+def execute() -> int:
+    """Run the fixed smoke from one locked, descriptor-stable cache snapshot."""
+
+    manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
+    _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
+    decision_sha256 = os.environ.get(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
+    ).strip()
+    if not _is_hex(decision_sha256, 64):
+        raise BootstrapRefusal("accepted decision SHA-256 is unavailable")
+    cache_root = _validate_cache_root(DEFAULT_CACHE, None)
+    final = cache_root / manifest_sha256
+    identity = _cache_entry_identity(final)
+    if identity is None:
+        raise BootstrapRefusal("runtime cache is not materialized")
+    current = cache_root / "current"
+    if not current.is_symlink() or os.readlink(current) != final.name:
+        raise BootstrapRefusal("runtime current link differs from the accepted cache")
+    governing_terms_sha256 = _governing_terms_identity(manifest)
+    lock_path = cache_root / ".bootstrap.lock"
+    with lock_path.open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        descriptor = os.open(
+            final,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (opened.st_dev, opened.st_ino) != identity:
+                raise BootstrapRefusal("runtime cache descriptor identity changed")
+            stable_root = Path("/proc/self/fd") / str(descriptor)
+            _validate_complete(
+                stable_root,
+                manifest,
+                manifest_sha256,
+                decision_sha256,
+                requirements_sha256,
+                governing_terms_sha256,
+            )
+            environment = _runtime_execution_environment(stable_root)
+            completed = subprocess.run(
+                ["/opt/npa/libero/smoke.sh"],
+                check=False,
+                env=environment,
+                pass_fds=(descriptor,),
+            )
+            _validate_complete(
+                stable_root,
+                manifest,
+                manifest_sha256,
+                decision_sha256,
+                requirements_sha256,
+                governing_terms_sha256,
+            )
+            _require_cache_entry_identity(final, identity)
+            if not current.is_symlink() or os.readlink(current) != final.name:
+                raise BootstrapRefusal("runtime current link changed during execution")
+            return completed.returncode
+        finally:
+            os.close(descriptor)
+
+
+def _parse_utc(value: object, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise BootstrapRefusal(f"{label} is not a valid timestamp") from exc
+    if parsed.tzinfo is None:
+        raise BootstrapRefusal(f"{label} must include a timezone")
+    return parsed
+
+
+def _storage_authorization(output_prefix: str, run_id: str) -> dict[str, Any]:
+    encoded = os.environ.get("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", "").strip()
+    expected = os.environ.get(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256", ""
+    ).strip()
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except ValueError as exc:
+        raise BootstrapRefusal("output storage authorization is not valid Base64") from exc
+    if not _is_hex(expected, 64) or hashlib.sha256(payload).hexdigest() != expected:
+        raise BootstrapRefusal("output storage authorization is not manager-accepted")
+    try:
+        authorization = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapRefusal("output storage authorization is not valid JSON") from exc
+    keys = {
+        "schema",
+        "issuer",
+        "run_id",
+        "output_prefix",
+        "access_key_id_sha256",
+        "secret_access_key_sha256",
+        "session_token_sha256",
+        "policy_sha256",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
+    if not isinstance(authorization, dict) or set(authorization) != keys:
+        raise BootstrapRefusal("output storage authorization schema is not closed")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    session_token = os.environ.get("AWS_SESSION_TOKEN", "")
+    prefix_sha256 = hashlib.sha256(output_prefix.encode()).hexdigest()
+    issued_at = _parse_utc(authorization.get("issued_at"), "authorization issued_at")
+    expires_at = _parse_utc(authorization.get("expires_at"), "authorization expires_at")
+    now = datetime.now(timezone.utc)
+    valid = (
+        authorization.get("schema") == "npa.libero.output-storage-authorization.v1"
+        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("run_id") == run_id
+        and authorization.get("output_prefix") == output_prefix
+        and prefix_sha256
+        == os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256", "")
+        and authorization.get("policy_sha256")
+        == os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", "")
+        and all((access_key, secret_key, session_token))
+        and authorization.get("access_key_id_sha256")
+        == hashlib.sha256(access_key.encode()).hexdigest()
+        and authorization.get("secret_access_key_sha256")
+        == hashlib.sha256(secret_key.encode()).hexdigest()
+        and authorization.get("session_token_sha256")
+        == hashlib.sha256(session_token.encode()).hexdigest()
+        and issued_at <= now + timedelta(minutes=5)
+        and issued_at < expires_at
+        and expires_at > now
+        and expires_at - issued_at <= timedelta(hours=24)
+    )
+    if not valid:
+        raise BootstrapRefusal("output storage authorization is invalid or expired")
+    return authorization
+
+
+def _sigv4_request(
+    method: str,
+    url: str,
+    *,
+    payload: bytes = b"",
+    extra_headers: dict[str, str] | None = None,
+) -> tuple[dict[str, str], bytes]:
+    access_key = os.environ["AWS_ACCESS_KEY_ID"]
+    secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+    session_token = os.environ["AWS_SESSION_TOKEN"]
+    region = os.environ.get("AWS_DEFAULT_REGION", "us-central1")
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise BootstrapRefusal("output storage endpoint must be a query-free HTTPS URL")
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    headers = {
+        "host": parsed.netloc,
+        "x-amz-content-sha256": payload_sha256,
+        "x-amz-date": amz_date,
+        "x-amz-security-token": session_token,
+        **{key.lower(): value for key, value in (extra_headers or {}).items()},
+    }
+    signed_names = ";".join(sorted(headers))
+    canonical_headers = "".join(
+        f"{name}:{' '.join(headers[name].split())}\n" for name in sorted(headers)
+    )
+    canonical_uri = urllib.parse.quote(
+        urllib.parse.unquote(parsed.path), safe="/-_.~"
+    )
+    canonical_request = "\n".join(
+        (
+            method,
+            canonical_uri,
+            "",
+            canonical_headers,
+            signed_names,
+            payload_sha256,
+        )
+    )
+    scope = f"{date_stamp}/{region}/s3/aws4_request"
+    string_to_sign = "\n".join(
+        (
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            scope,
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        )
+    )
+
+    def sign(key: bytes, value: str) -> bytes:
+        return hmac.new(key, value.encode(), hashlib.sha256).digest()
+
+    signing_key = sign(
+        sign(sign(sign(("AWS4" + secret_key).encode(), date_stamp), region), "s3"),
+        "aws4_request",
+    )
+    signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    request_headers = {
+        **headers,
+        "authorization": (
+            f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, "
+            f"SignedHeaders={signed_names}, Signature={signature}"
+        ),
+    }
+    connection = http.client.HTTPSConnection(
+        parsed.hostname, parsed.port or 443, timeout=120
+    )
+    target = urllib.parse.urlunsplit(("", "", parsed.path or "/", "", ""))
+    try:
+        connection.request(
+            method,
+            target,
+            body=payload if method == "PUT" else None,
+            headers=request_headers,
+        )
+        response = connection.getresponse()
+        try:
+            if response.status != 200:
+                raise BootstrapRefusal(
+                    f"output storage {method} refused with HTTP {response.status}"
+                )
+            body = response.read(MAX_OUTPUT_BYTES + 1)
+            response_headers = {
+                key.lower(): value for key, value in response.getheaders()
+            }
+        finally:
+            response.close()
+    except (http.client.HTTPException, OSError) as exc:
+        raise BootstrapRefusal(f"output storage {method} request failed") from exc
+    finally:
+        connection.close()
+    if len(body) > MAX_OUTPUT_BYTES:
+        raise BootstrapRefusal("output storage response exceeds the aggregate size budget")
+    return response_headers, body
+
+
+def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
+    """Upload through image-owned stdlib code after untrusted runtime execution ends."""
+
+    run_id = os.environ.get("NPA_BYOF_RUN_ID", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id):
+        raise BootstrapRefusal("output upload requires the accepted run ID")
+    output_prefix = os.environ.get("S3_OUTPUT_PREFIX", "").rstrip("/") + "/"
+    parsed = urllib.parse.urlsplit(output_prefix)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        raise BootstrapRefusal("output prefix must be an S3 URI")
+    _storage_authorization(output_prefix, run_id)
+    endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL")
+        or os.environ.get("NEBIUS_S3_ENDPOINT")
+        or f"https://s3.{os.environ.get('AWS_DEFAULT_REGION', 'us-central1')}.amazonaws.com"
+    ).rstrip("/")
+    endpoint_parts = urllib.parse.urlsplit(endpoint)
+    if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
+        raise BootstrapRefusal("output storage endpoint must be HTTPS")
+    root = Path(f"/workspace/byof-runs/{run_id}")
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    summary = {
+        "status": "success" if smoke_exit_code == 0 else "failed",
+        "tool": "byof",
+        "workload": "solution-smoke-libero-b200",
+        "run_id": run_id,
+        "image": os.environ.get("BYOF_IMAGE", ""),
+        "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+        "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+        "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+        "smoke_exit_code": smoke_exit_code,
+        "runtime_cache_uploaded": False,
+        "rendering_invoked": False,
+        "created_unix": round(datetime.now(timezone.utc).timestamp(), 3),
+    }
+    summary_payload = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
+    summary_fd = os.open(
+        "npa_byof_summary.json",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+        dir_fd=root_fd,
+    )
+    with os.fdopen(summary_fd, "wb") as stream:
+        stream.write(summary_payload)
+
+    def immutable_bytes(directory_fd: int, name: str, limit: int) -> tuple[bytes, str]:
+        info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+            raise BootstrapRefusal("output violates its type, link, or size boundary")
+        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        with os.fdopen(file_fd, "rb") as stream:
+            opened_before = os.fstat(stream.fileno())
+            payload = stream.read(limit + 1)
+            opened_after = os.fstat(stream.fileno())
+        if len(payload) > limit or (
+            opened_after.st_dev,
+            opened_after.st_ino,
+            opened_after.st_size,
+            opened_after.st_mtime_ns,
+        ) != (
+            opened_before.st_dev,
+            opened_before.st_ino,
+            len(payload),
+            opened_before.st_mtime_ns,
+        ):
+            raise BootstrapRefusal("output changed or exceeded its budget during snapshot")
+        return payload, hashlib.sha256(payload).hexdigest()
+
+    prefix = parsed.path.lstrip("/")
+
+    def upload_and_read_back(name: str, payload: bytes, digest: str) -> dict[str, Any]:
+        checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+        object_path = "/".join(
+            urllib.parse.quote(part, safe="-_.~")
+            for part in (parsed.netloc, prefix + name)
+        )
+        url = f"{endpoint}/{object_path}"
+        _sigv4_request(
+            "PUT",
+            url,
+            payload=payload,
+            extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
+        )
+        headers, observed = _sigv4_request(
+            "GET", url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
+        )
+        if (
+            observed != payload
+            or hashlib.sha256(observed).hexdigest() != digest
+            or headers.get("x-amz-checksum-sha256") != checksum
+        ):
+            raise BootstrapRefusal("output storage checksum/readback differs")
+        return {"name": name, "size_bytes": len(payload), "sha256": digest}
+
+    try:
+        if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
+            raise BootstrapRefusal("output differs from the exact artifact allowlist")
+        observed_total = sum(
+            os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
+            for name in OUTPUT_SIZE_LIMITS
+        )
+        if observed_total > MAX_OUTPUT_BYTES:
+            raise BootstrapRefusal("output exceeds the aggregate size budget")
+        receipts = []
+        for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
+            payload, digest = immutable_bytes(root_fd, name, limit)
+            receipts.append(upload_and_read_back(name, payload, digest))
+        receipt_payload = (
+            json.dumps(
+                {
+                    "schema": "npa.libero.s3-upload-readback.v1",
+                    "run_id": run_id,
+                    "status": "verified",
+                    "artifacts": receipts,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+        receipt_name = "npa_upload_receipt.json"
+        receipt_fd = os.open(
+            receipt_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR,
+            dir_fd=root_fd,
+        )
+        with os.fdopen(receipt_fd, "wb") as stream:
+            stream.write(receipt_payload)
+        receipt_bytes, receipt_sha256 = immutable_bytes(root_fd, receipt_name, 8 * 1024 * 1024)
+        upload_and_read_back(receipt_name, receipt_bytes, receipt_sha256)
+    finally:
+        os.close(root_fd)
+    return {"schema": "npa.libero.output-upload.v1", "status": "verified"}
+
+
+def _run_output_root(run_id: str) -> Path:
+    return Path(f"/workspace/byof-runs/{run_id}")
+
+
+def execute_and_upload() -> int:
+    """Hold the accepted cache snapshot lock through smoke output readback."""
+
+    manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
+    _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
+    decision_sha256 = os.environ.get(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
+    ).strip()
+    if not _is_hex(decision_sha256, 64):
+        raise BootstrapRefusal("accepted decision SHA-256 is unavailable")
+    cache_root = _validate_cache_root(DEFAULT_CACHE, None)
+    final = cache_root / manifest_sha256
+    identity = _cache_entry_identity(final)
+    if identity is None:
+        raise BootstrapRefusal("runtime cache is not materialized")
+    current = cache_root / "current"
+    governing_terms_sha256 = _governing_terms_identity(manifest)
+    run_id = os.environ.get("NPA_BYOF_RUN_ID", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id):
+        raise BootstrapRefusal("execution requires the accepted run ID")
+    output_root = _run_output_root(run_id)
+    root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    lock_path = cache_root / ".bootstrap.lock"
+    try:
+        stdout_fd = os.open(
+            "solution_smoke_stdout.log",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+            dir_fd=root_fd,
+        )
+        try:
+            stderr_fd = os.open(
+                "solution_smoke_stderr.log",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+                dir_fd=root_fd,
+            )
+        except Exception:
+            os.close(stdout_fd)
+            raise
+        with lock_path.open("rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            descriptor = os.open(
+                final,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            try:
+                opened = os.fstat(descriptor)
+                if (opened.st_dev, opened.st_ino) != identity:
+                    raise BootstrapRefusal("runtime cache descriptor identity changed")
+                stable_root = Path("/proc/self/fd") / str(descriptor)
+                _validate_complete(
+                    stable_root,
+                    manifest,
+                    manifest_sha256,
+                    decision_sha256,
+                    requirements_sha256,
+                    governing_terms_sha256,
+                )
+                with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
+                    stderr_fd, "wb"
+                ) as stderr:
+                    completed = subprocess.run(
+                        [
+                            "sudo",
+                            "--user=npa-libero-exec",
+                            "/opt/npa/libero/runtime-bootstrap.py",
+                            "execute",
+                        ],
+                        check=False,
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
+                smoke_exit_code = completed.returncode
+                artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
+                if artifact_name not in OUTPUT_SIZE_LIMITS or not (
+                    output_root / artifact_name
+                ).is_file():
+                    with (output_root / "solution_smoke_stderr.log").open(
+                        "a", encoding="utf-8"
+                    ) as stderr:
+                        stderr.write(
+                            f"missing required smoke artifact: {artifact_name}\n"
+                        )
+                    smoke_exit_code = 1
+                upload_outputs(smoke_exit_code)
+                _validate_complete(
+                    stable_root,
+                    manifest,
+                    manifest_sha256,
+                    decision_sha256,
+                    requirements_sha256,
+                    governing_terms_sha256,
+                )
+                _require_cache_entry_identity(final, identity)
+                if not current.is_symlink() or os.readlink(current) != final.name:
+                    raise BootstrapRefusal(
+                        "runtime current link changed before output readback completed"
+                    )
+                return smoke_exit_code
+            finally:
+                os.close(descriptor)
+    finally:
+        os.close(root_fd)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("ensure", "status"))
+    parser.add_argument(
+        "command", choices=("ensure", "status", "execute", "execute-and-upload")
+    )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--requirements", default=str(DEFAULT_REQUIREMENTS))
     parser.add_argument("--cache-root", default=str(DEFAULT_CACHE))
     parser.add_argument("--decision", default="")
     parser.add_argument("--decision-sha256", default="")
     parser.add_argument("--output-dir", default="")
+    parser.add_argument("--smoke-exit-code", type=int, default=1)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        payload = ensure(args) if args.command == "ensure" else status(args)
+        if args.command == "execute":
+            return execute()
+        if args.command == "execute-and-upload":
+            return execute_and_upload()
+        else:
+            payload = ensure(args) if args.command == "ensure" else status(args)
     except Exception as exc:
         print(
             json.dumps(

@@ -9,6 +9,7 @@ test ! -e "$runtime_root/source/libero/libero/assets"
 test ! -e "$runtime_root/source/.git"
 export BYOF_REPO_ROOT="$runtime_root/source"
 export LIBERO_CONFIG_PATH="$output_root/.libero-config"
+cp "$runtime_root/.complete.json" "$output_root/npa_runtime_metadata.json"
 mkdir -p "$LIBERO_CONFIG_PATH"
 printf '%s\n' \
   "benchmark_root: $runtime_root/source/libero/libero" \

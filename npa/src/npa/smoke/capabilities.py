@@ -27,6 +27,16 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "libero": [
+        "quarantined neutral bootstrap requires an explicit immutable "
+        "acceptance-candidate digest",
+        "runtime fetch verifies the pinned official MIT LIBERO source and "
+        "CC BY 4.0 demonstration hashes before use",
+        "headless one-B200 smoke requires real upstream BC-RNN Adam steps "
+        "and strict checkpoint reload",
+        "trajectory-disjoint held-out loss and actions plus exact image and "
+        "GPU evidence are required in libero-smoke.json",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

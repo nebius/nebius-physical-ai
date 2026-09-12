@@ -96,8 +96,6 @@ def build_byof_argv(
     smoke_artifact_name: str = "",
     libero_acceptance_candidate_image: str = "",
     libero_runtime_use_decision_file: str = "",
-    libero_runtime_use_decision_sha256: str = "",
-    libero_build_metadata_sha256: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -166,14 +164,6 @@ def build_byof_argv(
     if libero_runtime_use_decision_file:
         argv.extend(
             ["--libero-runtime-use-decision-file", libero_runtime_use_decision_file]
-        )
-    if libero_runtime_use_decision_sha256:
-        argv.extend(
-            ["--libero-runtime-use-decision-sha256", libero_runtime_use_decision_sha256]
-        )
-    if libero_build_metadata_sha256:
-        argv.extend(
-            ["--libero-build-metadata-sha256", libero_build_metadata_sha256]
         )
     if project:
         argv.extend(["--project", project])
@@ -274,16 +264,6 @@ def run_cmd(
         "--libero-runtime-use-decision-file",
         help="Owner-private manager-issued LIBERO runtime-use decision JSON.",
     ),
-    libero_runtime_use_decision_sha256: str = typer.Option(
-        "",
-        "--libero-runtime-use-decision-sha256",
-        help="Expected SHA-256 of the manager-issued LIBERO runtime-use decision.",
-    ),
-    libero_build_metadata_sha256: str = typer.Option(
-        "",
-        "--libero-build-metadata-sha256",
-        help="SHA-256 of independently observed buildx lineage metadata.",
-    ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
     ),
@@ -351,8 +331,6 @@ def run_cmd(
         smoke_artifact_name=smoke_artifact_name,
         libero_acceptance_candidate_image=libero_acceptance_candidate_image,
         libero_runtime_use_decision_file=libero_runtime_use_decision_file,
-        libero_runtime_use_decision_sha256=libero_runtime_use_decision_sha256,
-        libero_build_metadata_sha256=libero_build_metadata_sha256,
         project=project,
         registry=registry,
         image=image,

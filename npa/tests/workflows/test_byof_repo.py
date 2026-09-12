@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,18 +34,26 @@ LIBERO_YAML_PATH = (
 LIBERO_WORKFLOW_PATH = ROOT / "workflows" / "testing" / "byof-libero.yaml"
 
 
-def _libero_contract_args(tmp_path: Path) -> list[str]:
+def _libero_contract_args(
+    tmp_path: Path, *, run_id: str = "libero-managed-route"
+) -> tuple[list[str], dict[str, object]]:
     config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
     runtime_manifest = (
         ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-manifest.json"
     )
     decision = {
-        "schema": "npa.libero.runtime-use-decision.v1",
+        "schema": "npa.libero.runtime-use-decision.v2",
         "solution": "libero",
         "decision": "authorized",
         "runtime_fetch_authorized": True,
+        "acceptance_id": "libero-acceptance-test-0001",
+        "candidate_image": (
+            "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "1" * 64
+        ),
+        "publication_bundle_sha256": "2" * 64,
+        "infrastructure_bundle_sha256": "3" * 64,
         "runtime_manifest_sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
-        "source_revision": config["repo_ref"],
+        "upstream_source_revision": config["repo_ref"],
         "authorized_boundaries": [
             "demonstration",
             "language_model",
@@ -52,13 +61,32 @@ def _libero_contract_args(tmp_path: Path) -> list[str]:
             "source",
             "task_inputs",
         ],
-        "manager_receipt_sha256": "sha256:" + "2" * 64,
+        "run_id": run_id,
+        "namespace_sha256": "4" * 64,
+        "issuer": "npa-manager",
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        "nonce": "unique-libero-test-nonce-0000000001",
     }
     decision_path = tmp_path / "libero-runtime-use-decision.json"
     decision_path.write_text(json.dumps(decision, sort_keys=True) + "\n", encoding="utf-8")
     decision_path.chmod(0o600)
     decision_sha256 = hashlib.sha256(decision_path.read_bytes()).hexdigest()
-    return [
+    acceptance = {
+        "acceptance_id": decision["acceptance_id"],
+        "candidate_image": decision["candidate_image"],
+        "canonical_build_metadata_sha256": "5" * 64,
+        "publication_bundle_sha256": decision["publication_bundle_sha256"],
+        "infrastructure_bundle_sha256": decision["infrastructure_bundle_sha256"],
+        "runtime_manifest_sha256": decision["runtime_manifest_sha256"],
+        "runtime_use_decision_sha256": decision_sha256,
+        "upstream_source_revision": decision["upstream_source_revision"],
+        "infrastructure": {
+            "run_id": run_id,
+            "namespace_sha256": decision["namespace_sha256"],
+        },
+    }
+    arguments = [
         "--repo-url", config["repo_url"],
         "--repo-ref", config["repo_ref"],
         "--repo-auth", config["repo_auth"],
@@ -77,11 +105,10 @@ def _libero_contract_args(tmp_path: Path) -> list[str]:
         "--num-envs", str(config["num_envs"]),
         "--num-demos", str(config["num_demos"]),
         "--libero-acceptance-candidate-image",
-        "registry.example/project/npa-libero@sha256:" + "1" * 64,
+        str(decision["candidate_image"]),
         "--libero-runtime-use-decision-file", str(decision_path),
-        "--libero-runtime-use-decision-sha256", decision_sha256,
-        "--libero-build-metadata-sha256", "3" * 64,
     ]
+    return arguments, acceptance
 
 
 def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
@@ -765,6 +792,8 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
+    libero_args, acceptance = _libero_contract_args(tmp_path)
+    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
     seen: dict[str, object] = {}
     monkeypatch.setattr(
         module,
@@ -800,7 +829,7 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             "--run-id",
             "libero-managed-route",
             "--skip-push",
-            *_libero_contract_args(tmp_path),
+            *libero_args,
         ]
     )
 
@@ -908,7 +937,9 @@ def test_main_binds_exact_libero_inputs_before_registry_or_build(
     arguments = [
         "--run-id",
         "libero-contract-refusal",
-        *_libero_contract_args(tmp_path),
+        *_libero_contract_args(
+            tmp_path, run_id="libero-contract-refusal"
+        )[0],
     ]
     index = arguments.index(flag)
     arguments[index + 1] = value
@@ -933,7 +964,7 @@ def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
     arguments = [
         "--run-id",
         "libero-profile-refusal",
-        *_libero_contract_args(tmp_path),
+        *_libero_contract_args(tmp_path, run_id="libero-profile-refusal")[0],
     ]
     index = arguments.index("--yaml")
     arguments[index + 1] = str(profile)
@@ -959,7 +990,7 @@ def test_main_refuses_libero_skip_run_before_registry_or_build(
             "--run-id",
             "libero-skip-run-refusal",
             "--skip-run",
-            *_libero_contract_args(tmp_path),
+            *_libero_contract_args(tmp_path, run_id="libero-skip-run-refusal")[0],
         ]
     ) == 1
     result = json.loads(capsys.readouterr().out)

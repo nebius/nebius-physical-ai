@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from importlib import resources
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,7 +36,44 @@ WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
+LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
+
+LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
+LIBERO_RUNTIME_DECISION_BOUNDARIES = frozenset(
+    {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
+)
+LIBERO_OFFICIAL_CANDIDATE_PREFIX = (
+    "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
+)
+LIBERO_UPSTREAM_SOURCE_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_BUILD_INPUT_PATHS = (
+    "npa/docker/workbench/libero/Dockerfile",
+    "npa/docker/workbench/libero/REDISTRIBUTION.md",
+    "npa/docker/workbench/libero/THIRD_PARTY_NOTICES.md",
+    "npa/docker/workbench/libero/debian-packages.lock",
+    "npa/docker/workbench/libero/entrypoint.sh",
+    "npa/docker/workbench/libero/libero_smoke.py",
+    "npa/docker/workbench/libero/runtime-bootstrap.py",
+    "npa/docker/workbench/libero/runtime-manifest.json",
+    "npa/docker/workbench/libero/runtime-requirements.txt",
+    "npa/docker/workbench/libero/skypilot-bootstrap-guard.sh",
+    "npa/docker/workbench/libero/smoke.sh",
+)
+LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
+    ".github/workflows/publish-public-images.yml",
+    "npa/docker/workbench/packaging-contract.yaml",
+    "npa/scripts/run_byof_container_verify.py",
+    "npa/scripts/run_byof_repo.py",
+    "npa/scripts/scan_image_libero_payload.py",
+    "npa/scripts/scan_image_wan_payload.py",
+    "npa/src/npa/deploy/images.py",
+    "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+)
+LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
+    "https://slsa.dev/provenance/v1",
+    "https://spdx.dev/Document",
+)
 
 CONTAINER_IMAGE_NAMES = {
     "openpi": "npa-openpi",
@@ -384,6 +423,494 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
             "Content Agents accepted image manifest tag drifted from the supported tag"
         )
     return payload
+
+
+@lru_cache(maxsize=1)
+def libero_image_manifest() -> dict[str, Any]:
+    """Return the checked-in LIBERO publication and qualification boundary."""
+
+    try:
+        payload = json.loads(
+            resources.files(__package__)
+            .joinpath(LIBERO_IMAGE_MANIFEST_RESOURCE)
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("LIBERO image manifest is unavailable or invalid") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "npa.workbench.image-manifest.v1"
+        or payload.get("tool") != "libero"
+        or payload.get("image_name") != "npa-libero"
+    ):
+        raise RuntimeError("Unsupported LIBERO image manifest format")
+    return payload
+
+
+def _canonical_sha256(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _repository_file_bundle_sha256(
+    repository_root: Path,
+    *,
+    schema: str,
+    paths: tuple[str, ...],
+    development_sha: str | None = None,
+) -> str:
+    records = []
+    for relative in paths:
+        path = repository_root / relative
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"LIBERO build input is unavailable: {relative}") from exc
+        records.append(
+            {
+                "path": relative,
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    bundle: dict[str, Any] = {"schema": schema, "inputs": records}
+    if development_sha is not None:
+        bundle["development_sha"] = development_sha
+    return _canonical_sha256(bundle)
+
+
+def libero_build_input_bundle_sha256(
+    repository_root: Path, *, development_sha: str
+) -> str:
+    """Bind every byte copied into the neutral image plus its reproducibility epoch."""
+
+    if re.fullmatch(r"[0-9a-f]{40}", development_sha) is None:
+        raise RuntimeError("LIBERO build input bundle requires a full development SHA")
+    return _repository_file_bundle_sha256(
+        repository_root,
+        schema="npa.libero.build-input-bundle.v1",
+        paths=LIBERO_BUILD_INPUT_PATHS,
+        development_sha=development_sha,
+    )
+
+
+def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
+    """Bind the complete trusted publication and live-validation enforcement."""
+
+    return _repository_file_bundle_sha256(
+        repository_root,
+        schema="npa.libero.publication-enforcement-bundle.v1",
+        paths=LIBERO_PUBLICATION_ENFORCEMENT_PATHS,
+    )
+
+
+def libero_publication_lineage_values(
+    acceptance: dict[str, Any],
+    repository_root: Path,
+    *,
+    development_sha: str,
+) -> dict[str, Any]:
+    """Resolve only an accepted, byte-identical LIBERO publication source."""
+
+    if acceptance.get("development_sha") != development_sha:
+        raise RuntimeError("LIBERO acceptance development SHA differs")
+    observed = libero_build_input_bundle_sha256(
+        repository_root, development_sha=development_sha
+    )
+    if observed != acceptance.get("build_input_bundle_sha256"):
+        raise RuntimeError("LIBERO neutral build inputs differ from acceptance")
+    enforcement = libero_publication_enforcement_bundle_sha256(repository_root)
+    if enforcement != acceptance.get("publication_enforcement_bundle_sha256"):
+        raise RuntimeError("LIBERO publication enforcement differs from acceptance")
+    fields = (
+        "candidate_image",
+        "oci_digest",
+        "platform_manifest_digest",
+        "config_digest",
+        "canonical_build_metadata_sha256",
+        "attestation_manifest_digest",
+        "attestation_config_digest",
+        "attestation_layers",
+        "package_version_digests",
+        "publication_enforcement_bundle_sha256",
+        "complete_image_inventory_sha256",
+        "base_provenance_sha256",
+        "publication_bundle_sha256",
+        "infrastructure_bundle_sha256",
+        "package_writer_repository",
+    )
+    return {field: acceptance[field] for field in fields}
+
+
+def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
+    """Validate the separately reviewed bytes and identities allowed to run.
+
+    This repository resource is the authenticated channel for LIBERO acceptance.
+    Command-line values and ambient environment variables can only match it; they
+    cannot create an acceptance decision.
+    """
+
+    def require(ok: bool, field: str) -> None:
+        if not ok:
+            raise RuntimeError(f"LIBERO acceptance requires valid {field}")
+
+    require(isinstance(payload, dict), "manifest object")
+    require(payload.get("schema") == "npa.workbench.image-manifest.v1", "schema")
+    require(payload.get("tool") == "libero", "tool")
+    require(payload.get("runtime_payloads_baked") is False, "neutral payload")
+    acceptance = payload.get("acceptance")
+    require(isinstance(acceptance, dict), "acceptance record")
+    expected_keys = {
+        "schema",
+        "status",
+        "acceptance_id",
+        "accepted_at",
+        "expires_at",
+        "candidate_image",
+        "oci_digest",
+        "platform_manifest_digest",
+        "config_digest",
+        "canonical_build_metadata_sha256",
+        "attestation_manifest_digest",
+        "attestation_config_digest",
+        "attestation_layers",
+        "package_version_digests",
+        "complete_image_inventory_sha256",
+        "base_provenance_sha256",
+        "publication_bundle_sha256",
+        "development_sha",
+        "upstream_source_revision",
+        "build_input_bundle_sha256",
+        "publication_enforcement_bundle_sha256",
+        "package_writer_repository",
+        "runtime_manifest_sha256",
+        "runtime_use_decision_sha256",
+        "infrastructure_bundle_sha256",
+        "infrastructure",
+    }
+    require(set(acceptance) == expected_keys, "closed acceptance schema")
+    require(
+        acceptance.get("schema") == "npa.libero.qualification-acceptance.v2",
+        "acceptance schema",
+    )
+    require(acceptance.get("status") == "accepted", "accepted status")
+    require(
+        re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}",
+            str(acceptance.get("acceptance_id") or ""),
+        )
+        is not None,
+        "acceptance ID",
+    )
+    candidate = str(acceptance.get("candidate_image") or "")
+    require(
+        re.fullmatch(
+            rf"{re.escape(LIBERO_OFFICIAL_CANDIDATE_PREFIX)}[0-9a-f]{{64}}",
+            candidate,
+        )
+        is not None,
+        "official candidate image",
+    )
+    require(
+        candidate.rsplit("@", 1)[1] == acceptance.get("oci_digest"),
+        "candidate digest",
+    )
+    for field in (
+        "oci_digest",
+        "platform_manifest_digest",
+        "config_digest",
+        "attestation_manifest_digest",
+        "attestation_config_digest",
+    ):
+        require(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", str(acceptance.get(field) or ""))
+            is not None,
+            field,
+        )
+    for field in (
+        "canonical_build_metadata_sha256",
+        "complete_image_inventory_sha256",
+        "base_provenance_sha256",
+        "publication_bundle_sha256",
+        "build_input_bundle_sha256",
+        "publication_enforcement_bundle_sha256",
+        "runtime_manifest_sha256",
+        "runtime_use_decision_sha256",
+        "infrastructure_bundle_sha256",
+    ):
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", str(acceptance.get(field) or ""))
+            is not None,
+            field,
+        )
+    require(
+        re.fullmatch(
+            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+            str(acceptance.get("package_writer_repository") or ""),
+        )
+        is not None,
+        "package writer repository",
+    )
+    attestation_layers = acceptance.get("attestation_layers")
+    require(
+        isinstance(attestation_layers, list)
+        and len(attestation_layers) == len(LIBERO_REQUIRED_PUBLICATION_REFERRERS),
+        "complete attestation layer set",
+    )
+    for layer, predicate_type in zip(
+        attestation_layers or [], LIBERO_REQUIRED_PUBLICATION_REFERRERS, strict=True
+    ):
+        require(
+            isinstance(layer, dict)
+            and set(layer) == {"predicate_type", "digest", "size_bytes"}
+            and layer.get("predicate_type") == predicate_type
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", str(layer.get("digest") or ""))
+            is not None
+            and isinstance(layer.get("size_bytes"), int)
+            and 0 < layer["size_bytes"] <= 64 * 1024 * 1024,
+            f"attestation layer {predicate_type}",
+        )
+    package_version_digests = acceptance.get("package_version_digests")
+    require(
+        isinstance(package_version_digests, list)
+        and all(
+            isinstance(digest, str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is not None
+            for digest in package_version_digests
+        )
+        and package_version_digests == sorted(set(package_version_digests))
+        and acceptance.get("oci_digest") in package_version_digests
+        and acceptance.get("platform_manifest_digest") in package_version_digests
+        and acceptance.get("attestation_manifest_digest")
+        in package_version_digests,
+        "closed package version digest set",
+    )
+    require(
+        re.fullmatch(r"[0-9a-f]{40}", str(acceptance.get("development_sha") or ""))
+        is not None,
+        "development SHA",
+    )
+    require(
+        acceptance.get("upstream_source_revision") == LIBERO_UPSTREAM_SOURCE_REVISION,
+        "upstream source revision",
+    )
+    require(
+        acceptance.get("runtime_manifest_sha256")
+        == payload.get("runtime_manifest_sha256"),
+        "runtime manifest binding",
+    )
+    infrastructure = acceptance.get("infrastructure")
+    infrastructure_keys = {
+        "run_id",
+        "allowed_node_sha256",
+        "cluster_identity_sha256",
+        "namespace_sha256",
+        "namespace_uid_sha256",
+        "namespace_inventory_sha256",
+        "rbac_spec_sha256",
+        "role_binding_uid_sha256",
+        "role_uid_sha256",
+        "service_account_uid_sha256",
+        "payload_kubeconfig_sha256",
+        "execution_kubeconfig_sha256",
+        "skypilot_config_sha256",
+        "output_storage_authorization_sha256",
+        "output_storage_prefix_sha256",
+        "output_storage_policy_sha256",
+    }
+    require(
+        isinstance(infrastructure, dict) and set(infrastructure) == infrastructure_keys,
+        "closed infrastructure record",
+    )
+    require(
+        re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,62}", str(infrastructure.get("run_id") or "")
+        )
+        is not None,
+        "run ID",
+    )
+    for field in infrastructure_keys - {"run_id"}:
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", str(infrastructure.get(field) or ""))
+            is not None,
+            f"infrastructure {field}",
+        )
+    require(
+        _canonical_sha256(
+            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure}
+        )
+        == acceptance.get("infrastructure_bundle_sha256"),
+        "canonical infrastructure bundle",
+    )
+    publication_bundle = {
+        "schema": "npa.libero.publication-lineage-bundle.v2",
+        "candidate_image": candidate,
+        "oci_digest": acceptance.get("oci_digest"),
+        "platform_manifest_digest": acceptance.get("platform_manifest_digest"),
+        "config_digest": acceptance.get("config_digest"),
+        "canonical_build_metadata_sha256": acceptance.get(
+            "canonical_build_metadata_sha256"
+        ),
+        "attestation_manifest_digest": acceptance.get(
+            "attestation_manifest_digest"
+        ),
+        "attestation_config_digest": acceptance.get("attestation_config_digest"),
+        "attestation_layers": attestation_layers,
+        "package_version_digests": package_version_digests,
+        "complete_image_inventory_sha256": acceptance.get(
+            "complete_image_inventory_sha256"
+        ),
+        "base_provenance_sha256": acceptance.get("base_provenance_sha256"),
+        "development_sha": acceptance.get("development_sha"),
+        "upstream_source_revision": acceptance.get("upstream_source_revision"),
+        "build_input_bundle_sha256": acceptance.get("build_input_bundle_sha256"),
+        "publication_enforcement_bundle_sha256": acceptance.get(
+            "publication_enforcement_bundle_sha256"
+        ),
+        "package_writer_repository": acceptance.get("package_writer_repository"),
+        "infrastructure_bundle_sha256": acceptance.get(
+            "infrastructure_bundle_sha256"
+        ),
+    }
+    require(
+        _canonical_sha256(publication_bundle)
+        == acceptance.get("publication_bundle_sha256"),
+        "canonical publication lineage bundle",
+    )
+    artifact_review = payload.get("runtime_artifact_review")
+    require(
+        isinstance(artifact_review, dict)
+        and set(artifact_review)
+        == {
+            "status",
+            "pending_size_artifacts",
+            "pending_license_artifacts",
+            "report_sha256",
+        }
+        and artifact_review.get("status") == "complete"
+        and artifact_review.get("pending_size_artifacts") == 0
+        and artifact_review.get("pending_license_artifacts") == 0
+        and re.fullmatch(
+            r"[0-9a-f]{64}", str(artifact_review.get("report_sha256") or "")
+        )
+        is not None,
+        "complete runtime artifact review",
+    )
+    try:
+        accepted_at = datetime.fromisoformat(
+            str(acceptance["accepted_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO acceptance requires valid UTC timestamps") from exc
+    current = datetime.now(timezone.utc)
+    require(
+        accepted_at.tzinfo is not None
+        and expires_at.tzinfo is not None
+        and accepted_at <= current + timedelta(minutes=5)
+        and accepted_at < expires_at
+        and expires_at > current
+        and expires_at - accepted_at <= timedelta(days=7),
+        "unexpired acceptance window",
+    )
+    return acceptance
+
+
+def libero_accepted_image_manifest() -> dict[str, Any]:
+    """Return only a current, complete, checked-in LIBERO acceptance record."""
+
+    return validate_libero_accepted_image_manifest(libero_image_manifest())
+
+
+def validate_libero_runtime_decision(
+    decision_bytes: bytes,
+    *,
+    acceptance: dict[str, Any],
+    run_id: str,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Validate one closed, replay-bounded decision against repo acceptance."""
+
+    observed_sha256 = hashlib.sha256(decision_bytes).hexdigest()
+    if observed_sha256 != acceptance.get("runtime_use_decision_sha256"):
+        raise RuntimeError("LIBERO runtime decision differs from checked-in acceptance")
+    try:
+        decision = json.loads(decision_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("LIBERO runtime decision is not valid JSON") from exc
+    expected_keys = {
+        "schema",
+        "solution",
+        "decision",
+        "runtime_fetch_authorized",
+        "acceptance_id",
+        "candidate_image",
+        "publication_bundle_sha256",
+        "infrastructure_bundle_sha256",
+        "runtime_manifest_sha256",
+        "upstream_source_revision",
+        "authorized_boundaries",
+        "run_id",
+        "namespace_sha256",
+        "issuer",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
+    if not isinstance(decision, dict) or set(decision) != expected_keys:
+        raise RuntimeError("LIBERO runtime decision schema is not closed")
+    infrastructure = acceptance["infrastructure"]
+    boundaries = decision.get("authorized_boundaries")
+    if (
+        decision.get("schema") != LIBERO_RUNTIME_DECISION_SCHEMA
+        or decision.get("solution") != "libero"
+        or decision.get("decision") != "authorized"
+        or decision.get("runtime_fetch_authorized") is not True
+        or decision.get("acceptance_id") != acceptance.get("acceptance_id")
+        or decision.get("candidate_image") != acceptance.get("candidate_image")
+        or decision.get("publication_bundle_sha256")
+        != acceptance.get("publication_bundle_sha256")
+        or decision.get("infrastructure_bundle_sha256")
+        != acceptance.get("infrastructure_bundle_sha256")
+        or decision.get("runtime_manifest_sha256")
+        != acceptance.get("runtime_manifest_sha256")
+        or decision.get("upstream_source_revision")
+        != acceptance.get("upstream_source_revision")
+        or decision.get("run_id") != run_id
+        or run_id != infrastructure.get("run_id")
+        or decision.get("namespace_sha256") != infrastructure.get("namespace_sha256")
+        or decision.get("issuer") != "npa-manager"
+        or not isinstance(boundaries, list)
+        or len(boundaries) != len(LIBERO_RUNTIME_DECISION_BOUNDARIES)
+        or frozenset(boundaries) != LIBERO_RUNTIME_DECISION_BOUNDARIES
+        or re.fullmatch(
+            r"[A-Za-z0-9_-]{32,128}", str(decision.get("nonce") or "")
+        )
+        is None
+    ):
+        raise RuntimeError("LIBERO runtime decision does not bind accepted identities")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(decision["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(decision["expires_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO runtime decision timestamps are invalid") from exc
+    current = now or datetime.now(timezone.utc)
+    if (
+        issued_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or issued_at > current + timedelta(minutes=5)
+        or expires_at <= current
+        or expires_at - issued_at > timedelta(hours=24)
+    ):
+        raise RuntimeError("LIBERO runtime decision is expired or replayable")
+    return decision, observed_sha256
 
 
 def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:

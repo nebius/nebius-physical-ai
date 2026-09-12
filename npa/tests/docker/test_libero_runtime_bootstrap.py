@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -41,6 +42,7 @@ def _write_json(path: Path, value: object, *, mode: int = 0o600) -> str:
 
 def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, object]]:
     module = _load_module()
+    module.RUNTIME_EXECUTION_GROUP = module.grp.getgrgid(os.getgid()).gr_name
     license_bytes = b"fixture MIT license\n"
     bddl_bytes = b"fixture bddl\n"
     initial_bytes = b"fixture initial states\n"
@@ -56,6 +58,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
                 "https://files.pythonhosted.org/packages/00/00/"
                 f"package_{index}-1.0-py3-none-any.whl"
             ),
+            "size_bytes": len(f"artifact-{index}".encode()),
             "sha256": _sha(f"artifact-{index}".encode()),
             "license_expression": "MIT",
             "metadata_source": f"https://pypi.org/pypi/package-{index}/1.0/json",
@@ -162,10 +165,20 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "solution": "libero",
         "decision": "authorized",
         "runtime_fetch_authorized": True,
+        "acceptance_id": "libero-fixture-acceptance-0001",
+        "candidate_image": "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
+        + "9" * 64,
+        "publication_bundle_sha256": "a" * 64,
+        "infrastructure_bundle_sha256": "b" * 64,
         "runtime_manifest_sha256": manifest_sha,
-        "source_revision": "1" * 40,
+        "upstream_source_revision": "1" * 40,
         "authorized_boundaries": sorted(module.EXPECTED_DECISION_BOUNDARIES),
-        "manager_receipt_sha256": "sha256:" + "5" * 64,
+        "run_id": "libero-runtime-bootstrap-fixture",
+        "namespace_sha256": "c" * 64,
+        "issuer": "npa-manager",
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        "nonce": "libero-runtime-bootstrap-fixture-nonce-0001",
     }
     decision_path = tmp_path / "runtime-use-decision.json"
     decision_sha = _write_json(decision_path, decision)
@@ -177,6 +190,22 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         decision_sha256=decision_sha,
         output_dir=str(tmp_path / "output"),
     )
+    os.environ.update(
+        {
+            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
+            "BYOF_IMAGE": decision["candidate_image"],
+            "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": decision[
+                "publication_bundle_sha256"
+            ],
+            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": decision[
+                "infrastructure_bundle_sha256"
+            ],
+            "NPA_BYOF_RUN_ID": decision["run_id"],
+            "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256": decision[
+                "namespace_sha256"
+            ],
+        }
+    )
     fixture = {
         "license": license_bytes,
         "bddl": bddl_bytes,
@@ -187,6 +216,140 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "manifest_sha": manifest_sha,
     }
     return module, args, fixture
+
+
+def test_fetched_execution_environment_excludes_every_storage_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    for name in module.STORAGE_SECRET_ENV_NAMES:
+        monkeypatch.setenv(name, f"secret-{name}")
+    monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-runtime-environment")
+
+    environment = module._runtime_execution_environment(Path("/proc/self/fd/7"))
+
+    assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
+    assert environment["NPA_BYOF_RUN_ID"] == "libero-runtime-environment"
+    assert environment["LIBERO_RUNTIME_ROOT"] == "/proc/self/fd/7"
+
+
+def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    run_id = "libero-output-authorization"
+    prefix = f"s3://fixture/byof/{run_id}/"
+    credentials = {
+        "AWS_ACCESS_KEY_ID": "temporary-access",
+        "AWS_SECRET_ACCESS_KEY": "temporary-secret",
+        "AWS_SESSION_TOKEN": "temporary-session",
+    }
+    for name, value in credentials.items():
+        monkeypatch.setenv(name, value)
+    policy_sha256 = "a" * 64
+    authorization = {
+        "schema": "npa.libero.output-storage-authorization.v1",
+        "issuer": "npa-manager",
+        "run_id": run_id,
+        "output_prefix": prefix,
+        "access_key_id_sha256": _sha(credentials["AWS_ACCESS_KEY_ID"].encode()),
+        "secret_access_key_sha256": _sha(
+            credentials["AWS_SECRET_ACCESS_KEY"].encode()
+        ),
+        "session_token_sha256": _sha(credentials["AWS_SESSION_TOKEN"].encode()),
+        "policy_sha256": policy_sha256,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        "nonce": "libero-output-authorization-nonce-0001",
+    }
+    payload = (json.dumps(authorization, sort_keys=True) + "\n").encode()
+    monkeypatch.setenv(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+        module.base64.b64encode(payload).decode(),
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256", _sha(payload)
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256", _sha(prefix.encode())
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", policy_sha256
+    )
+
+    assert module._storage_authorization(prefix, run_id) == authorization
+
+    monkeypatch.delenv("AWS_SESSION_TOKEN")
+    with pytest.raises(module.BootstrapRefusal, match="invalid or expired"):
+        module._storage_authorization(prefix, run_id)
+
+
+def test_sigv4_storage_request_uses_a_direct_tls_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "temporary-access",
+        "AWS_SECRET_ACCESS_KEY": "temporary-secret",
+        "AWS_SESSION_TOKEN": "temporary-session",
+        "AWS_DEFAULT_REGION": "fixture-region",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    observed: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def read(self, limit: int) -> bytes:
+            observed["read_limit"] = limit
+            return b"read-back"
+
+        def getheaders(self) -> list[tuple[str, str]]:
+            return [("X-Amz-Checksum-Sha256", "fixture-checksum")]
+
+        def close(self) -> None:
+            observed["response_closed"] = True
+
+    class Connection:
+        def __init__(self, hostname: str, port: int, timeout: int) -> None:
+            observed.update(hostname=hostname, port=port, timeout=timeout)
+
+        def request(
+            self,
+            method: str,
+            target: str,
+            *,
+            body: bytes | None,
+            headers: dict[str, str],
+        ) -> None:
+            observed.update(method=method, target=target, body=body, headers=headers)
+
+        def getresponse(self) -> Response:
+            return Response()
+
+        def close(self) -> None:
+            observed["connection_closed"] = True
+
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", Connection)
+
+    headers, body = module._sigv4_request(
+        "GET",
+        "https://storage.example:8443/bucket/object",
+        extra_headers={"x-amz-checksum-mode": "ENABLED"},
+    )
+
+    assert body == b"read-back"
+    assert headers == {"x-amz-checksum-sha256": "fixture-checksum"}
+    assert observed["hostname"] == "storage.example"
+    assert observed["port"] == 8443
+    assert observed["target"] == "/bucket/object"
+    assert observed["body"] is None
+    assert "authorization" in observed["headers"]
+    assert observed["response_closed"] is True
+    assert observed["connection_closed"] is True
+    with pytest.raises(module.BootstrapRefusal, match="query-free HTTPS"):
+        module._sigv4_request("GET", "https://user@storage.example/bucket/object")
 
 
 def _install_fake_materializers(
@@ -258,6 +421,41 @@ def test_missing_decision_refuses_before_network_or_cache_mutation(
     assert not Path(args.cache_root).exists()
 
 
+@pytest.mark.parametrize("field", ["size_bytes", "license_expression"])
+def test_incomplete_runtime_artifact_review_refuses_before_cache_mutation(
+    tmp_path, field
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    manifest["runtime_artifacts"][0].pop(field)
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
+        Path(args.manifest), manifest
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="size/license review"):
+        module.ensure(args)
+
+    assert not Path(args.cache_root).exists()
+
+
+def test_runtime_artifact_total_size_budget_refuses_before_cache_mutation(
+    tmp_path,
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    manifest["runtime_artifacts"][0]["size_bytes"] = (
+        module.MAX_RUNTIME_CACHE_DOWNLOAD_BYTES + 1
+    )
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
+        Path(args.manifest), manifest
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="cache budget"):
+        module.ensure(args)
+
+    assert not Path(args.cache_root).exists()
+
+
 @pytest.mark.parametrize("mutation", ["hash", "boundary", "acceptance-proxy"])
 def test_mismatched_decision_refuses_before_cache_mutation(tmp_path, mutation) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
@@ -317,16 +515,19 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     monkeypatch, tmp_path
 ) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
+    for name in module.STORAGE_SECRET_ENV_NAMES:
+        monkeypatch.setenv(name, f"secret-{name}")
+    monkeypatch.setenv("HF_TOKEN", "unrelated-provider-secret")
     manifest, _ = module._validate_manifest(Path(args.manifest))
     lines, _ = module._validate_requirements(Path(args.requirements), manifest)
-    commands: list[list[str]] = []
+    commands: list[tuple[list[str], dict[str, str]]] = []
 
     def fake_download(destination: Path, **_kwargs) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"fixture")
 
-    def fake_run(command: list[str], **_kwargs) -> None:
-        commands.append(command)
+    def fake_run(command: list[str], **kwargs) -> None:
+        commands.append((command, kwargs["environment"]))
         if command[1:4] == ["-m", "venv", str(tmp_path / "runtime" / "venv")]:
             python = tmp_path / "runtime" / "venv" / "bin" / "python"
             python.parent.mkdir(parents=True)
@@ -336,21 +537,35 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     site_packages.mkdir(parents=True)
     monkeypatch.setattr(module, "_download_verified", fake_download)
     monkeypatch.setattr(module, "_run", fake_run)
-    monkeypatch.setattr(
-        module.subprocess,
-        "check_output",
-        lambda *_args, **_kwargs: str(site_packages),
-    )
+    check_output_environments: list[dict[str, str]] = []
+
+    def fake_check_output(*_args, **kwargs) -> str:
+        check_output_environments.append(kwargs["env"])
+        return str(site_packages)
+
+    monkeypatch.setattr(module.subprocess, "check_output", fake_check_output)
 
     module._install_runtime(tmp_path / "runtime", manifest["runtime_artifacts"], lines)
 
-    installs = [command for command in commands if "install" in command]
+    installs = [command for command, _environment in commands if "install" in command]
     assert len(installs) == 2
     assert all("--require-hashes" in command for command in installs)
     assert all("--no-deps" in command for command in installs)
     assert all("--no-index" in command for command in installs)
     assert all("--find-links" in command for command in installs)
     assert all("--no-cache-dir" in command for command in installs)
+    subprocess_environments = [environment for _command, environment in commands]
+    subprocess_environments.extend(check_output_environments)
+    assert len(subprocess_environments) == 4
+    assert all(
+        module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
+        for environment in subprocess_environments
+    )
+    assert all("HF_TOKEN" not in environment for environment in subprocess_environments)
+    assert all(
+        environment["HOME"] == str(tmp_path / "runtime")
+        for environment in subprocess_environments
+    )
 
 
 def test_authorized_materialization_is_atomic_and_warm_reusable(
@@ -376,6 +591,16 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     assert not (final / "source" / "libero" / "libero" / "assets").exists()
     assert all(
         path.is_symlink() or path.stat().st_mode & 0o222 == 0
+        for path in (final, *final.rglob("*"))
+    )
+    assert all(
+        path.is_symlink() or path.stat().st_gid == os.getgid()
+        for path in (final, *final.rglob("*"))
+    )
+    assert all(
+        path.is_symlink()
+        or (path.is_dir() and path.stat().st_mode & 0o050 == 0o050)
+        or (path.is_file() and path.stat().st_mode & 0o040 == 0o040)
         for path in (final, *final.rglob("*"))
     )
 
@@ -685,6 +910,55 @@ def test_verified_download_follows_only_an_allowlisted_https_redirect(
     assert all(connection.closed for connection in connections)
 
 
+@pytest.mark.parametrize(
+    ("content_length", "payload", "message"),
+    [
+        ("99", b"short", "Content-Length differs"),
+        (None, b"one-byte-too-many", "exceeded expected size"),
+    ],
+)
+def test_verified_download_enforces_size_before_publication(
+    monkeypatch, tmp_path, content_length, payload, message
+) -> None:
+    module = _load_module()
+
+    class Response:
+        def __init__(self) -> None:
+            self.remaining = payload
+
+        def getheader(self, name: str) -> str | None:
+            return content_length if name == "Content-Length" else None
+
+        def read(self, _size: int = -1) -> bytes:
+            value, self.remaining = self.remaining, b""
+            return value
+
+        def close(self) -> None:
+            pass
+
+    class Connection:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        module,
+        "_open_https_download",
+        lambda *_a, **_k: (Connection(), Response()),
+    )
+    destination = tmp_path / "package.whl"
+
+    with pytest.raises(module.BootstrapRefusal, match=message):
+        module._download_verified(
+            destination,
+            url="https://files.pythonhosted.org/package.whl",
+            sha256=_sha(payload),
+            size=len(payload) - 1,
+        )
+
+    assert not destination.exists()
+    assert not destination.with_name(".package.whl.partial").exists()
+
+
 def test_verified_download_refuses_redirect_outside_allowlist(
     monkeypatch, tmp_path
 ) -> None:
@@ -728,3 +1002,55 @@ def test_verified_download_refuses_redirect_outside_allowlist(
             size=1,
         )
     assert not destination.exists()
+
+
+def test_execute_and_upload_holds_cache_lock_through_readback(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    output = tmp_path / "run-output"
+    output.mkdir()
+    (output / "libero-smoke.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(module, "DEFAULT_MANIFEST", Path(args.manifest))
+    monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
+    monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
+    monkeypatch.setattr(module, "_run_output_root", lambda _run_id: output)
+    monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-lock-test-0001")
+    monkeypatch.setenv("BYOF_SMOKE_ARTIFACT_NAME", "libero-smoke.json")
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", args.decision_sha256
+    )
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        assert command == [
+            "sudo",
+            "--user=npa-libero-exec",
+            "/opt/npa/libero/runtime-bootstrap.py",
+            "execute",
+        ]
+        assert "env" not in kwargs
+        return Completed()
+
+    lock_path = Path(args.cache_root) / ".bootstrap.lock"
+
+    def fake_upload(smoke_exit_code):
+        assert smoke_exit_code == 0
+        with lock_path.open("rb") as competing:
+            with pytest.raises(BlockingIOError):
+                module.fcntl.flock(
+                    competing,
+                    module.fcntl.LOCK_EX | module.fcntl.LOCK_NB,
+                )
+        return {"status": "verified"}
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "upload_outputs", fake_upload)
+
+    assert module.execute_and_upload() == 0
+    assert (output / "solution_smoke_stdout.log").is_file()
+    assert (output / "solution_smoke_stderr.log").is_file()

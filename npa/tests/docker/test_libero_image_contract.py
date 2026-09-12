@@ -37,6 +37,17 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert 'org.nebius.npa.validation-status="quarantined-unvalidated"' in text
     assert "USER ubuntu" in text
     assert "useradd --no-log-init --uid 1000" in text
+    assert "groupadd --gid 1001 npa-libero-exec" in text
+    assert "useradd --no-log-init --uid 1001 --gid npa-libero-exec" in text
+    assert "ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC" in text
+    assert "NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute" in text
+    assert "execute-python" not in text
+    for credential in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ):
+        assert credential not in text
     assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH" in text
     assert "/usr/local/bin/ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub" in text
@@ -45,6 +56,8 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     ) in text
     assert "/usr/sbin/sshd" not in text
     assert "NOPASSWD:ALL" not in text.replace(" ", "")
+    assert "PYTHONPATH" not in text
+    assert "LD_PRELOAD" not in text
     assert "apt-get upgrade" not in text
     assert "ARG SOURCE_DATE_EPOCH" in text
     assert "case \"${SOURCE_DATE_EPOCH}\" in ''|*[!0-9]*) exit 64" in text
@@ -238,6 +251,11 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         }
         for item in manifest["runtime_artifacts"]
     )
+    assert sum("size_bytes" not in item for item in manifest["runtime_artifacts"]) == 135
+    assert sum(
+        not str(item.get("license_expression") or "").strip()
+        for item in manifest["runtime_artifacts"]
+    ) == 65
     lines = [
         line
         for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
@@ -291,6 +309,8 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert text.count("--exported-rootfs") == 2
     assert text.count("--expected-image-inventory-sha256") == 2
     assert text.count("--expected-config-digest") == 2
+    assert text.count("--expected-canonical-build-metadata-sha256") == 2
+    assert text.count("--expected-base-provenance-sha256") == 2
     assert text.count("--image-inventory-output") == 2
     assert text.count("docker export --output") >= 2
     assert (
@@ -305,5 +325,39 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
-    assert "manager-accepted private image inventory is required" in text
-    assert "manager-accepted private config digest is required" in text
+    assert "libero_accepted_image_manifest" in text
+    assert "checked-in acceptance development SHA does not match" in text
+    assert "libero_publication_lineage_values" in text
+    assert 'crane tag "$LIBERO_ACCEPTED_CANDIDATE_IMAGE"' in text
+    assert 'test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"' in text
+    assert "Revalidate accepted LIBERO repository and OCI lineage" in text
+    assert "LIBERO_ACCEPTED_ATTESTATION_LAYERS" in text
+    assert "libero-final-attestation-manifest.json" in text
+    assert "LIBERO_ACCEPTED_PUBLICATION_BUNDLE_SHA256" in text
+    assert "LIBERO_ACCEPTED_INFRASTRUCTURE_BUNDLE_SHA256" in text
+    assert "inputs.libero_private_image_inventory_sha256" not in text
+    assert "inputs.libero_private_config_digest" not in text
+    assert (
+        "LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: "
+        "${{ matrix.libero_private_image_inventory_sha256 }}"
+    ) in text
+    assert (
+        "LIBERO_PRIVATE_CONFIG_DIGEST: "
+        "${{ matrix.libero_private_config_digest }}"
+    ) in text
+    assert 'version_count="$(jq \'length\' "$versions")"' in text
+    assert "Private destination contains image or referrer versions" in text
+    assert "Private destination is genuinely empty" in text
+    assert "exactly the accepted untagged OCI graph" in text
+    assert "tagged_count=" not in text
+    assert "public-image-${{ inputs.target" in text
+    assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
+    final_inventory = text.index("libero-final-package-versions.json")
+    visibility_change = text.index(
+        'gh api --method PATCH "$package_api" -f visibility=public',
+        final_inventory,
+    )
+    assert final_inventory < visibility_change
+    assert "libero-public-package-versions.json" in text
+    assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
+    assert "Deleting the whole still-private package removes" in text

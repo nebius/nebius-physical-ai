@@ -44,6 +44,7 @@ RUNTIME_MANIFEST = (
     / "libero"
     / "runtime-manifest.json"
 )
+MAX_UNCOMPRESSED_ARCHIVE_BYTES = 64 * 1024 * 1024 * 1024
 
 FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -186,7 +187,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "eee8a9bd9e89019e8f0f913c60eff31370dce1685e016ccd6fbb5e99c83772f8"
+        "a156038bce46f93c94d62ec083417e020847d3ccdbe777fec41df91a9c11d42b"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
@@ -331,6 +332,50 @@ def _metadata_findings(
     return findings
 
 
+def canonical_build_metadata_bytes(metadata: dict[str, Any]) -> bytes:
+    """Return the reproducible Buildx identity used by manager acceptance.
+
+    Buildx emits runner/session fields whose raw JSON is intentionally unstable.
+    The security-relevant identity is the scanned config plus the complete,
+    canonically ordered provenance material set.
+    """
+
+    provenance = metadata.get("buildx.build.provenance")
+    materials = provenance.get("materials") if isinstance(provenance, dict) else None
+    if not isinstance(materials, list) or not materials:
+        raise RuntimeError("Buildx metadata has no structured provenance materials")
+    canonical_materials = []
+    for material in materials:
+        if not isinstance(material, dict) or set(material) != {"uri", "digest"}:
+            raise RuntimeError("Buildx provenance material schema is not closed")
+        uri = material.get("uri")
+        digests = material.get("digest")
+        if (
+            not isinstance(uri, str)
+            or not uri
+            or not isinstance(digests, dict)
+            or not digests
+            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in digests.items())
+        ):
+            raise RuntimeError("Buildx provenance material identity is invalid")
+        canonical_materials.append({"uri": uri, "digest": dict(sorted(digests.items()))})
+    canonical_materials.sort(
+        key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"))
+    )
+    config_digest = metadata.get("containerimage.config.digest")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", str(config_digest or "")) is None:
+        raise RuntimeError("Buildx metadata has no immutable config digest")
+    return json.dumps(
+        {
+            "schema": "npa.libero.canonical-build-metadata.v1",
+            "config_digest": config_digest,
+            "materials": canonical_materials,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+
 def _runtime_payload_hashes() -> frozenset[str]:
     payload = RUNTIME_MANIFEST.read_bytes()
     if hashlib.sha256(payload).hexdigest() != RUNTIME_MANIFEST_SHA256:
@@ -443,21 +488,33 @@ def _normalized_tar_path(name: str) -> str:
 
 
 def _uncompressed_tar_bytes(path: Path) -> bytes:
+    if path.stat().st_size > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
+        raise RuntimeError("compressed archive exceeds the scanner size budget")
     payload = path.read_bytes()
+    stream: Any
     if payload.startswith(b"\x1f\x8b"):
-        return gzip.decompress(payload)
-    if payload.startswith(b"BZh"):
-        return bz2.decompress(payload)
-    if payload.startswith(b"\xfd7zXZ\x00"):
-        return lzma.decompress(payload)
-    if payload.startswith(b"\x28\xb5\x2f\xfd"):
+        stream = gzip.GzipFile(fileobj=io.BytesIO(payload))
+    elif payload.startswith(b"BZh"):
+        stream = bz2.BZ2File(io.BytesIO(payload))
+    elif payload.startswith(b"\xfd7zXZ\x00"):
+        stream = lzma.LZMAFile(io.BytesIO(payload))
+    elif payload.startswith(b"\x28\xb5\x2f\xfd"):
         if walker.zstd is None:
             raise RuntimeError("zstd archive cannot be accounted without zstandard")
-        with walker.zstd.ZstdDecompressor().stream_reader(
-            io.BytesIO(payload)
-        ) as reader:
-            return reader.read()
-    return payload
+        stream = walker.zstd.ZstdDecompressor().stream_reader(io.BytesIO(payload))
+    else:
+        return payload
+    try:
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            if total > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
+                raise RuntimeError("uncompressed archive exceeds the scanner size budget")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        stream.close()
 
 
 def _archive_records(
@@ -826,6 +883,44 @@ def _private_stage_identity_findings(
     return findings
 
 
+def _accepted_lineage_findings(
+    build_metadata: dict[str, Any],
+    base_provenance_bytes: bytes,
+    expected_canonical_build_metadata_sha256: str,
+    expected_base_provenance_sha256: str,
+) -> list[walker.Finding]:
+    findings: list[walker.Finding] = []
+    try:
+        canonical_metadata = canonical_build_metadata_bytes(build_metadata)
+    except RuntimeError as exc:
+        findings.append(
+            walker.Finding(
+                "accepted_build_lineage", "<buildx-metadata>", str(exc)
+            )
+        )
+        canonical_metadata = b""
+    for kind, label, payload, expected in (
+        (
+            "accepted_build_lineage",
+            "<buildx-metadata>",
+            canonical_metadata,
+            expected_canonical_build_metadata_sha256,
+        ),
+        (
+            "accepted_base_lineage",
+            "<published-base-provenance>",
+            base_provenance_bytes,
+            expected_base_provenance_sha256,
+        ),
+    ):
+        observed = hashlib.sha256(payload).hexdigest()
+        if re.fullmatch(r"[0-9a-f]{64}", expected or "") is None or observed != expected:
+            findings.append(
+                walker.Finding(kind, label, "bytes differ from checked-in acceptance")
+            )
+    return findings
+
+
 def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
     records, findings, _identity = _archive_records(path)
     with tarfile.open(path, "r:*") as archive:
@@ -1178,6 +1273,8 @@ def scan_tars(
     observed_config_digest: str = "",
     expected_image_inventory_sha256: str,
     expected_config_digest: str,
+    expected_canonical_build_metadata_sha256: str | None = None,
+    expected_base_provenance_sha256: str | None = None,
     inventory_output: Path | None = None,
     evidence: dict[str, object] | None = None,
 ) -> list[walker.Finding]:
@@ -1212,6 +1309,17 @@ def scan_tars(
             image_inventory_rootfs_entry_count=inventory.entry_count,
             observed_config_digest=observed_config_digest,
         )
+    if expected_canonical_build_metadata_sha256 is None:
+        try:
+            canonical_metadata = canonical_build_metadata_bytes(build_metadata)
+        except RuntimeError:
+            expected_canonical_build_metadata_sha256 = ""
+        else:
+            expected_canonical_build_metadata_sha256 = hashlib.sha256(
+                canonical_metadata
+            ).hexdigest()
+    if expected_base_provenance_sha256 is None:
+        expected_base_provenance_sha256 = hashlib.sha256(base_provenance_bytes).hexdigest()
     return [
         *findings,
         *_renamed_payload_content_findings(layer_tars, config),
@@ -1220,6 +1328,12 @@ def scan_tars(
         *_config_findings(config),
         *_metadata_findings(build_metadata, observed_config_digest),
         *_base_provenance_findings(base_provenance_bytes, base_provenance),
+        *_accepted_lineage_findings(
+            build_metadata,
+            base_provenance_bytes,
+            expected_canonical_build_metadata_sha256,
+            expected_base_provenance_sha256,
+        ),
         *_private_stage_identity_findings(
             inventory,
             observed_config_digest,
@@ -1239,6 +1353,8 @@ def scan(
     observed_config_digest: str,
     expected_image_inventory_sha256: str,
     expected_config_digest: str,
+    expected_canonical_build_metadata_sha256: str | None = None,
+    expected_base_provenance_sha256: str | None = None,
 ) -> list[walker.Finding]:
     return scan_tars(
         [rootfs_tar],
@@ -1249,6 +1365,10 @@ def scan(
         observed_config_digest=observed_config_digest,
         expected_image_inventory_sha256=expected_image_inventory_sha256,
         expected_config_digest=expected_config_digest,
+        expected_canonical_build_metadata_sha256=(
+            expected_canonical_build_metadata_sha256
+        ),
+        expected_base_provenance_sha256=expected_base_provenance_sha256,
     )
 
 
@@ -1263,6 +1383,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-provenance", type=Path, required=True)
     parser.add_argument("--expected-image-inventory-sha256", required=True)
     parser.add_argument("--expected-config-digest", required=True)
+    parser.add_argument("--expected-canonical-build-metadata-sha256", required=True)
+    parser.add_argument("--expected-base-provenance-sha256", required=True)
     parser.add_argument("--image-inventory-output", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -1273,7 +1395,7 @@ def main(argv: list[str] | None = None) -> int:
     if bool(args.exported_rootfs) != bool(args.docker_save):
         parser.error("--docker-save and --exported-rootfs are required together")
     try:
-        metadata = json.loads(args.build_metadata.read_text(encoding="utf-8"))
+        metadata = json.loads(args.build_metadata.read_bytes())
         base_provenance_bytes = args.base_provenance.read_bytes()
         base_provenance = json.loads(base_provenance_bytes)
         with tempfile.TemporaryDirectory(prefix="npa-libero-byte-scan-") as temporary:
@@ -1316,6 +1438,10 @@ def main(argv: list[str] | None = None) -> int:
                 observed_config_digest=observed_config_digest,
                 expected_image_inventory_sha256=(args.expected_image_inventory_sha256),
                 expected_config_digest=args.expected_config_digest,
+                expected_canonical_build_metadata_sha256=(
+                    args.expected_canonical_build_metadata_sha256
+                ),
+                expected_base_provenance_sha256=args.expected_base_provenance_sha256,
                 inventory_output=args.image_inventory_output,
                 evidence=evidence,
             )
