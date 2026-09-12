@@ -45,7 +45,8 @@ Inputs and outputs may be local or operator-owned S3 paths. The simulator
 subprocess receives no cloud, model, or HTTP admission credentials. Each result
 contains raw episode JSONL, upstream static HTML, the credential-isolated simulator
 log, and `result.json` with aggregate metrics, GPU identity, byte sizes, and hashes.
-`--record-video` additionally fails unless upstream writes a non-empty MP4.
+`--record-video` additionally fails unless upstream writes an independently probed,
+decodable MP4 with valid dimensions and positive duration.
 
 The Python SDK is the same implementation:
 
@@ -73,7 +74,7 @@ pass the standard S3 credentials through workflow secret handling. No model
 credential is required for the zero-action baseline.
 
 ```bash
-npa workbench health preflight --checks nebius,storage
+npa workbench health preflight --checks nebius,s3
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b200.yaml
 npa workbench workflow plan-spec workflows/testing/isaac-arena-evaluation-b200.yaml
 ```
