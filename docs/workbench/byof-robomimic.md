@@ -115,8 +115,10 @@ distribution and downstream service use. The runner therefore retains a Phase A
 refusal for the exact registered source revision and for every recognized
 robomimic label, repository, image, capability, and smoke identity. Generic BYOF
 remains an operator-controlled arbitrary-source facility, not a content-aware
-license firewall; it must never be used to relabel equivalent bytes around this
-decision.
+license firewall. When the manager eventually records an accepted immutable
+image, the runner and workflow gate also recognize that digest under a renamed
+repository reference. This is defense in depth, not permission to relabel
+equivalent unrecognized bytes around the rights decision.
 
 Official sources for the later human/vendor decision include the NVIDIA CUDA
 Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch

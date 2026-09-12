@@ -45,6 +45,7 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
             "opt/robomimic-deps/diffusers/models/transformers/transformer_2d.py": b"\n",
             "opt/robomimic-deps/numpy/lib/tests/data/python3.npy": b"fixture",
             "opt/robomimic-deps/numpy/core/tests/data/py3-objarr.npz": b"fixture",
+            "opt/robomimic-deps/site-packages/distutils-precedence.pth": b"import _distutils_hack",
         },
     )
     assert scanner.scan(layer, {"history": [{"created_by": "COPY source"}]}) == []
@@ -129,6 +130,7 @@ def test_deleted_later_payload_still_fails_layer_scan(tmp_path: Path) -> None:
         "/bin/sh -c huggingface-cli download robomimic/robomimic_datasets",
         "ENV NPA_ROBOMIMIC_ACCEPT_EULA=YES",
         "/bin/sh -c #(nop)  ENV NPA_ROBOMIMIC_ACCEPT_EULA=YES",
+        "ARG NPA_ROBOMIMIC_ACCEPT_EULA",
     ],
 )
 def test_forbidden_build_history_is_detected(tmp_path: Path, history: str) -> None:
@@ -136,11 +138,17 @@ def test_forbidden_build_history_is_detected(tmp_path: Path, history: str) -> No
     assert scanner.scan(layer, {"history": [{"created_by": history}]})
 
 
-def test_oci_config_env_rejects_invented_acceptance_proxy(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "env",
+    ["NPA_ROBOMIMIC_ACCEPT_EULA=YES", "NPA_ROBOMIMIC_ACCEPT_EULA=", "CUDA_ACCEPT"],
+)
+def test_oci_config_env_rejects_invented_acceptance_proxy(
+    tmp_path: Path, env: str
+) -> None:
     layer = _tar(tmp_path / "empty.tar", {"neutral": b"ok"})
     findings = scanner.scan(
         layer,
-        {"config": {"Env": ["NPA_ROBOMIMIC_ACCEPT_EULA=YES"]}},
+        {"config": {"Env": [env]}},
     )
 
     assert {finding.kind for finding in findings} == {"invented_acceptance_proxy"}
