@@ -90,8 +90,9 @@ def test_logs_preserve_explicit_connection_without_isolation(
 @pytest.mark.parametrize("stage", ["rollout", "99"])
 @pytest.mark.parametrize("split_streams", [False, True])
 @pytest.mark.parametrize("valid_ids", ["0", "0-7"])
+@pytest.mark.parametrize("banners", [False, True])
 def test_logs_propagate_remote_task_selection_failure(
-    tmp_path: Path, monkeypatch, stage: str, split_streams: bool, valid_ids: str,
+    tmp_path: Path, monkeypatch, stage: str, split_streams: bool, valid_ids: str, banners: bool,
 ) -> None:
     monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
     task = int(stage) if stage.isdecimal() else stage
@@ -99,6 +100,9 @@ def test_logs_propagate_remote_task_selection_failure(
     trailer = "command terminated with exit code 102\n"
     stdout = "\x1b[31m" + diagnostic + "\x1b[0m" + ("" if split_streams else trailer)
     stderr = trailer if split_streams else ""
+    if banners:
+        stdout = "SkyPilot: fetching task logs\n" + stdout
+        stderr += "SkyPilot: log request finished\n"
     executable = tmp_path / "sky"
     _write_sky(
         executable,
@@ -116,8 +120,8 @@ def test_logs_propagate_remote_task_selection_failure(
     "No task found matching 'rollout' in job 62. Valid task IDs are 0.\ncommand terminated with exit code 102\n",
     "No task found matching 'other' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 102\n",
     "(worker pid=1) No task found matching 'rollout' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 102\n",
-    "application diagnostic follows\nNo task found matching 'rollout' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 102\n",
-    "No task found matching 'rollout' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 102\napplication continued\n",
+    "application diagnostic: No task found matching 'rollout' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 102\n",
+    "No task found matching 'rollout' in job 61. Valid task IDs are 0.\ncommand terminated with exit code 1024\n",
     "Traceback: application FAILED\n",
 ])
 def test_logs_do_not_reclassify_application_diagnostics(

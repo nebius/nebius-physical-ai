@@ -518,7 +518,7 @@ def workflow_state_error_is_missing(exc: BaseException) -> bool:
 def _task_selection_failed(
     result: subprocess.CompletedProcess[str], *, job_id: str, stage: str,
 ) -> bool:
-    """Recognize SkyPilot's complete task-not-found response for this request."""
+    """Recognize a complete task-not-found diagnostic amid SkyPilot log banners."""
     if result.returncode != 0 or not stage:
         return False
     task = int(stage) if stage.isdecimal() else stage
@@ -526,10 +526,10 @@ def _task_selection_failed(
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     output = re.sub(r"\x1b\[[0-9;]*m", "", output).strip()
     pattern = (
-        re.escape(diagnostic)
-        + r"0(?:-[1-9][0-9]*)?\.\s*\ncommand terminated with exit code 102"
+        "^" + re.escape(diagnostic)
+        + r"0(?:-[1-9][0-9]*)?\.\s*\ncommand terminated with exit code 102[ \t\r]*$"
     )
-    return re.fullmatch(pattern, output) is not None
+    return re.search(pattern, output, flags=re.MULTILINE) is not None
 
 
 def tail_live_job_logs(

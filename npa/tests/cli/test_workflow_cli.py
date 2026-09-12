@@ -1097,8 +1097,10 @@ def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
         "attempt": 1, "status": "running", "job_id": "42", "tasks": [],
     }])
     diagnostic = (
+        "SkyPilot: fetching task logs\n"
         "No task found matching 'rollout' in job 42. Valid task IDs are 0-1.\n"
         "command terminated with exit code 102\n"
+        "SkyPilot: log request finished\n"
     )
     executable = tmp_path / "sky"
     executable.write_text(

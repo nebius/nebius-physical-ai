@@ -601,13 +601,13 @@ def test_stop_recovers_process_created_before_pid_was_saved(local_runtime):
 
 
 @pytest.fixture
-def service_account_runtime(local_runtime):
+def service_account_runtime(local_runtime, request):
     import yaml
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     home = Path(local_runtime["environment"]["HOME"])
-    provider = home / ".nebius"
+    provider = home / getattr(request, "param", ".nebius")
     provider.mkdir()
     key = home / "selected-private.pem"
     key.write_bytes(rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
@@ -625,6 +625,7 @@ def service_account_runtime(local_runtime):
 
 
 @pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+@pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
 def test_service_account_cache_refresh_creation_pruning_preserves_owned_pid(service_account_runtime, initial_cache):
     runtime, provider, key, cache = service_account_runtime
     if initial_cache == "absent":
@@ -658,6 +659,7 @@ def test_service_account_private_key_replacement_rejects_owned_api(service_accou
 
 
 @pytest.mark.parametrize("change", ["account", "public-key", "endpoint", "key-source", "missing-key", "invalid-key"])
+@pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
 def test_service_account_durable_auth_change_cannot_adopt(service_account_runtime, change):
     import yaml
 
@@ -864,6 +866,31 @@ def test_designated_provider_cache_alias_uses_same_durable_identity(service_acco
     assert before[str(alias / "credentials.yaml")] == before[str(cache)]
     cache.write_text("tokens: {}\n")
     assert api._identity_files(runtime["environment"]) == before
+
+
+@pytest.mark.parametrize("service_account_runtime", ["custom-nebius"], indirect=True)
+def test_custom_provider_does_not_relax_an_unselected_default_cache(service_account_runtime):
+    runtime, _, _, selected_cache = service_account_runtime
+    default_cache = Path(runtime["environment"]["HOME"]) / ".nebius/credentials.yaml"
+    default_cache.parent.mkdir()
+    default_cache.write_bytes(selected_cache.read_bytes())
+    before = api._identity_files(runtime["environment"])
+
+    selected_cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
+    default_cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_exec_override_of_provider_directory_keeps_cache_byte_strict(service_account_runtime):
+    runtime, provider, _, cache = service_account_runtime
+    _select_nebius_exec(runtime, ["--config", str(provider / "config.yaml")], [
+        {"name": "NEBIUS_CONFIG_DIR", "value": str(provider / "other")},
+    ])
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
 
 
 def test_unreadable_selected_key_fails_without_credential_diagnostics(service_account_runtime, monkeypatch):

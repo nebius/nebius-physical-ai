@@ -222,7 +222,11 @@ def _nebius_profile_selection(config_path, profile, environment):
             str(Path(selected["private-key-file-path"])))
 
 
-def _service_account_key_binding(selection, home):
+def _nebius_config_dir(environment, home):
+    return Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius")
+
+
+def _service_account_key_binding(selection, provider_dir):
     from cryptography.exceptions import UnsupportedAlgorithm
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -237,34 +241,38 @@ def _service_account_key_binding(selection, home):
     key_hash = hashlib.sha256(key_bytes).hexdigest()
     binding = json.dumps([config_name, config_hash, profile, account, public_key, key_name, key_hash])
     return {Path(config_name): config_hash, Path(key_name): key_hash,
-            home / ".nebius/credentials.yaml": "derived-nebius-sa-cache-v1:" + hashlib.sha256(binding.encode()).hexdigest()}
+            provider_dir / "credentials.yaml": "derived-nebius-sa-cache-v1:" + hashlib.sha256(binding.encode()).hexdigest()}
 
 
 def _nebius_service_account_identity(environment: Mapping[str, str], home: Path, execs: list[dict]) -> dict[Path, str]:
     """Bind one supported CLI RSA profile and its durable key; never fetch tokens.
 
     CLI --config/--profile override exec environment and default selection.
-    NEBIUS_CONFIG_DIR is not a documented CLI config selector. Relative paths,
-    extra auth sources, and multiple effective selections remain byte-strict.
+    NEBIUS_CONFIG_DIR selects the default profile directory and token cache.
+    Relative paths, extra auth sources, and multiple effective selections remain
+    byte-strict, including exec overrides selecting a different cache directory.
     """
     selections = set()
+    provider_dir = _nebius_config_dir(environment, home)
     alternate_auth = ("NEBIUS_ENDPOINT", "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
                       "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE")
     for spec in execs or [{}]:
         env = _nebius_exec_environment(environment, spec)
         if env is None or any(env.get(key) for key in alternate_auth):
             return {}
+        if _nebius_config_dir(env, home) != provider_dir:
+            return {}
         selectors = _nebius_exec_selectors(spec)
         if selectors is None:
             return {}
-        config_path = Path(selectors.get("config", home / ".nebius/config.yaml"))
+        config_path = Path(selectors.get("config", provider_dir / "config.yaml"))
         selected = _nebius_profile_selection(config_path, selectors.get("profile"), env)
         if selected is None:
             return {}
         selections.add(selected)
     if len(selections) != 1:
         return {}
-    return _service_account_key_binding(selections.pop(), home)
+    return _service_account_key_binding(selections.pop(), provider_dir)
 
 
 def _derived_service_account_cache(contents: bytes | None) -> bool:
@@ -292,7 +300,7 @@ def _derived_service_account_cache(contents: bytes | None) -> bool:
 def _configured_identity_paths(environment, home, kube_paths, config):
     paths = [*kube_paths, home / ".aws" / "config", home / ".aws" / "credentials"]
     filenames = ("config.yaml", "credentials.yaml", "credentials.json", "NEBIUS_IAM_TOKEN.txt", "NEBIUS_TENANT_ID.txt", "NEBIUS_DOMAIN.txt")
-    provider_dirs = (home / ".nebius", Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius"))
+    provider_dirs = (home / ".nebius", _nebius_config_dir(environment, home))
     designated_caches = {directory / "credentials.yaml" for directory in provider_dirs}
     npa_dir = Path(environment.get("NPA_CONFIG_DIR") or home / ".npa")
     protected = [npa_dir / name for name in filenames]
@@ -396,7 +404,8 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     protected.extend(referenced)
     try:
         durable = _nebius_service_account_identity(environment, home, execs)
-        return _hash_identity_paths(paths, protected, designated_caches, durable, home / ".nebius/credentials.yaml")
+        cache = _nebius_config_dir(environment, home) / "credentials.yaml"
+        return _hash_identity_paths(paths, protected, designated_caches, durable, cache)
     except OSError:
         raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
 
