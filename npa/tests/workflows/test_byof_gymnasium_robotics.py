@@ -76,6 +76,10 @@ def test_runtime_and_neutral_baked_closures_stay_incomplete() -> None:
         source["resolved_python_artifact_count"]
         < source["expected_python_distribution_count"]
     )
+    assert source["expected_python_distribution_count"] == 19
+    runtime_requirements = (IMAGE_ROOT / "requirements.in").read_text()
+    assert "boto3" not in runtime_requirements
+    assert "botocore" not in runtime_requirements
 
 
 def test_directly_loaded_shadow_asset_closure_is_exact() -> None:
