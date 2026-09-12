@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -211,7 +212,11 @@ def _install_fake_materializers(
     ) -> None:
         python = root / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
-        python.write_text("#!/bin/sh\n", encoding="utf-8")
+        python.write_text(
+            '#!/bin/sh\nset -eu\ntest -f "$LIBERO_CONFIG_PATH/config.yaml"\n',
+            encoding="utf-8",
+        )
+        python.chmod(0o755)
 
     def fetch_inputs(root: Path, manifest: dict[str, object]) -> None:
         demo = manifest["demonstration"]
@@ -372,6 +377,35 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
         path.is_symlink() or path.stat().st_mode & 0o222 == 0
         for path in (final, *final.rglob("*"))
     )
+
+
+def test_smoke_runs_against_sealed_cache_without_writing_into_it(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    final = Path(args.cache_root) / fixture["manifest_sha"]
+    output = Path(args.output_dir)
+    output.mkdir()
+    before = module._inventory_entries(final)
+    environment = {
+        "LIBERO_RUNTIME_ROOT": str(final),
+        "NPA_SMOKE_OUTPUT_DIR": str(output),
+    }
+
+    completed = subprocess.run(
+        [ROOT / "npa/docker/workbench/libero/smoke.sh"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert module._inventory_entries(final) == before
+    assert not (final / "libero-config").exists()
+    assert not (output / ".libero-config").exists()
 
 
 def test_verified_warm_cache_reuse_performs_no_network_fetch(
