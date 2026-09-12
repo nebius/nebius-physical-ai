@@ -425,7 +425,11 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
 
     assert binding.evidence == expected_evidence
-    assert binding.access_state == access_state
+    assert binding.access_state == module.replace(
+        access_state,
+        execution_kubeconfig=execution_kubeconfig,
+        execution_context="execution-context",
+    )
     expected_envs = {
         f"NPA_LIBERO_EXPECTED_{key.upper()}": value
         for key, value in expected_evidence.items()
@@ -779,6 +783,86 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
     with pytest.raises(RuntimeError, match="may not receive ClusterRoleBindings"):
         module._libero_namespaced_inventory(
             Path("/private/payload-kubeconfig"), "payload-context", namespace
+        )
+
+
+def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> None:
+    module = _load_module()
+    namespace = "isolated-namespace"
+
+    def metadata(name: str) -> dict[str, str]:
+        return {
+            "name": name,
+            "namespace": namespace,
+            "uid": f"uid-{name}",
+            "creationTimestamp": "2026-09-12T00:00:00Z",
+        }
+
+    objects = {
+        "skypilot-service-account": {
+            "metadata": metadata("skypilot-service-account")
+        },
+        "skypilot-service-account-role": {
+            "metadata": metadata("skypilot-service-account-role"),
+            "rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}],
+        },
+        "skypilot-service-account-role-binding": {
+            "metadata": metadata("skypilot-service-account-role-binding"),
+            "subjects": [{"kind": "ServiceAccount", "name": "skypilot-service-account"}],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": "skypilot-service-account-role",
+            },
+        },
+    }
+
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "clusterrolebindings":
+            return {"items": []}
+        return objects[arguments[-1]]
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    evidence = module._libero_controller_rbac_evidence(
+        Path("/private/execution-kubeconfig"), "execution-context", namespace
+    )
+    assert set(evidence) == {
+        "controller_service_account_uid_sha256",
+        "controller_role_uid_sha256",
+        "controller_role_binding_uid_sha256",
+        "controller_rbac_spec_sha256",
+    }
+
+    objects["skypilot-service-account-role-binding"]["roleRef"]["kind"] = (
+        "ClusterRole"
+    )
+    with pytest.raises(RuntimeError, match="RoleBinding differs"):
+        module._libero_controller_rbac_evidence(
+            Path("/private/execution-kubeconfig"), "execution-context", namespace
+        )
+    objects["skypilot-service-account-role-binding"]["roleRef"]["kind"] = "Role"
+
+    def cluster_bound(arguments, **kwargs):
+        if arguments[-1] != "clusterrolebindings":
+            return kubectl_json(arguments, **kwargs)
+        return {
+            "items": [
+                {
+                    "subjects": [
+                        {
+                            "kind": "ServiceAccount",
+                            "name": "skypilot-service-account",
+                            "namespace": namespace,
+                        }
+                    ]
+                }
+            ]
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", cluster_bound)
+    with pytest.raises(RuntimeError, match="may not receive a ClusterRoleBinding"):
+        module._libero_controller_rbac_evidence(
+            Path("/private/execution-kubeconfig"), "execution-context", namespace
         )
 
 

@@ -35,7 +35,7 @@
     "report_sha256": ""
   },
   "acceptance": {
-    "schema": "npa.libero.qualification-acceptance.v2",
+    "schema": "npa.libero.qualification-acceptance.v3",
     "status": "not_accepted",
     "acceptance_id": "",
     "accepted_at": "",
@@ -71,6 +71,11 @@
     "runtime_manifest_sha256": "2db4ca50fa3c324bf60eeb6a4f9d9ba9f36fc377a958ef3458e1bf97a51b83ea",
     "runtime_use_decision_sha256": "",
     "infrastructure_bundle_sha256": "",
+    "manager_signature": {
+      "algorithm": "ed25519",
+      "public_key_sha256": "",
+      "signature_b64": ""
+    },
     "infrastructure": {
       "run_id": "",
       "allowed_node_sha256": "",

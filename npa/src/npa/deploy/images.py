@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from importlib import resources
@@ -12,6 +14,9 @@ from pathlib import Path
 import re
 import shlex
 from typing import Any
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from npa.workbench.gpu_classes import DATACENTER_HEADLESS, classify_gpu_target
 
@@ -40,6 +45,9 @@ LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
+LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_ENV = (
+    "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64"
+)
 LIBERO_RUNTIME_DECISION_BOUNDARIES = frozenset(
     {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
 )
@@ -75,6 +83,8 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/src/npa/workbench/gpu_classes.py",
     "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
     "npa/tests/deploy/test_public_publish.py",
+    "npa/tests/docker/test_libero_image_contract.py",
+    "npa/tests/docker/test_libero_image_payload_scan.py",
     "npa/tests/docker/test_libero_runtime_bootstrap.py",
     "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
     "npa/tests/unit/test_execution_preflight.py",
@@ -435,6 +445,57 @@ def _canonical_sha256(payload: Any) -> str:
     ).hexdigest()
 
 
+def libero_acceptance_signature_payload(payload: dict[str, Any]) -> bytes:
+    """Return the canonical bytes signed by the external LIBERO manager."""
+
+    unsigned = json.loads(json.dumps(payload))
+    acceptance = unsigned.get("acceptance")
+    if not isinstance(acceptance, dict):
+        raise RuntimeError("LIBERO acceptance signature requires a manifest record")
+    acceptance.pop("manager_signature", None)
+    return json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":")
+    ).encode()
+
+
+def _verify_libero_manager_signature(payload: dict[str, Any]) -> None:
+    acceptance = payload["acceptance"]
+    signature_record = acceptance.get("manager_signature")
+    if not isinstance(signature_record, dict) or set(signature_record) != {
+        "algorithm",
+        "public_key_sha256",
+        "signature_b64",
+    }:
+        raise RuntimeError("LIBERO acceptance requires a closed manager signature")
+    if signature_record.get("algorithm") != "ed25519":
+        raise RuntimeError("LIBERO acceptance requires an Ed25519 manager signature")
+    encoded_key = os.environ.get(
+        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_ENV, ""
+    ).strip()
+    try:
+        public_key = base64.b64decode(encoded_key, validate=True)
+        signature = base64.b64decode(
+            str(signature_record.get("signature_b64") or ""), validate=True
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError(
+            "LIBERO manager signature material is unavailable or invalid"
+        ) from exc
+    if (
+        len(public_key) != 32
+        or len(signature) != 64
+        or hashlib.sha256(public_key).hexdigest()
+        != signature_record.get("public_key_sha256")
+    ):
+        raise RuntimeError("LIBERO acceptance manager trust root differs")
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature, libero_acceptance_signature_payload(payload)
+        )
+    except (ValueError, InvalidSignature) as exc:
+        raise RuntimeError("LIBERO acceptance manager signature is invalid") from exc
+
+
 def _repository_file_bundle_sha256(
     repository_root: Path,
     *,
@@ -593,10 +654,11 @@ def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "runtime_use_decision_sha256",
         "infrastructure_bundle_sha256",
         "infrastructure",
+        "manager_signature",
     }
     require(set(acceptance) == expected_keys, "closed acceptance schema")
     require(
-        acceptance.get("schema") == "npa.libero.qualification-acceptance.v2",
+        acceptance.get("schema") == "npa.libero.qualification-acceptance.v3",
         "acceptance schema",
     )
     require(acceptance.get("status") == "accepted", "accepted status")
@@ -821,6 +883,7 @@ def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         and expires_at - accepted_at <= timedelta(days=7),
         "unexpired acceptance window",
     )
+    _verify_libero_manager_signature(payload)
     return acceptance
 
 

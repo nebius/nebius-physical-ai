@@ -33,6 +33,14 @@ class ExecutionPreflightError(RuntimeError):
 LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 SKYPILOT_ENGINE_SERVICE_ACCOUNT = "skypilot-service-account"
+LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+    "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+    "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+)
 
 
 @dataclass(frozen=True)
@@ -640,12 +648,57 @@ def preflight_skypilot_submission(
         "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
     }
+    if libero_submission:
+        verify_worker_environment(target, [*documents, dict(global_config or {})])
     for document in documents:
         env = document.setdefault("envs", {})
         for name, value in injected.items():
-            if value:
+            if value and (
+                not libero_submission
+                or name not in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+            ):
                 env[name] = value
-    verify_worker_environment(target, [*documents, dict(global_config or {})])
+        if libero_submission:
+            # Storage keys and the session token must reach a LIBERO task only
+            # through SkyPilot's redacted ``--secret`` channel.  Removing a
+            # legacy top-level declaration before persisting prepared YAML also
+            # prevents the payload's pods/get permission from reading literal
+            # credential values back from its own Pod specification.
+            for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+                env.pop(name, None)
+
+    if libero_submission:
+        def reject_inline_storage_secret(value: Any) -> None:
+            if isinstance(value, Mapping):
+                envs = value.get("envs")
+                if isinstance(envs, Mapping) and any(
+                    name in envs
+                    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+                ):
+                    raise ExecutionPreflightError(
+                        "worker_environment",
+                        "LIBERO storage credentials must use the redacted task secret channel",
+                    )
+                pod_env = value.get("env")
+                if isinstance(pod_env, list) and any(
+                    isinstance(entry, Mapping)
+                    and entry.get("name")
+                    in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+                    for entry in pod_env
+                ):
+                    raise ExecutionPreflightError(
+                        "worker_environment",
+                        "LIBERO pod configuration may not inline storage credentials",
+                    )
+                for child in value.values():
+                    reject_inline_storage_secret(child)
+            elif isinstance(value, list):
+                for child in value:
+                    reject_inline_storage_secret(child)
+
+        reject_inline_storage_secret([*documents, dict(global_config or {})])
+    else:
+        verify_worker_environment(target, [*documents, dict(global_config or {})])
     session_token = process_env.get("AWS_SESSION_TOKEN", "")
     output_authorization = process_env.get(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""

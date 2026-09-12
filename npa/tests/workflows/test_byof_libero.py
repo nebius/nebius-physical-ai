@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import json
 import shutil
@@ -11,10 +12,13 @@ from pathlib import Path
 
 import pytest
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from npa.deploy.images import (
     LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS,
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
+    libero_acceptance_signature_payload,
     libero_accepted_image_manifest,
     libero_build_input_bundle_sha256,
     libero_publication_enforcement_bundle_sha256,
@@ -115,10 +119,10 @@ def test_publication_workflow_binds_anonymous_tag_to_pushed_digest() -> None:
     anonymous = workflow[workflow.index('anonymous_config="$(mktemp -d)"') :]
 
     resolve = anonymous.index(
-        'anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE"'
+        'anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$anonymous_reference"'
     )
     readable = anonymous.index(
-        'DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE"'
+        'DOCKER_CONFIG="$anonymous_config" crane manifest "$anonymous_reference"'
     )
     compare = anonymous.index('test "$anonymous_digest" = "$DIGEST"')
     assert resolve < readable < compare
@@ -308,7 +312,9 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
         libero_accepted_image_manifest()
 
 
-def test_libero_acceptance_closes_candidate_publication_and_infrastructure() -> None:
+def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
+    monkeypatch,
+) -> None:
     manifest = json.loads(IMAGE_MANIFEST_PATH.read_text(encoding="utf-8"))
     now = datetime.now(timezone.utc)
     digest = "sha256:" + "1" * 64
@@ -427,6 +433,22 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure() -> 
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
+        base64.b64encode(public_key).decode("ascii"),
+    )
+    acceptance["manager_signature"] = {
+        "algorithm": "ed25519",
+        "public_key_sha256": hashlib.sha256(public_key).hexdigest(),
+        "signature_b64": base64.b64encode(
+            private_key.sign(libero_acceptance_signature_payload(manifest))
+        ).decode("ascii"),
+    }
 
     assert validate_libero_accepted_image_manifest(manifest) == acceptance
     lineage = libero_publication_lineage_values(
@@ -436,6 +458,29 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure() -> 
     assert lineage["platform_manifest_digest"] == acceptance[
         "platform_manifest_digest"
     ]
+
+    signature = acceptance["manager_signature"]["signature_b64"]
+    acceptance["manager_signature"]["signature_b64"] = base64.b64encode(
+        b"\0" * 64
+    ).decode("ascii")
+    with pytest.raises(RuntimeError, match="manager signature is invalid"):
+        validate_libero_accepted_image_manifest(manifest)
+    acceptance["manager_signature"]["signature_b64"] = signature
+
+    untrusted_key = Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
+        base64.b64encode(untrusted_key).decode("ascii"),
+    )
+    with pytest.raises(RuntimeError, match="manager trust root differs"):
+        validate_libero_accepted_image_manifest(manifest)
+    monkeypatch.setenv(
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
+        base64.b64encode(public_key).decode("ascii"),
+    )
 
     acceptance["candidate_image"] = (
         "ghcr.io/attacker/example/npa-libero@" + digest
