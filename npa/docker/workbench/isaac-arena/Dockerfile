@@ -21,6 +21,7 @@ LABEL npa.tool="isaac-arena" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_LIGHT_WORKBENCH_TOOL=isaac-arena \
     ISAAC_ARENA_VERSION=${ISAAC_ARENA_VERSION} \
     ISAAC_ARENA_REVISION=${ISAAC_ARENA_REVISION} \
     ISAAC_ARENA_ROOT=/opt/isaac-arena \
@@ -37,6 +38,7 @@ SHELL ["/bin/bash", "-lc"]
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY docker/workbench/isaac-arena/npa-cli-requirements.txt /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
@@ -72,6 +74,12 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && /opt/npa/sim/venv/bin/python -m py_compile \
       /opt/npa/src/npa/workbench/isaac_arena/runtime.py \
       /opt/npa/src/npa/cli/workbench/isaac_arena.py \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
+      --require-hashes -r /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt \
+    && env -u ACCEPT_EULA /usr/local/bin/npa workbench isaac-arena evaluate \
+      --output-path /tmp/npa-arena-build-probe --dry-run --output-format json \
+      | grep -q '"status": "dry_run"' \
+    && test ! -e /tmp/npa-arena-build-probe \
     && chown -R ubuntu:ubuntu /opt/isaac-arena /opt/npa/docker/workbench/isaac-arena \
     && install -d -m 0755 -o ubuntu -g ubuntu /workspace/isaac-arena
 

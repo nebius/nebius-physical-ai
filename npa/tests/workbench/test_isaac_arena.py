@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.sdk.workbench.isaac_arena import evaluate as sdk_evaluate
+from npa.cli.entry import _is_isaac_arena_request
 from npa.workbench.isaac_arena.runtime import (
     ARTIFACT_SCHEMA,
     ISAAC_ARENA_REVISION,
@@ -17,6 +18,13 @@ from npa.workbench.isaac_arena.runtime import (
     build_evaluation_argv,
     evaluate,
 )
+
+
+def test_lightweight_console_route_is_exact() -> None:
+    assert _is_isaac_arena_request(["workbench", "isaac-arena", "evaluate"])
+    assert _is_isaac_arena_request(["workbench", "isaac-arena", "terms"])
+    assert not _is_isaac_arena_request(["workbench", "isaac-lab"])
+    assert not _is_isaac_arena_request(["isaac-arena", "evaluate"])
 
 
 def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
