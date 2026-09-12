@@ -428,9 +428,17 @@ def test_sigv4_storage_request_uses_a_direct_tls_connection(
 
     monkeypatch.setattr(module.http.client, "HTTPSConnection", Connection)
 
+    object_url = module._s3_object_url(
+        "https://storage.example:8443",
+        "fixture-bucket",
+        "byof/libero-owned-run-0001/libero smoke.json",
+    )
+    assert object_url.endswith(
+        "/fixture-bucket/byof/libero-owned-run-0001/libero%20smoke.json"
+    )
     headers, body = module._sigv4_request(
         "GET",
-        "https://storage.example:8443/bucket/object",
+        object_url,
         extra_headers={"x-amz-checksum-mode": "ENABLED"},
     )
 
@@ -438,13 +446,19 @@ def test_sigv4_storage_request_uses_a_direct_tls_connection(
     assert headers == {"x-amz-checksum-sha256": "fixture-checksum"}
     assert observed["hostname"] == "storage.example"
     assert observed["port"] == 8443
-    assert observed["target"] == "/bucket/object"
+    assert observed["target"] == (
+        "/fixture-bucket/byof/libero-owned-run-0001/libero%20smoke.json"
+    )
     assert observed["body"] is None
     assert "authorization" in observed["headers"]
     assert observed["response_closed"] is True
     assert observed["connection_closed"] is True
     with pytest.raises(module.BootstrapRefusal, match="query-free HTTPS"):
         module._sigv4_request("GET", "https://user@storage.example/bucket/object")
+    with pytest.raises(module.BootstrapRefusal, match="not canonical"):
+        module._sigv4_request(
+            "GET", "https://storage.example/fixture-bucket/byof%2Frun/artifact"
+        )
 
 
 def _install_fake_materializers(

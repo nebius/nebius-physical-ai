@@ -167,9 +167,11 @@ binds the exact run prefix and policy receipt, and requires short-lived session
 credentials. Storage secrets are removed from the fetched-code subprocess; only
 the image-owned standard-library uploader receives them. Per-file and aggregate
 size budgets apply before reads, PUT is conditional, and GET must return the
-service checksum as well as identical bytes. The owner-only worker file is removed
-immediately after materialization, and the Base64 secret is unset again at the
-start of the run phase.
+service checksum as well as identical bytes. S3 key segments are encoded
+individually so slash separators are identical in the SigV4 canonical URI and
+the TLS request target. The owner-only worker file is removed immediately after
+materialization, and the Base64 secret is unset again at the start of the run
+phase.
 
 The payload profile selects `npa-byof-libero-payload`; `default` and
 `skypilot-service-account` are forbidden for the payload. The manager-owned
@@ -177,13 +179,16 @@ SkyPilot controller remains on its separate engine account. Before a future run,
 the exact run-labelled namespace must be empty of Pods and Secrets and contain
 only `default`, the reviewed payload and controller ServiceAccounts, their two
 exact Roles, and their two exact RoleBindings. The payload Role is core
-`pods/get` only. The controller Role has no wildcard: it enumerates only the
+`pods/get` only. Kubernetes cannot name the not-yet-created Pod in that Role, so
+the hard empty-Pod namespace prerequisite makes the later workload Pod the only
+readable Pod. The controller Role has no wildcard: it enumerates only the
 namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service operations
 needed by this fixed container job. The host verifies both identities and rejects
-every ClusterRoleBinding before submission, repeats the controller check after
-infrastructure preflight immediately before submission, and verifies it again
-after terminal status. This makes the sole readable Pod for the payload the
-subsequently created run Pod. Every
+every ClusterRoleBinding before submission, then repeats the complete empty
+namespace/payload grant and controller checks after infrastructure preflight
+immediately adjacent to submission. After terminal status it rechecks the exact
+payload grant and object UIDs, no-ClusterRoleBinding result, and controller
+identity before accepting the result. Every
 namespace/object UID, inventory, and payload permission is bound to the checked-in
 acceptance record. The payload reads its own Pod and bound JWT and records
 the actual service account, Pod UID, node, and `containerStatuses.imageID`.

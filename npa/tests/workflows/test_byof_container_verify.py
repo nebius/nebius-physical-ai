@@ -372,6 +372,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         controller_service_account_uid="controller-account-uid",
         controller_role_uid="controller-role-uid",
         controller_role_binding_uid="controller-binding-uid",
+        run_id=run_id,
     )
     monkeypatch.setattr(
         module, "_libero_rbac_evidence", lambda *_a: (dict(rbac), access_state)
@@ -985,12 +986,79 @@ def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> Non
     pre_submit = submit_function[:submit_call]
     last_nonblank_lines = [
         line.strip() for line in pre_submit.splitlines() if line.strip()
-    ][-2:]
+    ][-5:]
 
     assert last_nonblank_lines == [
         "if libero_binding is not None:",
+        "_verify_libero_payload_unchanged(",
+        "libero_binding, require_empty_inventory=True",
+        ")",
         "_verify_libero_controller_unchanged(libero_binding)",
     ]
+
+
+def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    state = module.LiberoAccessState(
+        kubeconfig=Path("/private/payload-kubeconfig"),
+        context="payload-context",
+        namespace="isolated-namespace",
+        namespace_uid="namespace-uid",
+        service_account_uid="service-account-uid",
+        role_uid="role-uid",
+        role_binding_uid="binding-uid",
+        run_id="libero-payload-recheck",
+    )
+    binding = module.LiberoRuntimeBinding(
+        evidence={
+            "role_uid_sha256": "a" * 64,
+            "namespace_inventory_sha256": "b" * 64,
+        },
+        access_state=state,
+    )
+    calls = []
+
+    def unchanged(*_args, require_empty_inventory):
+        calls.append(require_empty_inventory)
+        evidence = {"role_uid_sha256": "a" * 64}
+        if require_empty_inventory:
+            evidence["namespace_inventory_sha256"] = "b" * 64
+        return evidence, state
+
+    monkeypatch.setattr(module, "_libero_rbac_evidence", unchanged)
+    module._verify_libero_payload_unchanged(
+        binding, require_empty_inventory=True
+    )
+    module._verify_libero_payload_unchanged(
+        binding, require_empty_inventory=False
+    )
+    assert calls == [True, False]
+
+    monkeypatch.setattr(
+        module,
+        "_libero_rbac_evidence",
+        lambda *_args, **_kwargs: ({"role_uid_sha256": "c" * 64}, state),
+    )
+    with pytest.raises(RuntimeError, match="payload RBAC changed"):
+        module._verify_libero_payload_unchanged(
+            binding, require_empty_inventory=False
+        )
+
+    changed_identity = module.replace(state, role_uid="replacement-role-uid")
+    monkeypatch.setattr(
+        module,
+        "_libero_rbac_evidence",
+        lambda *_args, **_kwargs: (
+            {"role_uid_sha256": "a" * 64},
+            changed_identity,
+        ),
+    )
+    with pytest.raises(RuntimeError, match="payload RBAC identity changed"):
+        module._verify_libero_payload_unchanged(
+            binding, require_empty_inventory=False
+        )
 
 
 def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> None:

@@ -520,12 +520,16 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
         "npa/tests/e2e/conftest.py",
         "npa/tests/e2e/npa_workflow_live_helpers.py",
         "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
+        "npa/tests/guardrails/test_byof_profiles.py",
+        "npa/tests/guardrails/test_e2e_gate_reachability.py",
     } <= set(enforcement_paths)
     representatives = {
         ".github/workflows/publish-public-images.yml",
         "npa/scripts/run_byof_container_verify.py",
         "npa/src/npa/cleanup_identity.py",
         "npa/tests/e2e/conftest.py",
+        "npa/tests/guardrails/test_byof_profiles.py",
+        "npa/tests/guardrails/test_e2e_gate_reachability.py",
     }
     assert representatives <= set(enforcement_paths)
     for relative in representatives:
