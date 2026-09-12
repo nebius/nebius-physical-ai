@@ -175,8 +175,6 @@ EXPECTED_SOURCE_FIELDS = {
 }
 EXPECTED_PYTHON_DISTRIBUTIONS = {
     "absl-py": "2.5.0",
-    "boto3": "1.43.91",
-    "botocore": "1.43.91",
     "cloudpickle": "3.1.2",
     "etils": "1.14.0",
     "farama-notifications": "0.0.6",
@@ -185,7 +183,6 @@ EXPECTED_PYTHON_DISTRIBUTIONS = {
     "gymnasium": "1.3.0",
     "imageio": "2.37.4",
     "jinja2": "3.1.6",
-    "jmespath": "1.1.0",
     "markupsafe": "3.0.3",
     "mujoco": "3.12.0",
     "numpy": "2.5.3",
@@ -193,12 +190,8 @@ EXPECTED_PYTHON_DISTRIBUTIONS = {
     "pettingzoo": "1.27.0",
     "pillow": "12.3.0",
     "pyopengl": "3.1.10",
-    "python-dateutil": "2.9.0.post0",
-    "s3transfer": "0.19.2",
     "setuptools": "84.0.0",
-    "six": "1.17.0",
     "typing-extensions": "4.16.0",
-    "urllib3": "2.7.0",
     "zipp": "4.1.0",
 }
 def _safe(name: str) -> str:
@@ -875,14 +868,14 @@ def _neutral_candidate(
     artifacts = source.get("artifacts")
     if (
         not isinstance(artifacts, list)
-        or len(artifacts) != 27
-        or source.get("expected_python_distribution_count") != 26
-        or source.get("resolved_python_artifact_count") != 26
+        or len(artifacts) != 20
+        or source.get("expected_python_distribution_count") != 19
+        or source.get("resolved_python_artifact_count") != 19
     ):
         raise ValueError("runtime artifact closure is incomplete")
     if sum(item.get("role") == "solution-source" for item in artifacts) != 1:
         raise ValueError("runtime source archive closure changed")
-    if sum(item.get("role") == "python-wheel" for item in artifacts) != 26:
+    if sum(item.get("role") == "python-wheel" for item in artifacts) != 19:
         raise ValueError("runtime wheel closure changed")
     if not any(
         item.get("name") == "gymnasium-robotics-source"

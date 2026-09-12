@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import sys
 import tarfile
 import zipfile
@@ -27,6 +28,16 @@ assert VERIFIER_SPEC and VERIFIER_SPEC.loader
 VERIFIER = importlib.util.module_from_spec(VERIFIER_SPEC)
 sys.modules[VERIFIER_SPEC.name] = VERIFIER
 VERIFIER_SPEC.loader.exec_module(VERIFIER)
+BOOTSTRAP_SCRIPT = (
+    ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-bootstrap.py"
+)
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
+    "gymnasium_runtime_bootstrap_for_scan_tests", BOOTSTRAP_SCRIPT
+)
+assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
+BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+sys.modules[BOOTSTRAP_SPEC.name] = BOOTSTRAP
+BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
 
 
 def _tar_bytes(
@@ -355,8 +366,8 @@ def _complete_neutral_rootfs() -> tuple[dict[str, bytes], list[str]]:
             "runtime_cache": "operator-owned-and-external",
             "outputs": "operator-owned-run-artifacts",
         },
-        "expected_python_distribution_count": 26,
-        "resolved_python_artifact_count": 26,
+        "expected_python_distribution_count": 19,
+        "resolved_python_artifact_count": 19,
         "artifacts": artifacts,
         "components": {
             name: dict(fields) for name, fields in SCAN.EXPECTED_SOURCE_FIELDS.items()
@@ -401,6 +412,35 @@ def _complete_neutral_rootfs() -> tuple[dict[str, bytes], list[str]]:
     )
     diff_ids = ["sha256:" + "b" * 64]
     return rootfs, diff_ids
+
+
+def test_scanner_runtime_distribution_baseline_matches_fetch_inputs() -> None:
+    requirements_in = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/requirements.in"
+    ).read_text()
+    declared: dict[str, str] = {}
+    for source_line in requirements_in.splitlines():
+        line = source_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = re.fullmatch(
+            r"(?P<name>[A-Za-z0-9_.-]+)(?:\[[A-Za-z0-9_,.-]+\])?"
+            r"==(?P<version>[^\s]+)",
+            line,
+        )
+        assert match is not None
+        declared[SCAN._normalize_distribution(match.group("name"))] = match.group(
+            "version"
+        )
+
+    source_lock = json.loads(
+        (
+            ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
+        ).read_text()
+    )
+    assert declared == SCAN.EXPECTED_PYTHON_DISTRIBUTIONS
+    assert len(declared) == BOOTSTRAP.EXPECTED_WHEEL_COUNT
+    assert source_lock["expected_python_distribution_count"] == len(declared)
 
 
 def test_neutral_semantic_gate_can_accept_only_a_complete_reviewed_fixture(
