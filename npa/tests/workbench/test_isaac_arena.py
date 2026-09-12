@@ -44,9 +44,10 @@ def test_capabilities_are_complete_and_honest() -> None:
     replay = next(
         item for item in payload["policy_adapters"] if item["name"] == "replay"
     )
-    assert {"implemented", "input_required", "live_validated"}.issubset(
-        replay["npa_status"]
-    )
+    assert {"implemented", "input_required"}.issubset(replay["npa_status"])
+    assert "live_validated" not in replay["npa_status"]
+    assert payload["live_validation"]["scope"] == "digest_bound_external_evidence"
+    assert payload["live_validation"]["embedded_claims"] is False
     assert len(payload["environments"]) == 18
     assert {
         "cube_goal_pose",

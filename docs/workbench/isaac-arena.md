@@ -38,11 +38,14 @@ npa workbench isaac-arena capabilities
 ```
 
 This JSON command and `npa.sdk.workbench.isaac_arena.capabilities()` enumerate
-the pinned alpha surface with explicit `implemented`, `live_validated`,
-`input_required`, `unsupported`, and `upstream_alpha` states. Both Arena entries
-in the authenticated Agent UI's `/api/tools` catalog embed the same payload and
-name the CLI command. It is the source of truth when a broader upstream feature
-exists but is not an NPA claim.
+the pinned alpha surface with explicit `implemented`, `input_required`,
+`unsupported`, and `upstream_alpha` states. Digest-specific `live_validated`
+claims deliberately remain in the readiness and release records: an image
+cannot pre-assert qualification of its own not-yet-published digest. Both Arena
+entries in the authenticated Agent UI's `/api/tools` catalog embed the same
+payload and name the CLI command. Together with those digest-bound records, it
+is the source of truth when a broader upstream feature exists but is not an NPA
+claim.
 
 The evaluator supports the three local policy adapters registered by upstream:
 
@@ -117,7 +120,7 @@ has been live-qualified.
 | `franka_put_and_close_door` | sequential pick/place + close door | `franka_ik` / `dex_cube` | success, movement, subtask | implemented; unvalidated |
 | `galileo_g1_locomanip_pick_and_place` | pick/place | `g1_wbc_pink` / `brown_box` | success, object moved | implemented; unvalidated |
 | `galileo_pick_and_place` | pick/place | `gr1_pink` / `power_drill` | success, object moved | implemented; unvalidated |
-| `gr1_open_microwave` | open door | `gr1_pink` / none | success, joint moved | implemented; replay live-qualified |
+| `gr1_open_microwave` | open door | `gr1_pink` / none | success, joint moved | implemented; replay qualification is digest-bound in readiness evidence |
 | `gr1_table_multi_object_no_collision` | no scored task | `gr1_joint` / object pool | none | unsupported as evaluation |
 | `gr1_turn_stand_mixer_knob` | turn knob | `gr1_pink` / none | success, joint moved | implemented; unvalidated |
 | `kitchen_pick_and_place` | pick/place | `franka_ik` / `cracker_box` | success, object moved | implemented; unvalidated |

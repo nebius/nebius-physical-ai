@@ -75,7 +75,7 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "default_embodiment": "franka_ik",
         "default_object": "dex_cube",
         "metrics": ["success_rate", "object_moved_rate"],
-        "npa_status": ["implemented", "live_validated", "upstream_alpha"],
+        "npa_status": ["implemented", "upstream_alpha"],
     },
     {
         "name": "dexsuite_lift",
@@ -132,7 +132,6 @@ _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "metrics": ["success_rate", "revolute_joint_moved_rate"],
         "npa_status": [
             "implemented",
-            "live_validated",
             "upstream_alpha",
         ],
     },
@@ -252,7 +251,7 @@ def capabilities() -> dict[str, Any]:
         },
         "status_vocabulary": {
             "implemented": "The pinned NPA runner can invoke this upstream path.",
-            "live_validated": "The exact NPA image and path completed on physical target hardware.",
+            "live_validated": "Digest-scoped readiness evidence proves this path completed on physical target hardware; this tag is never inferred from implementation alone.",
             "input_required": "Operator-owned policy or trajectory input is mandatory.",
             "unsupported": "Present upstream but intentionally outside the current NPA execution contract.",
             "upstream_alpha": "Upstream marks 0.3.0 pre-release and its APIs unstable.",
@@ -262,7 +261,7 @@ def capabilities() -> dict[str, Any]:
                 "name": "zero_action",
                 "required_input": None,
                 "outputs_motion_by_contract": False,
-                "npa_status": ["implemented", "live_validated", "upstream_alpha"],
+                "npa_status": ["implemented", "upstream_alpha"],
                 "limitation": "A video may be decodable while behavior remains static; it is not meaningful visual evidence.",
             },
             {
@@ -272,7 +271,6 @@ def capabilities() -> dict[str, Any]:
                 "npa_status": [
                     "implemented",
                     "input_required",
-                    "live_validated",
                     "upstream_alpha",
                 ],
             },
@@ -306,6 +304,19 @@ def capabilities() -> dict[str, Any]:
                 "npa_status": ["unsupported", "input_required", "upstream_alpha"],
             },
         ],
+        "live_validation": {
+            "scope": "digest_bound_external_evidence",
+            "embedded_claims": False,
+            "readiness_sources": [
+                "npa/src/npa/deploy/gpu-readiness.yaml",
+                "npa/src/npa/deploy/public-image-release-manifest.yaml",
+            ],
+            "reason": (
+                "A container cannot truthfully pre-assert qualification of its own "
+                "not-yet-published digest; promotion and readiness records bind live "
+                "results after the immutable development image completes validation."
+            ),
+        },
         "environments": copy.deepcopy(list(_ENVIRONMENT_CAPABILITIES)),
         "environment_sources": {
             "registered_python_environments": len(_ENVIRONMENT_CAPABILITIES),
@@ -379,8 +390,8 @@ def capabilities() -> dict[str, Any]:
         },
         "rendering": {
             "viewport_video": {
-                "npa_status": ["implemented", "live_validated", "upstream_alpha"],
-                "requires": "RTX rasterization/RT-capable GPU; qualified on RTX PRO 6000",
+                "npa_status": ["implemented", "upstream_alpha"],
+                "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
                 "acceptance": {
                     "codec": "h264",
                     "minimum_dimensions": [320, 240],
