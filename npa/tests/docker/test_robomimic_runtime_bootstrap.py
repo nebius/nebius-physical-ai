@@ -4,8 +4,11 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -74,6 +77,79 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
         json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
     )
     return runtime_root, lock_path, _sha(inventory_path)
+
+
+def _bootstrap_with_fake_snapshot(tmp_path: Path) -> Path:
+    fake_verifier = tmp_path / "fake_verifier.py"
+    fake_verifier.write_text(
+        """\
+import os
+import sys
+from pathlib import Path
+
+destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+interpreter = destination / "payload" / "bin" / "python"
+interpreter.parent.mkdir(parents=True)
+interpreter.write_text(
+    '''#!/bin/sh
+if [ "${1:-}" = "-c" ]; then
+    if [ -n "${NPA_TEST_IMPORT_STARTED:-}" ]; then
+        : >"${NPA_TEST_IMPORT_STARTED}"
+    fi
+    case "${NPA_TEST_IMPORT_MODE:-success}" in
+        fail) exit 42 ;;
+        block) while :; do sleep 1; done ;;
+    esac
+    exit 0
+fi
+: >"${NPA_TEST_EXEC_STARTED}"
+while :; do sleep 1; done
+''',
+    encoding="utf-8",
+)
+interpreter.chmod(0o755)
+Path(os.environ["NPA_TEST_SNAPSHOT_RECORD"]).write_text(
+    str(destination), encoding="utf-8"
+)
+""",
+        encoding="utf-8",
+    )
+    source = (IMAGE_ROOT / "runtime_bootstrap.sh").read_text(encoding="utf-8")
+    source = source.replace(
+        'readonly verifier="/opt/npa/robomimic/verify_image.py"',
+        f'readonly verifier="{fake_verifier}"',
+    ).replace("/usr/local/bin/python3", sys.executable)
+    script = tmp_path / "runtime_bootstrap.sh"
+    script.write_text(source, encoding="utf-8")
+    return script
+
+
+def _wait_for_file(path: Path, process: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if path.is_file():
+            return
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            pytest.fail(
+                f"bootstrap exited before {path.name}: "
+                f"status={process.returncode} stdout={stdout!r} stderr={stderr!r}"
+            )
+        time.sleep(0.01)
+    process.kill()
+    process.communicate()
+    pytest.fail(f"bootstrap did not create {path.name}")
+
+
+def _exec_environment(tmp_path: Path, *, import_mode: str) -> dict[str, str]:
+    return {
+        **os.environ,
+        "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_TEST_SNAPSHOT_RECORD": str(tmp_path / "snapshot-record"),
+        "NPA_TEST_IMPORT_STARTED": str(tmp_path / "import-started"),
+        "NPA_TEST_IMPORT_MODE": import_mode,
+        "NPA_TEST_EXEC_STARTED": str(tmp_path / "exec-started"),
+    }
 
 
 def test_exact_external_runtime_inventory_verifies_without_mutation(
@@ -301,6 +377,70 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     ):
         assert import_gate in text
     assert 'exec "${snapshot_root}/payload/bin/python"' in text
+    assert "trap - EXIT" not in text
+
+
+def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_exec_environment(tmp_path, import_mode="fail"),
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    assert result.returncode == 42, result.stderr
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_cleans_snapshot_when_signalled_during_import(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(tmp_path, import_mode="block"),
+        start_new_session=True,
+    )
+    _wait_for_file(tmp_path / "import-started", process)
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    os.killpg(process.pid, signal.SIGTERM)
+    process.communicate(timeout=5)
+
+    assert process.returncode is not None
+    assert not snapshot_root.parent.exists()
+
+
+def test_successful_exec_keeps_snapshot_available_to_payload(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(tmp_path, import_mode="success"),
+        start_new_session=True,
+    )
+    snapshot_root: Path | None = None
+    try:
+        _wait_for_file(tmp_path / "exec-started", process)
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        assert process.poll() is None
+        assert snapshot_root.is_dir()
+        os.killpg(process.pid, signal.SIGTERM)
+        process.communicate(timeout=5)
+        assert snapshot_root.is_dir()
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            shutil.rmtree(snapshot_root.parent, ignore_errors=True)
 
 
 def test_shipped_assert_refusal_reaches_missing_ready_marker(tmp_path: Path) -> None:
