@@ -874,6 +874,36 @@ def test_robomimic_runner_recognizes_exact_source_ref_through_renamed_mirror() -
     assert runner._is_robomimic_request(args) is True
 
 
+def test_robomimic_runner_recognizes_accepted_digest_under_renamed_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _byof_runner_module()
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_BYOF_ROBOMIMIC_IMAGE",
+        f"private.invalid/robomimic/npa-robomimic@{digest}",
+    )
+    args = runner._parse_args(
+        [
+            "--repo-url",
+            "https://github.com/example/unrelated.git",
+            "--repo-ref",
+            "b" * 40,
+            "--solution-name",
+            "renamed",
+            "--capability-name",
+            "renamed",
+            "--smoke-artifact-name",
+            "renamed.json",
+            "--smoke-command",
+            "python train.py",
+            "--image",
+            f"docker:private.invalid/opaque/renamed@{digest}",
+        ]
+    )
+    assert runner._is_robomimic_request(args) is True
+
+
 def test_workflow_refusal_recognizes_exact_source_ref_through_renaming() -> None:
     spec = SimpleNamespace(
         name="renamed",
@@ -882,6 +912,27 @@ def test_workflow_refusal_recognizes_exact_source_ref_through_renaming() -> None
             "repo_ref": SOURCE_REVISION,
             "solution_name": "renamed",
             "execution_policy": "direct",
+        },
+    )
+    assert workflow_cli._is_dedicated_live_gate_spec(spec) is True
+
+
+def test_workflow_refusal_recognizes_accepted_digest_under_renamed_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_BYOF_ROBOMIMIC_IMAGE",
+        f"private.invalid/robomimic/npa-robomimic@{digest}",
+    )
+    spec = SimpleNamespace(
+        name="renamed",
+        config={
+            "repo_url": "https://github.com/example/unrelated.git",
+            "repo_ref": "b" * 40,
+            "solution_name": "renamed",
+            "execution_policy": "direct",
+            "controller_image": f"docker:private.invalid/opaque/renamed@{digest}",
         },
     )
     assert workflow_cli._is_dedicated_live_gate_spec(spec) is True

@@ -41,6 +41,7 @@ _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 DEFAULT_LOG_OUTPUT_CHARS = 32_768
 MAX_LOG_OUTPUT_CHARS = 262_144
 ROBOMIMIC_SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
+_IMMUTABLE_IMAGE_DIGEST_RE = re.compile(r".+@(sha256:[0-9a-f]{64})", re.I)
 
 
 class OutputFormat(str, Enum):
@@ -58,6 +59,13 @@ class ControllerBackendOption(str, Enum):
     nebius = "nebius"
 
 
+def _immutable_image_digest(value: object) -> str:
+    match = _IMMUTABLE_IMAGE_DIGEST_RE.fullmatch(
+        str(value or "").strip().removeprefix("docker:")
+    )
+    return match.group(1).lower() if match else ""
+
+
 def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
     """Recognize specs that may execute only through their owned live harness."""
 
@@ -68,6 +76,13 @@ def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
         .rsplit("/", 1)[-1]
         .lower()
     )
+    manager_digest = _immutable_image_digest(
+        os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "")
+    )
+    image_digests = {
+        _immutable_image_digest(spec.config.get(key))
+        for key in ("controller_image", "image", "base_image")
+    }
     return (
         spec.name == "byof-robomimic"
         or str(spec.config.get("solution_name") or "").strip().lower()
@@ -75,6 +90,7 @@ def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
         or config_repo == "robomimic"
         or str(spec.config.get("repo_ref") or "").strip().lower()
         == ROBOMIMIC_SOURCE_REVISION
+        or bool(manager_digest and manager_digest in image_digests)
         or str(spec.config.get("execution_policy") or "").strip()
         == "dedicated-live-gate-only"
     )
