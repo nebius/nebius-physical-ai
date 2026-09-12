@@ -24,10 +24,21 @@ case "${1:-}" in
     shift
     snapshot_parent="$(mktemp -d)"
     snapshot_root="${snapshot_parent}/runtime"
+    payload_pid=""
+    stop_payload() {
+      local signal_name="$1"
+      local signal_status="$2"
+      trap - HUP INT TERM
+      if [[ -n "${payload_pid}" ]]; then
+        kill -s "${signal_name}" "${payload_pid}" 2>/dev/null || true
+        wait "${payload_pid}" 2>/dev/null || true
+      fi
+      exit "${signal_status}"
+    }
     trap 'rm -rf -- "${snapshot_parent}"' EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
+    trap 'stop_payload HUP 129' HUP
+    trap 'stop_payload INT 130' INT
+    trap 'stop_payload TERM 143' TERM
     /usr/local/bin/python3 "${verifier}" snapshot \
       --runtime-root "${runtime_root}" \
       --expected-inventory-sha256 "${expected_inventory_sha256}" \
@@ -35,9 +46,19 @@ case "${1:-}" in
     export NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"
     "${snapshot_root}/payload/bin/python" -c \
       'from robomimic.config import config_factory; from robomimic.algo import algo_factory; from robomimic.utils.file_utils import policy_from_checkpoint; from diffusers.schedulers.scheduling_ddim import DDIMScheduler; from diffusers.schedulers.scheduling_ddpm import DDPMScheduler; from diffusers.training_utils import EMAModel; assert all((config_factory, algo_factory, policy_from_checkpoint, DDIMScheduler, DDPMScheduler, EMAModel))'
-    # A successful exec replaces this shell without running its EXIT trap. Any
-    # import or exec failure still exits through the cleanup above.
-    exec "${snapshot_root}/payload/bin/python" "$@"
+    # Supervise the exec in a child so an exec failure remains cleanup-bound.
+    # Signals stop and reap a running payload before the EXIT trap removes its
+    # snapshot; a normal payload exit is reaped before that cleanup as well.
+    (
+      exec "${snapshot_root}/payload/bin/python" "$@"
+    ) &
+    payload_pid="$!"
+    set +e
+    wait "${payload_pid}"
+    payload_status="$?"
+    set -e
+    payload_pid=""
+    exit "${payload_status}"
     ;;
   assert-refusal)
     empty_root="$(mktemp -d)"
