@@ -92,6 +92,36 @@ def _smoke_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return module
 
 
+def _profile_upload_module(tmp_path: Path) -> ModuleType:
+    """Load only the embedded uploader's declarations, never its live operations."""
+
+    documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
+    run = documents[1]["run"]
+    script = run.split("python3 <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    parsed = ast.parse(script)
+    declarations = []
+    for node in parsed.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)):
+            declarations.append(node)
+        elif isinstance(node, ast.Assign) and all(
+            isinstance(target, ast.Name) and target.id.isupper()
+            for target in node.targets
+        ):
+            declarations.append(node)
+    helper_path = tmp_path / "robomimic_profile_upload.py"
+    helper_path.write_text(
+        ast.unparse(ast.Module(body=declarations, type_ignores=[])) + "\n",
+        encoding="utf-8",
+    )
+    specification = importlib.util.spec_from_file_location(
+        "robomimic_profile_upload", helper_path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def _live_e2e_module():
     """Import the live module so its pure contracts run in the default suite."""
 
@@ -1642,6 +1672,10 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
         encoding="utf-8"
     )
     profile_text = PROFILE.read_text(encoding="utf-8")
+    assert "path.read_bytes()" not in profile_text
+    assert "MAX_OUTPUT_FILE_BYTES" in profile_text
+    assert "MAX_OUTPUT_TOTAL_BYTES" in profile_text
+    assert "ContentLength=size" in profile_text
     for endpoint_gate in (
         'endpoint_parts.scheme != "https"',
         "endpoint_parts.username is not None",
@@ -1656,6 +1690,93 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     text = PROFILE.read_text(encoding="utf-8").lower()
     for graphics_surface in ("vulkan", "egl"):
         assert graphics_surface not in text
+
+
+def test_robomimic_profile_streams_outputs_in_bounded_chunks(tmp_path: Path) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    payload = root / "checkpoint.pth"
+    payload.write_bytes(b"x" * (2 * 1024 * 1024 + 7))
+
+    class RecordingS3:
+        def __init__(self) -> None:
+            self.chunks: list[int] = []
+            self.digest = hashlib.sha256()
+
+        def put_object(self, **kwargs: object) -> None:
+            assert kwargs["ContentLength"] == payload.stat().st_size
+            assert kwargs["IfNoneMatch"] == "*"
+            body = kwargs["Body"]
+            assert body.read(0) == b""
+            while chunk := body.read():
+                self.chunks.append(len(chunk))
+                self.digest.update(chunk)
+
+    s3 = RecordingS3()
+    assert module.upload_outputs(s3, "bucket", "prefix/", root) == 1
+    assert s3.chunks
+    assert max(s3.chunks) <= module.OUTPUT_READ_CHUNK_BYTES
+    assert s3.digest.hexdigest() == hashlib.sha256(payload.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("limit_kind", ("per-file", "aggregate"))
+def test_robomimic_profile_refuses_oversized_output_sets(
+    tmp_path: Path, limit_kind: str
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    if limit_kind == "per-file":
+        (root / "oversized").touch()
+        os.truncate(root / "oversized", module.MAX_OUTPUT_FILE_BYTES + 1)
+        expected = "per-file byte limit"
+    else:
+        for index in range(3):
+            path = root / f"part-{index}"
+            path.touch()
+            os.truncate(path, module.MAX_OUTPUT_FILE_BYTES)
+        expected = "aggregate byte limit"
+
+    class NoUploadS3:
+        def put_object(self, **_kwargs: object) -> None:
+            pytest.fail("oversized outputs must be rejected before upload")
+
+    with pytest.raises(RuntimeError, match=expected):
+        module.upload_outputs(NoUploadS3(), "bucket", "prefix/", root)
+
+
+def test_robomimic_profile_detects_output_growth_during_upload(
+    tmp_path: Path,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    payload = root / "checkpoint.pth"
+    payload.write_bytes(b"checkpoint")
+
+    class GrowingS3:
+        def put_object(self, **kwargs: object) -> None:
+            body = kwargs["Body"]
+            while body.read():
+                pass
+            with payload.open("ab") as handle:
+                handle.write(b"unexpected-growth")
+
+    with pytest.raises(RuntimeError, match="size changed during upload"):
+        module.upload_outputs(GrowingS3(), "bucket", "prefix/", root)
+
+
+def test_robomimic_download_refuses_a_malformed_allowed_host_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    with pytest.raises(RuntimeError, match="malformed approved HTTPS URL"):
+        module._open_allowed_https(
+            "https://huggingface.co:not-a-port/file",
+            headers={},
+            allowed_hosts=("huggingface.co",),
+        )
 
 
 def test_robomimic_readiness_binds_exact_workflow_bytes() -> None:
