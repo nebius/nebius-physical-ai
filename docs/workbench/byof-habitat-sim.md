@@ -14,10 +14,11 @@ satisfy its hard gate.
   [`LICENSE`](https://github.com/facebookresearch/habitat-sim/blob/57ee4941dc4765240f0f91f70b2c97a919bf9038/LICENSE).
 - Image base: `ubuntu:22.04` at manifest digest
   `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
-- Ubuntu snapshot: `20260903T121500Z`, with a checksum-pinned CA-only bootstrap
-  whose sorted 121-certificate configuration and bundle are separately
-  size/hash bound before HTTPS package transport, Ubuntu archive `Signed-By`,
-  and exact Perl-family compatibility refusal.
+- Ubuntu snapshot: `20260903T121500Z`, with a checksum-pinned trust bootstrap
+  containing only the exact CA, OpenSSL CLI, and libssl packages needed to parse
+  the sorted 121-certificate set. Its configuration and bundle are separately
+  size/hash bound before HTTPS package transport, Ubuntu archive `Signed-By`, and
+  exact Perl-family compatibility refusal.
 
 The runtime's GPL-3.0+ `rsync` bootstrap binary is accompanied in the image by
 the complete four-file Ubuntu source package from the same signed immutable
@@ -30,8 +31,9 @@ It materializes an allowlisted projection, excludes unused audio and GUI gitlink
 and emits a path/size/SHA-256 inventory for every resulting build-source file. The
 wheel build enables Bullet and disables CUDA, GUI, audio, tests, and the Basis
 compressor. Python wheels are platform-specific and hash locked; the final stage
-does not contain build tools, wheel archives, source archives, package caches,
-the CA bootstrap archive, CUDA, or NVIDIA vendor libraries.
+does not contain build tools, wheel archives, package caches, trust-bootstrap
+package archives, CUDA, or NVIDIA vendor libraries. The exact rsync corresponding
+source described above is the sole intentional source-archive payload.
 
 Upstream warns that **beyond v0.3.4, Meta internal teams do not officially maintain
 releases or provide active development**. This candidate pins the upstream commit
