@@ -22,43 +22,100 @@ case "${1:-}" in
     ;;
   exec)
     shift
+    snapshot_parent=""
+    child_pid=""
+    pending_signal=""
+    pending_status=""
+    trap '[[ -z "${snapshot_parent}" ]] || rm -rf -- "${snapshot_parent}"' EXIT
     snapshot_parent="$(mktemp -d)"
     snapshot_root="${snapshot_parent}/runtime"
-    payload_pid=""
-    stop_payload() {
+    process_group_running() {
+      local state
+      while IFS= read -r state; do
+        case "${state//[[:space:]]/}" in
+          ""|Z*|X*) ;;
+          *) return 0 ;;
+        esac
+      done < <(ps -o stat= --pgroup "$1" 2>/dev/null)
+      return 1
+    }
+    stop_child() {
       local signal_name="$1"
       local signal_status="$2"
-      trap - HUP INT TERM
-      if [[ -n "${payload_pid}" ]]; then
-        kill -s "${signal_name}" "${payload_pid}" 2>/dev/null || true
-        wait "${payload_pid}" 2>/dev/null || true
-      fi
+      local target_pid="${child_pid}"
+      local attempt
+      trap '' HUP INT TERM
+      child_pid=""
+      kill -s "${signal_name}" -- "-${target_pid}" 2>/dev/null || true
+      for ((attempt = 0; attempt < 50; attempt += 1)); do
+        process_group_running "${target_pid}" || break
+        sleep 0.1
+      done
+      process_group_running "${target_pid}" \
+        && kill -s KILL -- "-${target_pid}" 2>/dev/null || true
+      wait "${target_pid}" 2>/dev/null || true
       exit "${signal_status}"
     }
-    trap 'rm -rf -- "${snapshot_parent}"' EXIT
-    trap 'stop_payload HUP 129' HUP
-    trap 'stop_payload INT 130' INT
-    trap 'stop_payload TERM 143' TERM
-    /usr/local/bin/python3 "${verifier}" snapshot \
+    request_stop() {
+      if [[ -z "${child_pid}" ]]; then
+        pending_signal="$1"
+        pending_status="$2"
+        return
+      fi
+      stop_child "$1" "$2"
+    }
+    run_child() {
+      local child_status
+      if [[ -n "${pending_signal}" ]]; then
+        exit "${pending_status}"
+      fi
+      set -m
+      (
+        trap - HUP INT QUIT TERM
+        exec "$@"
+      ) &
+      child_pid="$!"
+      set +m
+      if [[ -n "${pending_signal}" ]]; then
+        stop_child "${pending_signal}" "${pending_status}"
+      fi
+      if wait "${child_pid}"; then
+        child_status=0
+      else
+        child_status="$?"
+      fi
+      child_pid=""
+      return "${child_status}"
+    }
+    trap 'request_stop HUP 129' HUP
+    trap 'request_stop INT 130' INT
+    trap 'request_stop TERM 143' TERM
+    if run_child /usr/local/bin/python3 "${verifier}" snapshot \
       --runtime-root "${runtime_root}" \
       --expected-inventory-sha256 "${expected_inventory_sha256}" \
-      --destination "${snapshot_root}" >/dev/null
+      --destination "${snapshot_root}" >/dev/null; then
+      :
+    else
+      child_status="$?"
+      exit "${child_status}"
+    fi
     export NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"
-    "${snapshot_root}/payload/bin/python" -c \
-      'from robomimic.config import config_factory; from robomimic.algo import algo_factory; from robomimic.utils.file_utils import policy_from_checkpoint; from diffusers.schedulers.scheduling_ddim import DDIMScheduler; from diffusers.schedulers.scheduling_ddpm import DDPMScheduler; from diffusers.training_utils import EMAModel; assert all((config_factory, algo_factory, policy_from_checkpoint, DDIMScheduler, DDPMScheduler, EMAModel))'
-    # Supervise the exec in a child so an exec failure remains cleanup-bound.
-    # Signals stop and reap a running payload before the EXIT trap removes its
-    # snapshot; a normal payload exit is reaped before that cleanup as well.
-    (
-      exec "${snapshot_root}/payload/bin/python" "$@"
-    ) &
-    payload_pid="$!"
-    set +e
-    wait "${payload_pid}"
-    payload_status="$?"
-    set -e
-    payload_pid=""
-    exit "${payload_status}"
+    if run_child "${snapshot_root}/payload/bin/python" -c \
+      'from robomimic.config import config_factory; from robomimic.algo import algo_factory; from robomimic.utils.file_utils import policy_from_checkpoint; from diffusers.schedulers.scheduling_ddim import DDIMScheduler; from diffusers.schedulers.scheduling_ddpm import DDPMScheduler; from diffusers.training_utils import EMAModel; assert all((config_factory, algo_factory, policy_from_checkpoint, DDIMScheduler, DDPMScheduler, EMAModel))'; then
+      :
+    else
+      child_status="$?"
+      exit "${child_status}"
+    fi
+    # Every child runs in its own process group. A successful payload remains
+    # attached to this supervisor until it exits; only then is the private
+    # snapshot removed. Exec failure follows the same cleanup path.
+    if run_child "${snapshot_root}/payload/bin/python" "$@"; then
+      exit 0
+    else
+      child_status="$?"
+      exit "${child_status}"
+    fi
     ;;
   assert-refusal)
     empty_root="$(mktemp -d)"

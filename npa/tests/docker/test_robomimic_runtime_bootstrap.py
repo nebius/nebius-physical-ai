@@ -85,14 +85,30 @@ def _bootstrap_with_fake_snapshot(tmp_path: Path) -> Path:
         """\
 import os
 import sys
+import time
 from pathlib import Path
 
 destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+Path(os.environ["NPA_TEST_SNAPSHOT_RECORD"]).write_text(
+    str(destination), encoding="utf-8"
+)
+Path(os.environ["NPA_TEST_SNAPSHOT_PID"]).write_text(
+    str(os.getpid()), encoding="utf-8"
+)
+if os.environ.get("NPA_TEST_SNAPSHOT_MODE") == "block":
+    destination.mkdir(parents=True)
+    Path(os.environ["NPA_TEST_SNAPSHOT_STARTED"]).touch()
+    while True:
+        time.sleep(1)
+if os.environ.get("NPA_TEST_SNAPSHOT_MODE") == "fail":
+    destination.mkdir(parents=True)
+    raise SystemExit(41)
 interpreter = destination / "payload" / "bin" / "python"
 interpreter.parent.mkdir(parents=True)
 interpreter.write_text(
     '''#!/bin/sh
 if [ "${1:-}" = "-c" ]; then
+    printf '%s' "$$" >"${NPA_TEST_IMPORT_PID}"
     if [ -n "${NPA_TEST_IMPORT_STARTED:-}" ]; then
         : >"${NPA_TEST_IMPORT_STARTED}"
     fi
@@ -103,15 +119,16 @@ if [ "${1:-}" = "-c" ]; then
     esac
     exit 0
 fi
+printf '%s' "$$" >"${NPA_TEST_EXEC_PID}"
 : >"${NPA_TEST_EXEC_STARTED}"
-while :; do sleep 1; done
+case "${NPA_TEST_EXEC_MODE:-block}" in
+    exit) exit 0 ;;
+    block) while :; do sleep 1; done ;;
+esac
 ''',
     encoding="utf-8",
 )
 interpreter.chmod(0o755)
-Path(os.environ["NPA_TEST_SNAPSHOT_RECORD"]).write_text(
-    str(destination), encoding="utf-8"
-)
 """,
         encoding="utf-8",
     )
@@ -145,14 +162,50 @@ def _wait_for_file(path: Path, process: subprocess.Popen[str]) -> None:
     pytest.fail(f"bootstrap did not create {path.name}")
 
 
-def _exec_environment(tmp_path: Path, *, import_mode: str) -> dict[str, str]:
+def _communicate_or_kill(
+    process: subprocess.Popen[str], *, child_process_group: int
+) -> tuple[str, str]:
+    try:
+        return process.communicate(timeout=7)
+    except subprocess.TimeoutExpired:
+        for process_group in (child_process_group, process.pid):
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.communicate(timeout=5)
+        raise
+
+
+def _recorded_pid(path: Path) -> int:
+    return int(path.read_text(encoding="utf-8"))
+
+
+def _assert_process_gone(pid: int) -> None:
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def _exec_environment(
+    tmp_path: Path,
+    *,
+    import_mode: str,
+    snapshot_mode: str = "success",
+    exec_mode: str = "block",
+) -> dict[str, str]:
     return {
         **os.environ,
         "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
         "NPA_TEST_SNAPSHOT_RECORD": str(tmp_path / "snapshot-record"),
+        "NPA_TEST_SNAPSHOT_STARTED": str(tmp_path / "snapshot-started"),
+        "NPA_TEST_SNAPSHOT_PID": str(tmp_path / "snapshot-pid"),
+        "NPA_TEST_SNAPSHOT_MODE": snapshot_mode,
         "NPA_TEST_IMPORT_STARTED": str(tmp_path / "import-started"),
+        "NPA_TEST_IMPORT_PID": str(tmp_path / "import-pid"),
         "NPA_TEST_IMPORT_MODE": import_mode,
         "NPA_TEST_EXEC_STARTED": str(tmp_path / "exec-started"),
+        "NPA_TEST_EXEC_PID": str(tmp_path / "exec-pid"),
+        "NPA_TEST_EXEC_MODE": exec_mode,
     }
 
 
@@ -380,7 +433,8 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
         "from diffusers.training_utils import EMAModel",
     ):
         assert import_gate in text
-    assert 'exec "${snapshot_root}/payload/bin/python"' in text
+    assert 'run_child "${snapshot_root}/payload/bin/python" "$@"' in text
+    assert 'exec "$@"' in text
     assert "trap - EXIT" not in text
 
 
@@ -392,10 +446,56 @@ def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
         env=_exec_environment(tmp_path, import_mode="fail"),
+        timeout=5,
     )
 
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
     assert result.returncode == 42, result.stderr
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_cleans_snapshot_when_snapshot_creation_fails(
+    tmp_path: Path,
+) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", snapshot_mode="fail"
+        ),
+        timeout=5,
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    assert result.returncode == 41, result.stderr
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_stops_snapshot_creation_before_cleanup(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", snapshot_mode="block"
+        ),
+        start_new_session=True,
+    )
+    _wait_for_file(tmp_path / "snapshot-started", process)
+    snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    signal_started = time.monotonic()
+    os.kill(process.pid, signal.SIGTERM)
+    _communicate_or_kill(process, child_process_group=snapshot_pid)
+
+    assert process.returncode == 143
+    assert time.monotonic() - signal_started < 4
+    _assert_process_gone(snapshot_pid)
     assert not snapshot_root.parent.exists()
 
 
@@ -422,11 +522,15 @@ def test_bootstrap_cleans_snapshot_when_signalled_during_import(
         start_new_session=True,
     )
     _wait_for_file(tmp_path / "import-started", process)
+    import_pid = _recorded_pid(tmp_path / "import-pid")
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-    os.killpg(process.pid, signal_number)
-    process.communicate(timeout=5)
+    signal_started = time.monotonic()
+    os.kill(process.pid, signal_number)
+    _communicate_or_kill(process, child_process_group=import_pid)
 
     assert process.returncode == expected_returncode
+    assert time.monotonic() - signal_started < 4
+    _assert_process_gone(import_pid)
     assert not snapshot_root.parent.exists()
 
 
@@ -438,6 +542,7 @@ def test_bootstrap_cleans_snapshot_when_final_exec_fails(tmp_path: Path) -> None
         capture_output=True,
         text=True,
         env=_exec_environment(tmp_path, import_mode="remove"),
+        timeout=5,
     )
 
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
@@ -445,7 +550,39 @@ def test_bootstrap_cleans_snapshot_when_final_exec_fails(tmp_path: Path) -> None
     assert not snapshot_root.parent.exists()
 
 
-def test_successful_exec_keeps_snapshot_available_to_payload(tmp_path: Path) -> None:
+def test_finite_payload_exit_cleans_snapshot(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", exec_mode="exit"
+        ),
+        timeout=5,
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    payload_pid = _recorded_pid(tmp_path / "exec-pid")
+    assert result.returncode == 0, result.stderr
+    _assert_process_gone(payload_pid)
+    assert not snapshot_root.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("signal_number", "expected_returncode"),
+    [
+        (signal.SIGHUP, 129),
+        (signal.SIGINT, 130),
+        (signal.SIGTERM, 143),
+    ],
+)
+def test_supervisor_stops_payload_before_cleaning_snapshot(
+    tmp_path: Path,
+    signal_number: signal.Signals,
+    expected_returncode: int,
+) -> None:
     script = _bootstrap_with_fake_snapshot(tmp_path)
     process = subprocess.Popen(
         ["bash", str(script), "exec", "smoke.py"],
@@ -456,21 +593,31 @@ def test_successful_exec_keeps_snapshot_available_to_payload(tmp_path: Path) -> 
         start_new_session=True,
     )
     snapshot_root: Path | None = None
+    payload_pid: int | None = None
     try:
         _wait_for_file(tmp_path / "exec-started", process)
+        payload_pid = _recorded_pid(tmp_path / "exec-pid")
         snapshot_root = Path(
             (tmp_path / "snapshot-record").read_text(encoding="utf-8")
         )
         assert process.poll() is None
         assert snapshot_root.is_dir()
-        os.killpg(process.pid, signal.SIGTERM)
-        process.communicate(timeout=5)
-        assert process.returncode == 143
+        signal_started = time.monotonic()
+        os.kill(process.pid, signal_number)
+        _communicate_or_kill(process, child_process_group=payload_pid)
+        assert process.returncode == expected_returncode
+        assert time.monotonic() - signal_started < 4
+        _assert_process_gone(payload_pid)
         assert not snapshot_root.parent.exists()
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=5)
+        if payload_pid is not None:
+            try:
+                os.killpg(payload_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if snapshot_root is not None:
             shutil.rmtree(snapshot_root.parent, ignore_errors=True)
 
@@ -492,6 +639,7 @@ def test_shipped_assert_refusal_reaches_missing_ready_marker(tmp_path: Path) -> 
         capture_output=True,
         text=True,
         env={**os.environ, "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": ""},
+        timeout=5,
     )
 
     assert result.returncode == 0, result.stderr
