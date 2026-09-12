@@ -22,6 +22,12 @@ source version, signed metadata index, sizes, and SHA-256 values, and the final
 OCI verifier requires each exact source byte. This is accompanying corresponding
 source, not a mutable third-party link or an invented written offer.
 
+Before HTTPS is available, one isolated trust stage raw-extracts checksum-pinned
+CA, OpenSSL CLI, and libssl packages from that same timestamped snapshot. It
+copies only the exact generated CA configuration and parsed PEM bundle into the
+build and runtime stages; none of those bootstrap package archives or parser
+binaries can flow through this stage into the final image.
+
 Source, baked runtime, weights, runtime data, cache, and outputs are independent
 boundaries. This candidate has no weights. Its scene cache is run-owned and
 ephemeral. Saved RGB/depth observations and proof JSON are operator-owned derived

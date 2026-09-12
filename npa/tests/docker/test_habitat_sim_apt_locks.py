@@ -62,6 +62,25 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
         "config_sha256": "bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d",
         "bundle_bytes": 182140,
         "bundle_sha256": "9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd",
+        "x509_parser": {
+            "command": "/usr/bin/openssl",
+            "packages": [
+                {
+                    "binary": "openssl",
+                    "version": "3.0.2-0ubuntu1.29",
+                    "bytes": 1184520,
+                    "sha256": "bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817",
+                    "source": "openssl",
+                },
+                {
+                    "binary": "libssl3",
+                    "version": "3.0.2-0ubuntu1.29",
+                    "bytes": 1906444,
+                    "sha256": "c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146",
+                    "source": "openssl",
+                },
+            ],
+        },
     }
     assert f"ARG CA_DEB_SHA256={ca['sha256']}" in dockerfile
     assert f"ARG CA_CERT_COUNT={ca['certificate_count']}" in dockerfile
@@ -69,9 +88,14 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
     assert f"ARG CA_CONFIG_SHA256={ca['config_sha256']}" in dockerfile
     assert f"ARG CA_BUNDLE_BYTES={ca['bundle_bytes']}" in dockerfile
     assert f"ARG CA_BUNDLE_SHA256={ca['bundle_sha256']}" in dockerfile
+    for package in ca["x509_parser"]["packages"]:
+        assert f"ARG {package['binary'].upper()}_DEB_SHA256={package['sha256']}" in dockerfile
+        assert f"{package['binary']}_{package['version']}_amd64.deb" in dockerfile
+        assert f"source=/{package['binary']}.deb" in dockerfile
     assert "${APT_SNAPSHOT}/pool/main/c/ca-certificates/" in dockerfile
     assert dockerfile.count('stat -c %s "${ca_config}"') == 1
     assert dockerfile.count("stat -c %s /etc/ca-certificates.conf") == 2
+    assert dockerfile.count("openssl x509") == 1
 
 
 def test_rsync_corresponding_source_is_exact_and_accompanies_the_binary() -> None:
@@ -120,6 +144,8 @@ def test_rsync_corresponding_source_is_exact_and_accompanies_the_binary() -> Non
     build, runtime_stage = dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)
     assert "Types: deb deb-src" in build
     assert "Types: deb deb-src" not in runtime_stage
+    assert "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" in build
+    assert "Suites: jammy jammy-updates jammy-security" in build
     assert "apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7" in build
     for artifact in source["artifacts"]:
         assert artifact["filename"] in build
@@ -136,3 +162,8 @@ def test_no_floating_upgrade_or_unverified_apt_transport() -> None:
     assert "Acquire::https::Verify" not in dockerfile
     assert "trusted=yes" not in dockerfile
     assert "update-ca-certificates" not in dockerfile
+    assert dockerfile.count(
+        "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/"
+    ) == 2
+    assert dockerfile.count("Suites: jammy jammy-updates jammy-security") == 2
+    assert "Suites: ${APT_SNAPSHOT}" not in dockerfile

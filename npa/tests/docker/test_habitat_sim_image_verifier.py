@@ -251,6 +251,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         "usr/share/doc/npa-habitat-sim/source-manifest.json": _json(manifest),
         "usr/share/doc/npa-habitat-sim/source-projection.json": projection_bytes,
         "usr/share/doc/npa-habitat-sim/licenses.json": b"{}\n",
+        "usr/share/doc/npa-habitat-sim/apt-build.lock": b"build lock\n",
         "usr/share/doc/npa-habitat-sim/apt-runtime.lock": apt_lock,
         "usr/share/doc/npa-habitat-sim/requirements-runtime.lock": python_lock,
         "usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": b"redistribution\n",
@@ -352,7 +353,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 21
+    assert report["regular_files_read"] == 22
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
@@ -753,6 +754,8 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         "/usr/share/doc/npa-habitat-sim/source-manifest.json": PACKAGE
         / "source-manifest.json",
         "/usr/share/doc/npa-habitat-sim/licenses.json": PACKAGE / "licenses.json",
+        "/usr/share/doc/npa-habitat-sim/apt-build.lock": PACKAGE
+        / "apt-build.lock",
         "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": PACKAGE / "apt-runtime.lock",
         "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": PACKAGE
         / "requirements-runtime.lock",
