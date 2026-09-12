@@ -118,9 +118,13 @@ def test_deleted_later_payload_still_fails_layer_scan(tmp_path: Path) -> None:
     [
         "FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime",
         "RUN pip install torch==2.7.1+cu128",
+        "/bin/sh -c pip install torch==2.7.1+cu128",
         "RUN robomimic-runtime warm",
+        "/bin/sh -c robomimic-runtime warm # buildkit",
         "RUN huggingface-cli download robomimic/robomimic_datasets",
+        "/bin/sh -c huggingface-cli download robomimic/robomimic_datasets",
         "ENV NPA_ROBOMIMIC_ACCEPT_EULA=YES",
+        "/bin/sh -c #(nop)  ENV NPA_ROBOMIMIC_ACCEPT_EULA=YES",
     ],
 )
 def test_forbidden_build_history_is_detected(tmp_path: Path, history: str) -> None:

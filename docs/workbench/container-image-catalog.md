@@ -303,7 +303,7 @@ historical evidence.
 ## Intentionally not published as separate images
 
 - **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
-  published image. Its intended bytes are pinned MIT robomimic source plus 34
+  published image. Its intended bytes are pinned MIT robomimic source plus 40
   hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
   torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
   Lift PH data, populated runtime cache, credentials, and outputs are excluded.
