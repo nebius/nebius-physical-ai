@@ -1132,6 +1132,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
+        config_defaults={"alignment_mode": "", "attribute_threshold": ""},
+        omit_flags_when_empty=("--alignment-mode", "--attribute-threshold"),
         description=(
             "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
             "(hallucination + VLM attribute verification, Apache-2.0) plus the "
@@ -1154,6 +1156,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.configs_uri}}",
             "--threshold",
             "{{config.grade_threshold}}",
+            "--attribute-threshold",
+            "{{config.attribute_threshold}}",
+            "--alignment-mode",
+            "{{config.alignment_mode}}",
             "--temporal-threshold",
             "{{config.temporal_consistency_threshold}}",
             "--temporal-regions-json",
@@ -3138,6 +3144,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.prepare_video_input": ToolEntry(
         name="workbench.cosmos3.prepare_video_input",
+        config_defaults={"conditioning_fps": ""},
+        omit_flags_when_empty=("--conditioning-fps",),
         description=(
             "Select one direct video or LeRobot v2/v3 episode/camera and stage "
             "the canonical source video plus caption frames."
@@ -3161,12 +3169,18 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.input_uri}}",
             "--provenance-uri",
             "{{config.input_provenance_uri}}",
+            "--conditioning-fps",
+            "{{config.conditioning_fps}}",
             "--run-id",
             "{{run.id}}",
         ],
     ),
     "workbench.cosmos3.generate_variants": ToolEntry(
         name="workbench.cosmos3.generate_variants",
+        config_defaults={"structural_control": "", "conditioning_fps": "",
+                         "transfer_chunk_frames": "", "control_guidance": ""},
+        omit_flags_when_empty=("--structural-control", "--conditioning-fps",
+                               "--transfer-chunk-frames", "--control-guidance"),
         access_capabilities=("cosmos3",),
         description=(
             "Run real Cosmos 3 video2video inference once per PAIDF variant, "
@@ -3220,6 +3234,14 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--guardrails",
             "--source-motion-weight",
             "{{config.source_motion_weight}}",
+            "--structural-control",
+            "{{config.structural_control}}",
+            "--conditioning-fps",
+            "{{config.conditioning_fps}}",
+            "--transfer-chunk-frames",
+            "{{config.transfer_chunk_frames}}",
+            "--control-guidance",
+            "{{config.control_guidance}}",
             "--run-id",
             "{{run.id}}",
         ],

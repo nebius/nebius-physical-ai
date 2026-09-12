@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
+PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 RUNNER = CliRunner()
 
 
@@ -400,6 +401,58 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     assert fake_runtime["options"].resume is True
 
 
+@pytest.fixture()
+def gpu_then_cpu_spec(tmp_path: Path) -> Path:
+    spec = tmp_path / "gpu-then-cpu.yaml"
+    spec.write_text("""apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: gpu-then-cpu}
+config: {bucket: rt-bucket, prefix: pipeline}
+resources:
+  gpu: {cloud: kubernetes, accelerators: B200:1, cpus: 16, memory: 128Gi}
+  cpu: {cloud: kubernetes, cpus: 4, memory: 16Gi}
+initial: generate
+states:
+  generate: {resources: gpu, run: {shell: 'true'}, next: publish}
+  publish: {resources: cpu, run: {shell: 'true'}, terminal: true}
+""")
+    return spec
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_runtime_defers_free_capacity_to_the_actual_wave(
+    fake_runtime, gpu_then_cpu_spec: Path, tmp_path: Path, mocker, resume: bool,
+) -> None:
+    capacity = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_gang_capacity",
+        side_effect=RuntimeError("completed generation no longer has free GPUs"),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
+    mocker.patch("npa.cli.workbench.workflow._resolve_submit_accelerators", return_value={})
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch("npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim", return_value="")
+
+    def target_preflight(_spec, **kwargs):
+        if kwargs.get("gpu_check") is not None:
+            kwargs["gpu_check"]()
+        return None, {}
+
+    target = mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", side_effect=target_preflight)
+    arguments = ["workbench", "workflow", "submit", str(gpu_then_cpu_spec),
+                 "--run-id", "wave-capacity", "--runtime", "--infra", "k8s/unit-context",
+                 "--no-deploy-if-absent"]
+    result = RUNNER.invoke(app, [*arguments, *(["--resume"] if resume else [])])
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].resume is resume
+    target.assert_called_once()
+    assert target.call_args.kwargs["verify_cluster"] is True
+    wave = tmp_path / "publish.yaml"
+    wave.write_text("name: publish\nresources: {cloud: kubernetes, cpus: 4, memory: 16}\nrun: 'true'\n")
+    fake_runtime["options"].pre_submit_hook(wave)
+    capacity.assert_not_called()
+
+
 def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
     mocker, monkeypatch, satisfied_preflight
 ) -> None:
@@ -540,6 +593,58 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "waves: 2" in result.output
     assert "[parallel]" in result.output
     assert "decision: promote_checkpoint" in result.output
+
+
+def test_runtime_required_workflow_selects_runtime_automatically(
+    fake_runtime, tmp_path: Path
+) -> None:
+    runtime_spec = tmp_path / "runtime-required.yaml"
+    runtime_spec.write_text(
+        FANOUT.read_text(encoding="utf-8").replace(
+            "metadata:\n", "metadata:\n  executionMode: runtime\n", 1
+        ),
+        encoding="utf-8",
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(runtime_spec),
+            "--run-id",
+            "paidf-runtime-required",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["spec"].metadata["executionMode"] == "runtime"
+
+
+def test_runtime_required_workflow_rejects_explicit_no_runtime(mocker) -> None:
+    runtime_driver = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(PAIDF_COSMOS3),
+            "--run-id",
+            "paidf-no-runtime",
+            "--no-runtime",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires runtime execution" in result.output
+    runtime_driver.assert_not_called()
 
 
 def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> None:

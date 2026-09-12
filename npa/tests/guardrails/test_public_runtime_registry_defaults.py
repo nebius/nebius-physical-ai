@@ -117,6 +117,8 @@ def _prepare_registry_workflow(spec_path):
             image_overrides=image_overrides,
             materialize_registry_secrets=False,
         ),
+        # This guardrail only inspects rendered image ownership; it never submits.
+        allow_runtime_required=True,
     )
 
 

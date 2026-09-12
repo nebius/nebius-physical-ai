@@ -407,10 +407,14 @@ def test_lerobot_rejects_unsafe_format_fields_and_nonfinite_timestamps(
         )
 
 
+@pytest.mark.parametrize("metadata_chunk", [0, 2])
+@pytest.mark.parametrize("file_index", [0, 2])
 def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     tmp_path: Path,
     fake_media_pipeline: None,
     monkeypatch: pytest.MonkeyPatch,
+    metadata_chunk: int,
+    file_index: int,
 ) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -432,7 +436,7 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
             {
                 "episode_index": 7,
                 f"videos/{feature}/chunk_index": 0,
-                f"videos/{feature}/file_index": 2,
+                f"videos/{feature}/file_index": file_index,
                 f"videos/{feature}/from_timestamp": 1.25,
                 f"videos/{feature}/to_timestamp": 2.75,
             }
@@ -440,10 +444,9 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     )
     parquet = tmp_path / "episodes.parquet"
     pq.write_table(table, parquet)
-    storage.s3.objects[
-        ("artifacts", prefix + "meta/episodes/chunk-000/file-000.parquet")
-    ] = parquet.read_bytes()
-    shared_key = prefix + f"videos/{feature}/chunk-000/file-002.mp4"
+    metadata_key = prefix + f"meta/episodes/chunk-{metadata_chunk:03d}/file-000.parquet"
+    storage.s3.objects[("artifacts", metadata_key)] = parquet.read_bytes()
+    shared_key = prefix + f"videos/{feature}/chunk-000/file-{file_index:03d}.mp4"
     storage.s3.objects[("artifacts", shared_key)] = b"shared-video"
     trim_args: list[tuple[float, float]] = []
 
@@ -464,11 +467,11 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     assert result.selection == "lerobot_dataset"
     assert trim_args == [(1.25, 2.75)]
     assert [key for _bucket, key in storage.s3.downloads] == [
-        prefix + "meta/episodes/chunk-000/file-000.parquet",
+        metadata_key,
         shared_key,
     ]
     assert storage.s3.list_requests == [
-        ("artifacts", prefix + "meta/episodes/chunk-000/")
+        ("artifacts", prefix + "meta/episodes/")
     ]
 
 

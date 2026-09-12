@@ -19,6 +19,19 @@ requires_ffmpeg = pytest.mark.skipif(
 )
 
 
+def _quality_disposition(*, accepted: bool) -> dict[str, object]:
+    return {
+        "schema": c3.QUALITY_DISPOSITION_SCHEMA,
+        "quality_status": "accepted" if accepted else "rejected",
+        "decision": "promote_checkpoint" if accepted else "loop_back",
+        "evaluator_status": "completed",
+        "score": 0.88 if accepted else 0.27,
+        "threshold": 0.75,
+        "hard_checks_passed": accepted,
+        "reasons": [] if accepted else ["aggregate score is below threshold"],
+    }
+
+
 def _tiny_video(path: Path, *, color: str = "blue") -> Path:
     assert FFMPEG is not None
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,8 +58,9 @@ def _tiny_video(path: Path, *, color: str = "blue") -> Path:
 
 @requires_ffmpeg
 @pytest.mark.parametrize("version", ["v2.1", "v3.0"])
+@pytest.mark.parametrize("episode", [0, 1])
 def test_prepare_input_selects_generic_lerobot_v2_and_v3(
-    tmp_path: Path, version: str
+    tmp_path: Path, version: str, episode: int
 ) -> None:
     dataset = tmp_path / "dataset"
     camera = "observation.images.front"
@@ -64,7 +78,7 @@ def test_prepare_input_selects_generic_lerobot_v2_and_v3(
             pa.Table.from_pylist(
                 [
                     {
-                        "episode_index": 0,
+                        "episode_index": episode,
                         f"videos/{camera}/chunk_index": 0,
                         f"videos/{camera}/file_index": 0,
                         f"videos/{camera}/from_timestamp": 0.0,
@@ -75,14 +89,14 @@ def test_prepare_input_selects_generic_lerobot_v2_and_v3(
             episodes / "file-000.parquet",
         )
     else:
-        source = dataset / "videos" / "chunk-000" / camera / "episode_000000.mp4"
+        source = dataset / "videos" / "chunk-000" / camera / f"episode_{episode:06d}.mp4"
     _tiny_video(source)
 
     result = c3.prepare_input(
         "lerobot",
         "",
         str(dataset),
-        0,
+        episode,
         "front",
         str(tmp_path / "run" / "input"),
         str(tmp_path / "run" / "input" / "provenance.json"),
@@ -92,6 +106,7 @@ def test_prepare_input_selects_generic_lerobot_v2_and_v3(
     assert result["status"] == "prepared"
     assert result["source_kind"] == "lerobot_dataset"
     assert result["camera"] == camera
+    assert result["episode"] == episode
     assert result["video_bytes"] > 0
     assert (tmp_path / "run" / "input" / "source.mp4").stat().st_size > 0
     assert list((tmp_path / "run" / "input").glob("frame-*.png"))
@@ -439,7 +454,7 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -606,7 +621,7 @@ def test_finalize_missing_truthful_manifest_fields_raise_domain_error(
         encoding="utf-8",
     )
     (root / "grade" / "quality_disposition.json").write_text(
-        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+        json.dumps(_quality_disposition(accepted=True)), encoding="utf-8"
     )
     (root / "curation" / "cosmos_curator.json").write_text(
         json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
@@ -627,14 +642,7 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "rejected",
-                "decision": "loop_back",
-                "evaluator_status": "missing",
-                "hard_checks_passed": False,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=False)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -650,19 +658,13 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
         c3.require_accepted_quality(str(disposition))
 
 
-def test_quality_route_repairs_pre_decision_disposition_before_promotion(
+def test_quality_route_promotes_only_a_complete_accepted_disposition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     disposition = tmp_path / "quality_disposition.json"
     decision = tmp_path / "decision.json"
     disposition.write_text(
-        json.dumps(
-            {
-                "quality_status": "accepted",
-                "evaluator_status": "completed",
-                "hard_checks_passed": True,
-            }
-        ),
+        json.dumps(_quality_disposition(accepted=True)),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -676,8 +678,51 @@ def test_quality_route_repairs_pre_decision_disposition_before_promotion(
         c3.route_quality_disposition(str(disposition), str(decision))
         == "promote_checkpoint"
     )
-    assert json.loads(disposition.read_text())["decision"] == "promote_checkpoint"
     c3.require_accepted_quality(str(disposition))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.pop("decision"), "incomplete"),
+        (lambda value: value.update(decision="loop_back"), "inconsistent"),
+        (lambda value: value.update(score=float("nan")), "finite number"),
+        (lambda value: value.update(score="0.88"), "finite number"),
+        (
+            lambda value: value.update(evaluator_status=None),
+            "non-empty string",
+        ),
+        (lambda value: value.update(reasons=[""]), "string list"),
+        (
+            lambda value: value.update(
+                quality_status="rejected",
+                decision="loop_back",
+                hard_checks_passed=False,
+                reasons=[],
+            ),
+            "inconsistent",
+        ),
+    ],
+)
+def test_quality_route_fails_closed_on_malformed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    message: str,
+) -> None:
+    disposition = tmp_path / "quality_disposition.json"
+    decision = tmp_path / "decision.json"
+    document = _quality_disposition(accepted=True)
+    mutation(document)
+    disposition.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, value: Path(uri).write_text(value, encoding="utf-8"),
+    )
+
+    with pytest.raises(c3.PaidfCosmos3Error, match=message):
+        c3.route_quality_disposition(str(disposition), str(decision))
+    assert not decision.exists()
 
 
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:

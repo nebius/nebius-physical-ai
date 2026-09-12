@@ -11,6 +11,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -26,10 +27,84 @@ ATTEMPT_SCHEMA = "npa.paidf.cosmos3.refinement.v1"
 FINAL_SCHEMA = "npa.paidf.cosmos3.final.v1"
 ENGINE = "nvidia-cosmos/cosmos-framework"
 VIDEO_MODE = "video2video"
+QUALITY_DISPOSITION_SCHEMA = "npa.data_factory.quality_disposition.v1"
 
 
 class PaidfCosmos3Error(RuntimeError):
     """A PAIDF Cosmos 3 contract could not be satisfied."""
+
+
+def _disposition_number(document: Mapping[str, Any], field: str) -> float:
+    value = document.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PaidfCosmos3Error(f"quality disposition {field} must be a finite number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise PaidfCosmos3Error(f"quality disposition {field} must be a finite number")
+    if not 0.0 <= number <= 1.0:
+        raise PaidfCosmos3Error(f"quality disposition {field} must be between 0 and 1")
+    return number
+
+
+def _quality_disposition_fields(
+    document: Any,
+) -> tuple[Mapping[str, Any], list[str]]:
+    if not isinstance(document, dict):
+        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    required = {
+        "schema",
+        "quality_status",
+        "decision",
+        "evaluator_status",
+        "score",
+        "threshold",
+        "hard_checks_passed",
+        "reasons",
+    }
+    missing = sorted(required.difference(document))
+    if missing:
+        raise PaidfCosmos3Error(
+            "quality disposition is incomplete: " + ", ".join(missing)
+        )
+    if document["schema"] != QUALITY_DISPOSITION_SCHEMA:
+        raise PaidfCosmos3Error("quality disposition schema is unsupported")
+    if not isinstance(document["evaluator_status"], str) or not document[
+        "evaluator_status"
+    ].strip():
+        raise PaidfCosmos3Error(
+            "quality disposition evaluator_status must be a non-empty string"
+        )
+    if not isinstance(document["hard_checks_passed"], bool):
+        raise PaidfCosmos3Error(
+            "quality disposition hard_checks_passed must be boolean"
+        )
+    reasons = document["reasons"]
+    if not isinstance(reasons, list) or not all(
+        isinstance(reason, str) and reason.strip() for reason in reasons
+    ):
+        raise PaidfCosmos3Error("quality disposition reasons must be a string list")
+    return document, reasons
+
+
+def _validated_quality_status(document: Any) -> str:
+    disposition, reasons = _quality_disposition_fields(document)
+    score = _disposition_number(disposition, "score")
+    threshold = _disposition_number(disposition, "threshold")
+    accepted = (
+        disposition["evaluator_status"] == "completed"
+        and disposition["hard_checks_passed"] is True
+        and score >= threshold
+        and not reasons
+    )
+    expected_status = "accepted" if accepted else "rejected"
+    expected_decision = "promote_checkpoint" if accepted else "loop_back"
+    if (
+        disposition["quality_status"] != expected_status
+        or disposition["decision"] != expected_decision
+        or (expected_status == "rejected" and not reasons)
+    ):
+        raise PaidfCosmos3Error("quality disposition is internally inconsistent")
+    return expected_status
 
 
 def validate_committed_augment_manifest(
@@ -328,12 +403,21 @@ def _select_lerobot_video(
     row = next(
         (item for item in rows if int(item.get("episode_index", -1)) == episode), {}
     )
-    if rows and not row:
+    if (rows or version.startswith("v3")) and not row:
         raise PaidfCosmos3Error(
             "selected LeRobot episode is absent from episode metadata"
         )
+    source = _lerobot_video_path(root, info, row, episode, feature)
+    timestamps = _lerobot_episode_timestamps(row, feature, required=version.startswith("v3"))
+    return source, timestamps, feature
+
+
+def _lerobot_video_path(
+    root: Path, info: Mapping[str, Any], row: Mapping[str, Any], episode: int, feature: str,
+) -> Path:
     chunk_index = int(row.get(f"videos/{feature}/chunk_index", 0) or 0)
-    file_index = int(row.get(f"videos/{feature}/file_index", episode) or episode)
+    raw_file_index = row.get(f"videos/{feature}/file_index")
+    file_index = episode if raw_file_index is None else int(raw_file_index)
     pattern = str(
         info.get("video_path")
         or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
@@ -361,21 +445,50 @@ def _select_lerobot_video(
     source = next((path for path in candidates if path.is_file()), None)
     if source is None:
         raise PaidfCosmos3Error("selected LeRobot episode/camera video is missing")
+    return source
+
+
+def _lerobot_episode_timestamps(
+    row: Mapping[str, Any], feature: str, *, required: bool,
+) -> tuple[float, float] | None:
     start = row.get(f"videos/{feature}/from_timestamp")
     end = row.get(f"videos/{feature}/to_timestamp")
-    timestamps: tuple[float, float] | None = None
-    if start is not None or end is not None:
-        if (
-            start is None
-            or end is None
-            or float(start) < 0
-            or float(end) <= float(start)
-        ):
-            raise PaidfCosmos3Error(
-                "LeRobot episode video timestamps are incomplete or invalid"
+    if not required and start is None and end is None:
+        return None
+    try:
+        start, end = float(start), float(end)
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise PaidfCosmos3Error(
+            "LeRobot episode video timestamps are incomplete or invalid"
+        ) from exc
+    return start, end
+
+
+def _prepare_lerobot_source(
+    uri: str, root: Path, episode: int, camera: str, storage: Any | None,
+) -> tuple[Path, tuple[float, float] | None, str]:
+    if _is_s3(uri):
+        from npa.workflows.data_factory_input import (
+            PaidfInputError,
+            _materialize_lerobot_episode,
+        )
+
+        source = root / "selected.mp4"
+        try:
+            _materialize_lerobot_episode(
+                storage or _storage(), lerobot_uri=uri, camera=camera,
+                episode=episode, explicit_selection=bool(camera), destination=source,
             )
-        timestamps = (float(start), float(end))
-    return source, timestamps, feature
+        except PaidfInputError as exc:
+            raise PaidfCosmos3Error(str(exc)) from exc
+        # The shared selector has already trimmed this episode from its video.
+        return source, None, camera
+    dataset = _download_source(uri, root / "dataset", storage=storage)
+    if dataset.is_file():
+        raise PaidfCosmos3Error("LeRobot dataset URI must resolve to a directory")
+    return _select_lerobot_video(dataset, episode, camera)
 
 
 def _normalize_video(
@@ -451,6 +564,7 @@ def prepare_input(
     run_id: str = "",
     *,
     storage: Any | None = None,
+    conditioning_fps: int = 0,
 ) -> dict[str, Any]:
     """Select and stage one direct video or LeRobot v2/v3 episode/camera."""
 
@@ -485,27 +599,37 @@ def prepare_input(
                     )
                 source = videos[0]
         else:
-            dataset = _download_source(selected_uri, root / "dataset", storage=client)
-            if dataset.is_file():
-                raise PaidfCosmos3Error(
-                    "LeRobot dataset URI must resolve to a directory"
-                )
-            source, timestamps, feature = _select_lerobot_video(
-                dataset, episode_index, camera
+            source, timestamps, feature = _prepare_lerobot_source(
+                selected_uri, root, episode_index, camera, client
             )
         canonical = root / "source.mp4"
-        _normalize_video(source, canonical, timestamps)
+        timeline = None
+        if conditioning_fps:
+            from npa.workflows.paidf_cosmos3_media import prepare_reference
+
+            original = root / "original_source.mp4"
+            if timestamps:
+                _normalize_video(source, original, timestamps)
+            else:
+                shutil.copy2(source, original)
+            timeline = prepare_reference(original, canonical, int(conditioning_fps))
+        else:
+            _normalize_video(source, canonical, timestamps)
         frames = _extract_frames(canonical, root / "frames")
         base = input_uri if input_uri.endswith("/") else input_uri + "/"
         if _is_s3(base):
             assert client is not None
             client.upload_file(str(canonical), base + "source.mp4")
+            if timeline is not None:
+                client.upload_file(str(original), base + "original_source.mp4")
             for frame in frames:
                 client.upload_file(str(frame), base + frame.name)
         else:
             output = Path(base)
             output.mkdir(parents=True, exist_ok=True)
             shutil.copy2(canonical, output / "source.mp4")
+            if timeline is not None:
+                shutil.copy2(original, output / "original_source.mp4")
             for frame in frames:
                 shutil.copy2(frame, output / frame.name)
         payload = {
@@ -522,6 +646,11 @@ def prepare_input(
             "frame_count": len(frames),
             "run_id": str(run_id or ""),
         }
+        if timeline is not None:
+            payload["timeline_uri"] = _write_json(timeline, base + "timeline.json", storage=client)
+            payload["original_video_uri"] = base + "original_source.mp4"
+            payload["media"] = {key: value for key, value in timeline["prepared"].items() if key != "timestamps"}
+            payload["conditioning_fps"] = conditioning_fps
         payload["written_uri"] = _write_json(payload, provenance_uri, storage=client)
     print(
         json.dumps(
@@ -629,7 +758,7 @@ def _variant_metadata(
     artifact: Path,
     frame_count: int,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
         "engine": ENGINE,
@@ -653,6 +782,10 @@ def _variant_metadata(
         "motion_preservation": None,
         "published_video_sha256": _sha256(artifact),
     }
+    if metadata.get("temporal_alignment") is not None:
+        payload["temporal_alignment"] = metadata["temporal_alignment"]
+        payload["structural_control"] = "edge"
+    return payload
 
 
 def _publish_variant(
@@ -678,6 +811,12 @@ def _publish_variant(
         for frame in frames:
             storage.upload_file(str(frame), base + frame.name)
         clip_meta = _variant_metadata(clip, variables, metadata, artifact, len(frames))
+        if result.get("structural_transfer") is not None:
+            transfer = dict(result["structural_transfer"])
+            control_path = Path(transfer.pop("control_path"))
+            transfer["control_uri"] = storage.upload_file(str(control_path), base + "source_edges.mkv")
+            _write_json(transfer, base + "transfer.json", storage=storage)
+            clip_meta["transfer_uri"] = base + "transfer.json"
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
         "clip": clip,
@@ -689,6 +828,7 @@ def _publish_variant(
         "steps": clip_meta["steps"],
         "variables": dict(variables),
         "motion_preservation": None,
+        **({"temporal_alignment": metadata["temporal_alignment"]} if "temporal_alignment" in metadata else {}),
     }
 
 
@@ -720,6 +860,10 @@ def generate_variants(
     storage: Any | None = None,
     environ: Mapping[str, str] | None = None,
     generator: Any | None = None,
+    structural_control: str = "none",
+    conditioning_fps: int = 24,
+    transfer_chunk_frames: int = 93,
+    control_guidance: float = 1.5,
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -729,6 +873,14 @@ def generate_variants(
         )
     if str(mode) != VIDEO_MODE:
         raise PaidfCosmos3Error("PAIDF Cosmos 3 generation must use video2video")
+    if structural_control not in {"none", "edge"}:
+        raise PaidfCosmos3Error("structural_control must be none or edge")
+    transfer = None
+    if structural_control == "edge":
+        from npa.workbench.cosmos.structural_transfer import TransferSettings
+
+        transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance)
+        transfer.validate()
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
         raise PaidfCosmos3Error("PAIDF Cosmos 3 guardrails must remain enabled")
@@ -819,7 +971,12 @@ def generate_variants(
             parallelism_preset=parallelism_preset,
             run_id=run_id,
             environ=env,
+            **({"transfer": transfer} if transfer is not None else {}),
         )
+        if transfer is not None:
+            from npa.workflows.paidf_cosmos3_media import verify_pair
+
+            result["temporal_alignment"] = verify_pair(Path(local_input), Path(result["output_path"]), conditioning_fps)
         return index, result, combo, variant_prompt
 
     generated: list[tuple[int, dict[str, Any], dict[str, Any], str]] = []
@@ -845,6 +1002,7 @@ def generate_variants(
                         "guardrails": True,
                         "attempt": attempt,
                         "input_provenance_uri": input_provenance_uri,
+                        **({"temporal_alignment": result["temporal_alignment"]} if transfer is not None else {}),
                     },
                     storage=client,
                 )
@@ -873,6 +1031,7 @@ def generate_variants(
             "captions_uri": captions_uri,
         },
         "run_id": run_id,
+        "structural_control": structural_control,
         "motion_preservation": {
             "enabled": bool(motion_weight),
             "source_weight": motion_weight,
@@ -912,11 +1071,13 @@ def generate_variants(
 
 
 def reject_quality(disposition_uri: str) -> None:
-    disposition = _read_json(disposition_uri)
-    if (
-        not isinstance(disposition, dict)
-        or disposition.get("quality_status") != "rejected"
-    ):
+    try:
+        quality_status = _validated_quality_status(_read_json(disposition_uri))
+    except Exception as exc:
+        raise PaidfCosmos3Error(
+            "reject terminal requires a complete durable disposition"
+        ) from exc
+    if quality_status != "rejected":
         raise PaidfCosmos3Error(
             "reject terminal requires a durable rejected disposition"
         )
@@ -936,27 +1097,10 @@ def route_quality_disposition(disposition_uri: str, decision_uri: str) -> str:
         raise PaidfCosmos3Error(
             "quality disposition is missing or unreadable"
         ) from exc
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("quality disposition is not a JSON object")
-    quality_status = disposition.get("quality_status")
-    recorded_decision = disposition.get("decision")
-    expected = (
-        "promote_checkpoint" if quality_status == "accepted" else "loop_back"
-    )
-    if quality_status not in {"accepted", "rejected"}:
-        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
-    if recorded_decision is None:
-        # Runs started by the pre-decision disposition writer can reach this state
-        # after an operator repairs and resumes the driver.  Persist the uniquely
-        # derivable route before continuing so downstream acceptance checks still
-        # consume one durable, self-consistent disposition.  A present conflicting
-        # value remains a hard failure below.
-        disposition["decision"] = expected
-        _write_json(disposition, disposition_uri)
-    elif recorded_decision != expected:
-        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
-    write_decision(decision_uri, expected)
-    return expected
+    quality_status = _validated_quality_status(disposition)
+    decision = "promote_checkpoint" if quality_status == "accepted" else "loop_back"
+    write_decision(decision_uri, decision)
+    return decision
 
 
 def require_accepted_quality(disposition_uri: str) -> None:
@@ -968,14 +1112,7 @@ def require_accepted_quality(disposition_uri: str) -> None:
         raise PaidfCosmos3Error(
             "accepted quality disposition is missing or unreadable"
         ) from exc
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("accepted quality disposition is not a JSON object")
-    if (
-        disposition.get("quality_status") != "accepted"
-        or disposition.get("decision") != "promote_checkpoint"
-        or disposition.get("evaluator_status") != "completed"
-        or disposition.get("hard_checks_passed") is not True
-    ):
+    if _validated_quality_status(disposition) != "accepted":
         raise PaidfCosmos3Error(
             "annotation requires a complete accepted evaluator disposition"
         )
@@ -996,14 +1133,18 @@ def finalize(
     manifest = _read_json(root + "cosmos_augmented/manifest.json", storage=client)
     if not isinstance(manifest, dict):
         raise PaidfCosmos3Error("Cosmos 3 manifest is not a JSON object")
+    annotation = None
+    if manifest.get("structural_control") == "edge":
+        from npa.workflows.paidf_cosmos3_annotation import validate_annotation
+
+        annotation = validate_annotation(root, client)
     evaluator = _complete_evaluator_report(
         _read_json(root + "grade/cosmos_evaluator.json", storage=client)
     )
     disposition = _read_json(root + "grade/quality_disposition.json", storage=client)
     curator = _read_json(root + "curation/cosmos_curator.json", storage=client)
     fiftyone = _read_json(root + "curation/report.json", storage=client)
-    if not isinstance(disposition, dict):
-        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    quality_status = _validated_quality_status(disposition)
     if not isinstance(curator, dict):
         raise PaidfCosmos3Error("Cosmos Curator report is not a JSON object")
     if not isinstance(fiftyone, dict):
@@ -1063,10 +1204,7 @@ def finalize(
             "Cosmos 3 manifest does not prove real non-empty framework output; "
             f"missing or invalid fields: {', '.join(missing_or_invalid) or 'counts'}"
         )
-    if (
-        disposition.get("quality_status") != "accepted"
-        or evaluator.get("passed") is not True
-    ):
+    if quality_status != "accepted" or evaluator.get("passed") is not True:
         raise PaidfCosmos3Error(
             "finalization requires an accepted complete evaluator result"
         )
@@ -1121,6 +1259,10 @@ def finalize(
         "fiftyone_engine": fiftyone["curation_engine"],
         "has_rrd": True,
         "artifact_count": len(keys),
+        "annotated_variant_count": len(annotation["variants"]) if annotation else None,
+        "alignment_verified": annotation is not None,
+        "quality_threshold": evaluator.get("threshold"),
+        "attribute_threshold": evaluator.get("attribute_threshold", 1.0),
     }
     if upstream is not None:
         payload["upstream"] = upstream

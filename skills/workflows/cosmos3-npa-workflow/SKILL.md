@@ -24,6 +24,19 @@ URIs, and records declared outputs.
 
 ## Reference Spec
 
+For a complete source-video data factory, use `workflows/main/paidf-cosmos3.yaml`
+and `workflows/guides/paidf-cosmos3.md`. Its metadata selects runtime execution
+automatically, rejects assumed execution decisions, and enables `source_overlay`
+so pinned images use the submitted NPA
+adapters. Its `structural_control=edge` path prepares a complete 832×480 source
+at `conditioning_fps=24`, drives native transfer in `transfer_chunk_frames=93`
+windows with `control_guidance=1.5`, and verifies source/output timing and hashes
+before evaluation. Model text and video guardrails remain enabled. Quality
+acceptance uses the recorded `grade_threshold` and `attribute_threshold`;
+lower thresholds never bypass media alignment, guardrails or endpoint failures.
+Captioning and finalization require coverage of every accepted variant. Do not
+describe generic prefix-conditioned video2video as equivalent to this path.
+
 `workflows/testing/cosmos3-generate.yaml` is the working
 example. Copy its shape:
 
