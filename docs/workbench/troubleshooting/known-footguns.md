@@ -445,7 +445,7 @@ parse string as hex hash value`, with a valid token and an accepted license.
 Root cause: huggingface/xet-core#895 breaks the Xet transfer client on exactly
 `huggingface_hub==1.23.0` plus `hf-xet==1.5.1`. Newer releases fix it.
 
-The current `npa-cosmos3:1.2.2-cu130-r6` image bakes the compatible
+The current `npa-cosmos3:1.2.2-cu130-r7` image bakes the compatible
 `huggingface_hub==0.36.2` / `hf-xet==1.3.2` pair and its build rejects the
 known-bad pair. In other runtimes, set `HF_HUB_DISABLE_XET=1` and retry or
 upgrade the pair. `npa workbench cosmos3 generate` warns on stderr only for the
@@ -466,7 +466,9 @@ would otherwise return safe; upstream Qwen3Guard also converts an internal
 model exception into a safe tuple, while the video safety filter can skip a
 failed sampled-frame classifier call. NPA instruments the real upstream model
 calls, restores the shipped media filter only for the empty preset, and rejects
-all of those ineffective states.
+all of those ineffective states. It also copies the pinned Blocklist tokenizer
+subtree from Hugging Face's link-based snapshot into an integrity-checked
+regular-file cache because hardened NLTK intentionally refuses snapshot links.
 
 Current behavior: read the machine-readable `guardrail_state` receipt for the
 requested, discovered, evaluated, per-model evaluation detail, effective,
