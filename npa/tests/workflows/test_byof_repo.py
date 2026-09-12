@@ -458,7 +458,10 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
     assert output["base_image"].endswith(":fallback")
 
 
-def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
+@pytest.mark.parametrize("cleanup_argv", [[], ["--no-cleanup"]])
+def test_main_forwards_yaml_override_to_runner(
+    monkeypatch, cleanup_argv: list[str]
+) -> None:
     module = _load_module()
     seen: dict[str, object] = {}
 
@@ -491,6 +494,7 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
             "isaac-lab",
             "--yaml",
             "/tmp/isaac-lab-rtxpro.yaml",
+            *cleanup_argv,
         ]
     )
 
@@ -499,6 +503,11 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
     assert isinstance(cmd, list)
     assert "--yaml" in cmd
     assert "/tmp/isaac-lab-rtxpro.yaml" in cmd
+    if cleanup_argv:
+        assert "--cleanup" not in cmd
+        assert "--no-cleanup" not in cmd
+    else:
+        assert "--cleanup" in cmd
 
 
 def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
