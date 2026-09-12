@@ -271,7 +271,16 @@ def test_ngc_definitive_auth_rejection_fails(outcome: str) -> None:
     assert "health access" in result.remedy
 
 
-@pytest.mark.parametrize("outcome", ["entitlement-required", "tags-401", "tags-403"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "tags-401",
+        "tags-403",
+    ],
+)
 def test_ngc_definitive_entitlement_rejection_fails(outcome: str) -> None:
     result = check_ngc_key(
         "nvapi-synthetic",
