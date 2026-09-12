@@ -40,10 +40,19 @@ viewport because B200 has no RT cores. Use RTX PRO 6000 for the independent
 graphics qualification and require a non-empty MP4.
 
 ```bash
-npa workbench health preflight --checks nebius,storage
+npa workbench health preflight --checks nebius,s3
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b200.yaml
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
+
+The accepted release is `0.3.0-isaaclab3-20260912`, exact manifest
+`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`,
+promoted without rebuilding from development source SHA
+`22783a16abcd424df540b71e94600d705b317f9b`. On a target whose accelerator
+spelling has already passed `npa workbench workflow gpus`, set
+`NPA_WORKFLOW_GPU_ACCELERATOR=B200:1` for the state-only spec or
+`NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` for the
+video spec. This is an exact placement pin, not cross-platform fallback.
 
 `npa workbench isaac-arena evaluate` supports only upstream-shipped
 `zero_action`, `replay`, and `rsl_rl` policies. Replay requires one HDF5 file.
@@ -56,7 +65,7 @@ Successful evaluation requires:
 - one or more episode records with boolean `success` and positive
   `episode_length`;
 - `upstream/<timestamp>/episode_results_rank*.jsonl`;
-- `upstream/<timestamp>/report/index.html`;
+- `upstream/<timestamp>/index.html` plus linked pages under `report/`;
 - a required MP4 when `--record-video` is selected; and
 - `result.json` with the source revision, request, measured GPU identity,
   success rate, byte sizes, and SHA-256 hashes.
@@ -64,6 +73,13 @@ Successful evaluation requires:
 The zero-action qualification is a real baseline evaluation and may correctly
 report zero success. Do not turn that expected policy result into a synthetic
 pass; the capability gate is factual execution and artifact integrity.
+
+Accepted exact-digest evidence comprises independent 1,050-step episodes on
+B200 `(10, 0)` and RTX PRO 6000 `(12, 0)`. B200 retained five task artifacts /
+86,082 bytes with no MP4. RTX retained six / 1,119,004 bytes, including an
+independently decoded 1,024,140-byte H.264 viewport MP4 at 1280×720 for 70.067
+seconds. Consult `npa/docker/workbench/blackwell-dc-images.json` for the
+machine-readable, sanitized record.
 
 ## Build and release
 

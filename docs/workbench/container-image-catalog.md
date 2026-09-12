@@ -19,13 +19,13 @@ repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
 The main-branch public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-05**. All **32 current release tags**
-resolved and matched their recorded digests. All **43 retained table references**
-(32 current pins and 11 historical aliases) resolved anonymously; manifest and
+GHCR without credentials on **2026-09-12**. All **33 current release tags**
+resolved and matched their recorded digests. All **44 retained table references**
+(33 current pins and 11 historical aliases) resolved anonymously; manifest and
 OCI config hashes were checked, and every inspected runtime was `linux/amd64`.
-No missing or drifted accepted release required a build, promotion, or registry
-write. This audit did not execute new CPU/GPU workloads or repeat payload scans;
-capability results below retain their original exact-digest evidence.
+The 32 pre-existing release references required no registry write; Isaac Arena
+was built, qualified, and promoted as the additive 33rd release. Capability
+results below remain tied to their original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -45,8 +45,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
+**38 packaging entries** (36 redistribution-eligible and two restricted) and
+**39 mapped tools**: 33 public-release members, two restricted tools, and four
 quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
@@ -56,6 +56,24 @@ image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
 `404 MANIFEST_UNKNOWN` in the separate optional-variant check; use a validated
 operator image for that version. It is not a missing member of the current
 public release plan.
+
+## 2026-09-12 Isaac Arena publication
+
+`npa-isaac-arena:0.3.0-isaaclab3-20260912` promotes, without rebuilding, the
+exact public development manifest
+`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`
+from source revision `22783a16abcd424df540b71e94600d705b317f9b`. The image
+passed source/license, complete-layer payload, vulnerability, secret, SBOM,
+provenance, worker-bootstrap, and anonymous-pull gates.
+
+Independent digest-pinned workflows then completed the real upstream
+`policy_runner.py` on B200 `sm_100` and RTX PRO 6000 `sm_120`. Each produced one
+scored 1,050-step episode, JSONL, three linked HTML report pages, a simulator
+log, and an NPA hash manifest. The B200 run intentionally emitted no video. The
+RTX run additionally emitted a 1,024,140-byte H.264 viewport MP4 independently
+decoded as 1280×720 with 70.067 seconds duration. Isaac Sim/Lab remained an
+operator-authorized runtime fetch. Upstream Arena 0.3.0 remains alpha; NPA
+supports the pinned evaluator contract, not the broader unstable API.
 
 ## Pending NCore conversion image
 
@@ -199,17 +217,9 @@ published, and anonymously pullable status for this exact digest only.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912` | 2026-09-12 | Real completed-episode evaluation through the pinned upstream `policy_runner.py`. The payload-clean public image bakes only Apache-2.0 Arena source and fetches Isaac Sim/Lab at runtime under the operator's EULA acceptance. The exact release passed independent B200 state-only and RTX PRO 6000 viewport-video evaluations. Upstream remains alpha; only the pinned evaluator contract is supported. |
 
 ## Candidates outside the supported public release plan
-
-`npa-isaac-arena` is a public-eligible, payload-clean candidate built from the
-official Isaac Lab-Arena 0.3.0 release commit. It remains outside the supported
-release plan until the exact development digest passes the built-layer payload
-scan and real completed-episode evaluation independently on B200 and RTX PRO
-6000; the RTX run must also retain upstream's viewport MP4. Isaac Sim/Lab is an
-operator-authorized runtime fetch, never an image layer. Upstream calls 0.3.0
-alpha and explicitly warns against production use, so the NPA support boundary
-is the pinned evaluation runner rather than the broader unstable API.
 
 `npa-openpi` is a zero-weight, zero-dataset public-image candidate for the
 pinned pi0.5 full-DROID runtime. It includes `rerun-sdk==0.31.4` in an isolated
@@ -259,14 +269,15 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 32 accepted release references resolved anonymously to their recorded
-digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to
+All 33 accepted release references resolved anonymously to their recorded
+digests on 2026-09-12. Nineteen resolve directly to an image manifest and 14 to
 an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
 groups the current publishing plan three ways:
 
-- **17 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **18 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
+  `npa-isaac-arena`,
   `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
   `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
   `npa-wan2-2`. This band does not mean every cell has a current-release run:

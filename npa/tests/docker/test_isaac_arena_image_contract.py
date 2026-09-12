@@ -66,4 +66,4 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
 
 def test_isaac_arena_image_catalog_identity() -> None:
     assert CONTAINER_IMAGE_NAMES["isaac-arena"] == "npa-isaac-arena"
-    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-unbuilt"
+    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260912"

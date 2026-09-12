@@ -6,10 +6,10 @@
     "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real Isaac Arena evaluate command and requires upstream viewport video in addition to scored episode artifacts.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
   },
   "prerequisites": {
-    "output_storage": {"status": "unverified", "reason": "Operator storage is selected at submission time.", "evidence": []},
+    "output_storage": {"status": "verified", "reason": "A tenant-matched project credential completed the writable-storage preflight and retained independently readable evaluation and runtime-provenance objects.", "evidence": ["docs/workbench/isaac-arena.md", "npa/docker/workbench/blackwell-dc-images.json"]},
     "worker_input": {"status": "not_applicable", "reason": "The zero-action evaluation uses the procedural upstream cube_goal_pose environment and no checkpoint input.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
-    "credentials": {"status": "unverified", "reason": "Nebius and S3 preflight must pass before submission; no model credential is required.", "evidence": []},
-    "source_image": {"status": "unverified", "reason": "The public development image has not been built yet.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile"]},
-    "target_runtime": {"status": "unverified", "reason": "Reserved RTX PRO 6000 placement, evaluation, and viewport recording remain to be verified.", "evidence": []}
+    "credentials": {"status": "verified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights passed before GPU submission; this baseline requires no model credential.", "evidence": ["docs/workbench/isaac-arena.md"]},
+    "source_image": {"status": "verified", "reason": "The exact public digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/blackwell-dc-images.json"]},
+    "target_runtime": {"status": "verified", "reason": "The digest-pinned image completed a real 1,050-step scored episode on RTX PRO 6000 sm_120 and retained hash-verified JSONL, three linked HTML pages, a log, durable runtime provenance, and an independently decoded 1280x720 H.264 viewport MP4.", "evidence": ["npa/docker/workbench/sm120-images.json", "npa/docker/workbench/blackwell-dc-images.json", "docs/workbench/image-gpu-compatibility-matrix.md"]}
   }
 }

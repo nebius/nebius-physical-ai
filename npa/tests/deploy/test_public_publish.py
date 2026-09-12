@@ -302,12 +302,13 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "isaac-arena"}
+        {"openpi", "curobo", "ncore"}
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
         "detection-training",
+        "isaac-arena",
         "sonic-mujoco",
     }
 
@@ -336,6 +337,7 @@ def test_public_set_includes_the_oss_tools() -> None:
         "lichtblick",
         # Newly publishable: no baked Omniverse Kit, weights or assets.
         "isaac-lab",
+        "isaac-arena",
         "sonic",
         "groot",
         "cosmos3-serving",
@@ -356,6 +358,7 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     for image in (
         "npa-isaac-lab",
+        "npa-isaac-arena",
         "npa-sonic",
         "npa-groot",
     ):
@@ -426,11 +429,12 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "cosmos3-ray-serve",
             "sonic-mujoco",
             "detection-training",
+            "isaac-arena",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source. The six
+    # The five Sim2Real roles deliberately share one coherent source. The seven
     # other accepted sources, including the detector, remain distinct from it.
-    assert len(set(accepted_shas.values())) == 7
+    assert len(set(accepted_shas.values())) == 8
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]

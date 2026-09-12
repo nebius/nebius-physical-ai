@@ -18,6 +18,13 @@ The public `npa-isaac-arena` image adds the Apache-2.0 Arena source at commit
 Lab image. Its source archive is SHA-256 verified. Upstream tests, sample
 checkpoints, demonstration data, and documentation media are removed.
 
+The accepted release is
+`npa-isaac-arena:0.3.0-isaaclab3-20260912`, manifest
+`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`.
+It was promoted without rebuilding from source revision
+`22783a16abcd424df540b71e94600d705b317f9b` after complete payload/security,
+SBOM, provenance, bootstrap, anonymous-pull, and two-platform workload gates.
+
 The image contains no Isaac Sim/Lab/Omniverse Kit payload, weights, replay data,
 operator checkpoints, credentials, results, or populated runtime cache. On
 first use, `/isaac-sim/python.sh` fetches the pinned Isaac runtime from NVIDIA
@@ -78,6 +85,37 @@ npa workbench health preflight --checks nebius,s3
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b200.yaml
 npa workbench workflow plan-spec workflows/testing/isaac-arena-evaluation-b200.yaml
 ```
+
+On a cluster whose SkyPilot accelerator spelling is already verified, pin it
+explicitly to keep submission identity stable. Use the corresponding RTX name
+and YAML for the video workflow.
+
+```bash
+export NPA_WORKFLOW_GPU_ACCELERATOR='B200:1'
+npa workbench workflow submit \
+  workflows/testing/isaac-arena-evaluation-b200.yaml \
+  --runtime --durable-s3 --max-wait-seconds 0 \
+  --project <project-alias> --infra k8s/<context> \
+  --var bucket=<operator-owned-bucket>
+```
+
+## Accepted workload evidence
+
+The exact release digest completed independent one-episode evaluations on both
+required GPU families. The B200 run measured capability `(10, 0)`, completed
+1,050 scored steps, and retained five hash-verified task artifacts (86,082
+bytes): one episode journal, three linked HTML pages, and the simulator log. It
+made no video claim.
+
+The RTX PRO 6000 run measured capability `(12, 0)`, completed the same 1,050
+scored steps, and retained six hash-verified task artifacts (1,119,004 bytes).
+Its required viewport artifact independently decoded as H.264, 1280×720, and
+70.067 seconds. Both zero-action runs reported success rate 0.0; that is an
+expected policy baseline result, while the evaluation capability and artifact
+integrity gates passed.
+
+The live jobs and their run-created controllers were cancelled/removed after
+validation. The pre-existing shared clusters and operator storage were retained.
 
 For exact build, scan, qualification, and cleanup rules, use
 `skills/tools/isaac-arena/SKILL.md`.
