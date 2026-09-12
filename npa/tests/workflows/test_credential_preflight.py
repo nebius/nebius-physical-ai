@@ -130,7 +130,7 @@ def test_s3_present_unverified_without_probe() -> None:
 
 def test_s3_pass_when_reachable() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             return []
 
     creds = _Creds(
@@ -145,7 +145,7 @@ def test_s3_pass_when_reachable() -> None:
 
 def test_s3_fail_on_auth_error() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden AccessDenied")
 
     creds = _Creds(
@@ -276,7 +276,7 @@ def test_run_credential_preflight_rejects_unknown_check() -> None:
 
 def test_has_failure_true_when_any_fail() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403")
 
     creds = _Creds(

@@ -145,6 +145,25 @@ class StorageClient:
             or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
         )
 
+    def probe_list_access(self, bucket_uri: str) -> None:
+        """Verify listing permission with one request, including for empty buckets.
+
+        Args:
+            bucket_uri: S3 bucket or directory URI whose listing permission to test.
+
+        Returns:
+            None. Object names and continuation tokens are discarded.
+
+        Raises:
+            StorageError: The destination is not an S3 URI.
+            botocore.exceptions.BotoCoreError: The request could not complete.
+            ClientError: The service rejected the listing request.
+        """
+        bucket, prefix = _parse_bucket_uri(bucket_uri)
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        self._s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=1)
+
     def list_checkpoints(self, bucket_uri: str) -> list[dict[str, str]]:
         """List checkpoint directories under the given S3 URI."""
         bucket, prefix = _parse_bucket_uri(bucket_uri)
