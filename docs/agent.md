@@ -66,6 +66,25 @@ npa agent fresh-setup --project "<alias>" \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+### Optional public IPv4 pool
+
+Most deployments let Nebius select the default public IPv4 pool. If the target
+region requires an operator-provisioned public pool, pass its ID explicitly to
+the new agent deployment. NPA assigns it to the NPA-created network and makes
+the subnet inherit it before the VM requests a public address:
+
+```bash
+npa agent fresh-setup --project "<alias>" \
+  --project-id "<project-id>" --tenant-id "<tenant-id>" --region "<region>" \
+  --agent-only \
+  --tf-var "public_ipv4_pool_id=<public-ipv4-pool-id>"
+```
+
+The setting is optional and never changes or adopts existing shared networks.
+The supplied pool must be public, available in the deployment region, and
+authorized for the target project; NPA does not create, modify, or hardcode
+public pools.
+
 For one custom OpenAI-compatible provider, keep its settings outside the
 checkout in a mode-`0600` JSON file. The API key stays in a separate mode-`0600`
 file and is never passed on the command line:

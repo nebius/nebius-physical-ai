@@ -19,6 +19,20 @@ variable "nebius_region" {
   default     = "eu-north1"
 }
 
+variable "public_ipv4_pool_id" {
+  description = "Optional public IPv4 pool ID assigned to the NPA-created network and subnet. Empty uses the provider default pool."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.public_ipv4_pool_id) == "" ||
+      can(regex("^vpcpool-[a-z0-9]+$", trimspace(var.public_ipv4_pool_id)))
+    )
+    error_message = "public_ipv4_pool_id must be empty or a Nebius VPC pool ID."
+  }
+}
+
 # ── Service account (created by environment.sh) ───────────────────────────
 
 variable "service_account_id" {

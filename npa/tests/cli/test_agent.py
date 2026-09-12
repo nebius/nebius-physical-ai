@@ -4672,6 +4672,8 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "public_ipv4_pool_id=vpcpool-test",
         ],
     )
 
@@ -4680,6 +4682,7 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     assert captured["project_id"] == "project-dev"
     assert captured["tenant_id"] == "tenant-a"
     assert captured["region"] == "us-central1"
+    assert captured["tf_var"][-1] == "public_ipv4_pool_id=vpcpool-test"
 
     # Interactive: pressing Enter accepts the default_project (prod).
     captured.clear()
@@ -4902,6 +4905,8 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "public_ipv4_pool_id=vpcpool-test",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -4910,6 +4915,7 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
     assert merged_vars["server_port"] == "8088"
     assert merged_vars["ssh_user"] == "ubuntu"
     assert merged_vars["extra_ingress_ports"] == "[443,9090]"
+    assert merged_vars["public_ipv4_pool_id"] == "vpcpool-test"
     assert not any("OptionInfo" in str(value) for value in merged_vars.values()), (
         f"OptionInfo leaked into terraform vars: {merged_vars}"
     )

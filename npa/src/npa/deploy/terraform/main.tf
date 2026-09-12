@@ -18,12 +18,25 @@ provider "nebius" {
 resource "nebius_vpc_v1_network" "workbench" {
   parent_id = var.nebius_project_id
   name      = "${var.instance_name}-network"
+
+  # Some projects obtain public addresses from a tenant-shared external pool
+  # instead of the provider's default pool. Leave this unset to retain the
+  # provider default for every existing deployment.
+  ipv4_public_pools = trimspace(var.public_ipv4_pool_id) == "" ? null : {
+    pools = [{ id = trimspace(var.public_ipv4_pool_id) }]
+  }
 }
 
 resource "nebius_vpc_v1_subnet" "workbench" {
   parent_id  = var.nebius_project_id
   network_id = nebius_vpc_v1_network.workbench.id
   name       = "${var.instance_name}-subnet"
+
+  # Bind the subnet to the network's selected public pool so a VM public-IP
+  # allocation uses the same explicit source as its network.
+  ipv4_public_pools = trimspace(var.public_ipv4_pool_id) == "" ? null : {
+    use_network_pools = true
+  }
 }
 
 # ── Security group + rules ─────────────────────────────────────────────────
