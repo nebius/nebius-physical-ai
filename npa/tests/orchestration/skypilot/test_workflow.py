@@ -49,6 +49,7 @@ def _robotwin_bridge_fixture(
         encode_transport,
         validate_context_bytes,
     )
+    from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
         render_skypilot_yaml,
@@ -123,6 +124,11 @@ def _robotwin_bridge_fixture(
     skypilot = (
         f"kubernetes:\n  allowed_contexts: [{context_name}]\n"
     ).encode()
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
     authorization = validate_context_bytes(
         raw,
         config_bytes={
@@ -1496,7 +1502,11 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     control_calls = [item for item in calls if item[0] != launch_cmd]
     serialized_argv = json.dumps(launch_cmd)
     assert "--infra" not in launch_cmd
-    assert ["--secret", TRANSPORT_CONTEXT_ENV] == launch_cmd[-3:-1]
+    secret_pairs = [
+        launch_cmd[index : index + 2]
+        for index in range(len(launch_cmd) - 1)
+    ]
+    assert ["--secret", TRANSPORT_CONTEXT_ENV] in secret_pairs
     assert all(private not in serialized_argv for private in private_values)
     assert launch_kwargs["stdout"] == subprocess.PIPE
     assert launch_kwargs["stderr"] == subprocess.PIPE
@@ -1511,8 +1521,11 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     prepared = str(captured_files["prepared"])
     assert all(private not in prepared for private in prepared_forbidden_values)
     prepared_environment = list(yaml.safe_load_all(prepared))[1]["envs"]
-    assert prepared_environment["NPA_SRC_S3_URI"] == (
-        submit_context.rendered_private_values[0]
+    assert "NPA_SRC_S3_URI" not in prepared_environment
+    assert ["--secret", "NPA_SRC_S3_URI"] in secret_pairs
+    assert (
+        launch_kwargs["env"]["NPA_SRC_S3_URI"]
+        == submit_context.rendered_private_values[0]
     )
     assert "region:" not in prepared
     assert not Path(captured_files["submission_dir"]).exists()
@@ -1622,18 +1635,26 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     records: list[dict[str, object]] = []
 
     gpu_checks: list[str] = []
+    kubectl_environments: list[dict[str, str]] = []
 
     def verify_gpu(_inventory, *, accelerator, **_kwargs):
         gpu_checks.append(accelerator)
 
+    def discover_inventory(*, context, runner):
+        if context != "":
+            pytest.fail("private context reached kubectl argv")
+        result = runner(
+            ["kubectl", "get", "nodes", "-o", "json"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        kubectl_environments.append(dict(calls[-1][1]["env"]))
+        return {"context": context, "result": result.returncode}
+
     monkeypatch.setattr(
-        k8s_gpu_catalog,
-        "discover_kubernetes_gpu_inventory",
-        lambda *, context, runner: (
-            {"context": context, "runner": runner}
-            if context == ""
-            else pytest.fail("private context reached kubectl argv")
-        ),
+        k8s_gpu_catalog, "discover_kubernetes_gpu_inventory", discover_inventory
     )
     monkeypatch.setattr(
         k8s_gpu_catalog, "preflight_kubernetes_gpu_gang", verify_gpu
@@ -1721,6 +1742,23 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert "NPA_STORAGE_ENDPOINT" not in prepared_document["envs"]
     assert "S3_ENDPOINT_URL" not in prepared_document["envs"]
     assert gpu_checks == ["RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"]
+    assert len(kubectl_environments) == 1
+    assert set(kubectl_environments[0]) <= {
+        "HOME",
+        "KUBECONFIG",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "TMPDIR",
+    }
+    assert not {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL",
+        "NPA_SRC_S3_URI",
+    } & set(kubectl_environments[0])
     assert result.launch_transaction["controller"]["selected_context"] == ""
     assert all(
         private not in json.dumps(result.launch_transaction, sort_keys=True)

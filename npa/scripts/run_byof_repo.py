@@ -596,6 +596,11 @@ def _scan_robotwin_image(image: str, *, redactions: tuple[str, ...]) -> dict[str
         raise ValueError("RoboTwin requires an immutable image before byte scanning")
     with tempfile.TemporaryDirectory(prefix="npa-robotwin-image-scan-") as tmp:
         report_path = Path(tmp) / "report.json"
+        scanner_env = {
+            name: os.environ[name]
+            for name in ("DOCKER_CONFIG",)
+            if os.environ.get(name)
+        }
         _run(
             [
                 sys.executable,
@@ -606,7 +611,9 @@ def _scan_robotwin_image(image: str, *, redactions: tuple[str, ...]) -> dict[str
             ],
             stdin=image,
             capture=True,
+            env=scanner_env,
             redactions=redactions,
+            inherit_env=False,
         )
         report_bytes = report_path.read_bytes()
     report = json.loads(report_bytes)

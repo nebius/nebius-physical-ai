@@ -889,19 +889,29 @@ def _strip_confidential_task_context(
                 raise ValueError("confidential output binding changed during preflight")
             environment.pop("NPA_EXECUTION_OUTPUTS")
     allowed = tuple(value for value in allowed_rendered_values if value)
-    observed = [
-        environment.get("NPA_SRC_S3_URI")
-        for document in documents
-        if isinstance((environment := document.get("envs")), dict)
-        and environment.get("NPA_SRC_S3_URI") in allowed
-    ]
-    rendered = yaml.safe_dump_all(documents, sort_keys=False)
+    observed: list[str] = []
+    for document in documents:
+        environment = document.get("envs")
+        if not isinstance(environment, dict):
+            continue
+        source_uri = environment.get("NPA_SRC_S3_URI")
+        if source_uri in allowed:
+            observed.append(source_uri)
+    rendered_with_source = yaml.safe_dump_all(documents, sort_keys=False)
     if sorted(observed) != sorted(allowed) or any(
-        rendered.count(value) != 1 for value in allowed
+        rendered_with_source.count(value) != 1 for value in allowed
     ):
         raise ValueError("confidential source binding changed during preflight")
-    for value in allowed:
-        rendered = rendered.replace(value, "<control-plane-source>")
+    for document in documents:
+        environment = document.get("envs")
+        if not isinstance(environment, dict):
+            continue
+        if environment.get("NPA_SRC_S3_URI") in allowed:
+            # SkyPilot receives this value only through its existing secret
+            # transport.  Never serialize the private source coordinate into
+            # the task document that becomes scheduler state.
+            environment.pop("NPA_SRC_S3_URI")
+    rendered = yaml.safe_dump_all(documents, sort_keys=False)
     if any(private and private in rendered for private in redactions):
         raise ValueError("confidential Kubernetes value reached prepared task YAML")
 
@@ -995,7 +1005,24 @@ def _preflight_confidential_robotwin_inner(
     def run_kubectl_current_context(
         argv: list[str], **kwargs: Any
     ) -> subprocess.CompletedProcess[str]:
-        kwargs["env"] = dict(environment)
+        # GPU discovery needs only the selected kubeconfig and ordinary process
+        # runtime settings.  In particular, never give kubectl workload-output
+        # credentials or the confidential source coordinate.
+        kwargs["env"] = {
+            name: value
+            for name, value in environment.items()
+            if name
+            in {
+                "HOME",
+                "KUBECONFIG",
+                "LANG",
+                "LC_ALL",
+                "PATH",
+                "SSL_CERT_DIR",
+                "SSL_CERT_FILE",
+                "TMPDIR",
+            }
+        }
         return subprocess.run(argv, **kwargs)
 
     preflight_kubernetes_gpu_gang(
@@ -1363,10 +1390,6 @@ def submit_workflow(
             yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
         )
         _chmod_owner_only(prepared_yaml)
-        if robotwin_authorization is not None:
-            env.pop("NPA_SRC_S3_URI", None)
-            env.pop("NPA_E2E_NPA_SRC_S3_URI", None)
-
         cmd = [
             sky_executable,
             "jobs",
@@ -1385,6 +1408,16 @@ def submit_workflow(
         for secret_name in secret_envs or ():
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
+        if (
+            robotwin_submit_context is not None
+            and robotwin_submit_context.layer == "outer"
+            and robotwin_submit_context.rendered_private_values
+        ):
+            if not env.get("NPA_SRC_S3_URI"):
+                raise SkyPilotSubmitError(
+                    "RoboTwin confidential source secret is unavailable"
+                )
+            cmd[-1:-1] = ["--secret", "NPA_SRC_S3_URI"]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
         api_daemon_health = _ensure_local_api_daemon_cwd_locked(
             sky_executable,
