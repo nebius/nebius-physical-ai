@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -21,6 +22,8 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
+    libero_accepted_image_manifest,
+    validate_libero_runtime_decision,
     wan_accepted_image_manifest,
 )
 from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
@@ -131,20 +134,19 @@ def _normalize_optional(value: str) -> str:
     return cleaned
 
 
-def _libero_acceptance_candidate(value: str) -> str:
+def _libero_acceptance_candidate(value: str, acceptance: dict[str, Any]) -> str:
     candidate = str(value or "").strip().removeprefix("docker:")
-    if re.fullmatch(r"(?:[^/@\s]+/)+npa-libero@sha256:[0-9a-f]{64}", candidate) is None:
+    if candidate != acceptance.get("candidate_image"):
         raise ValueError(
-            "LIBERO requires an explicit immutable npa-libero acceptance candidate"
+            "LIBERO candidate must exactly match checked-in accepted image lineage"
         )
     return candidate
 
 
-def _libero_runtime_decision(args: argparse.Namespace) -> tuple[Path, str]:
+def _libero_runtime_decision(
+    args: argparse.Namespace, acceptance: dict[str, Any]
+) -> tuple[Path, bytes, str]:
     path = Path(str(args.libero_runtime_use_decision_file or "")).expanduser()
-    expected = str(args.libero_runtime_use_decision_sha256 or "").strip()
-    if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
-        raise ValueError("LIBERO requires the runtime-use decision SHA-256")
     try:
         metadata = path.lstat()
     except OSError as exc:
@@ -156,21 +158,16 @@ def _libero_runtime_decision(args: argparse.Namespace) -> tuple[Path, str]:
         or metadata.st_mode & 0o077
     ):
         raise ValueError("LIBERO runtime-use decision must be an owner-private regular file")
-    observed = hashlib.sha256(path.read_bytes()).hexdigest()
-    if observed != expected:
-        raise ValueError("LIBERO runtime-use decision hash differs")
+    decision_bytes = path.read_bytes()
     try:
-        decision = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError("LIBERO runtime-use decision is not valid JSON") from exc
-    if (
-        not isinstance(decision, dict)
-        or decision.get("schema") != "npa.libero.runtime-use-decision.v1"
-        or decision.get("solution") != "libero"
-        or decision.get("decision") != "authorized"
-    ):
-        raise ValueError("LIBERO runtime-use decision identity is invalid")
-    return path.resolve(), observed
+        _, observed = validate_libero_runtime_decision(
+            decision_bytes,
+            acceptance=acceptance,
+            run_id=args.run_id,
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    return path.resolve(), decision_bytes, observed
 
 
 def _validate_libero_identity(args: argparse.Namespace) -> None:
@@ -214,10 +211,6 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
     for label, (observed, expected) in exact_values.items():
         if observed != expected:
             raise ValueError(f"LIBERO requires its exact {label} contract")
-    _libero_acceptance_candidate(args.libero_acceptance_candidate_image)
-    _libero_runtime_decision(args)
-    if re.fullmatch(r"[0-9a-f]{64}", args.libero_build_metadata_sha256) is None:
-        raise ValueError("LIBERO requires independently observed build metadata SHA-256")
     command_hashes = {
         "build command": (
             hashlib.sha256(args.build_command.encode()).hexdigest(),
@@ -235,6 +228,13 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         raise ValueError(
             "LIBERO cannot use --skip-run because live qualification is mandatory"
         )
+    try:
+        acceptance = libero_accepted_image_manifest()
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    args._libero_acceptance = acceptance
+    _libero_acceptance_candidate(args.libero_acceptance_candidate_image, acceptance)
+    _libero_runtime_decision(args, acceptance)
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -926,8 +926,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--libero-runtime-use-decision-file", default="")
-    parser.add_argument("--libero-runtime-use-decision-sha256", default="")
-    parser.add_argument("--libero-build-metadata-sha256", default="")
     parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
@@ -1018,7 +1016,8 @@ def main(argv: list[str] | None = None) -> int:
     explicit_base = _normalize_optional(args.base_image)
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         explicit_base = _libero_acceptance_candidate(
-            args.libero_acceptance_candidate_image
+            args.libero_acceptance_candidate_image,
+            args._libero_acceptance,
         )
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
@@ -1366,13 +1365,17 @@ def _run_byof(
                 cmd.append("--cleanup")
             live_env = _live_runner_env(args.project)
             if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
-                decision_path, decision_sha256 = _libero_runtime_decision(args)
+                _, decision_bytes, decision_sha256 = _libero_runtime_decision(
+                    args, args._libero_acceptance
+                )
                 live_env.update(
                     {
-                        "NPA_LIBERO_RUNTIME_USE_DECISION_FILE": str(decision_path),
+                        "NPA_LIBERO_RUNTIME_USE_DECISION_B64": base64.b64encode(
+                            decision_bytes
+                        ).decode("ascii"),
                         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
-                        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256": (
-                            args.libero_build_metadata_sha256
+                        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": (
+                            args._libero_acceptance["canonical_build_metadata_sha256"]
                         ),
                     }
                 )

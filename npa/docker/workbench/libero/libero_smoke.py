@@ -12,18 +12,6 @@ import ssl
 import subprocess
 from pathlib import Path
 
-import h5py
-import numpy as np
-import torch
-from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf, open_dict
-from torch.utils.data import DataLoader
-from transformers import AutoModel, AutoTokenizer
-
-from libero.lifelong.algos.base import Sequential
-from libero.lifelong.datasets import SequenceVLDataset, get_dataset
-from libero.lifelong.utils import control_seed, torch_load_model, torch_save_model
-
 SOURCE_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 SOURCE_CLONE_URL = SOURCE_REPOSITORY + ".git"
 SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
@@ -410,8 +398,8 @@ try:
         raise RuntimeError(
             "pruned render assets or Git objects remain in the final filesystem"
         )
-    build_metadata_sha256 = required_sha256_environment(
-        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256"
+    canonical_build_metadata_sha256 = required_sha256_environment(
+        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256"
     )
 
     bddl_path = repo_root / BDDL_RELATIVE
@@ -428,6 +416,23 @@ try:
         raise RuntimeError(
             "pinned LIBERO task assets do not match their reviewed hashes"
         )
+
+    # No fetched runtime or upstream module executes until the descriptor-stable
+    # cache metadata and task/source hashes above have been validated.
+    import h5py
+    import numpy as np
+    import torch
+    from hydra import compose, initialize_config_dir
+    from libero.lifelong.algos.base import Sequential
+    from libero.lifelong.datasets import SequenceVLDataset, get_dataset
+    from libero.lifelong.utils import (
+        control_seed,
+        torch_load_model,
+        torch_save_model,
+    )
+    from omegaconf import OmegaConf, open_dict
+    from torch.utils.data import DataLoader
+    from transformers import AutoModel, AutoTokenizer
 
     if torch.cuda.device_count() != 1:
         raise RuntimeError(
@@ -783,7 +788,9 @@ try:
             },
             "build": {
                 "runtime_metadata": runtime_metadata,
-                "independently_observed_build_metadata_sha256": build_metadata_sha256,
+                "accepted_canonical_build_metadata_sha256": (
+                    canonical_build_metadata_sha256
+                ),
                 "base_image_digest": PUBLIC_BASE_IMAGE_DIGEST,
                 "base_rootfs_material_digest": PUBLIC_BASE_ROOTFS_MATERIAL_DIGEST,
                 "base_image_digest_pinned": True,

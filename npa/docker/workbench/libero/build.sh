@@ -5,7 +5,11 @@ image=${1:?usage: build.sh ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-<ful
 source_sha=${NPA_SOURCE_SHA:-$(git rev-parse HEAD)}
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
 [[ "$image" == "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-$source_sha" ]]
-test -z "$(git status --short --untracked-files=no)"
+image_inputs=(
+  npa/docker/workbench/libero
+)
+git diff --quiet -- "${image_inputs[@]}"
+git diff --cached --quiet -- "${image_inputs[@]}"
 source_epoch=$(git show -s --format=%ct "$source_sha")
 [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]]
 

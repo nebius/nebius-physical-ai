@@ -5,8 +5,9 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -211,16 +212,19 @@ def test_libero_payload_account_triggers_contract_independent_of_filename() -> N
 
 def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None:
     module = _load_module()
-    state = tmp_path / "isolated-state"
+    run_id = "libero-isolated-state"
+    state = tmp_path / run_id
     state.mkdir()
     state.chmod(0o755)
     with pytest.raises(ValueError, match="owner-private"):
-        module._libero_isolated_state_root(state)
+        module._libero_isolated_state_root(state, run_id)
 
     state.chmod(0o700)
-    assert module._libero_isolated_state_root(state) == state.resolve()
+    assert module._libero_isolated_state_root(state, run_id) == state.resolve()
+    with pytest.raises(ValueError, match="exact-run scoped"):
+        module._libero_isolated_state_root(state, "different-run-id")
     with pytest.raises(ValueError, match="requires an isolated"):
-        module._libero_isolated_state_root(None)
+        module._libero_isolated_state_root(None, run_id)
 
 
 def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
@@ -233,7 +237,11 @@ def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
 
     with pytest.raises(ValueError, match="requires verified managed cleanup"):
         module._bind_libero_runtime_contract(
-            args, documents, global_config={}, infra="k8s/context"
+            args,
+            documents,
+            global_config={},
+            infra="k8s/context",
+            run_id="libero-cleanup-test",
         )
 
 
@@ -251,6 +259,7 @@ def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> N
             [{"execution": "serial"}, {"name": "task"}],
             global_config={},
             infra="k8s/context",
+            run_id="libero-api-lifecycle",
         )
 
 
@@ -258,32 +267,78 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
+    run_id = "libero-runtime-binding"
     runtime_manifest_sha256 = module.hashlib.sha256(
         module.LIBERO_RUNTIME_MANIFEST.read_bytes()
     ).hexdigest()
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    )
     decision = {
-        "schema": "npa.libero.runtime-use-decision.v1",
+        "schema": "npa.libero.runtime-use-decision.v2",
         "solution": "libero",
         "decision": "authorized",
         "runtime_fetch_authorized": True,
+        "acceptance_id": "libero-acceptance-test-0001",
+        "candidate_image": candidate,
+        "publication_bundle_sha256": "a" * 64,
+        "infrastructure_bundle_sha256": "b" * 64,
         "runtime_manifest_sha256": runtime_manifest_sha256,
-        "source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
-        "authorized_boundaries": sorted(module.LIBERO_DECISION_BOUNDARIES),
-        "manager_receipt_sha256": "sha256:" + "7" * 64,
+        "upstream_source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+        "authorized_boundaries": [
+            "demonstration",
+            "language_model",
+            "runtime_packages",
+            "source",
+            "task_inputs",
+        ],
+        "run_id": run_id,
+        "namespace_sha256": "5" * 64,
+        "issuer": "npa-manager",
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        "nonce": "unique-libero-test-nonce-0000000001",
     }
-    decision_path = tmp_path / "runtime-use-decision.json"
     decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
-    decision_path.write_bytes(decision_bytes)
-    decision_path.chmod(0o600)
     decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
-    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", str(decision_path))
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+        module.base64.b64encode(decision_bytes).decode("ascii"),
+    )
     monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
-    monkeypatch.setenv("NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", "8" * 64)
+    output_prefix = f"s3://fixture-bucket/byof/{run_id}/"
+    access_key = "fixture-temporary-access"
+    secret_key = "fixture-temporary-secret"
+    session_token = "fixture-temporary-session"
+    policy_sha256 = "d" * 64
+    storage_authorization = {
+        "schema": "npa.libero.output-storage-authorization.v1",
+        "issuer": "npa-manager",
+        "run_id": run_id,
+        "output_prefix": output_prefix,
+        "access_key_id_sha256": module.hashlib.sha256(access_key.encode()).hexdigest(),
+        "secret_access_key_sha256": module.hashlib.sha256(secret_key.encode()).hexdigest(),
+        "session_token_sha256": module.hashlib.sha256(session_token.encode()).hexdigest(),
+        "policy_sha256": policy_sha256,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": decision["expires_at"],
+        "nonce": "unique-libero-storage-nonce-0000000001",
+    }
+    storage_bytes = (json.dumps(storage_authorization, sort_keys=True) + "\n").encode()
+    storage_sha256 = module.hashlib.sha256(storage_bytes).hexdigest()
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", access_key)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secret_key)
+    monkeypatch.setenv("AWS_SESSION_TOKEN", session_token)
+    monkeypatch.setenv(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+        module.base64.b64encode(storage_bytes).decode("ascii"),
+    )
     kubeconfig = tmp_path / "payload-kubeconfig"
     kubeconfig.write_text("payload proof\n", encoding="utf-8")
     kubeconfig.chmod(0o600)
     execution_kubeconfig = tmp_path / "execution-kubeconfig"
     execution_kubeconfig.write_text("execution proof\n", encoding="utf-8")
+    execution_kubeconfig.chmod(0o600)
     monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
     monkeypatch.setattr(module, "_libero_payload_kubeconfig", lambda: kubeconfig)
     monkeypatch.setattr(
@@ -295,7 +350,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             "6" * 64,
         )
         if path == kubeconfig
-        else ("execution-context", "", "6" * 64),
+        else ("execution-context", "isolated-namespace", "6" * 64),
     )
     rbac = {
         "service_account_uid_sha256": "1" * 64,
@@ -303,58 +358,117 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "role_binding_uid_sha256": "3" * 64,
         "rbac_spec_sha256": "4" * 64,
         "namespace_sha256": "5" * 64,
+        "namespace_uid_sha256": "7" * 64,
+        "namespace_inventory_sha256": "8" * 64,
     }
-    monkeypatch.setattr(module, "_libero_rbac_evidence", lambda *_a: dict(rbac))
-    args = SimpleNamespace(solution_name="libero", direct_launch=False)
-    documents = [{"execution": "serial"}, {"envs": {}}]
+    access_state = module.LiberoAccessState(
+        kubeconfig=kubeconfig,
+        context="payload-proof-context",
+        namespace="isolated-namespace",
+        namespace_uid="namespace-uid",
+        service_account_uid="service-account-uid",
+        role_uid="role-uid",
+        role_binding_uid="binding-uid",
+    )
+    monkeypatch.setattr(
+        module, "_libero_rbac_evidence", lambda *_a: (dict(rbac), access_state)
+    )
     expected_evidence = {
         **rbac,
         "cluster_identity_sha256": "6" * 64,
         "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest(),
+        "payload_kubeconfig_sha256": module.hashlib.sha256(
+            kubeconfig.read_bytes()
+        ).hexdigest(),
+        "execution_kubeconfig_sha256": module.hashlib.sha256(
+            execution_kubeconfig.read_bytes()
+        ).hexdigest(),
+        "skypilot_config_sha256": module._sha256_json(
+            {"kubernetes": {"allowed_nodes": {"names": ["worker"]}}}
+        ),
     }
-    for name, value in expected_evidence.items():
-        monkeypatch.setenv(f"NPA_LIBERO_EXPECTED_{name.upper()}", value)
+    acceptance = {
+        "acceptance_id": decision["acceptance_id"],
+        "expires_at": decision["expires_at"],
+        "candidate_image": candidate,
+        "canonical_build_metadata_sha256": "c" * 64,
+        "publication_bundle_sha256": decision["publication_bundle_sha256"],
+        "infrastructure_bundle_sha256": decision["infrastructure_bundle_sha256"],
+        "runtime_manifest_sha256": runtime_manifest_sha256,
+        "runtime_use_decision_sha256": decision_sha256,
+        "upstream_source_revision": decision["upstream_source_revision"],
+        "infrastructure": {
+            "run_id": run_id,
+            **expected_evidence,
+            "output_storage_authorization_sha256": storage_sha256,
+            "output_storage_prefix_sha256": module.hashlib.sha256(
+                output_prefix.encode()
+            ).hexdigest(),
+            "output_storage_policy_sha256": policy_sha256,
+        },
+    }
+    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
+    args = SimpleNamespace(
+        solution_name="libero", direct_launch=False, cleanup=True, image=candidate
+    )
+    documents = [
+        {"execution": "serial"},
+        {"envs": {"S3_OUTPUT_PREFIX": output_prefix}},
+    ]
 
-    evidence = module._bind_libero_runtime_contract(
+    binding = module._bind_libero_runtime_contract(
         args,
         documents,
         global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
         infra="k8s/execution-context",
+        run_id=run_id,
     )
 
-    assert evidence == expected_evidence
+    assert binding.evidence == expected_evidence
+    assert binding.access_state == access_state
     expected_envs = {
         f"NPA_LIBERO_EXPECTED_{key.upper()}": value
-        for key, value in evidence.items()
+        for key, value in expected_evidence.items()
     }
     expected_envs.update(
         {
-            "NPA_LIBERO_RUNTIME_USE_DECISION_B64": module.base64.b64encode(
-                decision_bytes
-            ).decode("ascii"),
-            "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
-            "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256": "8" * 64,
+            "S3_OUTPUT_PREFIX": output_prefix,
+            "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": "c" * 64,
+            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
+            "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": "a" * 64,
+            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": "b" * 64,
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256": storage_sha256,
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256": module.hashlib.sha256(
+                output_prefix.encode()
+            ).hexdigest(),
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256": policy_sha256,
         }
     )
     assert documents[1]["envs"] == expected_envs
+    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in documents[1]["envs"]
 
     invalid_decision = {**decision, "authorized_boundaries": ["source"]}
     invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
-    decision_path.write_bytes(invalid_bytes)
-    decision_path.chmod(0o600)
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+        module.base64.b64encode(invalid_bytes).decode("ascii"),
+    )
     monkeypatch.setenv(
         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
         module.hashlib.sha256(invalid_bytes).hexdigest(),
     )
-    with pytest.raises(ValueError, match="decision identity is invalid"):
+    with pytest.raises(ValueError, match="checked-in acceptance"):
         module._bind_libero_runtime_contract(
             args,
-            [{"execution": "serial"}, {"envs": {}}],
+            [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
+            run_id=run_id,
         )
-    decision_path.write_bytes(decision_bytes)
-    decision_path.chmod(0o600)
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+        module.base64.b64encode(decision_bytes).decode("ascii"),
+    )
     monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
 
     for direct, allowed in (
@@ -368,48 +482,59 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         with pytest.raises(ValueError):
             module._bind_libero_runtime_contract(
                 args,
-                [{"execution": "serial"}, {"envs": {}}],
+                [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
                 global_config={"kubernetes": {"allowed_nodes": allowed}},
                 infra="k8s/execution-context",
+                run_id=run_id,
             )
 
     args.direct_launch = False
-    missing_variable = "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256"
-    monkeypatch.delenv(missing_variable)
-    with pytest.raises(ValueError, match="owner-receipted hash"):
+    acceptance["infrastructure"]["role_uid_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="checked-in infrastructure differs"):
         module._bind_libero_runtime_contract(
             args,
-            [{"execution": "serial"}, {"envs": {}}],
+            [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
+            run_id=run_id,
         )
-    monkeypatch.setenv(missing_variable, expected_evidence["role_binding_uid_sha256"])
-    monkeypatch.setenv("NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", "f" * 64)
-    with pytest.raises(ValueError, match="differs for role_uid_sha256"):
-        module._bind_libero_runtime_contract(
-            args,
-            [{"execution": "serial"}, {"envs": {}}],
-            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
-            infra="k8s/execution-context",
-        )
-    monkeypatch.setenv(
-        "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", expected_evidence["role_uid_sha256"]
-    )
+    acceptance["infrastructure"]["role_uid_sha256"] = expected_evidence[
+        "role_uid_sha256"
+    ]
     monkeypatch.setattr(
         module,
         "_libero_context_contract",
         lambda path, **_kwargs: (
             ("payload-proof-context", "isolated-namespace", "6" * 64)
             if path == kubeconfig
-            else ("execution-context", "", "7" * 64)
+            else ("execution-context", "isolated-namespace", "7" * 64)
         ),
     )
     with pytest.raises(ValueError, match="different clusters"):
         module._bind_libero_runtime_contract(
             args,
-            [{"execution": "serial"}, {"envs": {}}],
+            [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
+            run_id=run_id,
+        )
+
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda path, **_kwargs: (
+            ("payload-proof-context", "isolated-namespace", "6" * 64)
+            if path == kubeconfig
+            else ("execution-context", "different-namespace", "6" * 64)
+        ),
+    )
+    with pytest.raises(ValueError, match="exact run namespace"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+            run_id=run_id,
         )
 
     monkeypatch.setattr(
@@ -424,9 +549,10 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="explicitly separated"):
         module._bind_libero_runtime_contract(
             args,
-            [{"execution": "serial"}, {"envs": {}}],
+            [{"execution": "serial"}, {"envs": {"S3_OUTPUT_PREFIX": output_prefix}}],
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
+            run_id=run_id,
         )
 
 
@@ -525,6 +651,7 @@ def test_libero_context_contract_binds_server_and_ca_without_exposing_them(
 def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None:
     module = _load_module()
     namespace = "isolated-namespace"
+    run_id = "libero-rbac-evidence"
     objects = {
         "serviceaccount": {
             "metadata": {"uid": "account-uid"},
@@ -554,22 +681,170 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
         "_libero_resource",
         lambda _kubeconfig, _context, _namespace, kind, _name: objects[kind],
     )
+    monkeypatch.setattr(
+        module,
+        "_kubectl_json",
+        lambda *_a, **_k: {
+            "metadata": {
+                "name": namespace,
+                "uid": "namespace-uid",
+                "labels": {
+                    "npa.nebius.ai/solution": "libero",
+                    "npa.nebius.ai/run-id-sha256": module.hashlib.sha256(
+                        run_id.encode()
+                    ).hexdigest(),
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_libero_namespaced_inventory",
+        lambda *_a: {
+            "pods": [],
+            "secrets": [],
+            "serviceaccounts": ["default", "npa-byof-libero-payload"],
+            "roles": ["npa-byof-libero-pod-reader"],
+            "rolebindings": ["npa-byof-libero-pod-reader"],
+        },
+    )
 
     kubeconfig = Path("/private/payload-kubeconfig")
-    evidence = module._libero_rbac_evidence(
-        kubeconfig, "payload-context", namespace
+    evidence, access_state = module._libero_rbac_evidence(
+        kubeconfig, "payload-context", namespace, run_id
     )
     assert evidence["service_account_uid_sha256"] == module.hashlib.sha256(
         b"account-uid"
     ).hexdigest()
+    assert access_state.namespace_uid == "namespace-uid"
 
     objects["role"]["rules"][0]["verbs"] = ["get", "list"]
     with pytest.raises(RuntimeError, match="broader"):
-        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
+        module._libero_rbac_evidence(
+            kubeconfig, "payload-context", namespace, run_id
+        )
     objects["role"]["rules"][0]["verbs"] = ["get"]
     objects["rolebinding"]["subjects"][0]["name"] = "default"
     with pytest.raises(RuntimeError, match="differs"):
-        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
+        module._libero_rbac_evidence(
+            kubeconfig, "payload-context", namespace, run_id
+        )
+
+
+def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[tuple[str, str, str]] = []
+
+    class ApiException(Exception):
+        def __init__(self, status: int):
+            super().__init__(status)
+            self.status = status
+
+    class Preconditions:
+        def __init__(self, *, uid: str):
+            self.uid = uid
+
+    class DeleteOptions:
+        def __init__(self, *, preconditions: Preconditions):
+            self.preconditions = preconditions
+
+    def absent(*_args, **_kwargs):
+        raise ApiException(404)
+
+    class Core:
+        def __init__(self, _client):
+            pass
+
+        def delete_namespaced_service_account(self, name, namespace, *, body):
+            calls.append(("serviceaccount", name, body.preconditions.uid))
+
+        read_namespaced_service_account = staticmethod(absent)
+
+        def delete_namespace(self, name, *, body):
+            calls.append(("namespace", name, body.preconditions.uid))
+
+        read_namespace = staticmethod(absent)
+
+    class Rbac:
+        def __init__(self, _client):
+            pass
+
+        def delete_namespaced_role_binding(self, name, namespace, *, body):
+            calls.append(("rolebinding", name, body.preconditions.uid))
+
+        read_namespaced_role_binding = staticmethod(absent)
+
+        def delete_namespaced_role(self, name, namespace, *, body):
+            calls.append(("role", name, body.preconditions.uid))
+
+        read_namespaced_role = staticmethod(absent)
+
+    client_module = ModuleType("kubernetes.client")
+    client_module.CoreV1Api = Core
+    client_module.RbacAuthorizationV1Api = Rbac
+    client_module.V1DeleteOptions = DeleteOptions
+    client_module.V1Preconditions = Preconditions
+    exceptions_module = ModuleType("kubernetes.client.exceptions")
+    exceptions_module.ApiException = ApiException
+    config_module = ModuleType("kubernetes.config")
+    config_module.new_client_from_config = lambda **_kwargs: object()
+    package = ModuleType("kubernetes")
+    package.client = client_module
+    package.config = config_module
+    monkeypatch.setitem(sys.modules, "kubernetes", package)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(
+        sys.modules, "kubernetes.client.exceptions", exceptions_module
+    )
+    monkeypatch.setitem(sys.modules, "kubernetes.config", config_module)
+    state = module.LiberoAccessState(
+        kubeconfig=Path("/private/payload-kubeconfig"),
+        context="payload-context",
+        namespace="isolated-namespace",
+        namespace_uid="namespace-uid",
+        service_account_uid="service-account-uid",
+        role_uid="role-uid",
+        role_binding_uid="binding-uid",
+    )
+
+    result = module._cleanup_libero_access_objects(state, timeout=1)
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
+    assert calls == [
+        ("rolebinding", module.LIBERO_PAYLOAD_ROLE_BINDING, "binding-uid"),
+        ("role", module.LIBERO_PAYLOAD_ROLE, "role-uid"),
+        (
+            "serviceaccount",
+            module.LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            "service-account-uid",
+        ),
+        ("namespace", "isolated-namespace", "namespace-uid"),
+    ]
+
+
+def test_libero_cleanup_removes_only_exact_run_local_state(tmp_path) -> None:
+    module = _load_module()
+    run_id = "libero-local-cleanup"
+    state_root = tmp_path / run_id
+    state_root.mkdir(mode=0o700)
+    (state_root / "state").write_text("fixture\n", encoding="utf-8")
+    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig.write_text("fixture\n", encoding="utf-8")
+    kubeconfig.chmod(0o600)
+
+    result = module._cleanup_libero_local_state(
+        isolated_state_root=state_root,
+        payload_kubeconfig=kubeconfig,
+        run_id=run_id,
+    )
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
+    assert not state_root.exists()
+    assert not kubeconfig.exists()
 
 
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:
@@ -1335,7 +1610,7 @@ def test_submit_waits_on_scheduler_id_not_human_run_name(
 ) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
-    isolated = tmp_path / "isolated-state"
+    isolated = tmp_path / args.run_id
     isolated.mkdir()
     isolated.chmod(0o700)
     args.isolated_config_dir = str(isolated)
@@ -1387,7 +1662,7 @@ def test_libero_refuses_isaac_lab_precheck_failure_override(
 ) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
-    isolated = tmp_path / "isolated-state"
+    isolated = tmp_path / args.run_id
     isolated.mkdir()
     isolated.chmod(0o700)
     args.isolated_config_dir = str(isolated)
@@ -1397,7 +1672,9 @@ def test_libero_refuses_isaac_lab_precheck_failure_override(
     monkeypatch.setattr(
         module, "_libero_global_config_path", lambda _args: _args.config_path
     )
-    monkeypatch.setattr(module, "_bind_libero_runtime_contract", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module, "_bind_libero_runtime_contract", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         module,
         "submit_workflow",

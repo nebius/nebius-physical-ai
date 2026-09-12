@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
 import hashlib
 import io
 import json
@@ -135,7 +136,16 @@ def _base_provenance(module) -> tuple[bytes, dict[str, object]]:
     return content, provenance
 
 
-def _scan(module, layers, config, metadata, *, base_provenance=None):
+def _scan(
+    module,
+    layers,
+    config,
+    metadata,
+    *,
+    base_provenance=None,
+    expected_canonical_build_metadata_sha256=None,
+    expected_base_provenance_sha256=None,
+):
     def contains_neutral_link(layer: Path) -> bool:
         with tarfile.open(layer, "r:") as archive:
             return "opt/byof" in archive.getnames()
@@ -149,6 +159,12 @@ def _scan(module, layers, config, metadata, *, base_provenance=None):
     if base_provenance is not None:
         provenance = base_provenance
         provenance_bytes = (json.dumps(provenance, sort_keys=True) + "\n").encode()
+    try:
+        canonical_metadata_sha256 = hashlib.sha256(
+            module.canonical_build_metadata_bytes(metadata)
+        ).hexdigest()
+    except RuntimeError:
+        canonical_metadata_sha256 = "0" * 64
     _findings, inventory = module._layer_graph_findings(layers)
     return module.scan_tars(
         layers,
@@ -159,6 +175,14 @@ def _scan(module, layers, config, metadata, *, base_provenance=None):
         observed_config_digest="sha256:" + "2" * 64,
         expected_image_inventory_sha256=inventory.sha256,
         expected_config_digest="sha256:" + "2" * 64,
+        expected_canonical_build_metadata_sha256=(
+            expected_canonical_build_metadata_sha256
+            or canonical_metadata_sha256
+        ),
+        expected_base_provenance_sha256=(
+            expected_base_provenance_sha256
+            or hashlib.sha256(provenance_bytes).hexdigest()
+        ),
     )
 
 
@@ -171,6 +195,53 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
     )
 
     assert _scan(module, [first, second], _config(module), _metadata(module)) == []
+
+
+def test_scanner_rejects_unaccepted_build_and_base_lineage_bytes(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "neutral.tar", {"usr/bin/sh": b"neutral\n"})
+
+    findings = _scan(
+        module,
+        [layer],
+        _config(module),
+        _metadata(module),
+        expected_canonical_build_metadata_sha256="a" * 64,
+        expected_base_provenance_sha256="b" * 64,
+    )
+
+    assert {finding.kind for finding in findings} >= {
+        "accepted_build_lineage",
+        "accepted_base_lineage",
+    }
+
+
+def test_canonical_build_metadata_ignores_only_untrusted_session_fields() -> None:
+    module = _load_module()
+    first = _metadata(module)
+    second = {
+        **_metadata(module),
+        "buildx.build.ref": "runner/session/volatile",
+        "containerimage.descriptor": {"annotations": {"created": "later"}},
+    }
+
+    assert module.canonical_build_metadata_bytes(first) == (
+        module.canonical_build_metadata_bytes(second)
+    )
+    second["buildx.build.provenance"]["materials"][0]["digest"]["sha256"] = "0" * 64
+    assert module.canonical_build_metadata_bytes(first) != (
+        module.canonical_build_metadata_bytes(second)
+    )
+
+
+def test_archive_decompression_is_bounded(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    archive = tmp_path / "expansion.tar.gz"
+    archive.write_bytes(gzip.compress(b"0" * 10_000))
+    monkeypatch.setattr(module, "MAX_UNCOMPRESSED_ARCHIVE_BYTES", 100)
+
+    with pytest.raises(RuntimeError, match="uncompressed archive exceeds"):
+        module._uncompressed_tar_bytes(archive)
 
 
 def test_scanner_accepts_neutral_bootstrap_symlink_and_system_metadata(

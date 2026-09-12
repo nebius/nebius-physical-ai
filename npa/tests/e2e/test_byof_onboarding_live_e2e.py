@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import math
 import os
@@ -15,6 +17,8 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
+from npa.clients.project_credentials import s3_client_for_project
+from npa.deploy.images import libero_accepted_image_manifest
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -540,12 +544,184 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     os.environ.get("NPA_BYOF_LIBERO_LIVE_B200") != "1",
     reason="Set NPA_BYOF_LIBERO_LIVE_B200=1 to verify an operator-selected one-B200 qualification report.",
 )
-def test_libero_b200_qualification_report() -> None:
-    """Verify the downloaded, immutable-image LIBERO qualification evidence."""
+def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
+    """Own one accepted managed run and independently read back every artifact."""
 
-    result_path = os.environ.get("NPA_BYOF_LIBERO_RESULT", "").strip()
-    assert result_path, "NPA_BYOF_LIBERO_RESULT must select the downloaded libero-smoke.json"
-    report = json.loads(Path(result_path).read_text(encoding="utf-8"))
+    acceptance = libero_accepted_image_manifest()
+    decision_path = os.environ.get(
+        "NPA_BYOF_LIBERO_RUNTIME_DECISION_FILE", ""
+    ).strip()
+    assert decision_path, (
+        "NPA_BYOF_LIBERO_RUNTIME_DECISION_FILE must select the owner-private "
+        "manager decision"
+    )
+    bucket = live_bucket(e2e_project)
+    run_id = acceptance["infrastructure"]["run_id"]
+    profile = (
+        REPO_ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "byof-solution-smoke-libero-b200-gpu.yaml"
+    )
+    cmd = [
+        sys.executable,
+        str(BYOF_RUNNER),
+        "--repo-url",
+        "https://github.com/Lifelong-Robot-Learning/LIBERO.git",
+        "--repo-ref",
+        acceptance["upstream_source_revision"],
+        "--repo-auth",
+        "none",
+        "--project",
+        e2e_project or "",
+        "--registry",
+        resolve_container_registry(e2e_project),
+        "--base-profile",
+        "prebuilt",
+        "--base-image",
+        "tool://libero",
+        "--run-id",
+        run_id,
+        "--workload",
+        "solution-smoke",
+        "--smoke-command",
+        "/opt/npa/libero/smoke.sh",
+        "--solution-name",
+        "libero",
+        "--capability-name",
+        "libero_spatial_bc_rnn_train_reload_heldout",
+        "--smoke-artifact-name",
+        "libero-smoke.json",
+        "--libero-acceptance-candidate-image",
+        acceptance["candidate_image"],
+        "--libero-runtime-use-decision-file",
+        decision_path,
+        "--num-envs",
+        "1",
+        "--num-demos",
+        "1",
+        "--task",
+        (
+            "libero_spatial/"
+            "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_"
+            "and_place_it_on_the_plate"
+        ),
+        "--iterations",
+        "1",
+        "--yaml",
+        str(profile),
+        "--output-root",
+        f"s3://{bucket}/oss-solutions/libero",
+        "--wait-timeout",
+        "-1",
+        "--poll-interval",
+        "60",
+        "--cleanup",
+        "--skip-build",
+        "--skip-push",
+    ]
+    config_path = skypilot_config_for_project(e2e_project)
+    if config_path:
+        cmd.extend(["--config-path", config_path])
+    env = dict(os.environ)
+    target = resolve_byof_kubernetes_target(e2e_project)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    skypilot_bin = resolve_skypilot_bin()
+    if skypilot_bin:
+        env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
+    proc = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=int(os.environ.get("NPA_BYOF_LIBERO_LIVE_TIMEOUT", "21600")),
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    runner_summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    assert runner_summary["status"] == "ok"
+    assert runner_summary["image"] == acceptance["candidate_image"]
+    run_summary = runner_summary["run"]
+    assert run_summary["run_id"] == run_id
+    assert run_summary["final"]["status"] == "SUCCEEDED"
+    assert run_summary["cleanup"]["ok"] is True
+    assert run_summary["cleanup"]["verified"] is True
+    assert run_summary["cleanup"]["remote_absence_verified"] is True
+    assert set(run_summary["cleanup"]["resources_removed"]) >= {
+        "libero-rolebinding",
+        "libero-role",
+        "libero-serviceaccount",
+        "libero-namespace",
+        "libero-payload-kubeconfig",
+        "libero-isolated-skypilot-state",
+    }
+    assert run_summary["api_stop"] == {
+        "ok": True,
+        "preserved_for_cleanup_recovery": False,
+    }
+    binding = run_summary["libero_runtime_binding"]
+    assert binding["namespace_sha256"] == acceptance["infrastructure"][
+        "namespace_sha256"
+    ]
+    assert binding["rbac_spec_sha256"] == acceptance["infrastructure"][
+        "rbac_spec_sha256"
+    ]
+
+    s3 = s3_client_for_project(e2e_project, allow_host_creds=True)
+    prefix = f"oss-solutions/libero/{run_id}/"
+
+    def read_back(name: str) -> tuple[bytes, dict[str, object]]:
+        response = s3.get_object(
+            Bucket=bucket, Key=prefix + name, ChecksumMode="ENABLED"
+        )
+        try:
+            payload = response["Body"].read()
+        finally:
+            response["Body"].close()
+        return payload, response
+
+    receipt_bytes, _ = read_back("npa_upload_receipt.json")
+    upload_receipt = json.loads(receipt_bytes)
+    assert upload_receipt["schema"] == "npa.libero.s3-upload-readback.v1"
+    assert upload_receipt["run_id"] == run_id
+    assert upload_receipt["status"] == "verified"
+    expected_names = {
+        "libero-bc-rnn-smoke.pth",
+        "libero-smoke.json",
+        "npa_byof_summary.json",
+        "npa_runtime_bootstrap.json",
+        "npa_runtime_metadata.json",
+        "nvidia_smi.txt",
+        "nvidia_smi_list.txt",
+        "solution_smoke_stderr.log",
+        "solution_smoke_stdout.log",
+    }
+    receipt_items = {item["name"]: item for item in upload_receipt["artifacts"]}
+    assert set(receipt_items) == expected_names
+    retrieved: dict[str, bytes] = {}
+    for name, item in receipt_items.items():
+        payload, response = read_back(name)
+        digest = hashlib.sha256(payload).hexdigest()
+        assert len(payload) == item["size_bytes"]
+        assert digest == item["sha256"]
+        returned_checksum = response.get("ChecksumSHA256")
+        assert returned_checksum == base64.b64encode(bytes.fromhex(digest)).decode(
+            "ascii"
+        )
+        retrieved[name] = payload
+    remote_summary = json.loads(retrieved["npa_byof_summary.json"])
+    assert remote_summary["status"] == "success"
+    assert remote_summary["run_id"] == run_id
+    assert remote_summary["image"] == acceptance["candidate_image"]
+    report = json.loads(retrieved["libero-smoke.json"])
 
     assert report["schema"] == "npa.workbench.libero.bc-smoke.v1"
     assert report["status"] == "passed"
@@ -652,6 +828,9 @@ def test_libero_b200_qualification_report() -> None:
     assert checkpoint["strict_state_dict_load"] is True
     assert checkpoint["reloaded_with"] == "libero.lifelong.utils.torch_load_model"
     assert re.fullmatch(r"[0-9a-f]{64}", checkpoint["sha256"])
+    assert checkpoint["sha256"] == hashlib.sha256(
+        retrieved["libero-bc-rnn-smoke.pth"]
+    ).hexdigest()
 
     action = report["reloaded_action"]
     assert action["dtype"] == "float32"
@@ -716,7 +895,7 @@ def test_libero_b200_qualification_report() -> None:
     assert runtime_metadata["git_objects_present"] is False
     assert runtime_metadata["cache_uploaded"] is False
     assert re.fullmatch(
-        r"[0-9a-f]{64}", build["independently_observed_build_metadata_sha256"]
+        r"[0-9a-f]{64}", build["accepted_canonical_build_metadata_sha256"]
     )
     assert build["base_image_digest"] == (
         "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"

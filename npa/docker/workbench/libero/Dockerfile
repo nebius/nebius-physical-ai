@@ -50,22 +50,29 @@ RUN set -eux; \
     test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.1.180-1'; \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     rm -rf /var/lib/apt/lists/*; \
+    groupadd --gid 1001 npa-libero-exec; \
     useradd --no-log-init --uid 1000 --create-home --shell /bin/bash ubuntu; \
+    useradd --no-log-init --uid 1001 --gid npa-libero-exec --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin npa-libero-exec; \
+    usermod --append --groups npa-libero-exec ubuntu; \
     chage --lastday "$((SOURCE_DATE_EPOCH / 86400))" ubuntu; \
+    chage --lastday "$((SOURCE_DATE_EPOCH / 86400))" npa-libero-exec; \
     rm -rf /var/log/apt/* /var/cache/apt/archives/*; \
     rm -f /var/log/dpkg.log /var/log/alternatives.log /var/log/lastlog /var/log/faillog /var/cache/ldconfig/aux-cache; \
-    install -d -m 0700 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero /workspace/byof-runs; \
+    install -d -m 0750 -o ubuntu -g npa-libero-exec /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero; \
+    install -d -m 0770 -o ubuntu -g npa-libero-exec /workspace/byof-runs; \
     install -d -m 0755 /run/sshd /opt/npa/libero; \
     printf '%s\n' \
       'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
+      'Cmnd_Alias NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute' \
+      'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_RUNTIME_USE_DECISION_SHA256 NPA_LIBERO_EXPECTED_ACCEPTANCE_ID NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
+      'ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC' \
       > /etc/sudoers.d/npa-skypilot-ssh; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
 COPY docker/workbench/libero/runtime-manifest.json /opt/npa/libero/runtime-manifest.json
 COPY docker/workbench/libero/runtime-requirements.txt /opt/npa/libero/runtime-requirements.txt
-COPY src/npa/deploy/libero_image_manifest.json /opt/npa/libero/image-manifest.json
 COPY docker/workbench/libero/runtime-bootstrap.py /opt/npa/libero/runtime-bootstrap.py
 COPY docker/workbench/libero/libero_smoke.py /opt/npa/libero/libero_smoke.py
 COPY docker/workbench/libero/REDISTRIBUTION.md /opt/npa/libero/REDISTRIBUTION.md

@@ -5,16 +5,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
+from dataclasses import dataclass
 import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,10 @@ from urllib.parse import urlparse
 
 import yaml
 
+from npa.deploy.images import (
+    libero_accepted_image_manifest,
+    validate_libero_runtime_decision,
+)
 from npa.execution_preflight import (
     SKYPILOT_ENGINE_SERVICE_ACCOUNT,
     verify_solution_payload_service_accounts,
@@ -77,15 +84,6 @@ LIBERO_RUNTIME_MANIFEST = (
     / "libero"
     / "runtime-manifest.json"
 )
-LIBERO_DECISION_BOUNDARIES = {
-    "source",
-    "runtime_packages",
-    "demonstration",
-    "task_inputs",
-    "language_model",
-}
-
-
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
 #: and artifacts to S3. Forwarded as SkyPilot task secrets (never written into the
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
@@ -109,6 +107,11 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         # The gated-repository entitlement, which the container requires for the
         # LTX source as well as the weights.
         "HF_TOKEN",
+    ),
+    "libero": (
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
     ),
 }
 DEFAULT_SECRET_ENVS = (
@@ -316,7 +319,7 @@ def _libero_payload_kubeconfig() -> Path:
     )
 
 
-def _libero_isolated_state_root(path: Path | None) -> Path:
+def _libero_isolated_state_root(path: Path | None, run_id: str) -> Path:
     if path is None:
         raise ValueError("LIBERO requires an isolated SkyPilot state root")
     if path.is_symlink() or not path.is_dir():
@@ -324,7 +327,10 @@ def _libero_isolated_state_root(path: Path | None) -> Path:
     metadata = path.stat()
     if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
         raise ValueError("LIBERO isolated SkyPilot state must be owner-private")
-    return path.resolve()
+    resolved = path.resolve()
+    if resolved.name != run_id or resolved.parent == resolved:
+        raise ValueError("LIBERO isolated SkyPilot state must be exact-run scoped")
+    return resolved
 
 
 def _libero_global_config_path(args: argparse.Namespace) -> str:
@@ -390,9 +396,80 @@ def _libero_resource(
     return payload
 
 
-def _libero_rbac_evidence(
+@dataclass(frozen=True)
+class LiberoAccessState:
+    """Raw run-owned access identities retained only for guarded cleanup."""
+
+    kubeconfig: Path
+    context: str
+    namespace: str
+    namespace_uid: str
+    service_account_uid: str
+    role_uid: str
+    role_binding_uid: str
+
+
+@dataclass(frozen=True)
+class LiberoRuntimeBinding:
+    evidence: dict[str, str]
+    access_state: LiberoAccessState
+
+
+def _libero_namespaced_inventory(
     kubeconfig: Path, context: str, namespace: str
-) -> dict[str, str]:
+) -> dict[str, list[str]]:
+    inventory: dict[str, list[str]] = {}
+    expected = {
+        "pods": set(),
+        "serviceaccounts": {"default", LIBERO_PAYLOAD_SERVICE_ACCOUNT},
+        "roles": {LIBERO_PAYLOAD_ROLE},
+        "rolebindings": {LIBERO_PAYLOAD_ROLE_BINDING},
+        "secrets": set(),
+    }
+    for kind, expected_names in expected.items():
+        payload = _kubectl_json(
+            ["--context", context, "--namespace", namespace, "get", kind],
+            purpose=f"LIBERO namespace {kind} inventory",
+            kubeconfig=kubeconfig,
+        )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError(f"LIBERO namespace {kind} inventory is invalid")
+        names = sorted(
+            str((item.get("metadata") or {}).get("name") or "")
+            for item in items
+            if isinstance(item, dict)
+        )
+        if (
+            any(not name for name in names)
+            or set(names) != expected_names
+            or len(names) != len(expected_names)
+        ):
+            raise RuntimeError(
+                f"LIBERO namespace is not isolated to its reviewed {kind} inventory"
+            )
+        inventory[kind] = names
+    return inventory
+
+
+def _libero_rbac_evidence(
+    kubeconfig: Path, context: str, namespace: str, run_id: str
+) -> tuple[dict[str, str], LiberoAccessState]:
+    namespace_record = _kubectl_json(
+        ["--context", context, "get", "namespace", namespace],
+        purpose="LIBERO namespace",
+        kubeconfig=kubeconfig,
+    )
+    namespace_metadata = namespace_record.get("metadata") or {}
+    run_id_sha256 = hashlib.sha256(run_id.encode()).hexdigest()
+    labels = namespace_metadata.get("labels") or {}
+    if (
+        namespace_metadata.get("name") != namespace
+        or not namespace_metadata.get("uid")
+        or labels.get("npa.nebius.ai/solution") != "libero"
+        or labels.get("npa.nebius.ai/run-id-sha256") != run_id_sha256
+    ):
+        raise RuntimeError("LIBERO namespace is not bound to this exact run")
     account = _libero_resource(
         kubeconfig,
         context,
@@ -427,7 +504,8 @@ def _libero_rbac_evidence(
         raise RuntimeError("LIBERO payload Role is broader than pods/get")
     if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
         raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
-    return {
+    inventory = _libero_namespaced_inventory(kubeconfig, context, namespace)
+    evidence = {
         "service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
         ).hexdigest(),
@@ -438,10 +516,29 @@ def _libero_rbac_evidence(
             binding["metadata"]["uid"].encode()
         ).hexdigest(),
         "rbac_spec_sha256": _sha256_json(
-            {"rules": rules, "subjects": subjects, "roleRef": role_ref}
+            {
+                "rules": rules,
+                "subjects": subjects,
+                "roleRef": role_ref,
+                "namespace_run_id_sha256": run_id_sha256,
+            }
         ),
         "namespace_sha256": hashlib.sha256(namespace.encode()).hexdigest(),
+        "namespace_uid_sha256": hashlib.sha256(
+            namespace_metadata["uid"].encode()
+        ).hexdigest(),
+        "namespace_inventory_sha256": _sha256_json(inventory),
     }
+    access_state = LiberoAccessState(
+        kubeconfig=kubeconfig,
+        context=context,
+        namespace=namespace,
+        namespace_uid=namespace_metadata["uid"],
+        service_account_uid=account["metadata"]["uid"],
+        role_uid=role["metadata"]["uid"],
+        role_binding_uid=binding["metadata"]["uid"],
+    )
+    return evidence, access_state
 
 
 def _bind_libero_runtime_contract(
@@ -450,7 +547,8 @@ def _bind_libero_runtime_contract(
     *,
     global_config: dict[str, Any],
     infra: str,
-) -> dict[str, str] | None:
+    run_id: str,
+) -> LiberoRuntimeBinding | None:
     if not _is_libero_invocation(args, documents):
         return None
     if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
@@ -461,56 +559,58 @@ def _bind_libero_runtime_contract(
         raise ValueError("LIBERO requires verified managed cleanup")
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
         raise ValueError("LIBERO requires verified isolated Sky API shutdown")
-    decision_path = _mode_private_regular_file(
-        os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", "").strip(),
-        label="runtime-use decision",
-    )
-    decision_bytes = decision_path.read_bytes()
-    decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
-    expected_decision_sha256 = os.environ.get(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
-    ).strip()
-    if decision_sha256 != expected_decision_sha256:
-        raise ValueError("LIBERO runtime-use decision differs from its owner receipt")
     try:
-        decision = json.loads(decision_bytes)
-    except json.JSONDecodeError as exc:
-        raise ValueError("LIBERO runtime-use decision is not valid JSON") from exc
-    if not isinstance(decision, dict):
-        raise ValueError("LIBERO runtime-use decision identity is invalid")
+        acceptance = libero_accepted_image_manifest()
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    image = str(args.image or "").strip().removeprefix("docker:")
+    if image != acceptance["candidate_image"]:
+        raise ValueError("LIBERO image differs from checked-in accepted lineage")
+    if run_id != acceptance["infrastructure"]["run_id"]:
+        raise ValueError("LIBERO run ID differs from checked-in infrastructure")
+    encoded_decision = os.environ.get(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64", ""
+    ).strip()
+    try:
+        decision_bytes = base64.b64decode(encoded_decision, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("LIBERO runtime-use decision secret is invalid") from exc
+    try:
+        _, decision_sha256 = validate_libero_runtime_decision(
+            decision_bytes,
+            acceptance=acceptance,
+            run_id=run_id,
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    if (
+        os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", "").strip()
+        != decision_sha256
+    ):
+        raise ValueError("LIBERO runtime decision secret pair differs")
     runtime_manifest_sha256 = hashlib.sha256(
         LIBERO_RUNTIME_MANIFEST.read_bytes()
     ).hexdigest()
-    boundaries = decision.get("authorized_boundaries")
-    if (
-        decision.get("schema") != "npa.libero.runtime-use-decision.v1"
-        or decision.get("solution") != "libero"
-        or decision.get("decision") != "authorized"
-        or decision.get("runtime_fetch_authorized") is not True
-        or decision.get("runtime_manifest_sha256") != runtime_manifest_sha256
-        or decision.get("source_revision")
-        != "8f1084e3132a39270c3a13ebe37270a43ece2a01"
-        or not isinstance(boundaries, list)
-        or set(boundaries) != LIBERO_DECISION_BOUNDARIES
-        or len(boundaries) != len(LIBERO_DECISION_BOUNDARIES)
-        or re.fullmatch(
-            r"sha256:[0-9a-f]{64}",
-            str(decision.get("manager_receipt_sha256") or ""),
-        )
-        is None
-        or any(str(key).startswith("ACCEPT_") for key in decision)
-    ):
-        raise ValueError("LIBERO runtime-use decision identity is invalid")
-    build_metadata_sha256 = os.environ.get(
-        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", ""
-    ).strip()
-    if re.fullmatch(r"[0-9a-f]{64}", build_metadata_sha256) is None:
-        raise ValueError("LIBERO requires independent build metadata SHA-256")
+    if runtime_manifest_sha256 != acceptance["runtime_manifest_sha256"]:
+        raise ValueError("LIBERO runtime manifest differs from accepted lineage")
+    build_metadata_sha256 = acceptance["canonical_build_metadata_sha256"]
+    storage_authorization = _validate_libero_output_storage_authorization(
+        documents=documents,
+        acceptance=acceptance,
+        run_id=run_id,
+    )
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
         raise ValueError("LIBERO requires one explicit Kubernetes context")
     allowed_node = _libero_allowed_node(global_config)
     execution_context = infra.removeprefix("k8s/").strip()
     payload_kubeconfig = _libero_payload_kubeconfig()
+    payload_kubeconfig_sha256 = hashlib.sha256(
+        payload_kubeconfig.read_bytes()
+    ).hexdigest()
+    if payload_kubeconfig_sha256 != acceptance["infrastructure"][
+        "payload_kubeconfig_sha256"
+    ]:
+        raise ValueError("LIBERO payload kubeconfig differs from checked-in acceptance")
     payload_context, namespace, payload_cluster_sha256 = _libero_context_contract(
         payload_kubeconfig, require_namespace=True
     )
@@ -519,36 +619,161 @@ def _bind_libero_runtime_contract(
             "LIBERO payload and execution contexts must remain explicitly separated"
         )
     execution_kubeconfig_value = os.environ.get("KUBECONFIG", "").strip()
-    execution_kubeconfig = Path(execution_kubeconfig_value)
-    if not execution_kubeconfig_value or not execution_kubeconfig.is_file():
-        raise ValueError("LIBERO requires the selected NPA execution kubeconfig")
-    _, _, execution_cluster_sha256 = _libero_context_contract(
+    execution_kubeconfig = _mode_private_regular_file(
+        execution_kubeconfig_value, label="NPA execution kubeconfig"
+    )
+    execution_kubeconfig_sha256 = hashlib.sha256(
+        execution_kubeconfig.read_bytes()
+    ).hexdigest()
+    if execution_kubeconfig_sha256 != acceptance["infrastructure"][
+        "execution_kubeconfig_sha256"
+    ]:
+        raise ValueError(
+            "LIBERO execution kubeconfig differs from checked-in acceptance"
+        )
+    _, execution_namespace, execution_cluster_sha256 = _libero_context_contract(
         execution_kubeconfig,
         expected_context=execution_context,
-        require_namespace=False,
+        require_namespace=True,
     )
     if payload_cluster_sha256 != execution_cluster_sha256:
         raise ValueError("LIBERO payload and execution kubeconfigs select different clusters")
-    evidence = _libero_rbac_evidence(payload_kubeconfig, payload_context, namespace)
+    if execution_namespace != namespace:
+        raise ValueError(
+            "LIBERO payload and execution contexts must select the exact run namespace"
+        )
+    evidence, access_state = _libero_rbac_evidence(
+        payload_kubeconfig, payload_context, namespace, run_id
+    )
     evidence["cluster_identity_sha256"] = payload_cluster_sha256
     evidence["allowed_node_sha256"] = hashlib.sha256(allowed_node.encode()).hexdigest()
+    evidence["payload_kubeconfig_sha256"] = payload_kubeconfig_sha256
+    evidence["execution_kubeconfig_sha256"] = execution_kubeconfig_sha256
+    evidence["skypilot_config_sha256"] = _sha256_json(global_config)
+    expected_infrastructure = acceptance["infrastructure"]
     for name, observed in evidence.items():
-        variable = f"NPA_LIBERO_EXPECTED_{name.upper()}"
-        expected = os.environ.get(variable, "").strip()
-        if not re.fullmatch(r"[0-9a-f]{64}", expected):
-            raise ValueError(f"LIBERO requires owner-receipted hash {variable}")
+        expected = expected_infrastructure.get(name)
         if expected != observed:
-            raise ValueError(f"LIBERO owner-receipted hash differs for {name}")
+            raise ValueError(f"LIBERO checked-in infrastructure differs for {name}")
     for document in documents[1:]:
         envs = document.setdefault("envs", {})
         for name, value in evidence.items():
             envs[f"NPA_LIBERO_EXPECTED_{name.upper()}"] = value
-        envs["NPA_LIBERO_RUNTIME_USE_DECISION_B64"] = base64.b64encode(
-            decision_bytes
-        ).decode("ascii")
-        envs["NPA_LIBERO_RUNTIME_USE_DECISION_SHA256"] = decision_sha256
-        envs["NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256"] = build_metadata_sha256
-    return evidence
+        envs["NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256"] = (
+            build_metadata_sha256
+        )
+        envs["NPA_LIBERO_EXPECTED_ACCEPTANCE_ID"] = acceptance["acceptance_id"]
+        envs["NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256"] = acceptance[
+            "publication_bundle_sha256"
+        ]
+        envs["NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256"] = acceptance[
+            "infrastructure_bundle_sha256"
+        ]
+        envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"] = (
+            expected_infrastructure["output_storage_authorization_sha256"]
+        )
+        envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"] = (
+            expected_infrastructure["output_storage_prefix_sha256"]
+        )
+        envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = (
+            storage_authorization["policy_sha256"]
+        )
+    return LiberoRuntimeBinding(evidence=evidence, access_state=access_state)
+
+
+def _validate_libero_output_storage_authorization(
+    *,
+    documents: list[dict[str, Any]],
+    acceptance: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    """Verify manager-bound, short-lived, run-prefix-only upload credentials."""
+
+    expected = acceptance["infrastructure"]
+    prefixes = {
+        str((document.get("envs") or {}).get("S3_OUTPUT_PREFIX") or "").strip()
+        for document in documents[1:]
+    }
+    if len(prefixes) != 1:
+        raise ValueError("LIBERO requires one exact output storage prefix")
+    output_prefix = prefixes.pop().rstrip("/") + "/"
+    if hashlib.sha256(output_prefix.encode()).hexdigest() != expected[
+        "output_storage_prefix_sha256"
+    ]:
+        raise ValueError("LIBERO output prefix differs from checked-in acceptance")
+    encoded = os.environ.get(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""
+    ).strip()
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("LIBERO output storage authorization secret is invalid") from exc
+    if hashlib.sha256(payload).hexdigest() != expected[
+        "output_storage_authorization_sha256"
+    ]:
+        raise ValueError("LIBERO output storage authorization is not manager-accepted")
+    try:
+        authorization = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("LIBERO output storage authorization is not valid JSON") from exc
+    keys = {
+        "schema",
+        "issuer",
+        "run_id",
+        "output_prefix",
+        "access_key_id_sha256",
+        "secret_access_key_sha256",
+        "session_token_sha256",
+        "policy_sha256",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
+    if not isinstance(authorization, dict) or set(authorization) != keys:
+        raise ValueError("LIBERO output storage authorization schema is not closed")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    session_token = os.environ.get("AWS_SESSION_TOKEN", "")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(authorization["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(authorization["expires_at"]).replace("Z", "+00:00")
+        )
+        acceptance_expires_at = datetime.fromisoformat(
+            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
+    now = datetime.now(timezone.utc)
+    valid = (
+        authorization.get("schema") == "npa.libero.output-storage-authorization.v1"
+        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("run_id") == run_id
+        and authorization.get("output_prefix") == output_prefix
+        and authorization.get("policy_sha256")
+        == expected["output_storage_policy_sha256"]
+        and all((access_key, secret_key, session_token))
+        and authorization.get("access_key_id_sha256")
+        == hashlib.sha256(access_key.encode()).hexdigest()
+        and authorization.get("secret_access_key_sha256")
+        == hashlib.sha256(secret_key.encode()).hexdigest()
+        and authorization.get("session_token_sha256")
+        == hashlib.sha256(session_token.encode()).hexdigest()
+        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
+        is not None
+        and issued_at.tzinfo is not None
+        and expires_at.tzinfo is not None
+        and issued_at <= now + timedelta(minutes=5)
+        and issued_at < expires_at
+        and expires_at > now
+        and expires_at - issued_at <= timedelta(hours=24)
+        and expires_at <= acceptance_expires_at
+    )
+    if not valid:
+        raise ValueError("LIBERO output storage authorization is invalid or expired")
+    return authorization
 
 
 def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
@@ -1081,6 +1306,149 @@ def _verify_managed_clusters_absent(
     return cleanup
 
 
+def _cleanup_libero_access_objects(
+    state: LiberoAccessState, *, timeout: int
+) -> CleanupResult:
+    """Delete exact UID-bound RBAC objects and their per-run namespace."""
+
+    cleanup = CleanupResult()
+    try:
+        from kubernetes import client as kubernetes_client
+        from kubernetes import config as kubernetes_config
+        from kubernetes.client.exceptions import ApiException
+
+        api_client = kubernetes_config.new_client_from_config(
+            config_file=str(state.kubeconfig), context=state.context
+        )
+        core = kubernetes_client.CoreV1Api(api_client)
+        rbac = kubernetes_client.RbacAuthorizationV1Api(api_client)
+    except Exception:  # noqa: BLE001 - access cleanup ambiguity is fatal
+        cleanup.errors.append("LIBERO Kubernetes cleanup client initialization failed")
+        return cleanup
+
+    delete_options = kubernetes_client.V1DeleteOptions
+    preconditions = kubernetes_client.V1Preconditions
+    operations = (
+        (
+            "rolebinding",
+            LIBERO_PAYLOAD_ROLE_BINDING,
+            state.role_binding_uid,
+            rbac.delete_namespaced_role_binding,
+            rbac.read_namespaced_role_binding,
+        ),
+        (
+            "role",
+            LIBERO_PAYLOAD_ROLE,
+            state.role_uid,
+            rbac.delete_namespaced_role,
+            rbac.read_namespaced_role,
+        ),
+        (
+            "serviceaccount",
+            LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            state.service_account_uid,
+            core.delete_namespaced_service_account,
+            core.read_namespaced_service_account,
+        ),
+    )
+    for kind, name, uid, delete, read in operations:
+        try:
+            delete(
+                name,
+                state.namespace,
+                body=delete_options(preconditions=preconditions(uid=uid)),
+            )
+        except ApiException as exc:
+            if exc.status != 404:
+                cleanup.errors.append(f"LIBERO {kind} cleanup could not prove absence")
+                return cleanup
+        except Exception:  # noqa: BLE001 - never claim an ambiguous delete
+            cleanup.errors.append(f"LIBERO {kind} cleanup raised unexpectedly")
+            return cleanup
+        deadline = time.time() + max(timeout, 1)
+        while True:
+            try:
+                read(name, state.namespace)
+            except ApiException as exc:
+                if exc.status == 404:
+                    break
+                cleanup.errors.append(f"LIBERO {kind} absence check failed")
+                return cleanup
+            except Exception:  # noqa: BLE001 - absence must be objective
+                cleanup.errors.append(f"LIBERO {kind} absence check raised")
+                return cleanup
+            if time.time() >= deadline:
+                cleanup.errors.append(
+                    f"LIBERO {kind} still exists after exact deletion"
+                )
+                return cleanup
+            time.sleep(1)
+        cleanup.resources_removed.append(f"libero-{kind}")
+
+    try:
+        core.delete_namespace(
+            state.namespace,
+            body=delete_options(
+                preconditions=preconditions(uid=state.namespace_uid)
+            ),
+        )
+    except ApiException as exc:
+        if exc.status != 404:
+            cleanup.errors.append("LIBERO namespace exact deletion failed")
+            return cleanup
+    except Exception:  # noqa: BLE001 - preserve local recovery state on ambiguity
+        cleanup.errors.append("LIBERO namespace exact deletion failed")
+        return cleanup
+    deadline = time.time() + max(timeout, 1)
+    while True:
+        try:
+            core.read_namespace(state.namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                break
+            cleanup.errors.append("LIBERO namespace absence check failed")
+            return cleanup
+        except Exception:  # noqa: BLE001 - absence must be objective
+            cleanup.errors.append("LIBERO namespace absence check raised")
+            return cleanup
+        if time.time() >= deadline:
+            cleanup.errors.append("LIBERO namespace still exists after exact deletion")
+            return cleanup
+        time.sleep(1)
+    cleanup.resources_removed.append("libero-namespace")
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
+    return cleanup
+
+
+def _cleanup_libero_local_state(
+    *, isolated_state_root: Path, payload_kubeconfig: Path, run_id: str
+) -> CleanupResult:
+    """Remove only exact run-scoped local state after remote absence and API stop."""
+
+    cleanup = CleanupResult()
+    try:
+        state_root = _libero_isolated_state_root(isolated_state_root, run_id)
+        kubeconfig = _mode_private_regular_file(
+            str(payload_kubeconfig), label="payload kubeconfig"
+        )
+        kubeconfig.unlink()
+        if kubeconfig.exists() or kubeconfig.is_symlink():
+            raise RuntimeError("payload kubeconfig still exists")
+        shutil.rmtree(state_root)
+        if state_root.exists() or state_root.is_symlink():
+            raise RuntimeError("isolated SkyPilot state still exists")
+    except Exception:  # noqa: BLE001 - local absence must remain unverified
+        cleanup.errors.append("LIBERO exact local-state cleanup failed")
+        return cleanup
+    cleanup.resources_removed.extend(
+        ["libero-payload-kubeconfig", "libero-isolated-skypilot-state"]
+    )
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
+    return cleanup
+
+
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     output_root = _normalize_output_root(args.output_root)
@@ -1131,7 +1499,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             args.isolated_config_dir or None
         )
         if is_libero:
-            isolated_config_dir = _libero_isolated_state_root(isolated_config_dir)
+            isolated_config_dir = _libero_isolated_state_root(
+                isolated_config_dir, run_id
+            )
         api_stop_attempted = False
         preserve_api = False
         api_config_path: Path | None = None
@@ -1155,7 +1525,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 docs, global_config=global_config
             )
             libero_binding = _bind_libero_runtime_contract(
-                args, docs, global_config=global_config, infra=infra
+                args,
+                docs,
+                global_config=global_config,
+                infra=infra,
+                run_id=run_id,
             )
             _write_yaml_documents(rendered_yaml, docs)
             preflight_output_storage(output_root=output_root, run_id=run_id)
@@ -1259,7 +1633,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "outputs": outputs,
                 }
                 if libero_binding is not None:
-                    summary["libero_runtime_binding"] = libero_binding
+                    summary["libero_runtime_binding"] = libero_binding.evidence
                 final, wait_diagnostics = _wait_for_terminal(
                     scheduler_job_id,
                     sky_bin=sky_bin,
@@ -1315,7 +1689,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "outputs": outputs,
                 }
                 if libero_binding is not None:
-                    summary["libero_runtime_binding"] = libero_binding
+                    summary["libero_runtime_binding"] = libero_binding.evidence
                 return_code = 2
             except Exception as exc:  # noqa: BLE001 - cleanup must still be reported
                 summary = {
@@ -1328,31 +1702,44 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "outputs": outputs,
                 }
                 if libero_binding is not None:
-                    summary["libero_runtime_binding"] = libero_binding
+                    summary["libero_runtime_binding"] = libero_binding.evidence
                 return_code = 2
             finally:
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
                     cleanup_result = cleanup_submission()
-            if summary is not None and cleanup_result is not None:
+            cleanup_verified = bool(
+                cleanup_result is not None
+                and cleanup_result.ok
+                and cleanup_result.verified
+                and cleanup_result.remote_absence_verified
+            )
+            if cleanup_verified and libero_binding is not None:
+                access_cleanup = _cleanup_libero_access_objects(
+                    libero_binding.access_state,
+                    timeout=max(int(teardown_guard.timeout), 1),
+                )
+                assert cleanup_result is not None
+                cleanup_result.extend(access_cleanup)
+                cleanup_result.verified = (
+                    cleanup_result.verified and access_cleanup.verified
+                )
+                cleanup_result.remote_absence_verified = (
+                    cleanup_result.remote_absence_verified
+                    and access_cleanup.remote_absence_verified
+                )
                 cleanup_verified = bool(
                     cleanup_result.ok
                     and cleanup_result.verified
                     and cleanup_result.remote_absence_verified
                 )
-                summary["cleanup"] = {
-                    "ok": cleanup_verified,
-                    "errors": cleanup_result.errors,
-                    "resources_removed": cleanup_result.resources_removed,
-                    "verified": cleanup_result.verified,
-                    "remote_absence_verified": (
-                        cleanup_result.remote_absence_verified
-                    ),
-                }
                 if not cleanup_verified:
                     return_code = 1
-                    if is_libero:
-                        preserve_api = True
+                    preserve_api = True
+            if cleanup_result is not None and not cleanup_verified:
+                return_code = 1
+                if is_libero:
+                    preserve_api = True
             if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
                 if preserve_api:
                     if summary is not None:
@@ -1382,6 +1769,41 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                                 "ok": True,
                                 "preserved_for_cleanup_recovery": False,
                             }
+                        if libero_binding is not None and cleanup_verified:
+                            assert isolated_config_dir is not None
+                            local_cleanup = _cleanup_libero_local_state(
+                                isolated_state_root=isolated_config_dir,
+                                payload_kubeconfig=(
+                                    libero_binding.access_state.kubeconfig
+                                ),
+                                run_id=run_id,
+                            )
+                            assert cleanup_result is not None
+                            cleanup_result.extend(local_cleanup)
+                            cleanup_result.verified = (
+                                cleanup_result.verified and local_cleanup.verified
+                            )
+                            cleanup_result.remote_absence_verified = (
+                                cleanup_result.remote_absence_verified
+                                and local_cleanup.remote_absence_verified
+                            )
+                            cleanup_verified = bool(
+                                cleanup_result.ok
+                                and cleanup_result.verified
+                                and cleanup_result.remote_absence_verified
+                            )
+                            if not cleanup_verified:
+                                return_code = 1
+            if summary is not None and cleanup_result is not None:
+                summary["cleanup"] = {
+                    "ok": cleanup_verified,
+                    "errors": cleanup_result.errors,
+                    "resources_removed": cleanup_result.resources_removed,
+                    "verified": cleanup_result.verified,
+                    "remote_absence_verified": (
+                        cleanup_result.remote_absence_verified
+                    ),
+                }
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:

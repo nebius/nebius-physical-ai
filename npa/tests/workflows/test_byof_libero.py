@@ -5,9 +5,22 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 import yaml
+
+from npa.deploy.images import (
+    LIBERO_REQUIRED_PUBLICATION_REFERRERS,
+    LIBERO_PUBLICATION_ENFORCEMENT_PATHS,
+    libero_accepted_image_manifest,
+    libero_build_input_bundle_sha256,
+    libero_publication_enforcement_bundle_sha256,
+    libero_publication_lineage_values,
+    validate_libero_accepted_image_manifest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -85,8 +98,8 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert config["wait_timeout"] == -1
     assert config["libero_acceptance_candidate_image"] == ""
     assert config["libero_runtime_use_decision_file"] == ""
-    assert config["libero_runtime_use_decision_sha256"] == ""
-    assert config["libero_build_metadata_sha256"] == ""
+    assert "libero_runtime_use_decision_sha256" not in config
+    assert "libero_build_metadata_sha256" not in config
     resources = workflow["resources"]
     assert isinstance(resources, dict)
     assert resources["gpu"]["image"] == "{{config.base_image}}"
@@ -196,28 +209,44 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert pod_spec["serviceAccountName"] not in {"default", "skypilot-service-account"}
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert "NVIDIA_VISIBLE_DEVICES" not in task["envs"]
+    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in task["envs"]
+    assert "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256" not in task["envs"]
     profile = PROFILE_PATH.read_text(encoding="utf-8")
     for contract in (
         "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
-        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256",
+        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "/opt/npa/libero/runtime-bootstrap.py ensure",
+        "/opt/npa/libero/runtime-bootstrap.py execute",
+        "/opt/npa/libero/runtime-bootstrap.py execute-and-upload",
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
         "npa_runtime_bootstrap.json",
         "/opt/npa/libero/smoke.sh",
         "npa-byof-libero-payload",
     ):
         assert contract in profile
-    assert '"rendering_invoked": False' in profile
-    assert 'descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)' in profile
-    assert "dir_fd=descriptor" in profile
-    assert "dir_fd=directory_fd" in profile
-    assert "root.rglob" not in profile
-    assert "root.resolve" not in profile
-    assert "stat.S_ISLNK(info.st_mode)" in profile
-    assert "stat.S_ISREG(info.st_mode)" in profile
-    assert "info.st_nlink != 1" in profile
-    assert "os.O_NOFOLLOW" in profile
-    assert "os.fstat(stream.fileno())" in profile
+    bootstrap = (IMAGE_ROOT / "runtime-bootstrap.py").read_text(encoding="utf-8")
+    assert '"rendering_invoked": False' in bootstrap
+    assert "root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)" in bootstrap
+    assert "dir_fd=root_fd" in bootstrap
+    assert "stat.S_ISREG(info.st_mode)" in bootstrap
+    assert "info.st_nlink != 1" in bootstrap
+    assert "os.O_NOFOLLOW" in bootstrap
+    assert "os.fstat(stream.fileno())" in bootstrap
+    assert '"if-none-match": "*"' in bootstrap
+    assert '"x-amz-checksum-mode": "ENABLED"' in bootstrap
+    assert "headers.get(\"x-amz-checksum-sha256\") != checksum" in bootstrap
+    assert '"schema": "npa.libero.s3-upload-readback.v1"' in bootstrap
+    assert "set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS)" in bootstrap
+    assert "MAX_OUTPUT_BYTES" in bootstrap
+    assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
+    assert profile.count("unset NPA_LIBERO_RUNTIME_USE_DECISION_B64") == 2
+    assert (
+        "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "
+        "execute-and-upload"
+    ) in profile
+    assert "runtime-bootstrap.py upload" not in profile
+    assert "execute-python" not in profile
     assert ".render(" not in profile
 
 
@@ -225,7 +254,7 @@ def test_libero_workload_requires_pod_identity_and_independent_build_lineage() -
     smoke = _smoke_source()
 
     for contract in (
-        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256",
+        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "PUBLIC_BASE_IMAGE_DIGEST",
         "PUBLIC_BASE_ROOTFS_MATERIAL_DIGEST",
         "observe_own_pod_image",
@@ -249,6 +278,14 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["gpu_validation"] is None
     assert manifest["anonymous_pull_verified"] is False
     assert manifest["runtime_payloads_baked"] is False
+    assert manifest["runtime_artifact_review"] == {
+        "status": "incomplete",
+        "pending_size_artifacts": 135,
+        "pending_license_artifacts": 65,
+        "report_sha256": "",
+    }
+    assert manifest["acceptance"]["status"] == "not_accepted"
+    assert manifest["acceptance"]["candidate_image"] == ""
     assert manifest["catalog_release"] is False
     assert manifest["base_provenance"] == {
         "repository": "index.docker.io/library/python",
@@ -265,6 +302,159 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
             "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
         ),
     }
+
+    with pytest.raises(RuntimeError, match="accepted status"):
+        libero_accepted_image_manifest()
+
+
+def test_libero_acceptance_closes_candidate_publication_and_infrastructure() -> None:
+    manifest = json.loads(IMAGE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    now = datetime.now(timezone.utc)
+    digest = "sha256:" + "1" * 64
+    manifest["runtime_artifact_review"] = {
+        "status": "complete",
+        "pending_size_artifacts": 0,
+        "pending_license_artifacts": 0,
+        "report_sha256": "2" * 64,
+    }
+    acceptance = manifest["acceptance"]
+    acceptance.update(
+        {
+            "status": "accepted",
+            "acceptance_id": "libero-qualification-acceptance-0001",
+            "accepted_at": now.isoformat(),
+            "expires_at": (now + timedelta(hours=1)).isoformat(),
+            "candidate_image": (
+                "ghcr.io/nebius/nebius-physical-ai/npa-libero@" + digest
+            ),
+            "oci_digest": digest,
+            "platform_manifest_digest": "sha256:" + "3" * 64,
+            "config_digest": "sha256:" + "4" * 64,
+            "canonical_build_metadata_sha256": "5" * 64,
+            "attestation_manifest_digest": "sha256:" + "e" * 64,
+            "attestation_config_digest": "sha256:" + "f" * 64,
+            "attestation_layers": [
+                {
+                    "predicate_type": predicate_type,
+                    "digest": "sha256:" + digit * 64,
+                    "size_bytes": 1024,
+                }
+                for predicate_type, digit in zip(
+                    LIBERO_REQUIRED_PUBLICATION_REFERRERS, ("1", "2"), strict=True
+                )
+            ],
+            "package_version_digests": sorted(
+                [digest, "sha256:" + "3" * 64, "sha256:" + "e" * 64]
+            ),
+            "complete_image_inventory_sha256": "6" * 64,
+            "base_provenance_sha256": "7" * 64,
+            "publication_bundle_sha256": "8" * 64,
+            "development_sha": "d" * 40,
+            "upstream_source_revision": SOURCE_REF,
+            "build_input_bundle_sha256": libero_build_input_bundle_sha256(
+                ROOT, development_sha="d" * 40
+            ),
+            "publication_enforcement_bundle_sha256": (
+                libero_publication_enforcement_bundle_sha256(ROOT)
+            ),
+            "package_writer_repository": "nebius/nebius-physical-ai",
+            "runtime_use_decision_sha256": "9" * 64,
+            "infrastructure_bundle_sha256": "a" * 64,
+        }
+    )
+    acceptance["infrastructure"] = {
+        "run_id": "libero-qualification-run-0001",
+        **{
+            key: "b" * 64
+            for key in acceptance["infrastructure"]
+            if key != "run_id"
+        },
+    }
+    acceptance["infrastructure_bundle_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                "schema": "npa.libero.infrastructure-bundle.v1",
+                **acceptance["infrastructure"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    acceptance["publication_bundle_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                "schema": "npa.libero.publication-lineage-bundle.v2",
+                "candidate_image": acceptance["candidate_image"],
+                "oci_digest": acceptance["oci_digest"],
+                "platform_manifest_digest": acceptance["platform_manifest_digest"],
+                "config_digest": acceptance["config_digest"],
+                "canonical_build_metadata_sha256": acceptance[
+                    "canonical_build_metadata_sha256"
+                ],
+                "attestation_manifest_digest": acceptance[
+                    "attestation_manifest_digest"
+                ],
+                "attestation_config_digest": acceptance[
+                    "attestation_config_digest"
+                ],
+                "attestation_layers": acceptance["attestation_layers"],
+                "package_version_digests": acceptance[
+                    "package_version_digests"
+                ],
+                "complete_image_inventory_sha256": acceptance[
+                    "complete_image_inventory_sha256"
+                ],
+                "base_provenance_sha256": acceptance["base_provenance_sha256"],
+                "development_sha": acceptance["development_sha"],
+                "upstream_source_revision": acceptance[
+                    "upstream_source_revision"
+                ],
+                "build_input_bundle_sha256": acceptance[
+                    "build_input_bundle_sha256"
+                ],
+                "publication_enforcement_bundle_sha256": acceptance[
+                    "publication_enforcement_bundle_sha256"
+                ],
+                "package_writer_repository": acceptance[
+                    "package_writer_repository"
+                ],
+                "infrastructure_bundle_sha256": acceptance[
+                    "infrastructure_bundle_sha256"
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    assert validate_libero_accepted_image_manifest(manifest) == acceptance
+    lineage = libero_publication_lineage_values(
+        acceptance, ROOT, development_sha="d" * 40
+    )
+    assert lineage["candidate_image"] == acceptance["candidate_image"]
+    assert lineage["platform_manifest_digest"] == acceptance[
+        "platform_manifest_digest"
+    ]
+
+    acceptance["candidate_image"] = (
+        "ghcr.io/attacker/example/npa-libero@" + digest
+    )
+    with pytest.raises(RuntimeError, match="official candidate image"):
+        validate_libero_accepted_image_manifest(manifest)
+
+
+def test_publication_enforcement_bundle_detects_descendant_policy_drift(
+    tmp_path,
+) -> None:
+    for relative in LIBERO_PUBLICATION_ENFORCEMENT_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    accepted = libero_publication_enforcement_bundle_sha256(tmp_path)
+    workflow = tmp_path / ".github/workflows/publish-public-images.yml"
+    workflow.write_bytes(workflow.read_bytes() + b"\n# policy drift\n")
+
+    assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
 
 
 def test_libero_readiness_hashes_bind_every_execution_input() -> None:
