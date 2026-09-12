@@ -55,8 +55,105 @@ headroom. RTX PRO 6000 is an independent `sm_120` validation path, not something
 inferred from B200 success.
 
 Successful inference publishes `result.json` (pins and provenance),
-`trajectory.json` (the predicted ego trajectory), and `trajectory.png` (the
-calibrated-camera visualization).
+`trajectory.json` (upstream trajectory metadata and displacement-error metrics),
+and `trajectory.png` (the calibrated-camera visualization). The upstream JSON
+does not contain the full predicted coordinate array. NPA snapshots the selected
+manifest before downloading weights, verifies the output sample identity, seed,
+and required camera projection, and decodes the PNG before publication. Missing
+or invalid manifests fail before model fetch; they cannot fall back to upstream's
+default clip. `result.json` includes the manifest hash and validated metrics.
+
+## Ray experiments
+
+The [sweep template](../../workflows/testing/alpamayo2-ray-sweep.yaml) extends the
+single-inference template into a scenario × seed × diffusion-step experiment.
+Its default grid contains eight cases: samples `0,1`, seeds `42,43`, and step
+counts `10,20`. Change these comma-separated config values to define an experiment;
+there is no implicit truncation. `workers` defaults to one GPU actor. Increase
+both the resource allocation and actor count together for multiple GPUs on one
+node. The catalog rejects multi-node replication of this single-node command.
+
+Ray GPU actors call the shared upstream inference implementation. Each actor
+keeps one case in flight and reuses the downloaded pinned model snapshot. Model
+weights load into a fresh upstream subprocess for each case. Actors emit
+structured progress events in the driver logs: `alpamayo.case_started`
+and `alpamayo.case_completed`. Completion events include measured ADE and elapsed
+time after artifact publication; CLI progress stays on stderr. Ray CPU tasks
+calculate per-scenario/per-setting mean ADE, mean FDE, and population standard
+deviation across seeds. `elapsed_seconds` measures the whole case, including
+model fetch/load, inference, rendering, and artifact upload. It does not isolate
+inference latency. The runtime uses an independent local Ray instance with
+a 256 MiB object store for small measurement records; it never discovers
+SkyPilot's management Ray through an ambient address.
+
+Use the current source with the accepted image: the release image predates the
+new sweep command. Source staging is required until an image containing this
+implementation is released. The renderer installs Ray 2.58.0 into the NPA stage
+interpreter, independently of the upstream model interpreter.
+
+```bash
+npa workbench health preflight --checks nebius,hf,s3 --json
+npa workbench health access --capability alpamayo2-super --json
+npa workbench workflow validate-spec workflows/testing/alpamayo2-ray-sweep.yaml --json
+npa workbench workflow submit workflows/testing/alpamayo2-ray-sweep.yaml \
+  --project YOUR_PROJECT --infra k8s/YOUR_CONTEXT --stage-src \
+  --var bucket=YOUR_BUCKET \
+  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+On a verified RTX PRO 6000 target, set
+`NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:1` in the submitting process. The
+checked-in B200 default remains the same as the inference base template.
+
+The [hard-case template](../../workflows/testing/alpamayo2-ray-hardcases.yaml)
+first measures a baseline, then consumes its S3 `report.json` to select every
+scenario whose mean ADE exceeds `minimum_ade` (default `2.0` meters). It reruns
+those scenarios at `refinement_steps` (default `20,30`) using the baseline seeds.
+An empty selection completes with zero refinement cases. Comparisons require
+the same model revision, dataset revision, manifest hash, scenario, and seed.
+A negative `ade_change_m` means lower measured displacement error; extra steps
+are not assumed to improve a prediction. These are offline error measurements,
+not driving-safety or closed-loop policy evaluations.
+
+Both templates publish a `report.json` and `SHA256SUMS`. Each measured case links
+its independently verified `result.json`, `trajectory.json`, and `trajectory.png`
+under a fresh execution subdirectory. A missing case, duplicate, invalid metric,
+or failed actor prevents a complete report. Use a new run ID for each experiment;
+this path does not implement checkpoint recovery or automatic inference retries.
+
+For an already allocated GPU environment, `npa workbench alpamayo2-super sweep`
+exposes `--output-path`, `--run-id`, `--sample-indices`, `--seeds`,
+`--diffusion-steps`, and `--workers`. Supply `--input-path` with a baseline report
+and `--minimum-ade` to refine it. Public CLI handoffs use S3. The Python SDK's
+`sweep(AlpamayoSweepRequest(...))` uses the same implementation and can use local
+paths for development. A dedicated Ray Jobs driver can invoke
+`python -m npa.workbench.alpamayo2_super.ray_sweep` with an explicit
+`--ray-address HOST:PORT`; deliver the NPA source and dependencies to every worker.
+The module defaults to `local` and rejects `auto` to avoid management-cluster
+discovery. `ray[default]==2.58.0` is required in the application environment.
+
+Independently verify a completed live report with the read-only artifact test.
+Set `NPA_ALPAMAYO_RAY_REPORT_URI` to the exact authorized S3 `report.json` and
+provide that bucket's storage credentials in the test environment:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_ALPAMAYO_RAY_REPORT_URI=s3://YOUR_BUCKET/runs/YOUR_RUN/alpamayo2-ray-sweep/sweep/report.json \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_alpamayo_ray_artifacts_live.py -q
+```
+
+This downloads and decodes every case's artifacts and checks report hashes,
+case coverage, pinned revisions, sample identity, projected trajectory shape,
+and consistency of the measured errors. It requires a prior real GPU run;
+it does not submit another workload.
+
+The [initial RTX validation report](alpamayo2-ray-validation.md) records the
+20-case workflow experiment. The [extended Ray study](alpamayo2-ray-extended-validation.md)
+records 340 cases on two physical GPU hosts over multiple hours, measured
+utilization, paired results, recordings and the full Linux test result. The
+templates' B200 default and standard SkyPilot submission still need their own
+live qualification.
 
 ## Serve inference
 

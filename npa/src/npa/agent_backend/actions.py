@@ -1235,7 +1235,9 @@ def run_action_loop(
         if terminal_empty:
             replan_reason = ""
         status = "error" if replan_reason == "tool_error" else "empty" if empty_result else "ok"
-        observed = _observe(observation)
+        # The trusted local catalog is the complete routing inventory. A text
+        # prefix hides registered capabilities from the next planning step.
+        observed = observation if tool == "tools_catalog" else _observe(observation)
         steps.append(
             {
                 "step": step_index + 1,

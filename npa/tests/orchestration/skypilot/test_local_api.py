@@ -60,6 +60,38 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     assert (local_runtime["isolated_dir"] / "local-api" / "daemon.json").stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("missed_scans", [1, 3])
+def test_live_new_server_waits_for_process_discovery(local_runtime, monkeypatch, missed_scans):
+    inspect_process = api._process
+    remaining = missed_scans
+
+    def delayed_discovery(record, **kwargs):
+        nonlocal remaining
+        process = inspect_process(record, **kwargs)
+        if process and remaining:
+            remaining -= 1
+            return None
+        return process
+
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "_process", delayed_discovery)
+        result = api.ensure_isolated_api(**local_runtime)
+
+    assert remaining == 0
+    assert result["outcome"] == "owned_isolated_api"
+    record = _record(local_runtime)
+    assert api._listener_owned(record, inspect_process(record))
+    assert api.ensure_isolated_api(**local_runtime) == result
+
+
+def test_new_server_exit_still_fails_readiness(local_runtime):
+    modules = Path(local_runtime["environment"]["PYTHONPATH"])
+    (modules / "sky" / "server" / "server.py").write_text("raise SystemExit(7)\n")
+
+    with pytest.raises(api.IsolatedApiError, match="exited before readiness"):
+        api.ensure_isolated_api(**local_runtime)
+
+
 @pytest.mark.parametrize("resolver", ["resolve_project_storage", "resolve_terraform_state"])
 def test_project_resolution_preserves_verified_api_but_rotation_is_rejected(
     local_runtime, tmp_path, monkeypatch, resolver,

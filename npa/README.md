@@ -38,6 +38,11 @@ environments, and the separate SkyPilot environment.
 
 Extra tools required by specific commands:
 
+- `ray[default]==2.58.0` in the NPA application environment for
+  `npa workbench alpamayo2-super sweep`. The workflow renderer installs this
+  dependency for the [Ray experiment templates](../docs/workbench/alpamayo2-super.md#ray-experiments).
+  Use `--sample-indices`, `--seeds`, and `--diffusion-steps` for a baseline,
+  or `--input-path` and `--minimum-ade` to refine a completed S3 report.
 - `nebius` CLI for Serverless AI Endpoint deploys and managed Nebius deploy commands
 - `terraform` for VM and container workbench deploys
 - `ffmpeg` for `npa adapter convert`
