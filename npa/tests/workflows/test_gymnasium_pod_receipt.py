@@ -258,10 +258,12 @@ def test_owner_permission_preflight_matches_list_and_exec(
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
     live._require_gymnasium_owner_receipt_access({}, namespace=NAMESPACE)
-    assert observed == [
-        ("auth", "can-i", "list", "pods"),
-        ("auth", "can-i", "create", "pods/exec"),
+    expected = [
+        ("auth", "can-i", "list", resource)
+        for resource in live.GYMNASIUM_CLEANUP_RESOURCES
     ]
+    expected.append(("auth", "can-i", "create", "pods/exec"))
+    assert observed == expected
 
 
 def test_scheduling_contract_requires_one_exact_named_ready_rtx_node(
@@ -512,12 +514,13 @@ def test_failed_sky_down_is_not_accepted_while_exact_pod_remains(
     monkeypatch.setattr(live, "_exact_gymnasium_run_pods", lambda *args, **kwargs: [{}])
     monkeypatch.setattr(live, "GYMNASIUM_CLEANUP_TIMEOUT_SECONDS", 0)
 
-    with pytest.raises(AssertionError, match="Pod remains"):
+    with pytest.raises(AssertionError, match="cleanup command failed"):
         live._cleanup_gymnasium_run(
             env,
             namespace=NAMESPACE,
             run_id=RUN_ID,
             config_path="/operator/config.yaml",
+            namespace_baseline={},
             issue_down=True,
         )
     assert commands == [
@@ -534,14 +537,12 @@ def test_failed_sky_down_is_not_accepted_while_exact_pod_remains(
     assert all(path.stat().st_mode & 0o077 == 0 for path in evidence.iterdir())
 
 
-def test_failed_sky_down_polls_until_terminating_pod_is_absent(
+def test_failed_sky_down_is_not_accepted_after_pod_disappears(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
     env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
-    observed_pods = iter([[{}], []])
-
     monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
     monkeypatch.setattr(
         live.subprocess,
@@ -550,20 +551,120 @@ def test_failed_sky_down_polls_until_terminating_pod_is_absent(
             command, 1, "", "cleanup raced deletion"
         ),
     )
-    monkeypatch.setattr(
-        live,
-        "_exact_gymnasium_run_pods",
-        lambda *args, **kwargs: next(observed_pods),
-    )
-    monkeypatch.setattr(live.time, "sleep", lambda _seconds: None)
+    with pytest.raises(AssertionError, match="cleanup command failed"):
+        live._cleanup_gymnasium_run(
+            env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            config_path=None,
+            namespace_baseline={},
+            issue_down=True,
+        )
 
+
+def test_namespace_inventory_accounts_all_cleanup_classes_and_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        resource = args[1]
+        items = [pod] if resource == "pods" else []
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    inventory = live._gymnasium_namespace_inventory({}, namespace=NAMESPACE)
+    assert set(inventory) == set(live.GYMNASIUM_CLEANUP_RESOURCES)
+    assert inventory["pods"][0]["gpu_requests"] == 1
+    assert inventory["pods"][0]["gpu_limits"] == 1
+
+
+def test_cleanup_requires_cluster_absence_and_exact_namespace_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    baseline = {resource: [] for resource in live.GYMNASIUM_CLEANUP_RESOURCES}
+    monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
+    monkeypatch.setattr(
+        live.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, "[]" if "status" in command else "", ""
+        ),
+    )
+    monkeypatch.setattr(
+        live, "_gymnasium_namespace_inventory", lambda *args, **kwargs: baseline
+    )
     live._cleanup_gymnasium_run(
         env,
         namespace=NAMESPACE,
         run_id=RUN_ID,
-        config_path=None,
+        config_path="/operator/sky.yaml",
+        namespace_baseline=baseline,
         issue_down=True,
     )
+
+
+def test_cleanup_refuses_residual_namespace_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline = {resource: [] for resource in live.GYMNASIUM_CLEANUP_RESOURCES}
+    residual = {**baseline, "roles": [{"name": "left", "uid": "left-uid"}]}
+    monkeypatch.setattr(
+        live, "_gymnasium_namespace_inventory", lambda *args, **kwargs: residual
+    )
+    monkeypatch.setattr(live, "GYMNASIUM_CLEANUP_TIMEOUT_SECONDS", 0)
+    assert not live._wait_for_gymnasium_namespace_baseline(
+        {}, namespace=NAMESPACE, baseline=baseline
+    )
+
+
+def test_failed_output_cleanup_deletes_only_the_exact_empty_baseline_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deleted: list[str] = []
+
+    class FakePaginator:
+        def paginate(self, **kwargs: object) -> list[dict[str, object]]:
+            assert kwargs["Prefix"] == "runs/exact/"
+            return [{"Contents": [{"Key": "runs/exact/partial.json"}]}]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+        def delete_object(self, **kwargs: str) -> None:
+            deleted.append(kwargs["Key"])
+
+        def list_objects_v2(self, **kwargs: str) -> dict[str, object]:
+            return {}
+
+    monkeypatch.setattr(live, "s3_client_for_project", lambda *args, **kwargs: FakeS3())
+    live._cleanup_gymnasium_failed_output(None, root_uri="s3://bucket/runs/exact/")
+    assert deleted == ["runs/exact/partial.json"]
+
+
+def test_output_prefix_preflight_rejects_existing_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            return {"Contents": [{"Key": "runs/exact/existing.json"}]}
+
+    monkeypatch.setattr(live, "s3_client_for_project", lambda *args, **kwargs: FakeS3())
+    with pytest.raises(AssertionError, match="not empty"):
+        live._require_gymnasium_output_prefix_empty(
+            None, root_uri="s3://bucket/runs/exact/"
+        )
 
 
 def test_runner_termination_escalates_to_sigkill(
@@ -607,7 +708,11 @@ def test_success_cleanup_escalates_to_active_sky_down(
 
     monkeypatch.setattr(live, "_cleanup_gymnasium_run", fake_cleanup)
     live._cleanup_gymnasium_run_after_success(
-        {}, namespace=NAMESPACE, run_id=RUN_ID, config_path="/operator/sky.yaml"
+        {},
+        namespace=NAMESPACE,
+        run_id=RUN_ID,
+        config_path="/operator/sky.yaml",
+        namespace_baseline={},
     )
     assert attempts == [False, True]
 

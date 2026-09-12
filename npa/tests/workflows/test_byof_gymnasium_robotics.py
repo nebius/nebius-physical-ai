@@ -155,6 +155,12 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "-u AWS_SECRET_ACCESS_KEY" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
+    assert 'upload_paths = (artifact_path, root / "npa_byof_summary.json")' in profile
+    assert 'ContentType="application/json"' in profile
+    assert 'Metadata={"sha256": digest}' in profile
+    assert 'get_paginator("list_objects_v2")' in profile
+    assert "observed_keys != expected_keys" in profile
+    assert "root.rglob" not in profile
 
 
 def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:

@@ -65,6 +65,14 @@ GYMNASIUM_CLEANUP_TIMEOUT_SECONDS = 180
 GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS = 120
 GYMNASIUM_RUNNER_TIMEOUT_SECONDS = 1800
 GYMNASIUM_RUNNER_TERM_GRACE_SECONDS = 15
+GYMNASIUM_CLEANUP_RESOURCES = (
+    "roles",
+    "rolebindings",
+    "pods",
+    "jobs",
+    "secrets",
+    "persistentvolumeclaims",
+)
 RUNNER = CliRunner()
 
 
@@ -905,7 +913,9 @@ def _new_gymnasium_private_file(path: Path) -> TextIO:
 def _require_gymnasium_owner_receipt_access(
     env: dict[str, str], *, namespace: str
 ) -> None:
-    for verb, resource in (("list", "pods"), ("create", "pods/exec")):
+    required = [("list", resource) for resource in GYMNASIUM_CLEANUP_RESOURCES]
+    required.append(("create", "pods/exec"))
+    for verb, resource in required:
         result = _gymnasium_kubectl(env, namespace, "auth", "can-i", verb, resource)
         assert result.returncode == 0 and result.stdout.strip() == "yes", (
             "the owner identity needs narrowly scoped "
@@ -947,6 +957,99 @@ def _exact_gymnasium_run_pods(
     ]
     assert len(pods) <= 1, "expected at most one exact SkyPilot run Pod"
     return pods
+
+
+def _gymnasium_gpu_quantity(item: dict[str, object], kind: str) -> int:
+    containers = item.get("spec", {}).get("containers", [])
+    return sum(
+        int(container.get("resources", {}).get(kind, {}).get("nvidia.com/gpu", 0))
+        for container in containers
+    )
+
+
+def _gymnasium_namespace_inventory(
+    env: dict[str, str], *, namespace: str
+) -> dict[str, list[dict[str, object]]]:
+    inventory: dict[str, list[dict[str, object]]] = {}
+    for resource in GYMNASIUM_CLEANUP_RESOURCES:
+        result = _gymnasium_kubectl(
+            env, namespace, "get", resource, "--output", "json"
+        )
+        assert result.returncode == 0, f"cannot inventory namespace {resource}"
+        items = json.loads(result.stdout).get("items", [])
+        records = []
+        for item in items:
+            metadata = item.get("metadata", {})
+            record = {"name": metadata.get("name"), "uid": metadata.get("uid")}
+            if resource == "pods":
+                record["gpu_requests"] = _gymnasium_gpu_quantity(item, "requests")
+                record["gpu_limits"] = _gymnasium_gpu_quantity(item, "limits")
+            records.append(record)
+        inventory[resource] = sorted(records, key=lambda value: str(value["name"]))
+    return inventory
+
+
+def _require_gymnasium_empty_workload_baseline(
+    inventory: dict[str, list[dict[str, object]]],
+) -> None:
+    for resource in (
+        "roles",
+        "rolebindings",
+        "pods",
+        "jobs",
+        "persistentvolumeclaims",
+    ):
+        assert inventory[resource] == [], f"namespace baseline contains {resource}"
+    assert sum(item.get("gpu_requests", 0) for item in inventory["pods"]) == 0
+    assert sum(item.get("gpu_limits", 0) for item in inventory["pods"]) == 0
+
+
+def _seal_gymnasium_namespace_baseline(
+    env: dict[str, str], *, run_id: str, inventory: dict[str, object]
+) -> None:
+    path = _gymnasium_evidence_dir(env) / f"{run_id}-namespace-baseline.json"
+    with _new_gymnasium_private_file(path) as stream:
+        json.dump(inventory, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+
+
+def _wait_for_gymnasium_namespace_baseline(
+    env: dict[str, str],
+    *,
+    namespace: str,
+    baseline: dict[str, list[dict[str, object]]],
+) -> bool:
+    deadline = time.monotonic() + GYMNASIUM_CLEANUP_TIMEOUT_SECONDS
+    while _gymnasium_namespace_inventory(env, namespace=namespace) != baseline:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(2)
+    return True
+
+
+def _gymnasium_sky_cluster_absent(
+    env: dict[str, str], *, run_id: str, config_path: str | None
+) -> bool:
+    sky_bin = resolve_skypilot_bin()
+    assert sky_bin, "SkyPilot executable is required for cluster absence proof"
+    command = [sky_bin, "status"]
+    if config_path:
+        command.extend(["--config", config_path])
+    command.extend(["--output", "json"])
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+        timeout=GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, "SkyPilot cluster status lookup failed"
+    payload = json.loads(result.stdout)
+    clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
+    assert isinstance(clusters, list), "unexpected SkyPilot cluster status schema"
+    return not any(item.get("name") == run_id for item in clusters)
 
 
 def _gymnasium_pod_image_receipt(
@@ -1090,22 +1193,6 @@ def _gymnasium_pod_image_receipt(
     )
 
 
-def _wait_for_gymnasium_pod_absence(
-    env: dict[str, str], *, namespace: str, run_id: str
-) -> bool:
-    deadline = time.monotonic() + GYMNASIUM_CLEANUP_TIMEOUT_SECONDS
-    while _exact_gymnasium_run_pods(
-        env,
-        namespace=namespace,
-        run_id=run_id,
-        include_terminating=True,
-    ):
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(2)
-    return True
-
-
 def _terminate_gymnasium_runner(proc: subprocess.Popen[str]) -> None:
     if proc.poll() is not None:
         return
@@ -1123,63 +1210,73 @@ def _terminate_gymnasium_runner(proc: subprocess.Popen[str]) -> None:
         proc.wait(timeout=GYMNASIUM_RUNNER_TERM_GRACE_SECONDS)
 
 
+def _record_gymnasium_sky_down_logs(
+    evidence_dir: Path,
+    *,
+    run_id: str,
+    stdout: str | bytes,
+    stderr: str | bytes,
+) -> None:
+    for suffix, content in (("stdout", stdout), ("stderr", stderr)):
+        decoded = content.decode(errors="replace") if isinstance(content, bytes) else content
+        path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
+        with _new_gymnasium_private_file(path) as stream:
+            stream.write(decoded)
+
+
+def _issue_gymnasium_sky_down(
+    env: dict[str, str], *, run_id: str, config_path: str | None
+) -> None:
+    sky_bin = resolve_skypilot_bin()
+    assert sky_bin, "SkyPilot executable is required for exact-run cleanup"
+    command = [sky_bin, "down"]
+    if config_path:
+        command.extend(["--config", config_path])
+    command.extend(["--yes", run_id])
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+            timeout=GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _record_gymnasium_sky_down_logs(
+            _gymnasium_evidence_dir(env),
+            run_id=run_id,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+        )
+        raise AssertionError("exact-run SkyPilot cleanup timed out") from exc
+    _record_gymnasium_sky_down_logs(
+        _gymnasium_evidence_dir(env),
+        run_id=run_id,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+    assert result.returncode == 0, "exact-run SkyPilot cleanup command failed"
+
+
 def _cleanup_gymnasium_run(
     env: dict[str, str],
     *,
     namespace: str,
     run_id: str,
     config_path: str | None,
+    namespace_baseline: dict[str, list[dict[str, object]]],
     issue_down: bool,
 ) -> None:
-    evidence_dir = _gymnasium_evidence_dir(env)
     if issue_down:
-        sky_bin = resolve_skypilot_bin()
-        assert sky_bin, "SkyPilot executable is required for exact-run cleanup"
-        command = [sky_bin, "down"]
-        if config_path:
-            command.extend(["--config", config_path])
-        command.extend(["--yes", run_id])
-        try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                cwd=str(REPO_ROOT),
-                env=env,
-                timeout=GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            for suffix, content in (
-                ("stdout", exc.stdout or ""),
-                ("stderr", exc.stderr or ""),
-            ):
-                path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
-                with _new_gymnasium_private_file(path) as stream:
-                    stream.write(
-                        content.decode(errors="replace")
-                        if isinstance(content, bytes)
-                        else content
-                    )
-            assert _wait_for_gymnasium_pod_absence(
-                env, namespace=namespace, run_id=run_id
-            ), "sky down timed out and the exact-run Pod remains"
-            return
-        for suffix, content in (
-            ("stdout", result.stdout),
-            ("stderr", result.stderr),
-        ):
-            path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
-            with _new_gymnasium_private_file(path) as stream:
-                stream.write(content)
-        if result.returncode != 0:
-            assert _wait_for_gymnasium_pod_absence(
-                env, namespace=namespace, run_id=run_id
-            ), "exact-run SkyPilot cleanup failed and its Pod remains"
-            return
-    assert _wait_for_gymnasium_pod_absence(env, namespace=namespace, run_id=run_id), (
-        "timed out waiting for the exact-run Pod to disappear"
-    )
+        _issue_gymnasium_sky_down(env, run_id=run_id, config_path=config_path)
+    assert _gymnasium_sky_cluster_absent(
+        env, run_id=run_id, config_path=config_path
+    ), "the exact SkyPilot cluster still exists"
+    assert _wait_for_gymnasium_namespace_baseline(
+        env, namespace=namespace, baseline=namespace_baseline
+    ), "namespace did not return to its sealed pre-run inventory"
 
 
 def _cleanup_gymnasium_run_after_success(
@@ -1188,6 +1285,7 @@ def _cleanup_gymnasium_run_after_success(
     namespace: str,
     run_id: str,
     config_path: str | None,
+    namespace_baseline: dict[str, list[dict[str, object]]],
 ) -> None:
     try:
         _cleanup_gymnasium_run(
@@ -1195,6 +1293,7 @@ def _cleanup_gymnasium_run_after_success(
             namespace=namespace,
             run_id=run_id,
             config_path=config_path,
+            namespace_baseline=namespace_baseline,
             issue_down=False,
         )
     except AssertionError as passive_error:
@@ -1204,6 +1303,7 @@ def _cleanup_gymnasium_run_after_success(
                 namespace=namespace,
                 run_id=run_id,
                 config_path=config_path,
+                namespace_baseline=namespace_baseline,
                 issue_down=True,
             )
         except BaseException as active_error:
@@ -1237,15 +1337,71 @@ def _gymnasium_remote_evidence(
         endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
     )
     prefix = parsed.path.lstrip("/")
-    artifact = s3.get_object(
-        Bucket=parsed.netloc, Key=prefix + "gymnasium-robotics-smoke.json"
-    )["Body"].read()
-    summary = json.loads(
-        s3.get_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")[
-            "Body"
-        ].read()
+    expected_keys = {
+        prefix + "gymnasium-robotics-smoke.json",
+        prefix + "npa_byof_summary.json",
+    }
+    pages = s3.get_paginator("list_objects_v2").paginate(
+        Bucket=parsed.netloc, Prefix=prefix
     )
+    observed_keys = {
+        item["Key"] for page in pages for item in page.get("Contents", [])
+    }
+    assert observed_keys == expected_keys, "unexpected qualification output object"
+
+    def read_json(name: str) -> bytes:
+        response = s3.get_object(Bucket=parsed.netloc, Key=prefix + name)
+        payload = response["Body"].read()
+        assert response.get("ContentLength") == len(payload)
+        assert response.get("ContentType") == "application/json"
+        assert response.get("Metadata", {}).get("sha256") == hashlib.sha256(
+            payload
+        ).hexdigest()
+        json.loads(payload)
+        return payload
+
+    artifact = read_json("gymnasium-robotics-smoke.json")
+    summary = json.loads(read_json("npa_byof_summary.json"))
     return artifact, summary
+
+
+def _cleanup_gymnasium_failed_output(
+    e2e_project: str | None, *, root_uri: str
+) -> None:
+    parsed = urlparse(root_uri)
+    assert parsed.scheme == "s3" and parsed.netloc
+    prefix = parsed.path.lstrip("/")
+    assert prefix and prefix.endswith("/"), "failed-run prefix must be exact"
+    s3 = s3_client_for_project(
+        e2e_project,
+        allow_host_creds=True,
+        endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+    )
+    pages = s3.get_paginator("list_objects_v2").paginate(
+        Bucket=parsed.netloc, Prefix=prefix
+    )
+    keys = [item["Key"] for page in pages for item in page.get("Contents", [])]
+    for key in keys:
+        assert key.startswith(prefix)
+        s3.delete_object(Bucket=parsed.netloc, Key=key)
+    remaining = s3.list_objects_v2(Bucket=parsed.netloc, Prefix=prefix)
+    assert not remaining.get("Contents"), "failed-run output prefix is not empty"
+
+
+def _require_gymnasium_output_prefix_empty(
+    e2e_project: str | None, *, root_uri: str
+) -> None:
+    parsed = urlparse(root_uri)
+    assert parsed.scheme == "s3" and parsed.netloc
+    prefix = parsed.path.lstrip("/")
+    assert prefix and prefix.endswith("/"), "run output prefix must be exact"
+    s3 = s3_client_for_project(
+        e2e_project,
+        allow_host_creds=True,
+        endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+    )
+    response = s3.list_objects_v2(Bucket=parsed.netloc, Prefix=prefix, MaxKeys=1)
+    assert not response.get("Contents"), "exact run output prefix is not empty"
 
 
 @pytest.mark.public_inputs
@@ -1260,6 +1416,8 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     e2e_project: str | None,
 ) -> None:
     cmd, output_root, run_id = _gymnasium_live_command(e2e_project)
+    run_root = output_root.rstrip("/") + f"/{run_id}/"
+    _require_gymnasium_output_prefix_empty(e2e_project, root_uri=run_root)
     env = _gymnasium_live_env(e2e_project)
     namespace = os.environ.get("NPA_BYOF_GYMNASIUM_ROBOTICS_NAMESPACE", "").strip()
     assert namespace, (
@@ -1271,6 +1429,14 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     config_path = skypilot_config_for_project(e2e_project)
     _require_gymnasium_scheduling_contract(
         env, namespace=namespace, config_path=config_path
+    )
+    namespace_baseline = _gymnasium_namespace_inventory(env, namespace=namespace)
+    _require_gymnasium_empty_workload_baseline(namespace_baseline)
+    assert _gymnasium_sky_cluster_absent(
+        env, run_id=run_id, config_path=config_path
+    ), "the exact run already exists before submission"
+    _seal_gymnasium_namespace_baseline(
+        env, run_id=run_id, inventory=namespace_baseline
     )
     stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
     stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
@@ -1315,11 +1481,18 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                     namespace=namespace,
                     run_id=run_id,
                     config_path=config_path,
+                    namespace_baseline=namespace_baseline,
                     issue_down=True,
                 )
             except BaseException as cleanup_error:
                 primary_error.add_note(
                     f"exact-run cleanup also failed: {cleanup_error}"
+                )
+            try:
+                _cleanup_gymnasium_failed_output(e2e_project, root_uri=run_root)
+            except BaseException as output_cleanup_error:
+                primary_error.add_note(
+                    f"failed-run output cleanup also failed: {output_cleanup_error}"
                 )
             raise
     _cleanup_gymnasium_run_after_success(
@@ -1327,6 +1500,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
         namespace=namespace,
         run_id=run_id,
         config_path=config_path,
+        namespace_baseline=namespace_baseline,
     )
     stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
     stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
@@ -1343,8 +1517,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     assert receipt["expected_digest"] == expected_digest
     assert receipt["observed_digest"] == expected_digest
     artifact_bytes, remote_summary = _gymnasium_remote_evidence(
-        e2e_project,
-        root_uri=output_root.rstrip("/") + f"/{run_id}/",
+        e2e_project, root_uri=run_root
     )
     assert_no_credential_leakage(
         artifact_bytes.decode("utf-8"), extra_forbidden=credential_markers

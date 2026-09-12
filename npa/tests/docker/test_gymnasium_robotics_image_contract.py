@@ -21,8 +21,19 @@ def test_neutral_dockerfile_is_pinned_non_root_and_gated_before_network() -> Non
     )
     assert "runtime-bootstrap.py" in text
     assert "USER ubuntu" in text
+    assert "ENV HOME=/home/ubuntu" in text
+    assert "install -d -m 0755 -o ubuntu -g ubuntu /workspace" in text
+    assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in text
+    assert "chmod 0440 /etc/sudoers.d/99-npa-skypilot-runtime" in text
+    assert "PasswordAuthentication no" in text
+    assert "PermitRootLogin no" in text
+    assert "ssh-keygen -A" in text
+    assert text.index("rm -f /etc/ssh/ssh_host_*") < text.index("USER ubuntu")
     assert 'ENTRYPOINT ["/usr/local/bin/npa-gymnasium-entrypoint"]' in text
     assert "COPY --from=" not in text
+    assert "COPY npa/" not in text
+    assert "COPY --chmod=0444 npa/" not in text
+    assert "COPY --chmod=0555 npa/" not in text
     assert "/opt/venv" not in text
     assert "pip install" not in text
     assert "nvidia/cuda" not in text.lower()
@@ -99,6 +110,8 @@ def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
     entry = contract["images"]["gymnasium-robotics"]
     assert entry["redistribution"] == "public"
     assert entry["phase"] == "pre-registration-quarantine"
+    assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
+    assert "uid 1000" in entry["passwordless_root_exemption"]
     assert "No image" in entry["notes"]
     assert "neutral" in entry["notes"].lower()
     assert "accepted_manifest" not in entry
