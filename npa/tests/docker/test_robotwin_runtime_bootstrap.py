@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from npa.orchestration.npa_workflow import robotwin_preflight
+
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME = ROOT / "npa/docker/workbench/robotwin/robotwin_runtime.py"
@@ -34,6 +36,13 @@ def _load_runtime():
 
 
 runtime = _load_runtime()
+
+
+def test_runtime_lock_digest_is_bound_to_both_validators() -> None:
+    lock_sha256 = hashlib.sha256(LOCK.read_bytes()).hexdigest()
+
+    assert lock_sha256 == runtime.RUNTIME_LOCK_SHA256
+    assert lock_sha256 == robotwin_preflight.RUNTIME_LOCK_SHA256
 
 
 def _context(**updates: object) -> dict[str, object]:
