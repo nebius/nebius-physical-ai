@@ -44,17 +44,19 @@ flowchart TB
         direction LR
         sky["SkyPilot orchestration"] --> tools["Containerized tools<br/>simulate · train · generate · evaluate"]
         tools <--> s3["S3 artifacts<br/>inputs · checkpoints · media · reports"]
-        tools -->|"when selected"| tf["Token Factory<br/>hosted inference"]
+        tf["Token Factory<br/>hosted inference · no cluster"]
     end
 
     npa <-->|"plan · submit · status"| sky
+    npa -->|"direct inference"| tf
     s3 -->|"artifacts"| npa
 ```
 
 `npa` gives the agent one bounded interface for readiness checks, infrastructure,
 workflow lifecycle, and artifacts. SkyPilot schedules the selected tools on
-Nebius; S3 carries durable inputs and outputs between stages. You remain in the
-loop for choices and human-bound approvals such as accepting model terms.
+Nebius; Token Factory handles supported hosted inference without a cluster; S3
+carries durable inputs and outputs between stages. You remain in the loop for
+choices and human-bound approvals such as accepting model terms.
 
 Start with a [workload guide](#pick-your-first-win). The guide tells you which
 data, model access, GPU, and output to expect.

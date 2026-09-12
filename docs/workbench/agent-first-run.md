@@ -66,36 +66,28 @@ Describe the task you want to run, then give your agent this prompt:
 
 ```text
 Set up Nebius Physical AI Workbench for the task I described. If the intended
-result or input is unclear, ask me one concise question before choosing tools.
-Read AGENTS.md and skills/index.yaml, then follow the relevant repository skills,
-workload guide, and current command help. Select a supported tool or workflow
-that directly produces my intended result. State its inputs, output artifacts,
-model access, infrastructure, and any unsupported part of my request.
+result or input is unclear, ask one concise question. Read AGENTS.md,
+skills/index.yaml, the relevant skills and workload guide, and current command
+help. Choose a supported tool or workflow and state its inputs, artifacts, model
+access, infrastructure, and any unsupported part.
 
-Use project values and the credentials required by the selected tools from
-the private process environment. Never print secret values, put them in command
-arguments, or write them into the repository.
-Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
-the process environment; inspect only allowlisted names and report present or
-missing. Do not read credential files except through npa's credential APIs.
-Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
+Use project values and credentials only through the private environment and
+npa's configuration APIs. Never print secret values, dump the environment, read
+credential files directly, pass secret values in arguments, or commit live
+infrastructure identifiers. Inspect only required variable names as present or
+missing. Use NPA_PROJECT_ALIAS when set; otherwise use "workbench".
 
-Install or verify npa, the Nebius CLI, and the host prerequisites for the
-selected runtime. Configure known project values non-interactively; ask only for
-required non-secret values you cannot resolve. Persist supported environment
-credentials with npa configure --save-env-credentials. If the task needs S3,
-explain the required storage before using explicit --provision to create or
-reuse it, and first confirm that the active identity has the required project
+Install or verify npa, the Nebius CLI, and required host tools. Configure known
+values non-interactively with npa configure --save-env-credentials. Before
+explicit S3 provisioning, explain the storage and confirm the required project
 permissions.
 
-Inspect npa configure --show. Run credential preflight checks for the selected
-services, including --checks nebius before cloud provisioning. Use npa workbench
-health access for the selected capabilities and their required model assets.
-
-Do not bypass a failed gate or provision GPU resources during setup. If model
-access needs human approval, show me the exact official pages and wait; never
-accept terms for me. Finish with a concise readiness report: what passed, what
-is still blocked, the planned workload and resources, and the next command.
+Inspect npa configure --show. Run npa workbench health preflight for the selected
+services, including --checks nebius before cloud provisioning, then run health
+access for required model assets. Stop on any failed gate and do not provision
+GPUs. If access needs human approval, show the official pages and wait; never
+accept terms for me. Finish with what passed, blockers, the planned workload
+and resources, and the next command.
 ```
 
 For project creation, federation or SSO profiles, non-interactive setup, and
@@ -123,43 +115,33 @@ public. Paste this prompt after making project values and `HF_TOKEN` available
 to the agent through its private environment:
 
 ```text
-Run my first Nebius Physical AI Workbench workflow:
-workflows/testing/cosmos3-generate.yaml. Follow AGENTS.md, skills/index.yaml,
-the relevant Cosmos 3 and workflow-operation skills, and
-docs/workbench/cosmos3-generate.md. Use the current local checkout and its npa
-installation. Use the configured project, writable bucket, and credentials.
-First install or verify npa, the Nebius CLI, and the host tools required by the
-maintained Workbench setup guide.
+Run workflows/testing/cosmos3-generate.yaml to a verified result. Follow
+AGENTS.md, skills/index.yaml, the relevant first-run, Cosmos 3, and workflow
+operation skills, and docs/workbench/cosmos3-generate.md.
 
-Never print secret values, put them in command arguments or YAML, or dump the
-process environment. Inspect only the allowlisted names needed for this run and
-report each as present or missing. Resolve credentials through npa's supported
-configuration APIs. Keep project, cluster, bucket, registry, and artifact
-identifiers out of chat and committed files.
+Use the configured project, writable bucket, and credentials through npa. Inspect
+resource and artifact identifiers locally when required, but redact them from
+chat, reports, and commits. Never print secrets, dump the environment, or pass
+secret values in arguments or YAML. Inspect only required variable names as
+present or missing.
 
-Inspect npa configure --show. Run the Nebius, selected-project S3, and Cosmos 3
-model-access gates before provisioning. If access is pending, show me the exact
-official model pages and wait for me to accept the terms; never accept them for
-me. Rerun the gate after I finish. Do not disable guardrails or bypass a failed
-check.
+Before provisioning, inspect npa configure --show and run the Nebius,
+selected-project S3, and Cosmos 3 access gates. Keep guardrails enabled. If
+access needs human approval, show the official pages, wait for me, and rerun the
+gate; never accept terms for me or bypass a failure.
 
-Validate and plan the checked-in spec using my actual bucket. Explain the
-expected vision.jpg and generate.json output plus the requested CPU, memory,
-and GPU before provisioning. Preview provision-if-absent, then create only
-missing resources through npa. Bootstrap and verify the isolated SkyPilot
-runtime, discover the accelerator name exposed by the selected cluster, and
-reconcile the workflow resource request if necessary. Revalidate the plan and
-preflight the exact workflow images.
+Validate and plan the checked-in spec with my actual bucket. State the expected
+vision.jpg and generate.json artifacts and requested resources. Preview
+provision-if-absent, create only missing resources through npa, bootstrap and
+verify SkyPilot, discover the cluster's accelerator name, reconcile it if
+needed, then revalidate and preflight the exact images.
 
-Submit the workflow with --runtime and forward secrets only by name with
---secret-env. Stay with the run until it reaches a terminal state. On failure,
-use npa workbench workflow status, logs, and artifacts to diagnose the recorded
-stage; keep log output bounded and resume safely when supported instead of
-launching an unrelated run. On success, verify that the generated media is
-non-empty, inspect generate.json, and show me the media in an available agent
-viewer. Finish with the run outcome, artifact types, and any still-running
-resources. Do not destroy shared infrastructure; offer the documented
-cancel-before-destroy cleanup path.
+Submit with --runtime and forward secrets only by name with --secret-env. Stay
+until the run is terminal. On failure, use bounded status, logs, and artifact
+inspection and resume when supported. On success, verify non-empty media,
+inspect generate.json, and show the result in an available viewer. Report the
+outcome, artifacts, and still-running resources, then offer the documented
+cancel-before-destroy cleanup path without destroying shared infrastructure.
 ```
 
 Do not treat a valid plan or accepted submission as completion: the prompt ends
@@ -176,41 +158,35 @@ Physical AI Data Factory with real source-video-conditioned Cosmos 3, attach a
 local H.264 MP4 or set `PAIDF_INPUT_URI` to one private `s3://` MP4, then paste:
 
 ```text
-Run my first Workbench workflow with me: the PAIDF Cosmos 3 video-conditioning
-workflow at workflows/main/paidf-cosmos3.yaml. Follow
-docs/workbench/guides/paidf-cosmos3.md and the repository skills. Use the
-configured Nebius project, region, writable bucket, and credentials. Use the
-attached local H.264 MP4, or PAIDF_INPUT_URI if it is set; if neither is
-available, ask me only for the input video before continuing. Keep all input and
-artifact locations private.
+Run workflows/main/paidf-cosmos3.yaml to a terminal result. Follow AGENTS.md,
+skills/index.yaml, the relevant repository skills, and
+docs/workbench/guides/paidf-cosmos3.md. Use the configured project, region,
+writable bucket, and credentials. Use the attached H.264 MP4 or
+PAIDF_INPUT_URI; if neither exists, ask only for the input video.
 
-Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
-the process environment. Inspect only allowlisted variable names and report
-present or missing; do not print secret values or read credential files directly.
+Keep input, artifact, and infrastructure locations private. Never print secrets,
+dump the environment, read credential files directly, or pass secret values in
+YAML or arguments. Inspect required variable names only as present or missing.
 
-Re-run the credential and model-access gates for paidf,cosmos3. Validate and
-plan the spec with the real bucket and input, starting with one variant and one
-supported GPU. Honor configured TF_VAR_* topology and reserved-capacity settings.
-Show me the validated plan and explain the required CPU/GPU resources before
-provisioning. Bootstrap and verify SkyPilot, provision any required resources
-that are absent, and discover the accelerator name the target cluster advertises.
-Use that name in the resource overrides and revalidate the plan. Then stage the
-input and preflight the selected images. If a selected image fails the
-SkyPilot bootstrap contract, build the repository's current compliant image,
-push it to an authorized private project registry at an immutable digest, and
-repeat preflight. Then submit with --runtime.
-Forward only secret names through --secret-env: HF_TOKEN,
-NEBIUS_TOKEN_FACTORY_KEY, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY; never put
-secret values in YAML or command arguments.
+Before provisioning, run npa workbench health preflight for the selected project
+with --checks s3,token_factory,nebius, then run npa workbench health access
+--capability cosmos3. Validate and plan with the real bucket and input, one
+variant, and one supported GPU; honor configured TF_VAR_* topology and reserved
+capacity. Show the plan and resources. Through npa, preview and create only
+missing resources, bootstrap and verify SkyPilot, discover the advertised
+accelerator, apply any required override, and revalidate. Stage the input and
+preflight the selected images. If an image fails the bootstrap contract, follow
+the guide's compliant immutable build-and-push path and repeat preflight; do not
+bypass it.
 
-Stay with the run until it reaches a terminal state. If it fails, diagnose the
-recorded stage and resume safely rather than starting an unrelated run. If it
-succeeds, show me the generated and curated artifacts and load the final Rerun
-recording when an agent viewer is available. A terminal quality rejection after
-the workflow's bounded refinement loop is a valid fail-closed result: do not
-lower the threshold or force promotion. Show me the generated video, evaluator
-report, quality disposition, and Rerun evidence, and explain that labeling and
-curation were intentionally skipped.
+Submit with --runtime and forward only these secret names with --secret-env:
+HF_TOKEN, NEBIUS_TOKEN_FACTORY_KEY, AWS_ACCESS_KEY_ID, and
+AWS_SECRET_ACCESS_KEY. Stay until terminal. On failure, diagnose the recorded
+stage and resume when safe. On success, show the generated and curated artifacts
+and load the final Rerun recording when available. Treat a terminal quality
+rejection as valid fail-closed behavior: do not lower thresholds or force
+promotion; show the generated video, evaluator report, disposition, and Rerun
+evidence, and explain why labeling and curation were skipped.
 ```
 
 The workflow uses the independent
