@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -36,6 +38,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "USER ubuntu" in text
     assert "useradd --uid 1000" in text
     assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH" in text
+    assert "/usr/local/bin/ssh-keygen -A" in text
+    assert "rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub" in text
+    assert (
+        "ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/ssh-keygen"
+    ) in text
     assert "/usr/sbin/sshd" not in text
     assert "NOPASSWD:ALL" not in text.replace(" ", "")
     assert "apt-get upgrade" not in text
@@ -52,6 +59,64 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         "ACCEPT_LIBERO",
     ):
         assert forbidden not in text
+
+
+def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
+    tmp_path,
+) -> None:
+    guard_source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text(
+        encoding="utf-8"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "ssh-keygen.calls"
+    real_keygen = tmp_path / "real-ssh-keygen"
+    real_keygen.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$NPA_TEST_KEYGEN_CALLS"\n',
+        encoding="utf-8",
+    )
+    real_keygen.chmod(0o755)
+    fake_id = bin_dir / "id"
+    fake_id.write_text("#!/bin/sh\nprintf '%s\\n' 0\n", encoding="utf-8")
+    fake_id.chmod(0o755)
+    skypilot_tmp = Path("/") / "tmp"
+    guard_source = guard_source.replace(
+        str(skypilot_tmp / "npa-skypilot-bootstrap-contract.failed"),
+        str(tmp_path / "bootstrap-contract.failed"),
+    ).replace(
+        str(skypilot_tmp / "apt-ssh-setup.failed"),
+        str(tmp_path / "apt-ssh-setup.failed"),
+    )
+    guard = bin_dir / "npa-skypilot-bootstrap-guard"
+    guard.write_text(
+        guard_source.replace("/usr/bin/ssh-keygen", str(real_keygen)),
+        encoding="utf-8",
+    )
+    guard.chmod(0o755)
+    keygen = bin_dir / "ssh-keygen"
+    keygen.symlink_to(guard)
+    system_bin = Path(shutil.which("basename") or "/usr/bin/basename").parent
+    environment = {
+        "PATH": f"{bin_dir}:{system_bin}",
+        "NPA_TEST_KEYGEN_CALLS": str(calls),
+    }
+
+    accepted = subprocess.run(
+        [keygen, "-A"], env=environment, capture_output=True, text=True, check=False
+    )
+    refused = subprocess.run(
+        [keygen, "-f", str(tmp_path / "unexpected")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert accepted.returncode == 0
+    assert calls.read_text(encoding="utf-8") == "-A\n"
+    assert refused.returncode == 87
+    assert "unexpected-ssh-keygen-arguments" in refused.stderr
+    assert calls.read_text(encoding="utf-8") == "-A\n"
 
 
 def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:

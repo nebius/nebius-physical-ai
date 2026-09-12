@@ -10,6 +10,8 @@ first cache mutation unless a manager-issued decision is present and hash-bound.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import http.client
@@ -386,6 +388,78 @@ def _validate_cache_root(cache_root: Path, output_dir: Path | None) -> Path:
         ):
             raise BootstrapRefusal("runtime cache and output boundaries overlap")
     return resolved
+
+
+def _cache_entry_identity(path: Path) -> tuple[int, int] | None:
+    """Return a real directory's identity without following the final component."""
+
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise BootstrapRefusal("cannot inspect the runtime cache entry") from exc
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise BootstrapRefusal("runtime cache entry must be a real directory")
+    return info.st_dev, info.st_ino
+
+
+def _require_cache_entry_identity(path: Path, expected: tuple[int, int]) -> None:
+    if _cache_entry_identity(path) != expected:
+        raise BootstrapRefusal("runtime cache entry changed during validation")
+
+
+@contextmanager
+def _open_cache_entry(path: Path, *, expected: tuple[int, int]) -> Iterator[Path]:
+    """Retain the no-follow cache leaf while validating through its descriptor."""
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise BootstrapRefusal("runtime cache requires no-follow directory support")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | directory | nofollow | os.O_CLOEXEC)
+    except OSError as exc:
+        raise BootstrapRefusal(
+            "runtime cache entry could not be opened without following links"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != expected
+            or stat.S_IMODE(opened.st_mode) & 0o222
+        ):
+            raise BootstrapRefusal("runtime cache entry identity or mode is invalid")
+        _require_cache_entry_identity(path, expected)
+        stable_root = Path("/proc/self/fd") / str(descriptor)
+        if not stable_root.is_dir():
+            raise BootstrapRefusal("runtime cache descriptor is unavailable")
+        yield stable_root
+        _require_cache_entry_identity(path, expected)
+    finally:
+        os.close(descriptor)
+
+
+def _publish_current_cache_link(
+    cache_root: Path, final: Path, expected: tuple[int, int]
+) -> None:
+    """Publish ``current`` only while the validated leaf keeps its identity."""
+
+    current = cache_root / "current"
+    temporary_link = cache_root / f".current-{os.getpid()}"
+    temporary_link.unlink(missing_ok=True)
+    _require_cache_entry_identity(final, expected)
+    temporary_link.symlink_to(final.name)
+    try:
+        _require_cache_entry_identity(final, expected)
+        temporary_link.replace(current)
+        _require_cache_entry_identity(final, expected)
+    except Exception:
+        temporary_link.unlink(missing_ok=True)
+        if current.is_symlink() and os.readlink(current) == final.name:
+            current.unlink()
+        raise
 
 
 def _validate_decision(
@@ -886,9 +960,10 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     output = Path(args.output_dir) if args.output_dir else None
     cache_root = _validate_cache_root(Path(args.cache_root), output)
     final = cache_root / manifest_sha256
+    initial_identity = _cache_entry_identity(final)
     governing_terms_sha256 = (
         _governing_terms_identity(manifest)
-        if final.is_dir()
+        if initial_identity is not None
         else _verify_governing_terms(manifest)
     )
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -897,17 +972,22 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     with lock_path.open("a+b") as lock:
         os.chmod(lock_path, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        current = cache_root / "current"
-        warm_reuse = final.is_dir()
+        locked_identity = _cache_entry_identity(final)
+        if initial_identity is not None and locked_identity != initial_identity:
+            raise BootstrapRefusal("runtime cache entry changed before validation")
+        warm_reuse = locked_identity is not None
         if warm_reuse:
-            record = _validate_complete(
-                final,
-                manifest,
-                manifest_sha256,
-                decision_sha256,
-                requirements_sha256,
-                governing_terms_sha256,
-            )
+            assert locked_identity is not None
+            with _open_cache_entry(final, expected=locked_identity) as stable_final:
+                record = _validate_complete(
+                    stable_final,
+                    manifest,
+                    manifest_sha256,
+                    decision_sha256,
+                    requirements_sha256,
+                    governing_terms_sha256,
+                )
+                _publish_current_cache_link(cache_root, final, locked_identity)
         else:
             partial = Path(
                 tempfile.mkdtemp(prefix=f".{manifest_sha256}.partial-", dir=cache_root)
@@ -930,13 +1010,22 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 _seal_cache_tree(partial)
                 partial.replace(final)
+                locked_identity = _cache_entry_identity(final)
+                if locked_identity is None:
+                    raise BootstrapRefusal("materialized runtime cache is unavailable")
+                with _open_cache_entry(final, expected=locked_identity) as stable_final:
+                    _validate_complete(
+                        stable_final,
+                        manifest,
+                        manifest_sha256,
+                        decision_sha256,
+                        requirements_sha256,
+                        governing_terms_sha256,
+                    )
+                    _publish_current_cache_link(cache_root, final, locked_identity)
             except Exception:
                 shutil.rmtree(partial, ignore_errors=True)
                 raise
-        temporary_link = cache_root / f".current-{os.getpid()}"
-        temporary_link.unlink(missing_ok=True)
-        temporary_link.symlink_to(final.name)
-        temporary_link.replace(current)
     return {**record, "cache_path": str(final), "warm_reuse": warm_reuse}
 
 
@@ -945,12 +1034,17 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     _validate_requirements(Path(args.requirements), manifest)
     cache_root = _validate_cache_root(Path(args.cache_root), None)
     final = cache_root / manifest_sha256
-    complete = final / ".complete.json"
+    identity = _cache_entry_identity(final)
+    materialized = False
+    if identity is not None:
+        with _open_cache_entry(final, expected=identity) as stable_final:
+            complete = stable_final / ".complete.json"
+            materialized = complete.is_file() and not complete.is_symlink()
     return {
         "schema": "npa.libero.runtime-status.v1",
         "solution": "libero",
         "manifest_sha256": manifest_sha256,
-        "materialized": complete.is_file(),
+        "materialized": materialized,
         "source_revision": manifest["source"]["revision"],
     }
 

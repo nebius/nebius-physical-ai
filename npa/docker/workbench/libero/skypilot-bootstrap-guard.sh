@@ -3,6 +3,7 @@ set -u
 
 real_apt_get=/usr/bin/apt-get
 real_timeout=/usr/bin/timeout
+real_ssh_keygen=/usr/bin/ssh-keygen
 guard_state=/tmp/npa-skypilot-bootstrap-apt.state
 guard_failure=/tmp/npa-skypilot-bootstrap-contract.failed
 sky_failure=/tmp/apt-ssh-setup.failed
@@ -40,11 +41,12 @@ verify_contract() {
         *" fuse "*|*" fuse ("*) ;;
         *) missing="$missing fuse" ;;
     esac
-    for command_name in sh sudo sshd rsync service curl wget nc gcc patch lspci \
-        fusermount fusermount3 timeout; do
+    for command_name in sh sudo sshd ssh-keygen rsync service curl wget nc gcc \
+        patch lspci fusermount fusermount3 timeout; do
         command -v "$command_name" >/dev/null 2>&1 \
             || missing="$missing command:$command_name"
     done
+    [ -x "$real_ssh_keygen" ] || missing="$missing command:real-ssh-keygen"
     if [ -n "$missing" ]; then
         contract_failure "missing:${missing# }" 86
         return $?
@@ -106,9 +108,23 @@ bootstrap_timeout() {
     exit "$status"
 }
 
+bootstrap_ssh_keygen() {
+    if [ "$#" -ne 1 ] || [ "$1" != -A ]; then
+        contract_failure unexpected-ssh-keygen-arguments 87
+        exit $?
+    fi
+    if [ "$(id -u)" -ne 0 ]; then
+        contract_failure ssh-keygen-requires-root 87
+        exit $?
+    fi
+    umask 077
+    exec "$real_ssh_keygen" -A
+}
+
 case "$(basename "$0")" in
     apt-get) bootstrap_apt_get "$@" ;;
     timeout) bootstrap_timeout "$@" ;;
+    ssh-keygen) bootstrap_ssh_keygen "$@" ;;
     npa-skypilot-bootstrap-guard)
         [ "${1:-}" = verify ] \
             || { printf '%s\n' 'usage: npa-skypilot-bootstrap-guard verify' >&2; exit 64; }

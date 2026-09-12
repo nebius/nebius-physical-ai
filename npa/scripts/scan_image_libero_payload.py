@@ -126,7 +126,7 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "credential_or_private_configuration",
         re.compile(
             r"(?:^|/)(?:\.aws/credentials|\.docker/config\.json|\.git-credentials|"
-            r"kubeconfig|runtime-context\.json|etc/ssh/ssh_host_(?:rsa|ecdsa|ed25519)_key)$",
+            r"kubeconfig|runtime-context\.json|etc/ssh/ssh_host_(?:rsa|ecdsa|ed25519)_key(?:\.pub)?)$",
             re.I,
         ),
     ),

@@ -391,6 +391,68 @@ def test_verified_warm_cache_reuse_performs_no_network_fetch(
     assert warm["warm_reuse"] is True
 
 
+def test_manifest_cache_entry_symlink_to_output_refuses_without_network(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    cache_root = Path(args.cache_root)
+    cache_root.mkdir()
+    output = Path(args.output_dir)
+    output.mkdir()
+    (cache_root / fixture["manifest_sha"]).symlink_to(output, target_is_directory=True)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda _manifest: pytest.fail("symlink refusal must precede network"),
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+        module.ensure(args)
+    with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+        module.status(args)
+
+    assert not (cache_root / "current").exists()
+
+
+def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    cache_root = Path(args.cache_root)
+    final = cache_root / fixture["manifest_sha"]
+    preserved = cache_root / ".preserved-final"
+    output = Path(args.output_dir)
+    output.mkdir()
+    original_identity = module._cache_entry_identity
+    first = True
+
+    def swap_after_initial_identity(path: Path):
+        nonlocal first
+        identity = original_identity(path)
+        if first and path == final:
+            first = False
+            final.rename(preserved)
+            final.symlink_to(output, target_is_directory=True)
+        return identity
+
+    monkeypatch.setattr(module, "_cache_entry_identity", swap_after_initial_identity)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda _manifest: pytest.fail("warm race refusal must remain offline"),
+    )
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+            module.ensure(args)
+    finally:
+        final.unlink(missing_ok=True)
+        preserved.rename(final)
+
+    assert (cache_root / "current").resolve() == final.resolve()
+
+
 @pytest.mark.parametrize(
     "relative",
     ["source/libero/lifelong/utils.py", "venv/bin/python"],
