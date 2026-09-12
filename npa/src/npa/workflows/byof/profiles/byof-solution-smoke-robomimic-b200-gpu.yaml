@@ -110,6 +110,7 @@ run: |
   import os
   import re
   import stat
+  import tempfile
   import time
   from pathlib import Path
   from urllib.parse import urlparse
@@ -120,6 +121,7 @@ run: |
   MAX_OUTPUT_FILE_BYTES = 1024 * 1024 * 1024
   MAX_OUTPUT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
   OUTPUT_READ_CHUNK_BYTES = 1024 * 1024
+  RESERVED_JSON_MAX_BYTES = 4 * 1024 * 1024
 
 
   class ExactLengthReader:
@@ -175,6 +177,93 @@ run: |
           self._handle.seek(self._length)
           if self._handle.read(1):
               raise RuntimeError("output file grew during upload")
+
+
+  def read_reserved_json_object(path):
+      """Read one bounded, single-link regular JSON file without following links."""
+
+      nofollow = getattr(os, "O_NOFOLLOW", None)
+      if nofollow is None:
+          raise RuntimeError("reserved JSON verification requires O_NOFOLLOW")
+      try:
+          descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | nofollow)
+      except OSError as exc:
+          raise RuntimeError(f"reserved JSON is not a safe regular file: {path}") from exc
+      with os.fdopen(descriptor, "rb") as handle:
+          opened = os.fstat(handle.fileno())
+          if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+              raise RuntimeError(f"reserved JSON must be one regular file: {path}")
+          if opened.st_size > RESERVED_JSON_MAX_BYTES:
+              raise RuntimeError(f"reserved JSON exceeds its byte limit: {path}")
+          raw = handle.read(opened.st_size + 1)
+          closed = os.fstat(handle.fileno())
+          if (
+              len(raw) != opened.st_size
+              or closed.st_size != opened.st_size
+              or closed.st_dev != opened.st_dev
+              or closed.st_ino != opened.st_ino
+              or closed.st_nlink != 1
+          ):
+              raise RuntimeError(f"reserved JSON changed while being read: {path}")
+      try:
+          value = json.loads(raw)
+      except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+          raise RuntimeError(f"reserved JSON is invalid: {path}") from exc
+      if not isinstance(value, dict):
+          raise RuntimeError(f"reserved JSON must contain an object: {path}")
+      return value
+
+
+  def atomic_write_json_object(path, value):
+      """Publish bounded JSON through a verified temporary regular file."""
+
+      encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+      if len(encoded) > RESERVED_JSON_MAX_BYTES:
+          raise RuntimeError(f"reserved JSON exceeds its byte limit: {path}")
+      descriptor, temporary_name = tempfile.mkstemp(
+          prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+      )
+      temporary_path = Path(temporary_name)
+      try:
+          with os.fdopen(descriptor, "wb") as handle:
+              opened = os.fstat(handle.fileno())
+              if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                  raise RuntimeError("reserved JSON temporary is not one regular file")
+              handle.write(encoded)
+              handle.flush()
+              os.fsync(handle.fileno())
+              written = os.fstat(handle.fileno())
+              if (
+                  written.st_dev != opened.st_dev
+                  or written.st_ino != opened.st_ino
+                  or written.st_nlink != 1
+                  or written.st_size != len(encoded)
+              ):
+                  raise RuntimeError("reserved JSON temporary identity changed")
+          staged = temporary_path.lstat()
+          if (
+              not stat.S_ISREG(staged.st_mode)
+              or staged.st_dev != opened.st_dev
+              or staged.st_ino != opened.st_ino
+              or staged.st_nlink != 1
+              or staged.st_size != len(encoded)
+          ):
+              raise RuntimeError("reserved JSON temporary changed before publication")
+          os.replace(temporary_path, path)
+          published = path.lstat()
+          if (
+              not stat.S_ISREG(published.st_mode)
+              or published.st_dev != opened.st_dev
+              or published.st_ino != opened.st_ino
+              or published.st_nlink != 1
+              or published.st_size != len(encoded)
+          ):
+              raise RuntimeError("reserved JSON publication identity changed")
+      finally:
+          try:
+              temporary_path.unlink()
+          except FileNotFoundError:
+              pass
 
 
   def checked_output_files(root):
@@ -244,17 +333,18 @@ run: |
   smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
   smoke_artifact_name = os.environ["BYOF_SMOKE_ARTIFACT_NAME"]
   smoke_artifact_path = root / smoke_artifact_name
-  if smoke_artifact_path.is_file():
-      smoke_artifact = json.loads(smoke_artifact_path.read_text(encoding="utf-8"))
-      if not isinstance(smoke_artifact, dict):
-          raise RuntimeError(f"smoke artifact must be a JSON object: {smoke_artifact_path}")
+  try:
+      smoke_artifact_path.lstat()
+  except FileNotFoundError:
+      smoke_artifact = None
+  else:
+      smoke_artifact = read_reserved_json_object(smoke_artifact_path)
+  if smoke_artifact is not None:
       # Only the wrapper can observe the completed smoke process' return code.
       smoke_artifact["exit_status"] = smoke_exit_code
-      smoke_artifact_path.write_text(
-          json.dumps(smoke_artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-      )
-  metadata = json.loads(
-      (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(encoding="utf-8")
+      atomic_write_json_object(smoke_artifact_path, smoke_artifact)
+  metadata = read_reserved_json_object(
+      Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json"
   )
   summary = {
       "status": "success" if smoke_exit_code == 0 else "failed",
@@ -270,9 +360,7 @@ run: |
       "smoke_exit_code": smoke_exit_code,
       "created_unix": round(time.time(), 3),
   }
-  (root / "npa_byof_summary.json").write_text(
-      json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-  )
+  atomic_write_json_object(root / "npa_byof_summary.json", summary)
   print(json.dumps(summary, indent=2), flush=True)
 
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
