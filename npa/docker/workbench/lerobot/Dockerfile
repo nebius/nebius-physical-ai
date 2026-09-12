@@ -17,7 +17,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_CHECKPOINT_DIR=/opt/lerobot/checkpoints \
     NPA_JOB_STATUS_DIR=/opt/lerobot/job_status \
     NPA_LOG_DIR=/var/log/npa-lerobot \
-    NPA_LEROBOT_VERSION=${LEROBOT_VERSION}
+    NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -102,7 +103,14 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "torchvision==0.27.1" \
            "diffusers>=0.38.0"; \
        fi \
-    && /opt/lerobot/venv/bin/pip uninstall -y wandb
+    && /opt/lerobot/venv/bin/pip uninstall -y wandb \
+    && find /opt/lerobot/venv -type f \
+         -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test "$(/opt/lerobot/venv/bin/python -c \
+         'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" \
+         = /usr/bin/ffmpeg \
+    && test -z "$(find /opt/lerobot/venv -type f \
+         -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \

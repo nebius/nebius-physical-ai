@@ -481,7 +481,8 @@ def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> N
     assert result.exit_code == 0, result.output
     kwargs = client.create_job.call_args.kwargs
     assert kwargs["image"] == (
-        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.6.0"
+        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:"
+        "0.6.0-d6-extras-20260912"
     )
     assert "--env_eval_freq=1000000" in kwargs["command"]
     assert "--eval_freq=" not in kwargs["command"]

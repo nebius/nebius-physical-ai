@@ -48,7 +48,9 @@ def check_generate_wiring() -> _WiringResult:
         return _WiringResult(
             "cosmos3 generate wiring", False, "missing cosmos3 generate command"
         )
-    plan = generate_plan(prompt="a robot arm on a workbench", output_dir="/tmp/npa-cosmos3-wiring")
+    plan = generate_plan(
+        prompt="a robot arm on a workbench", output_dir="/tmp/npa-cosmos3-wiring"
+    )
     if plan.get("guardrails") is not True:
         return _WiringResult(
             "cosmos3 generate wiring", False, "guardrails are not on by default"
@@ -75,9 +77,7 @@ def main() -> int:
         print("[FAIL] cosmos-framework inference runtime not present in this image")
         return 1
 
-    output_dir = os.environ.get(
-        "NPA_COSMOS3_OUTPUT_DIR", "/tmp/npa-cosmos3-generate"
-    )
+    output_dir = os.environ.get("NPA_COSMOS3_OUTPUT_DIR", "/tmp/npa-cosmos3-generate")
     try:
         result = run_cosmos3_generate(
             mode="text2image",
@@ -109,11 +109,21 @@ def main() -> int:
     if result.get("guardrails") is not True:
         print("[FAIL] guardrails were not enabled for the golden eval")
         return 1
+    guardrail_state = result.get("guardrail_state") or {}
+    if (
+        guardrail_state.get("requested") is not True
+        or guardrail_state.get("effective") is not True
+        or guardrail_state.get("status") != "passed"
+    ):
+        print(f"[FAIL] guardrail execution was not effective: {guardrail_state}")
+        return 1
 
     print(
         f"[PASS] cosmos3 generated {artifact} ({artifact.stat().st_size} bytes, "
         f"{width}x{height}) checkpoint={result.get('checkpoint')} "
-        f"guardrails={result.get('guardrails')} weights_baked={result.get('weights_baked')}"
+        f"guardrails={result.get('guardrails')} "
+        f"guardrail_effective={guardrail_state.get('effective')} "
+        f"weights_baked={result.get('weights_baked')}"
     )
     return 0
 

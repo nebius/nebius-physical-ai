@@ -65,7 +65,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the pod user. Without them a workbench image cannot host a SkyPilot k8s task
 # (it dies with `sudo: command not found`), which is why the cosmos3-generate
 # workflow needs them. The final user stays non-root; the sudoers grant below is
-# scoped to that bootstrap.
+# scoped to that bootstrap. The CUDA devel base's Nsight EFA metrics helper is
+# unused by generation and contains a vulnerable Go TLS stdlib; remove the
+# executable instead of exempting the scanner finding. Reinstalling
+# linux-libc-dev from the refreshed Ubuntu index updates the stale copy inherited
+# from the CUDA devel base; inference/JIT compatibility keeps those headers in
+# place, so removing the package is not an equivalent fix.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -73,11 +78,16 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        linux-libc-dev \
         openssh-server \
         rsync \
         sudo \
         wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -delete \
+    && test -z "$(find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -print -quit)"
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 
@@ -137,6 +147,8 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
+    && PYTHONPATH=/opt/npa/src "${COSMOS3_REPO}/.venv/bin/python" -c \
+       'from npa.workbench.cosmos.guarded_inference import GUARDRAIL_STATE_SCHEMA; assert GUARDRAIL_STATE_SCHEMA == "npa.cosmos3.guardrail-state.v1"' \
     && /opt/npa/.venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
