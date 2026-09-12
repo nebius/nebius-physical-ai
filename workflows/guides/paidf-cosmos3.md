@@ -487,8 +487,10 @@ Both starter variants passed the exploratory default quality gate in the
 recorded live run. Review generated data separately for training suitability.
 Generation and evaluator results can vary, and a new run can still be rejected.
 
-On a cold worker, image pulls, source setup, and model downloads happen before
-the payload. Runtime stages launch managed jobs and can repeat worker setup,
+On a cold worker, image pulls and source setup happen before the payload;
+generation then fetches any missing model weights before inference. A GPU job
+can report `RUNNING` with low GPU utilization during those downloads.
+Runtime stages launch managed jobs and can repeat worker setup,
 so even short CPU stages may take several minutes of wall time. Model downloads
 can dominate GPU startup. Inspect stage logs to distinguish setup from payload
 progress, and keep the submit command running so its driver can launch later
@@ -505,7 +507,8 @@ preview, and R3 to execute.
 
 For your own video, add **one** of these input options to the submit command:
 
-- `--input-video /absolute/path/source.mp4` for a local H.264 MP4.
+- `--input-video /absolute/path/source.mp4` for a local H.264 MP4; R3b provides
+  a complete example.
 - `--input-uri 's3://<your-bucket>/<your-prefix>/source.mp4'` for a stored MP4.
 - `--lerobot-uri 's3://<your-bucket>/<dataset-prefix>/'` with the episode and
   camera options in R3a for a LeRobot dataset.
@@ -593,6 +596,82 @@ run; use a fresh run ID for each further selection. Physical fidelity and
 training suitability still require review, and a complete quality rejection
 can stop a run.
 
+### R3b. Run the full pipeline from a local MP4
+
+Complete S1–S8 and R1, then set `INPUT_VIDEO` to your own H.264 MP4:
+
+```bash
+INPUT_VIDEO='/absolute/path/source.mp4'
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration \
+  -of json "$INPUT_VIDEO"
+ffmpeg -v error -xerror -i "$INPUT_VIDEO" -map 0:v:0 -f null -
+```
+
+Both commands must succeed. To try the public robot capture instead, the
+following downloads a new copy into a new directory and verifies its pinned
+SHA-256. It does not fetch a previous workflow's input or generated output.
+The [RoboPro dataset card](https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/README.md)
+declares [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); retain the
+downloaded card for attribution when sharing the sample or derivatives.
+
+```bash
+MP4_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-mp4.XXXXXX")"
+INPUT_VIDEO="$MP4_DIR/source.mp4"
+MP4_BASE='https://huggingface.co/datasets/Hoshipu/RoboPro/resolve/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0'
+curl --fail --location "$MP4_BASE/README.md" --output "$MP4_DIR/README.md"
+curl --fail --location \
+  "$MP4_BASE/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4" \
+  --output "$INPUT_VIDEO"
+python3.12 - "$INPUT_VIDEO" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+expected = "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
+actual = hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest()
+if actual != expected:
+    raise SystemExit("MP4 checksum mismatch; stop before submission")
+print("Verified fresh public MP4:", actual)
+PY
+```
+
+Stop if either download or verification fails. This sample is 3.38 seconds at
+50 fps, with 169 frames. Run the two media checks above against it as well.
+
+Run R2 now to reserve a **new** `RUN_ID`, select its separate SkyPilot directory,
+and validate the workflow and images. Use this full command in place of R3:
+
+```bash
+npa workbench workflow submit "$SPEC" \
+  --run-id "$RUN_ID" \
+  --input-video "$INPUT_VIDEO" \
+  --var bucket="$BUCKET" \
+  --var caption_model="$CAPTION_MODEL" \
+  --runtime \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --project "$PROJECT_ALIAS" \
+  --durable-s3
+```
+
+This starts every stage from the selected MP4. For a fresh experiment, do not
+use `--resume-run`, reuse an earlier run ID, or copy earlier outputs into its
+prefix. Keep the submit process running through finalization. Follow R4 and
+[Check every stage](#check-every-stage-and-full-pipeline-completion) to inspect
+the current run's runtime record, generated videos, evaluations, captions,
+curated clips, and both recordings.
+
+The worker preserves the submitted file as `input/original_source.mp4` and
+creates `input/source.mp4` as the generation reference. For the public sample,
+the reference and both generated variants should each contain 81 frames at
+24 fps (3.375 seconds); the original retains its 169 frames at 50 fps. Compare
+generated media against the **prepared reference**, and inspect the actual
+action and appearance before using accepted data for training.
+
 ### R4. Monitor and recover
 
 In another terminal, restore the same project, run ID, and other R1 variables,
@@ -613,13 +692,30 @@ to identify the GPU task and each retry; do not assume one job ID or a fixed
 tail. The current CLI captures `--follow` output until the underlying log process
 returns, so it may not display incremental output while a stage is running.
 
+Before the first payload starts, `logs --no-follow` can still wait for the
+worker and time out after 300 seconds. This log-query timeout does not cancel
+the workflow. During controller creation there may not yet be an exact job ID
+for logs, and NPA reports `VERIFICATION_UNAVAILABLE`. Check the current run's
+status and the worker's Kubernetes events before retrying the log command:
+
+```bash
+kubectl --context "$KUBE_CONTEXT" get pods -A
+kubectl --context "$KUBE_CONTEXT" describe pod '<your-worker-pod>' \
+  --namespace '<its-namespace>'
+```
+
+`ContainerCreating` with a normal `Pulling` event can be a cold image download.
+`ImagePullBackOff`, `FailedMount`, `FailedScheduling`, or disk-pressure events
+need investigation. Keep the existing submit process running while startup
+progresses; do not launch a duplicate run because logs are not available yet.
+
 During runtime execution, the summary status and artifact index can lag the
 per-wave record. For the default prefix used in this guide, read the durable
 record with the AWS profile configured in S7:
 
 ```bash
 aws s3 cp "s3://$BUCKET/paidf-cosmos3/$RUN_ID/npa-workflow/runtime.json" - \
-  --profile nebius | jq '{status, waves: [.waves[] | {key, status}]}'
+  --profile nebius | jq '{status, waves: [.waves[] | {key, status, job_id, sky_status, replayed}]}'
 ```
 
 Each wave reports whether it is running or succeeded. A missing stage row or
@@ -878,6 +974,7 @@ appears.
 | GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Inspect node disk pressure and available capacity, or ask the cluster administrator. Keep enough disk for image layers and runtime weights. |
 | Token Factory returns `404` / model does not exist | Hosted model availability | List models again and set `caption_model` to an available vision model. |
 | Evaluator reports `reasoning-only response with no visible answer` | An older bundled NPA client may be running | Update the checkout, retain `config.source_overlay: true` as in S8, and start a fresh run. Treat the original report as degraded; empty answers do not establish an attribute-quality verdict. |
+| Generation logs `No safety models found, returning safe` | The pinned upstream video guardrail has no video-content classifier | Its video runner still applies face-blur postprocessing; text checks use Blocklist and Qwen3Guard. Keep guardrails enabled. A successful video-guardrail flag confirms the configured runner completed, not video-content classification; see the [pinned upstream configuration](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/auxiliary/guardrail/common/presets.py). |
 | `annotation requires a complete accepted evaluator disposition` | A one-shot plan assumed promotion, or the accepted disposition is missing/incomplete | Follow [R6](#r6-diagnose-quality-rejection-and-prepare-the-next-run); retain the guard and use R3's runtime command for the next fresh run. |
 | `frame_counts_match: false`, or source/output durations differ | Unequal decoded lengths and possible temporal misalignment | Probe the same run's source and variants in R6; read required checks as well as advisory diagnostics. Use R5's required alignment contract and a fresh run after changing generation settings. |
 | `source_motion_weight must be 0` | Configuration copied from the old guide | Remove the old override or set it to `0.0`; publication retains model output after guardrail processing. |
@@ -898,23 +995,31 @@ preflights passed against live services. S5's new-cluster command was validated
 with a live `--dry-run`; execution used an existing RTX PRO 6000 Blackwell
 cluster and did not create a cluster.
 
-### Starter MP4
+### Fresh local MP4
 
-The full runtime completed all 15 stages at revision `1fb58217` on September 11,
-2026, using the starter input and the shipped generation and quality settings.
-Its 169-frame source
-at 50 fps and 640×480 becomes an 81-frame reference at 24 fps and 832×480.
-Duration changes from 3.38 to 3.375 seconds through frame-rate sampling;
+R3b's full command completed all 15 stages at revision `ba28a25f` on September 11,
+2026, with a fresh Linux operator environment, Python 3.12.14, and SkyPilot
+0.12.2 on an existing RTX PRO 6000 Blackwell cluster. The public MP4 was
+downloaded anew and supplied through `--input-video`. Its checksum matched
+R3b's pinned value and the staged original. The new run's input, output, and
+source-code prefixes were verified empty before submission, and the input
+cache and isolated API state were new. No earlier run artifacts or state were
+copied; every stage executed without replay or adoption. The submit command
+exited with code `0` using the shipped generation and quality settings.
+
+The 169-frame source at 50 fps and 640×480 becomes an 81-frame reference at
+24 fps and 832×480. Duration changes from 3.38 to 3.375 seconds through sampling;
 letterboxing preserves aspect ratio and does not stretch time. Both generated
 videos fully decode with the prepared reference's dimensions, frame count,
-frame rate, and duration. Native control readback and text/video guardrails
-passed for both variants.
+frame rate, and duration. Native control readback, text guardrails, and the
+configured video postprocessing completed for both variants. The video runner's
+scope is described in the troubleshooting table above.
 
-Both variants passed evaluation with an aggregate score of `0.383756` against
-`grade_threshold: 0.2`. Their attribute scores were `0.25` and `0.5` against
-`attribute_threshold: 0.25`; all eight attribute answers were complete, with
-no skipped checks. Evaluation matched the exact published video hashes and
-found zero timestamp error. Both temporal diagnostics and one appearance
+Both variants passed evaluation on the first attempt with an aggregate score
+of `0.458362` against `grade_threshold: 0.2`. Their attribute scores were `0.5`
+each against `attribute_threshold: 0.25`; all eight attribute answers were
+complete, with four matches and no skipped checks. Evaluation matched the exact
+published video hashes and found zero timestamp error. Both temporal diagnostics and one appearance
 diagnostic failed in advisory mode; those results did not gate acceptance.
 
 Accepted annotation produced six nonempty captions, three per variant, bound to
@@ -924,19 +1029,32 @@ shorter segments follow `curator_clip_len_s: 3`; the generated videos retain
 their verified 81-frame timeline. FiftyOne Brain kept both samples and flagged
 both as redundant for review. Its reported uniqueness method was
 `embedding-fallback`; the report does not identify the raw condition that
-triggered that fallback.
+triggered that fallback. The report includes PCA coordinates for both samples.
 
-Finalization reported two annotated variants, two curated clips, and 132
-artifacts. Both Rerun recordings were independently decoded and matched to this
-run's media, captions, evaluator, and available curation reports. The guide's
-AWS download and final-report `jq` commands passed against those actual outputs.
-A completed-run resume replayed all 15 stages with the same job IDs and launched
-no new jobs. The run's isolated API and credential bindings stayed unchanged.
+FiftyOne worker setup reported a dependency conflict: `voxel51-eta 0.15.5`
+declares `paramiko<4`, while NPA requires `paramiko>=5` and installed `5.0.0`.
+The exercised curation path completed with FiftyOne `1.15.0`; other ETA
+integrations were outside this validation.
+
+Finalization reported two annotated variants, two curated clips, and 139
+artifacts. The [completed-run MP4 regression test](../../npa/tests/e2e/test_paidf_cosmos3_mp4_live.py)
+passed, checking original input hashes, fresh object timestamps, all 15 stages, media alignment, caption
+coverage, curation, and both recording identities. An independent audit fully
+decoded all eight MP4/control files and verified both Rerun recordings against
+this run's media, evaluator, gate, disposition, and input provenance. Every
+embedded variant frame timestamp and video hash matched its published MP4.
+The final recording also matched the augmented caption coverage and both
+curation reports. The run's isolated API and credential bindings stayed unchanged
+during execution. The guide's AWS downloads, final-report `jq` gate, and headless Rerun
+verification and inspection commands passed against these outputs.
+The workflow artifact index remained empty after completion; the tested AWS
+commands retrieved the declared outputs directly from this run's prefix.
 
 Matched-time visual review showed recognizable pickup/removal timing, with
 gripper appearance changes, extra shadows, and strong warm coloration and
-colored borders in one variant. These exploratory acceptance settings do not
-certify physical fidelity or suitability for training. Review your own outputs
+colored borders in one variant after its first conditioning frame. These
+exploratory acceptance settings do not certify physical fidelity or suitability
+for training. Review your own outputs
 against the task's visual and motion requirements before using them as data.
 
 ### LeRobot v3 episode and multiple generation windows
@@ -950,8 +1068,9 @@ produced 192 frames at 24 fps, retaining the eight-second duration.
 
 Each of the two generated variants used three native generation windows. Both
 published videos fully decode to the reference's 192 frames, dimensions, and
-eight-second timeline, with zero timestamp error. Native control readback and
-text/video guardrails passed. The evaluator accepted both on the first pass:
+eight-second timeline, with zero timestamp error. Native control readback, text
+guardrails, and configured video postprocessing passed. The evaluator accepted
+both on the first pass:
 aggregate score `0.675465` against `0.2`, and attribute scores `0.5` each against
 `0.25`. All eight attribute answers were complete; four attributes matched.
 The thresholds were unchanged for this run.
@@ -1044,6 +1163,8 @@ directly with the AWS profile from S7:
   RRD_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/reports/$RRD_FILE"
   aws s3 ls "$RRD_URI" --profile nebius
   aws s3 cp "$RRD_URI" "$RRD_DIR/$RRD_FILE" --profile nebius
+  rerun rrd verify "$RRD_DIR/$RRD_FILE"
+  rerun rrd print -vv "$RRD_DIR/$RRD_FILE" > "$RRD_DIR/inspection.txt"
   rerun "$RRD_DIR/$RRD_FILE"
 )
 ```
@@ -1051,6 +1172,12 @@ directly with the AWS profile from S7:
 If you changed the workflow prefix, use its declared output URI instead. Run
 the final `rerun` command in a desktop session. From a headless host, transfer
 the recording to your desktop or follow the browser-viewing link below.
+The verification and inspection commands also work headlessly. Require a
+successful verification; check `inspection.txt` for your run ID, `frame` and
+`video_time` timelines, and both variants' video entities. The shared visualization
+tool currently records application ID `neural-reconstruction` for these PAIDF
+recordings. Repeat with `RRD_FILE=quality-evidence.rrd`
+to inspect the earlier recording.
 
 The NPA installation includes its pinned Rerun SDK. The recording presents the
 available source/generated frames, generation prompts, captions, evaluator
