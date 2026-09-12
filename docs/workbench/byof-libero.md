@@ -178,17 +178,23 @@ The payload profile selects `npa-byof-libero-payload`; `default` and
 SkyPilot controller remains on its separate engine account. Before a future run,
 the exact run-labelled namespace must be empty of Pods and Secrets and contain
 only `default`, the reviewed payload and controller ServiceAccounts, their two
-exact Roles, and their two exact RoleBindings. The payload Role is core
-`pods/get` only. Kubernetes cannot name the not-yet-created Pod in that Role, so
-the hard empty-Pod namespace prerequisite makes the later workload Pod the only
-readable Pod. The controller Role has no wildcard: it enumerates only the
-namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service operations
-needed by this fixed container job. The host verifies both identities and rejects
+exact Roles, and their two exact RoleBindings. The payload Role begins as core
+`pods/get` for a no-match `resourceNames` sentinel. After managed submission
+returns its exact numeric job ID, the host requires exactly one new Pod, binds
+its SkyPilot job label, head identity, service account, and sole container image
+to the accepted candidate, then uses a JSON Patch that tests the Role UID and
+complete sentinel rule before replacing it with that one Pod's exact
+`resourceNames` entry. The workload cannot read any Pod before this binding and
+can read only itself afterward. The controller Role has no wildcard: it
+enumerates only the namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service
+operations needed by this fixed container job. The host verifies both identities and rejects
 every ClusterRoleBinding before submission, then repeats the complete empty
 namespace/payload grant and controller checks after infrastructure preflight
-immediately adjacent to submission. After terminal status it rechecks the exact
-payload grant and object UIDs, no-ClusterRoleBinding result, and controller
-identity before accepting the result. Every
+immediately adjacent to submission. It rechecks the bound Role, sole Pod UID,
+job label, image, and no-ClusterRoleBinding result immediately after binding and
+at every scheduler-status observation, together with the controller identity.
+At terminal status the exact Pod may already be absent, but any replacement or
+foreign Pod is a hard failure. Every
 namespace/object UID, inventory, and payload permission is bound to the checked-in
 acceptance record. The payload reads its own Pod and bound JWT and records
 the actual service account, Pod UID, node, and `containerStatuses.imageID`.

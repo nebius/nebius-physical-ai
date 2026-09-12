@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from npa.deploy.images import (
     LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS,
+    LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS,
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
     libero_acceptance_signature_payload,
     libero_accepted_image_manifest,
@@ -503,6 +504,9 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
         "npa/src/npa",
         "npa/tests/e2e",
     }
+    assert set(LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS) == {
+        "npa/tests",
+    }
     assert {
         "npa/src/npa/execution_preflight.py",
         "npa/src/npa/orchestration/skypilot/cleanup.py",
@@ -538,6 +542,14 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
         path.write_bytes(original + b"\n# policy drift\n")
         assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
         path.write_bytes(original)
+
+    future = tmp_path / "npa/tests/guardrails/test_future_libero_policy.py"
+    future.write_text("def test_libero_future_policy():\n    pass\n", encoding="utf-8")
+    assert future.relative_to(tmp_path).as_posix() in (
+        libero_publication_enforcement_paths(tmp_path)
+    )
+    assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
+    future.unlink()
 
     assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 

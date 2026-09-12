@@ -687,8 +687,9 @@ def preflight_skypilot_submission(
             # Storage keys and the session token must reach a LIBERO task only
             # through SkyPilot's redacted ``--secret`` channel.  Removing a
             # legacy top-level declaration before persisting prepared YAML also
-            # prevents the payload's pods/get permission from reading literal
-            # credential values back from its own Pod specification.
+            # prevents the payload's exact-resourceName pods/get permission
+            # from reading literal credential values back from its own Pod
+            # specification.
             for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES:
                 env.pop(name, None)
 

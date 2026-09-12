@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import yaml
@@ -78,6 +78,7 @@ LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
+LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME = "npa-libero-unbound-pod"
 LIBERO_CONTROLLER_ROLE = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role"
 LIBERO_CONTROLLER_ROLE_BINDING = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role-binding"
 LIBERO_CONTROLLER_RULES = [
@@ -104,6 +105,7 @@ LIBERO_CONTROLLER_RULES = [
     },
 ]
 LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
+LIBERO_PROFILE_TASK_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
     / "docker"
@@ -441,6 +443,9 @@ class LiberoAccessState:
     execution_kubeconfig: Path | None = None
     execution_context: str = ""
     run_id: str = ""
+    payload_pod_name: str = ""
+    payload_pod_uid: str = ""
+    skypilot_cluster_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -448,6 +453,44 @@ class LiberoRuntimeBinding:
     evidence: dict[str, str]
     access_state: LiberoAccessState
     manager_acceptance_b64: str = ""
+    candidate_image: str = ""
+    task_name: str = ""
+
+
+def _libero_payload_rules(resource_name: str) -> list[dict[str, Any]]:
+    """Return the one-object payload grant, including its no-match initial state."""
+
+    if re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", resource_name) is None:
+        raise RuntimeError("LIBERO payload Pod resourceName is invalid")
+    return [
+        {
+            "apiGroups": [""],
+            "resources": ["pods"],
+            "resourceNames": [resource_name],
+            "verbs": ["get"],
+        }
+    ]
+
+
+def _libero_managed_job_display_name(task_name: str, scheduler_job_id: str) -> str:
+    """Mirror the pinned SkyPilot managed-job name before its per-user suffix."""
+
+    if re.fullmatch(r"[1-9][0-9]*", scheduler_job_id) is None:
+        raise RuntimeError("LIBERO scheduler job ID is invalid")
+    normalized = re.sub(r"[._]", "-", task_name).lower()
+    if re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", normalized) is None:
+        raise RuntimeError("LIBERO SkyPilot task name is invalid")
+    if len(normalized) > 25:
+        alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+        number = int(
+            hashlib.md5(task_name.encode(), usedforsecurity=False).hexdigest(), 16
+        )
+        encoded = ""
+        while number:
+            number, remainder = divmod(number, 36)
+            encoded = alphabet[remainder] + encoded
+        normalized = f"{normalized[:22].rstrip('-')}-{encoded[:2]}"
+    return f"{normalized}-{scheduler_job_id}"
 
 
 def _reject_libero_cluster_role_bindings(
@@ -529,7 +572,7 @@ def _libero_controller_rbac_evidence(
 
     The role enumerates only the namespaced primitives SkyPilot uses for this
     container job. The fetched payload never receives this account: it keeps
-    the independent pods/get-only identity verified above.
+    the independent exact-resourceName pods/get identity verified above.
     """
 
     account = _libero_resource(
@@ -621,6 +664,7 @@ def _libero_rbac_evidence(
     run_id: str,
     *,
     require_empty_inventory: bool = True,
+    expected_pod_name: str = LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME,
 ) -> tuple[dict[str, str], LiberoAccessState]:
     namespace_record = _kubectl_json(
         ["--context", context, "get", "namespace", namespace],
@@ -654,7 +698,7 @@ def _libero_rbac_evidence(
         "rolebinding",
         LIBERO_PAYLOAD_ROLE_BINDING,
     )
-    rules = [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]
+    rules = _libero_payload_rules(expected_pod_name)
     subjects = [
         {
             "kind": "ServiceAccount",
@@ -668,7 +712,9 @@ def _libero_rbac_evidence(
         "name": LIBERO_PAYLOAD_ROLE,
     }
     if role.get("rules") != rules:
-        raise RuntimeError("LIBERO payload Role is broader than pods/get")
+        raise RuntimeError(
+            "LIBERO payload Role is not scoped to the exact Pod resourceName"
+        )
     if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
         raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
     inventory = None
@@ -710,6 +756,11 @@ def _libero_rbac_evidence(
         role_uid=role["metadata"]["uid"],
         role_binding_uid=binding["metadata"]["uid"],
         run_id=run_id,
+        payload_pod_name=(
+            ""
+            if expected_pod_name == LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME
+            else expected_pod_name
+        ),
     )
     return evidence, access_state
 
@@ -867,6 +918,11 @@ def _bind_libero_runtime_contract(
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = (
             storage_authorization["policy_sha256"]
         )
+    task_names = {
+        str(document.get("name") or "").strip() for document in documents[1:]
+    }
+    if task_names != {LIBERO_PROFILE_TASK_NAME}:
+        raise ValueError("LIBERO requires one exact named SkyPilot task")
     manager_acceptance = json.dumps(
         signed_manifest, sort_keys=True, separators=(",", ":")
     ).encode()
@@ -874,7 +930,179 @@ def _bind_libero_runtime_contract(
         evidence=evidence,
         access_state=access_state,
         manager_acceptance_b64=base64.b64encode(manager_acceptance).decode("ascii"),
+        candidate_image=acceptance["candidate_image"],
+        task_name=LIBERO_PROFILE_TASK_NAME,
     )
+
+
+def _libero_payload_pod_record(
+    binding: LiberoRuntimeBinding, *, scheduler_job_id: str = ""
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Return the sole run Pod after verifying its scheduler and image identity."""
+
+    state = binding.access_state
+    payload = _kubectl_json(
+        [
+            "--context",
+            state.context,
+            "--namespace",
+            state.namespace,
+            "get",
+            "pods",
+        ],
+        purpose="LIBERO exact payload Pod inventory",
+        kubeconfig=state.kubeconfig,
+    )
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("LIBERO payload Pod inventory is invalid")
+    if not items:
+        raise LookupError("LIBERO payload Pod has not been created")
+    if len(items) != 1 or not isinstance(items[0], dict):
+        raise RuntimeError("LIBERO namespace does not contain exactly one payload Pod")
+    pod = items[0]
+    metadata = pod.get("metadata") or {}
+    spec = pod.get("spec") or {}
+    labels = metadata.get("labels") or {}
+    annotations = metadata.get("annotations") or {}
+    pod_name = str(metadata.get("name") or "")
+    pod_uid = str(metadata.get("uid") or "")
+    namespace = str(metadata.get("namespace") or "")
+    cluster_name = str(labels.get("skypilot-cluster-name") or "")
+    display_name = str(annotations.get("skypilot-cluster-name") or "")
+    if (
+        re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", pod_name) is None
+        or not pod_uid
+        or not metadata.get("creationTimestamp")
+        or namespace != state.namespace
+        or not cluster_name
+        or pod_name != f"{cluster_name}-head"
+        or labels.get("ray-node-type") != "head"
+        or labels.get("component") != pod_name
+        or not display_name
+    ):
+        raise RuntimeError("LIBERO payload Pod lacks its exact SkyPilot head identity")
+    if scheduler_job_id and display_name != _libero_managed_job_display_name(
+        binding.task_name, scheduler_job_id
+    ):
+        raise RuntimeError("LIBERO payload Pod differs from the submitted scheduler job")
+    if state.payload_pod_name and (
+        pod_name != state.payload_pod_name
+        or pod_uid != state.payload_pod_uid
+        or cluster_name != state.skypilot_cluster_name
+    ):
+        raise RuntimeError("LIBERO payload Pod identity changed after exact binding")
+    if spec.get("serviceAccountName") != LIBERO_PAYLOAD_SERVICE_ACCOUNT:
+        raise RuntimeError("LIBERO payload Pod used a different service account")
+    containers = spec.get("containers")
+    if (
+        not isinstance(containers, list)
+        or len(containers) != 1
+        or not isinstance(containers[0], dict)
+        or containers[0].get("image") != binding.candidate_image
+        or spec.get("initContainers")
+        or spec.get("ephemeralContainers")
+    ):
+        raise RuntimeError("LIBERO payload Pod differs from the accepted candidate image")
+    evidence = {
+        "payload_pod_name_sha256": hashlib.sha256(pod_name.encode()).hexdigest(),
+        "payload_pod_uid_sha256": hashlib.sha256(pod_uid.encode()).hexdigest(),
+        "skypilot_cluster_name_sha256": hashlib.sha256(
+            cluster_name.encode()
+        ).hexdigest(),
+    }
+    return pod, evidence
+
+
+def _bind_libero_payload_pod_access(
+    binding: LiberoRuntimeBinding,
+    scheduler_job_id: str,
+    *,
+    timeout: int,
+    poll_interval: int,
+) -> LiberoRuntimeBinding:
+    """Bind the initially inert Role to the one observed managed-job Pod."""
+
+    deadline = time.time() + max(timeout, 1)
+    while True:
+        try:
+            pod, pod_evidence = _libero_payload_pod_record(
+                binding, scheduler_job_id=scheduler_job_id
+            )
+            break
+        except LookupError:
+            if time.time() >= deadline:
+                raise RuntimeError(
+                    "LIBERO payload Pod was not created before the binding deadline"
+                ) from None
+            time.sleep(max(poll_interval, 1))
+    metadata = pod["metadata"]
+    pod_name = str(metadata["name"])
+    pod_uid = str(metadata["uid"])
+    cluster_name = str(metadata["labels"]["skypilot-cluster-name"])
+    initial_rules = _libero_payload_rules(LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME)
+    bound_rules = _libero_payload_rules(pod_name)
+    patch = [
+        {"op": "test", "path": "/metadata/uid", "value": binding.access_state.role_uid},
+        {"op": "test", "path": "/rules", "value": initial_rules},
+        {"op": "replace", "path": "/rules", "value": bound_rules},
+    ]
+    role = _kubectl_json(
+        [
+            "--context",
+            binding.access_state.context,
+            "--namespace",
+            binding.access_state.namespace,
+            "patch",
+            "role",
+            LIBERO_PAYLOAD_ROLE,
+            "--type=json",
+            "--patch",
+            json.dumps(patch, sort_keys=True, separators=(",", ":")),
+        ],
+        purpose="LIBERO exact payload Role binding",
+        kubeconfig=binding.access_state.kubeconfig,
+    )
+    if (
+        (role.get("metadata") or {}).get("uid") != binding.access_state.role_uid
+        or role.get("rules") != bound_rules
+    ):
+        raise RuntimeError("LIBERO payload Role exact binding was not observed")
+    observed, observed_state = _libero_rbac_evidence(
+        binding.access_state.kubeconfig,
+        binding.access_state.context,
+        binding.access_state.namespace,
+        binding.access_state.run_id,
+        require_empty_inventory=False,
+        expected_pod_name=pod_name,
+    )
+    for name, value in observed.items():
+        if name == "rbac_spec_sha256":
+            continue
+        if binding.evidence.get(name) != value:
+            raise RuntimeError("LIBERO payload identity changed during exact binding")
+    state = replace(
+        observed_state,
+        controller_service_account_uid=binding.access_state.controller_service_account_uid,
+        controller_role_uid=binding.access_state.controller_role_uid,
+        controller_role_binding_uid=binding.access_state.controller_role_binding_uid,
+        execution_kubeconfig=binding.access_state.execution_kubeconfig,
+        execution_context=binding.access_state.execution_context,
+        payload_pod_name=pod_name,
+        payload_pod_uid=pod_uid,
+        skypilot_cluster_name=cluster_name,
+    )
+    evidence = {
+        **binding.evidence,
+        **pod_evidence,
+        "bound_rbac_spec_sha256": observed["rbac_spec_sha256"],
+        "scheduler_job_id_sha256": hashlib.sha256(
+            scheduler_job_id.encode()
+        ).hexdigest(),
+    }
+    bound = replace(binding, evidence=evidence, access_state=state)
+    _libero_payload_pod_record(bound, scheduler_job_id=scheduler_job_id)
+    return bound
 
 
 def _verify_libero_controller_unchanged(binding: LiberoRuntimeBinding) -> None:
@@ -892,7 +1120,10 @@ def _verify_libero_controller_unchanged(binding: LiberoRuntimeBinding) -> None:
 
 
 def _verify_libero_payload_unchanged(
-    binding: LiberoRuntimeBinding, *, require_empty_inventory: bool
+    binding: LiberoRuntimeBinding,
+    *,
+    require_empty_inventory: bool,
+    allow_bound_pod_absent: bool = False,
 ) -> None:
     state = binding.access_state
     observed, observed_state = _libero_rbac_evidence(
@@ -901,9 +1132,17 @@ def _verify_libero_payload_unchanged(
         state.namespace,
         state.run_id,
         require_empty_inventory=require_empty_inventory,
+        expected_pod_name=(
+            state.payload_pod_name or LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME
+        ),
     )
     for name, value in observed.items():
-        if binding.evidence.get(name) != value:
+        expected_name = (
+            "bound_rbac_spec_sha256"
+            if name == "rbac_spec_sha256" and state.payload_pod_name
+            else name
+        )
+        if binding.evidence.get(expected_name) != value:
             raise RuntimeError("LIBERO payload RBAC changed after acceptance")
     identities = (
         "namespace_uid",
@@ -913,6 +1152,17 @@ def _verify_libero_payload_unchanged(
     )
     if any(getattr(state, name) != getattr(observed_state, name) for name in identities):
         raise RuntimeError("LIBERO payload RBAC identity changed after acceptance")
+    if state.payload_pod_name:
+        try:
+            _, pod_evidence = _libero_payload_pod_record(binding)
+        except LookupError:
+            if allow_bound_pod_absent:
+                return
+            raise RuntimeError(
+                "LIBERO payload Pod disappeared before terminal status"
+            ) from None
+        if any(binding.evidence.get(name) != value for name, value in pod_evidence.items()):
+            raise RuntimeError("LIBERO payload Pod changed after exact binding")
 
 
 def _validate_libero_output_storage_authorization(
@@ -1279,6 +1529,7 @@ def _wait_for_terminal(
     config_path: Path | None = None,
     wait_timeout: int,
     poll_interval: int,
+    observation_guard: Callable[[str], None] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Poll with explicit immediate, bounded, or indefinite semantics."""
 
@@ -1298,6 +1549,8 @@ def _wait_for_terminal(
     }
     final = workflow_status(scheduler_job_id, **status_kwargs)
     statuses.append(final.status)
+    if observation_guard is not None:
+        observation_guard(final.status)
     polls = 1
     while (
         final.status not in TERMINAL_STATUSES
@@ -1307,6 +1560,8 @@ def _wait_for_terminal(
         time.sleep(max(poll_interval, 1))
         final = workflow_status(scheduler_job_id, **status_kwargs)
         statuses.append(final.status)
+        if observation_guard is not None:
+            observation_guard(final.status)
         polls += 1
     diagnostics = {
         "mode": mode,
@@ -1898,6 +2153,17 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     timeout=args.submit_timeout,
                 )
                 scheduler_job_id = _exact_scheduler_job_id(result.job_id)
+                if libero_binding is not None:
+                    libero_binding = _bind_libero_payload_pod_access(
+                        libero_binding,
+                        scheduler_job_id,
+                        timeout=args.submit_timeout,
+                        poll_interval=args.poll_interval,
+                    )
+                    _verify_libero_payload_unchanged(
+                        libero_binding, require_empty_inventory=False
+                    )
+                    _verify_libero_controller_unchanged(libero_binding)
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
@@ -1912,6 +2178,18 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 }
                 if libero_binding is not None:
                     summary["libero_runtime_binding"] = libero_binding.evidence
+                observation_guard: Callable[[str], None] | None = None
+                if libero_binding is not None:
+
+                    def verify_libero_observation(status: str) -> None:
+                        _verify_libero_payload_unchanged(
+                            libero_binding,
+                            require_empty_inventory=False,
+                            allow_bound_pod_absent=status in TERMINAL_STATUSES,
+                        )
+                        _verify_libero_controller_unchanged(libero_binding)
+
+                    observation_guard = verify_libero_observation
                 final, wait_diagnostics = _wait_for_terminal(
                     scheduler_job_id,
                     sky_bin=sky_bin,
@@ -1919,12 +2197,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     config_path=submitted_config_path,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
+                    observation_guard=observation_guard,
                 )
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
                 if libero_binding is not None:
                     _verify_libero_payload_unchanged(
-                        libero_binding, require_empty_inventory=False
+                        libero_binding,
+                        require_empty_inventory=False,
+                        allow_bound_pod_absent=True,
                     )
                     _verify_libero_controller_unchanged(libero_binding)
                 return_code = 0 if final.status == "SUCCEEDED" else 1

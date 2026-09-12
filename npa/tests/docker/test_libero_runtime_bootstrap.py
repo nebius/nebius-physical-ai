@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -459,6 +460,21 @@ def test_sigv4_storage_request_uses_a_direct_tls_connection(
         module._sigv4_request(
             "GET", "https://storage.example/fixture-bucket/byof%2Frun/artifact"
         )
+
+
+@pytest.mark.parametrize(
+    "object_key",
+    (
+        "byof//artifact.json",
+        "byof/./artifact.json",
+        "byof/../artifact.json",
+    ),
+)
+def test_s3_object_url_refuses_noncanonical_segments(object_key: str) -> None:
+    module = _load_module()
+
+    with pytest.raises(module.BootstrapRefusal, match="object identity"):
+        module._s3_object_url("https://storage.example", "bucket", object_key)
 
 
 def _install_fake_materializers(
@@ -1178,6 +1194,50 @@ def test_verified_download_enforces_size_before_publication(
 
     assert not destination.exists()
     assert not destination.with_name(".package.whl.partial").exists()
+
+
+def test_verified_download_creates_private_partial_atomically(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    content = b"immutable-runtime-byte"
+    observed_modes: list[int] = []
+
+    class Response:
+        def __init__(self) -> None:
+            self.remaining = content
+
+        def getheader(self, name: str) -> str | None:
+            return str(len(content)) if name == "Content-Length" else None
+
+        def read(self, _size: int = -1) -> bytes:
+            partial = tmp_path / ".package.whl.partial"
+            observed_modes.append(stat.S_IMODE(partial.stat().st_mode))
+            value, self.remaining = self.remaining, b""
+            return value
+
+        def close(self) -> None:
+            pass
+
+    class Connection:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        module,
+        "_open_https_download",
+        lambda *_a, **_k: (Connection(), Response()),
+    )
+    destination = tmp_path / "package.whl"
+
+    module._download_verified(
+        destination,
+        url="https://files.pythonhosted.org/package.whl",
+        sha256=_sha(content),
+        size=len(content),
+    )
+
+    assert observed_modes == [0o600, 0o600]
 
 
 def test_verified_download_refuses_redirect_outside_allowlist(

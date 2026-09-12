@@ -100,6 +100,9 @@ LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS = (
     "npa/src/npa",
     "npa/tests/e2e",
 )
+LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS = (
+    "npa/tests",
+)
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
     "https://slsa.dev/provenance/v1",
     "https://spdx.dev/Document",
@@ -625,6 +628,25 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
                     f"{candidate.relative_to(repository_root).as_posix()}"
                 )
             paths.add(candidate.relative_to(repository_root).as_posix())
+    for relative_root in LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS:
+        directory = repository_root / relative_root
+        if not directory.is_dir() or directory.is_symlink():
+            raise RuntimeError(
+                f"LIBERO enforcement test root is unavailable: {relative_root}"
+            )
+        discovered = list(directory.rglob("*.py"))
+        if not discovered:
+            raise RuntimeError(
+                f"LIBERO enforcement test root is empty: {relative_root}"
+            )
+        for candidate in discovered:
+            if not candidate.is_file() or candidate.is_symlink():
+                raise RuntimeError(
+                    "LIBERO enforcement test must be a regular file: "
+                    f"{candidate.relative_to(repository_root).as_posix()}"
+                )
+            if b"libero" in candidate.read_bytes().lower():
+                paths.add(candidate.relative_to(repository_root).as_posix())
     return tuple(sorted(paths))
 
 
