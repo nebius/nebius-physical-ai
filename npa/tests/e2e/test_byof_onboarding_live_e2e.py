@@ -1224,18 +1224,19 @@ def _record_gymnasium_sky_down_logs(
     evidence_dir: Path,
     *,
     run_id: str,
+    attempt: int,
     stdout: str | bytes,
     stderr: str | bytes,
 ) -> None:
     for suffix, content in (("stdout", stdout), ("stderr", stderr)):
         decoded = content.decode(errors="replace") if isinstance(content, bytes) else content
-        path = evidence_dir / f"{run_id}-sky-down-{suffix}.log"
+        path = evidence_dir / f"{run_id}-sky-down-{attempt}-{suffix}.log"
         with _new_gymnasium_private_file(path) as stream:
             stream.write(decoded)
 
 
 def _issue_gymnasium_sky_down(
-    env: dict[str, str], *, run_id: str, config_path: str | None
+    env: dict[str, str], *, run_id: str, config_path: str | None, attempt: int
 ) -> None:
     sky_bin = resolve_skypilot_bin()
     assert sky_bin, "SkyPilot executable is required for exact-run cleanup"
@@ -1257,6 +1258,7 @@ def _issue_gymnasium_sky_down(
         _record_gymnasium_sky_down_logs(
             _gymnasium_evidence_dir(env),
             run_id=run_id,
+            attempt=attempt,
             stdout=exc.stdout or "",
             stderr=exc.stderr or "",
         )
@@ -1264,6 +1266,7 @@ def _issue_gymnasium_sky_down(
     _record_gymnasium_sky_down_logs(
         _gymnasium_evidence_dir(env),
         run_id=run_id,
+        attempt=attempt,
         stdout=result.stdout,
         stderr=result.stderr,
     )
@@ -1278,9 +1281,15 @@ def _cleanup_gymnasium_run(
     config_path: str | None,
     namespace_baseline: dict[str, list[dict[str, object]]],
     issue_down: bool,
+    cleanup_attempt: int = 1,
 ) -> None:
     if issue_down:
-        _issue_gymnasium_sky_down(env, run_id=run_id, config_path=config_path)
+        _issue_gymnasium_sky_down(
+            env,
+            run_id=run_id,
+            config_path=config_path,
+            attempt=cleanup_attempt,
+        )
     assert _gymnasium_sky_cluster_absent(
         env, run_id=run_id, config_path=config_path
     ), "the exact SkyPilot cluster still exists"
@@ -1297,14 +1306,27 @@ def _cleanup_gymnasium_run_after_success(
     config_path: str | None,
     namespace_baseline: dict[str, list[dict[str, object]]],
 ) -> None:
-    _cleanup_gymnasium_run(
-        env,
-        namespace=namespace,
-        run_id=run_id,
-        config_path=config_path,
-        namespace_baseline=namespace_baseline,
-        issue_down=True,
-    )
+    first_error: BaseException | None = None
+    for attempt in (1, 2):
+        try:
+            _cleanup_gymnasium_run(
+                env,
+                namespace=namespace,
+                run_id=run_id,
+                config_path=config_path,
+                namespace_baseline=namespace_baseline,
+                issue_down=True,
+                cleanup_attempt=attempt,
+            )
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+            else:
+                first_error.add_note(f"cleanup retry also failed: {error}")
+            continue
+        return
+    assert first_error is not None
+    raise first_error
 
 
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
@@ -1435,7 +1457,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
     stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
     proc: subprocess.Popen[str] | None = None
-    cleanup_complete = False
+    cleanup_started = False
     try:
         with (
             _new_gymnasium_private_file(stdout_path) as stdout_stream,
@@ -1464,6 +1486,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 raise AssertionError(
                     f"BYOF runner exited {returncode}; inspect owner-private logs"
                 )
+        cleanup_started = True
         _cleanup_gymnasium_run_after_success(
             env,
             namespace=namespace,
@@ -1471,7 +1494,6 @@ def test_live_gymnasium_robotics_exact_digest_capability(
             config_path=config_path,
             namespace_baseline=namespace_baseline,
         )
-        cleanup_complete = True
         stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
         stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
         credential_markers = live_credential_markers()
@@ -1514,15 +1536,14 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 primary_error.add_note(
                     f"BYOF runner termination also failed: {termination_error}"
                 )
-        if proc is not None and not cleanup_complete:
+        if proc is not None and not cleanup_started:
             try:
-                _cleanup_gymnasium_run(
+                _cleanup_gymnasium_run_after_success(
                     env,
                     namespace=namespace,
                     run_id=run_id,
                     config_path=config_path,
                     namespace_baseline=namespace_baseline,
-                    issue_down=True,
                 )
             except BaseException as cleanup_error:
                 primary_error.add_note(
