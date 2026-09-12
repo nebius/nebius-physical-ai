@@ -38,6 +38,25 @@ def test_exempt_images_are_real_workflow_image_tools() -> None:
     assert dc.EXEMPT_IMAGE_TOOLS <= dc.WORKFLOW_IMAGE_TOOLS
 
 
+def test_habitat_exemption_preserves_the_four_step_rule() -> None:
+    summaries = dc.spec_step_summary()
+    habitat = next(s for s in summaries if s.name == "habitat-sim-smoke.yaml")
+    assert habitat.total_states == habitat.exec_steps == 1
+    assert habitat.image_tools == frozenset({"habitat-sim"})
+    assert not habitat.is_comprehensive
+    assert "habitat-sim" in dc.EXEMPT_IMAGE_TOOLS
+
+    short_non_exempt = dc.SpecSummary(
+        name="short-non-exempt.yaml",
+        path=Path("short-non-exempt.yaml"),
+        total_states=3,
+        exec_steps=3,
+        image_tools=frozenset({"groot"}),
+    )
+    assert "groot" in dc.image_coverage([habitat, short_non_exempt]).missing
+    assert dc.MIN_COMPREHENSIVE_STEPS == 4
+
+
 def test_daily_plan_set_covers_every_covered_image() -> None:
     summaries = dc.spec_step_summary()
     report = dc.image_coverage(summaries)
