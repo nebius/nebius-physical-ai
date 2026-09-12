@@ -94,6 +94,12 @@ case "${1:-}" in
       else
         child_status="$?"
       fi
+      # The process-group leader can exit after starting a background worker.
+      # Keep both the group signal target and the verified snapshot alive until
+      # every non-zombie member has finished.
+      while process_group_running "${child_pid}"; do
+        sleep 0.1
+      done
       child_pid=""
       return "${child_status}"
     }
