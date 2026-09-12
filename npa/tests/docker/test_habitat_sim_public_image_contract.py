@@ -16,6 +16,20 @@ PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 DOCKERFILE = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
 
 
+def _run_bash(
+    script: str,
+    *arguments: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-ceu", script, "npa-habitat-contract", *arguments],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _bootstrap_function() -> str:
     start = DOCKERFILE.index("npa_bootstrap_ca()")
     end = DOCKERFILE.index("    npa_bootstrap_ca /\n", start)
@@ -42,19 +56,82 @@ def _run_bootstrap(
     }
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env['PATH']}"
-    return subprocess.run(
-        [
-            "bash",
-            "-ceu",
-            _bootstrap_function() + '\nnpa_bootstrap_ca "$1"',
-            "npa-ca-bootstrap",
-            str(root),
-        ],
+    return _run_bash(
+        _bootstrap_function() + '\nnpa_bootstrap_ca "$1"',
+        str(root),
         env=env,
-        check=False,
-        capture_output=True,
-        text=True,
     )
+
+
+def _runtime_stage(dockerfile: str) -> str:
+    return dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)[1]
+
+
+def _runtime_identity_commands(dockerfile: str) -> list[str]:
+    runtime = _runtime_stage(dockerfile)
+    start = runtime.index("groupadd --gid 1000 ubuntu")
+    end = runtime.index(" && \\\n    printf 'ubuntu ALL=", start)
+    command = runtime[start:end].replace("\\\n", " ")
+    return [part.strip() for part in re.split(r"\s+&&\s+", command)]
+
+
+def _runtime_identity_contract(dockerfile: str) -> bool:
+    runtime = _runtime_stage(dockerfile)
+    group = runtime.find("groupadd --gid 1000 ubuntu")
+    user = runtime.find("useradd --uid 1000 --gid 1000")
+    ownership = runtime.find("install -d -o ubuntu -g ubuntu")
+    runtime_users = re.findall(r"(?m)^USER\s+(\S+)\s*$", runtime)
+    return 0 <= group < user < ownership and runtime_users[-1:] == ["ubuntu"]
+
+
+def _write_identity_dispatcher(bin_dir: Path) -> None:
+    dispatcher = bin_dir / "identity-command"
+    dispatcher.write_text(
+        """#!/bin/sh
+set -eu
+state=$NPA_IDENTITY_STATE
+case ${0##*/} in
+  groupadd)
+    test "$*" = "--gid 1000 ubuntu"
+    test ! -e "$state"
+    printf group > "$state"
+    ;;
+  useradd)
+    test "$(cat "$state")" = group
+    test "$*" = "--uid 1000 --gid 1000 --create-home --home-dir /home/ubuntu --shell /bin/bash --no-log-init ubuntu"
+    printf user > "$state"
+    ;;
+  id)
+    test "$(cat "$state")" = user
+    test "$2" = ubuntu
+    case "$1" in -u|-g) printf '1000\\n' ;; *) exit 64 ;; esac
+    ;;
+  install)
+    test "$(cat "$state")" = user
+    test "$*" = "-d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh"
+    ;;
+  *) exit 64 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    dispatcher.chmod(0o755)
+    for command in ("groupadd", "useradd", "id", "install"):
+        (bin_dir / command).symlink_to(dispatcher.name)
+
+
+def _run_identity_commands(
+    commands: list[str], root: Path
+) -> subprocess.CompletedProcess[str]:
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    _write_identity_dispatcher(bin_dir)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "NPA_IDENTITY_STATE": str(root / "identity-state"),
+    }
+    return _run_bash(" && ".join(commands), env=env)
 
 
 def _create_ca(tmp_path: Path, name: str) -> bytes:
@@ -469,7 +546,7 @@ def test_build_frontend_uses_supported_release_environment() -> None:
 
 
 def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
-    final = DOCKERFILE.split("FROM ${BASE_IMAGE} AS runtime", 1)[1]
+    final = _runtime_stage(DOCKERFILE)
     assert final.rstrip().endswith(
         'CMD ["python3", "-m", "npa.workflows.habitat_sim_smoke", "--help"]'
     )
@@ -480,6 +557,27 @@ def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
     assert "rm -f /etc/ssh/ssh_host_*" in final
     assert "safe.directory" not in DOCKERFILE
     assert "-name '.gitconfig'" in final
+
+
+def test_runtime_identity_order_and_final_user_refuse_hostile_mutants(
+    tmp_path: Path,
+) -> None:
+    commands = _runtime_identity_commands(DOCKERFILE)
+
+    assert len(commands) == 5
+    assert _runtime_identity_contract(DOCKERFILE)
+    valid = _run_identity_commands(commands, tmp_path / "valid")
+    assert valid.returncode == 0, valid.stderr
+
+    ownership_first = _run_identity_commands(
+        [commands[-1], *commands[:-1]], tmp_path / "ownership-first"
+    )
+    assert ownership_first.returncode != 0
+
+    root_mutant = DOCKERFILE.replace(
+        "\nUSER ubuntu\nENTRYPOINT", "\nUSER root\nENTRYPOINT"
+    )
+    assert not _runtime_identity_contract(root_mutant)
 
 
 def test_final_stage_has_no_scene_or_vendor_payload_input() -> None:

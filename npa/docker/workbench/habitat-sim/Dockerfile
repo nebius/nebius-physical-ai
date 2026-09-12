@@ -243,6 +243,11 @@ RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/* && \
     rm -f /etc/ssh/ssh_host_* && \
+    groupadd --gid 1000 ubuntu && \
+    useradd --uid 1000 --gid 1000 --create-home --home-dir /home/ubuntu \
+      --shell /bin/bash --no-log-init ubuntu && \
+    test "$(id -u ubuntu)" -eq 1000 && \
+    test "$(id -g ubuntu)" -eq 1000 && \
     install -d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh && \
     printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-npa-skypilot && \
     chmod 0440 /etc/sudoers.d/90-npa-skypilot
