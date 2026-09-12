@@ -153,11 +153,12 @@ the table above uses the complete telemetry files for averages.
 
 Both compute applications succeeded. Inference actors exited, both GPUs had
 zero remaining compute processes, and the telemetry application and samplers
-stopped. Owned CPU test pods were removed. At handoff, expired Nebius CLI
-authentication still prevents removing the three Ray pods, two unused cache
-PVCs and their namespace. The pods continue reserving the two GPUs until that
-cleanup completes. An ownership-checked cleanup procedure is retained in
-private evidence; the shared cluster, filesystem and bucket must be preserved.
+stopped. Owned CPU test pods were removed. After operator authentication was
+renewed, cleanup verified resource ownership and removed all three Ray pods,
+both unused cache PVCs and their namespace. Both owned persistent volumes were
+reclaimed, releasing the workload's GPU reservations. All four shared cluster
+nodes remained Ready; the shared cluster, filesystem and bucket were preserved.
+Private evidence retains the ownership checks and cleanup receipt.
 
 Exact resource identifiers, credentials, recordings and gated camera artifacts
 remain outside Git in private operator evidence.
