@@ -116,7 +116,10 @@ def test_skill_requires_negative_positive_and_built_byte_proof() -> None:
         "**cache behavior:**",
         "**no secret leakage:**",
         "operator-controlled private registry",
-        "official public development push is already publication",
+        "single public immutable-development channel",
+        "anonymous exact-digest pull",
+        "never create a private candidate channel",
+        "explicit no-publication disposition",
         "fail-closed gate",
     )
     for phrase in required:
@@ -140,7 +143,7 @@ def test_copyable_contract_covers_all_artifact_boundaries_and_results() -> None:
         "cache reuse permission",
         "applicable refusal before network",
         "not applicable only for anonymous access with no documented acceptance gate",
-        "private staging digest before public publication",
+        "immutable delivery digest",
         "accepted:",
         "deferred:",
         "rejected:",
@@ -228,6 +231,9 @@ def test_contract_validation_blocks_are_shape_specific() -> None:
     )
     assert "not applicable — build-your-own" in runtime_validation
     assert "not applicable — runtime-fetch shape" in build_validation
+    assert "private staging digest before public publication" not in runtime_validation
+    assert "full-sha public development digest" in runtime_validation
+    assert "explicit no-publication disposition" in runtime_validation
     runtime_cache_row = next(
         line
         for line in CONTRACT.read_text(encoding="utf-8").splitlines()

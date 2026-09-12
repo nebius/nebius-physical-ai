@@ -6,9 +6,10 @@ description: Use when legal, license, or gated-access restrictions prevent bakin
 # Runtime-Fetch Onboarding
 
 Keep an onboarding moving when third-party bytes cannot be redistributed in a
-container. Ship the redistributable launcher and fetch restricted components
-directly from the upstream provider at runtime under the operator's own access
-and applicable terms.
+container. Choose either a redistributable launcher that fetches immutable
+upstream components at runtime under the operator's own access and terms, or an
+operator-built derivative that remains confined to a private registry when
+restricted inputs must be baked.
 
 Runtime fetch is a delivery design, not a license bypass. It can solve a
 redistribution restriction. It cannot create permission to use software, offer
@@ -168,10 +169,14 @@ build-your-own image when they are not part of its declared delivery path.
 
 Classify `redistribution: public` only from the bytes actually shipped and the
 verified rights for those bytes. Keep the image restricted or unvalidated when
-that proof is missing. Stage the exact digest in an operator-controlled private
-registry until byte-level inspection and real-GPU validation pass; an official
-public development push is already publication. A private registry changes
-access, not licensing.
+that proof is missing. For an authorized official public image, follow
+`secure-image-build`'s single public immutable-development channel: complete
+every local pre-publication gate, push the full-SHA development tag, prove its
+anonymous exact-digest pull, and then run the real-GPU capability on that public
+digest. Never create a private candidate channel for later public promotion.
+When official publication is not authorized, a private validation digest may
+prove the operator's own use only and must carry an explicit no-publication
+disposition. A private registry changes access, not licensing.
 
 When output terms reach a downstream workflow stage, encode a fail-closed gate
 or omit that stage. A documentation note is sufficient only when no automated

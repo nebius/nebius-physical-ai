@@ -88,7 +88,7 @@ pass/fail download, restricted-byte-absence, or cache evidence.
 | --- | --- | --- |
 | Applicable refusal before network | `<missing gated entitlement, explicit documented opt-out, or missing exact product opt-in; command and named failure>` | `<pass/fail; not applicable only for anonymous access with no documented acceptance gate>` |
 | Empty image/cache and byte-level restricted-payload absence | `<scanner and image digest>` | `<pass/fail>` |
-| Private staging digest before public publication | `<registry digest>` | `<pass/fail>` |
+| Immutable delivery digest | `<for authorized official publication: full-SHA public development digest and anonymous pull before GPU validation; otherwise: private validation digest plus explicit no-publication disposition>` | `<pass/fail>` |
 | Exact delivery and checksum verification | `<non-secret runtime-fetch manifest>` | `<pass/fail>` |
 | Restart/cache reuse and concurrent-population safety | `<test evidence>` | `<pass/fail>` |
 
