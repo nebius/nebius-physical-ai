@@ -19,10 +19,14 @@
   "required_final_file_sha256": {
     "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "1b1d7af997f35ba1ff2f4db39507ff11ac4306b6fcfc74a32385c9fde8bc5120",
     "/usr/share/doc/npa-habitat-sim/source-manifest.json": "44918d8afc1241183e2b5d2f763dd48aec705f6da847be3f65d79c6fa9e5e743",
-    "/usr/share/doc/npa-habitat-sim/licenses.json": "cc91ae7745287f08cdd655bed0dc3c94a98e3c72ff7bb2ceca75235f3dcebf63",
-    "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "1b1906ea2f32ee46b6882b92f333c30747342adcf62fcfb91312be7793e96b09",
+    "/usr/share/doc/npa-habitat-sim/licenses.json": "dd528ce0b4489e9c92f077e8d4222332a7c00f27701acfdbfd0369d96359770f",
+    "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "4bb99869a74cf5cedf359d173b72e5c0ec2dea6530b7191af136844dd651fcb7",
     "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": "82c97b7345a5044f4867efcabefa62f79391b675d92773816c59b29f98bb6548",
-    "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": "e5777b9be55857167f10c91f5c888885863678ecbcb7266d92a226db21dba5ef"
+    "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": "4a080d659ca4f721e5946494f4ffa4a4e79016b4b4d01bd3bbe341ca92f106dd",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7.orig.tar.gz": "4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7.orig.tar.gz.asc": "8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz": "05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7-0ubuntu0.22.04.7.dsc": "5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d"
   },
   "source_projection": {
     "manifest_path": "/usr/share/doc/npa-habitat-sim/source-manifest.json",

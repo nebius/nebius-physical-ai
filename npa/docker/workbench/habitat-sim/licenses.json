@@ -71,7 +71,7 @@
     {"name": "python3-defaults", "license": "PSF-2.0", "role": "build-and-runtime"},
     {"name": "openssh", "license": "BSD-style", "role": "runtime-bootstrap"},
     {"name": "netcat-openbsd", "license": "BSD-style", "role": "runtime-bootstrap"},
-    {"name": "rsync", "license": "GPL-3.0+", "role": "runtime-bootstrap", "source_offer_required": true},
+    {"name": "rsync", "license": "GPL-3.0+", "role": "runtime-bootstrap", "source_delivery": "accompanying-exact-source", "source_lock": "apt-runtime.lock#corresponding_sources[rsync]", "image_path": "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync"},
     {"name": "sudo", "license": "ISC-style", "role": "runtime-bootstrap"}
   ],
   "not_baked": [

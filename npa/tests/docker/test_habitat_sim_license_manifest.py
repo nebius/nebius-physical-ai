@@ -64,6 +64,20 @@ def test_runtime_asset_is_not_misclassified_as_baked() -> None:
     assert "credentials" in text and "generated outputs" in text
 
 
+def test_rsync_reciprocal_source_is_accompanied_not_merely_offered() -> None:
+    licenses = json.loads((PACKAGE / "licenses.json").read_text())
+    rsync = next(row for row in licenses["ubuntu_sources"] if row["name"] == "rsync")
+    assert rsync == {
+        "name": "rsync",
+        "license": "GPL-3.0+",
+        "role": "runtime-bootstrap",
+        "source_delivery": "accompanying-exact-source",
+        "source_lock": "apt-runtime.lock#corresponding_sources[rsync]",
+        "image_path": "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync",
+    }
+    assert "source_offer_required" not in json.dumps(licenses)
+
+
 def test_runtime_lock_contains_matplotlibs_pinned_packaging_dependency() -> None:
     build = _wheel_lock("requirements-build.lock")
     runtime = _wheel_lock("requirements-runtime.lock")

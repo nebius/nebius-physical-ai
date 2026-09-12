@@ -4,6 +4,7 @@ ARG BASE_IMAGE=ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b945
 ARG APT_SNAPSHOT=20260903T121500Z
 ARG CA_DEB_SHA256=6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
 ARG CA_CERT_COUNT=121
+ARG CA_CONFIG_BYTES=4930
 ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d
 ARG CA_BUNDLE_BYTES=182140
 ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
@@ -17,6 +18,7 @@ ADD --checksum=sha256:${CA_DEB_SHA256} \
 
 FROM ${BASE_IMAGE} AS npa-ca-trust
 ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
 ARG CA_CONFIG_SHA256
 ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
@@ -33,12 +35,14 @@ RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-cer
       find "${ca_cert_dir}" -type f -name '*.crt' -printf '%P\n' | \
         LC_ALL=C sort -u > "${ca_config}" && \
       test "$(wc -l < "${ca_config}")" -eq "${CA_CERT_COUNT}" && \
+      test "$(stat -c %s "${ca_config}")" -eq "${CA_CONFIG_BYTES}" && \
       printf '%s  %s\n' "${CA_CONFIG_SHA256}" "${ca_config}" | sha256sum -c - && \
       : > "${ca_bundle}" && \
       while IFS= read -r certificate; do \
         certificate_path="${ca_cert_dir}/${certificate}"; \
         test -f "${certificate_path}" || return 1; \
         test "$(tail -c 1 "${certificate_path}" | od -An -t u1 | tr -d ' ')" = 10 || return 1; \
+        openssl x509 -in "${certificate_path}" -noout >/dev/null 2>&1 || return 1; \
         cat "${certificate_path}" >> "${ca_bundle}" || return 1; \
       done < "${ca_config}" && \
       test "$(stat -c %s "${ca_bundle}")" -eq "${CA_BUNDLE_BYTES}" && \
@@ -49,6 +53,7 @@ RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-cer
 FROM ${BASE_IMAGE} AS build
 ARG APT_SNAPSHOT
 ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
 ARG CA_CONFIG_SHA256
 ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
@@ -58,11 +63,12 @@ COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
     test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
     printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
     test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
     printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
     printf '%s\n' \
-      'Types: deb' \
+      'Types: deb deb-src' \
       'URIs: https://snapshot.ubuntu.com/ubuntu/' \
       "Suites: ${APT_SNAPSHOT}" \
       'Components: main universe' \
@@ -91,6 +97,20 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
       pkg-config=0.29.2-1ubuntu3 \
       python3-dev=3.10.6-1~22.04 \
       python3-venv=3.10.6-1~22.04.1 && \
+    install -d -m 0755 /opt/rsync-source && \
+    cd /opt/rsync-source && \
+    apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7 && \
+    test "$(find . -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 4 && \
+    test "$(stat -c %s rsync_3.2.7.orig.tar.gz)" -eq 1149787 && \
+    test "$(stat -c %s rsync_3.2.7.orig.tar.gz.asc)" -eq 195 && \
+    test "$(stat -c %s rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz)" -eq 117112 && \
+    test "$(stat -c %s rsync_3.2.7-0ubuntu0.22.04.7.dsc)" -eq 2402 && \
+    printf '%s  %s\n' \
+      4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb rsync_3.2.7.orig.tar.gz \
+      8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae rsync_3.2.7.orig.tar.gz.asc \
+      05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811 rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
+      5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d rsync_3.2.7-0ubuntu0.22.04.7.dsc | \
+      sha256sum -c - && \
     ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
     rm -rf /var/lib/apt/lists/*
 
@@ -140,12 +160,19 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
     cp -a /opt/habitat-sim/src_python /opt/source-projection/ && \
     cp -a /opt/habitat-sim/src/deps /opt/source-projection/src/ && \
     mkdir -p /opt/notices && \
+    install -d -m 0755 /opt/notices/ubuntu-sources/rsync && \
+    cp /opt/rsync-source/rsync_3.2.7.orig.tar.gz \
+       /opt/rsync-source/rsync_3.2.7.orig.tar.gz.asc \
+       /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
+       /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.dsc \
+       /opt/notices/ubuntu-sources/rsync/ && \
     cp source-manifest.json source-projection.json licenses.json apt-build.lock apt-runtime.lock \
        requirements-build.lock requirements-runtime.lock runtime-payload.json /opt/notices/
 
 FROM ${BASE_IMAGE} AS runtime
 ARG APT_SNAPSHOT
 ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
 ARG CA_CONFIG_SHA256
 ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
@@ -154,6 +181,7 @@ USER root
 COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
     printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
     test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
     printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \

@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The static plan has one terminal state, one reachable module toolRef, one STRICT RTX PRO 6000 Blackwell request, and the named RGB/depth/Bullet/EGL output contract. Runtime capability remains unverified for this unbuilt digest.",
+      "reason": "The static plan has one terminal state, one reachable module toolRef, one RTX PRO 6000 Blackwell model/count request, and the named RGB/depth/Bullet/EGL output contract. A future external owner receipt must add the STRICT capacity binding; runtime capability remains unverified for this unbuilt digest.",
       "evidence": [
         "npa/tests/workflows/test_habitat_sim_workflow.py"
       ]

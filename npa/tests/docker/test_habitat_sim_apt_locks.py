@@ -65,10 +65,68 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
     }
     assert f"ARG CA_DEB_SHA256={ca['sha256']}" in dockerfile
     assert f"ARG CA_CERT_COUNT={ca['certificate_count']}" in dockerfile
+    assert f"ARG CA_CONFIG_BYTES={ca['config_bytes']}" in dockerfile
     assert f"ARG CA_CONFIG_SHA256={ca['config_sha256']}" in dockerfile
     assert f"ARG CA_BUNDLE_BYTES={ca['bundle_bytes']}" in dockerfile
     assert f"ARG CA_BUNDLE_SHA256={ca['bundle_sha256']}" in dockerfile
     assert "${APT_SNAPSHOT}/pool/main/c/ca-certificates/" in dockerfile
+    assert dockerfile.count('stat -c %s "${ca_config}"') == 1
+    assert dockerfile.count("stat -c %s /etc/ca-certificates.conf") == 2
+
+
+def test_rsync_corresponding_source_is_exact_and_accompanies_the_binary() -> None:
+    runtime = _lock("apt-runtime.lock")
+    [source] = runtime["corresponding_sources"]
+    assert source == {
+        "binary": "rsync",
+        "source": "rsync",
+        "version": "3.2.7-0ubuntu0.22.04.7",
+        "delivery": "accompanying-exact-source",
+        "directory": "pool/main/r/rsync",
+        "signed_index": {
+            "suite": "jammy-updates",
+            "path": "dists/jammy-updates/main/source/Sources.xz",
+            "bytes": 520028,
+            "sha256": "e2d0a07fd09ee8134bc10e23b1183270473cb6b45703803878d0273564cb54a0",
+        },
+        "artifacts": [
+            {
+                "filename": "rsync_3.2.7.orig.tar.gz",
+                "bytes": 1149787,
+                "sha256": "4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb",
+                "locator": "https://snapshot.ubuntu.com/ubuntu/20260903T121500Z/pool/main/r/rsync/rsync_3.2.7.orig.tar.gz",
+            },
+            {
+                "filename": "rsync_3.2.7.orig.tar.gz.asc",
+                "bytes": 195,
+                "sha256": "8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae",
+                "locator": "https://snapshot.ubuntu.com/ubuntu/20260903T121500Z/pool/main/r/rsync/rsync_3.2.7.orig.tar.gz.asc",
+            },
+            {
+                "filename": "rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz",
+                "bytes": 117112,
+                "sha256": "05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811",
+                "locator": "https://snapshot.ubuntu.com/ubuntu/20260903T121500Z/pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz",
+            },
+            {
+                "filename": "rsync_3.2.7-0ubuntu0.22.04.7.dsc",
+                "bytes": 2402,
+                "sha256": "5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d",
+                "locator": "https://snapshot.ubuntu.com/ubuntu/20260903T121500Z/pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.dsc",
+            },
+        ],
+    }
+    dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+    build, runtime_stage = dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)
+    assert "Types: deb deb-src" in build
+    assert "Types: deb deb-src" not in runtime_stage
+    assert "apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7" in build
+    for artifact in source["artifacts"]:
+        assert artifact["filename"] in build
+        assert str(artifact["bytes"]) in build
+        assert artifact["sha256"] in build
+        assert artifact["locator"].endswith("/" + artifact["filename"])
+    assert "/opt/notices/ubuntu-sources/rsync" in build
 
 
 def test_no_floating_upgrade_or_unverified_apt_transport() -> None:
