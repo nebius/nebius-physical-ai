@@ -64,13 +64,11 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
 
 
-def test_pr_test_matrix_uses_one_version_and_main_keeps_compatibility() -> None:
+def test_pr_and_main_test_the_full_supported_python_matrix() -> None:
     workflow = _load_workflow("test.yml")
     versions = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
 
-    assert "github.event_name == 'pull_request'" in versions
-    assert "[\"3.12\"]" in versions
-    assert "[\"3.10\",\"3.12\",\"3.14\"]" in versions
+    assert versions == "${{ fromJSON('[\"3.10\",\"3.12\",\"3.14\"]') }}"
 
 
 def _make_recipe(target: str) -> list[str]:

@@ -260,7 +260,9 @@ def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(runtim
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
-def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(runtime, monkeypatch, cancelled, caplog):
+def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(
+    runtime, monkeypatch, cancelled, caplog
+):
     streams, terminated = [], []
     failure = asyncio.CancelledError() if cancelled else RuntimeError("synthetic initialization failure")
 
@@ -275,11 +277,15 @@ def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(
     async def models(*args, **kwargs):
         raise failure
 
+    async def start_and_capture_failure():
+        with pytest.raises(type(failure)) as caught:
+            await runtime.start()
+        return caught.value
+
     monkeypatch.setattr(server.subprocess, "Popen", spawn)
     monkeypatch.setattr(httpx.AsyncClient, "get", models)
-    with pytest.raises(type(failure)) as caught:
-        asyncio.run(runtime.start())
-    assert caught.value is failure
+    caught_failure = asyncio.run(start_and_capture_failure())
+    assert caught_failure is failure
     assert terminated == [True]
     assert len(streams) == 1 and streams[0].closed
     assert runtime._log_stream is None
