@@ -17,6 +17,7 @@ import pytest
 from rich.console import Console
 import typer
 from typer.testing import CliRunner
+import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
@@ -233,6 +234,58 @@ def test_robotwin_self_certified_context_refuses_before_external_boundaries(
 
     assert result.exit_code == 1
     assert "manager-runtime-use-receipt-unavailable" in result.output
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
+def test_relabelled_robotwin_workflow_refuses_before_external_boundaries(
+    mocker, tmp_path: Path
+) -> None:
+    document = yaml.safe_load(ROBOTWIN_SPEC.read_text(encoding="utf-8"))
+    document["metadata"]["name"] = "generic-workflow"
+    document["config"].update(
+        {
+            "solution_name": "generic-solution",
+            "runtime_context_env": "GENERIC_RUNTIME_CONTEXT",
+            "repo_ref": "main",
+        }
+    )
+    relabelled = tmp_path / "generic-workflow.yaml"
+    relabelled.write_text(yaml.safe_dump(document), encoding="utf-8")
+    boundaries = [
+        mocker.patch(
+            "npa.orchestration.npa_workflow.first_run_state.prepare_run"
+        ),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
+        ),
+        mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
+        mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
+        mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.deploy.ensure_infra_present"
+        ),
+        mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
+    ]
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(relabelled),
+            "--run-id",
+            "generic-public-launcher",
+            "--no-deploy-if-absent",
+            "--skip-preflight",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "workflow-config" in result.output
     for boundary in boundaries:
         boundary.assert_not_called()
 

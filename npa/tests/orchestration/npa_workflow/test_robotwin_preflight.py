@@ -164,6 +164,51 @@ def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> Non
     ("field", "value"),
     [
         ("solution_name", "RoBoTwIn"),
+        ("repo_url", "https://github.com/RoboTwin-Platform/RoboTwin.git"),
+        ("base_image", "tool://robotwin"),
+        ("image", "registry.invalid/private/npa-robotwin:mutable"),
+        ("smoke_command", "/opt/npa/robotwin/robotwin-runtime run"),
+        (
+            "capability_name",
+            "beat_block_hammer_successful_seed_replay_collection",
+        ),
+        (
+            "resource_profile_yaml",
+            "byof-solution-smoke-robotwin-rtxpro-gpu",
+        ),
+    ],
+)
+def test_relabelled_workflow_still_enters_exact_contract_refusal(
+    field: str, value: str
+) -> None:
+    spec = load_spec(ROBOTWIN_SPEC)
+    config = {
+        **spec.config,
+        "solution_name": "generic-solution",
+        "repo_url": "https://example.invalid/generic/repository.git",
+        "repo_ref": "main",
+        "runtime_context_env": "GENERIC_RUNTIME_CONTEXT",
+        "base_image": "tool://generic",
+        "smoke_command": "echo generic",
+        "capability_name": "generic_capability",
+        "resource_profile_yaml": "generic-profile",
+        field: value,
+    }
+
+    with pytest.raises(RobotwinPreflightError, match="workflow-config"):
+        recognize_contract(
+            replace(
+                spec,
+                metadata={**spec.metadata, "name": "generic-workflow"},
+                config=config,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("solution_name", "RoBoTwIn"),
         ("repo_url", "https://github.com/robotwin-platform/robotwin"),
         (
             "repo_url",
