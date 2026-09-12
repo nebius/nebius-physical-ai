@@ -102,12 +102,20 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     base = "ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986"
     assert f"ARG BASE_IMAGE={base}" in DOCKERFILE
     assert "ARG APT_SNAPSHOT=20260903T121500Z" in DOCKERFILE
-    assert "ADD --checksum=sha256:${CA_DEB_SHA256}" in DOCKERFILE
+    for expected in (
+        "ADD --checksum=sha256:${CA_DEB_SHA256}",
+        "ADD --checksum=sha256:${OPENSSL_DEB_SHA256}",
+        "ADD --checksum=sha256:${LIBSSL3_DEB_SHA256}",
+    ):
+        assert expected in DOCKERFILE
     assert (
         "http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/"
         in DOCKERFILE
     )
-    assert "URIs: https://snapshot.ubuntu.com/ubuntu/" in DOCKERFILE
+    assert (
+        "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" in DOCKERFILE
+    )
+    assert "Suites: jammy jammy-updates jammy-security" in DOCKERFILE
     assert "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in DOCKERFILE
     for expected in (
         "ARG CA_CERT_COUNT=121",
@@ -136,6 +144,14 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
         )
         assert stage_start < config_copy < bundle_copy < https
     assert DOCKERFILE.count("source=/ca-certificates.deb") == 1
+    assert DOCKERFILE.count("source=/openssl.deb") == 1
+    assert DOCKERFILE.count("source=/libssl3.deb") == 1
+    assert DOCKERFILE.index("dpkg-deb -x /tmp/libssl3.deb") < DOCKERFILE.index(
+        "openssl x509"
+    )
+    assert DOCKERFILE.index("dpkg-deb -x /tmp/openssl.deb") < DOCKERFILE.index(
+        "openssl x509"
+    )
     assert "COPY --from=npa-ca-bootstrap" not in DOCKERFILE
     assert not re.search(r"URIs:\s+http://", DOCKERFILE)
 
@@ -269,7 +285,9 @@ def test_https_and_repository_signature_failures_have_no_bypass() -> None:
             continue
         assert (
             stage.index("COPY --from=npa-ca-trust")
-            < stage.index("URIs: https://snapshot.ubuntu.com/ubuntu/")
+            < stage.index(
+                "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/"
+            )
             < stage.index("apt-get update")
         )
     for forbidden in (
@@ -435,6 +453,9 @@ def test_final_stage_has_no_scene_or_vendor_payload_input() -> None:
         assert token not in DOCKERFILE
     assert "HABITAT_WITH_CUDA=OFF" in DOCKERFILE
     assert "ffmpeg-*' -delete" in DOCKERFILE
+    final = DOCKERFILE.split("FROM ${BASE_IMAGE} AS runtime", 1)[1]
+    for archive in ("ca-certificates*.deb", "openssl*.deb", "libssl3*.deb"):
+        assert f"-name '{archive}'" in final
 
 
 def test_local_builder_outputs_attested_oci_without_push_or_load() -> None:

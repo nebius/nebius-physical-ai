@@ -3,6 +3,8 @@
 ARG BASE_IMAGE=ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
 ARG APT_SNAPSHOT=20260903T121500Z
 ARG CA_DEB_SHA256=6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
+ARG OPENSSL_DEB_SHA256=bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817
+ARG LIBSSL3_DEB_SHA256=c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146
 ARG CA_CERT_COUNT=121
 ARG CA_CONFIG_BYTES=4930
 ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d
@@ -12,9 +14,17 @@ ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483
 FROM scratch AS npa-ca-bootstrap
 ARG APT_SNAPSHOT
 ARG CA_DEB_SHA256
+ARG OPENSSL_DEB_SHA256
+ARG LIBSSL3_DEB_SHA256
 ADD --checksum=sha256:${CA_DEB_SHA256} \
     http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb \
     /ca-certificates.deb
+ADD --checksum=sha256:${OPENSSL_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.29_amd64.deb \
+    /openssl.deb
+ADD --checksum=sha256:${LIBSSL3_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.29_amd64.deb \
+    /libssl3.deb
 
 FROM ${BASE_IMAGE} AS npa-ca-trust
 ARG CA_CERT_COUNT
@@ -24,6 +34,10 @@ ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
 USER root
 RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-certificates.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/openssl.deb,target=/tmp/openssl.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/libssl3.deb,target=/tmp/libssl3.deb,ro \
+    dpkg-deb -x /tmp/libssl3.deb / && \
+    dpkg-deb -x /tmp/openssl.deb / && \
     dpkg-deb -x /tmp/ca-certificates.deb / && \
     npa_bootstrap_ca() { \
       ca_root="${1%/}"; \
@@ -69,8 +83,8 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
     printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
     printf '%s\n' \
       'Types: deb deb-src' \
-      'URIs: https://snapshot.ubuntu.com/ubuntu/' \
-      "Suites: ${APT_SNAPSHOT}" \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-security' \
       'Components: main universe' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       'Check-Valid-Until: no' \
@@ -187,8 +201,8 @@ RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
     printf '%s\n' \
       'Types: deb' \
-      'URIs: https://snapshot.ubuntu.com/ubuntu/' \
-      "Suites: ${APT_SNAPSHOT}" \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-security' \
       'Components: main universe' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       'Check-Valid-Until: no' \
@@ -233,7 +247,9 @@ RUN chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
     chown -R root:root /opt/venv /opt/npa-runtime /usr/src/habitat-sim \
       /usr/share/doc/npa-habitat-sim && \
     ! find / -xdev \( -name 'habitat-test-scenes.zip' -o -name 'skokloster-castle.glb' \
-      -o -name 'skokloster-castle.navmesh' -o -name '.git' -o -name '.gitconfig' \) \
+      -o -name 'skokloster-castle.navmesh' -o -name 'ca-certificates*.deb' \
+      -o -name 'openssl*.deb' -o -name 'libssl3*.deb' \
+      -o -name '.git' -o -name '.gitconfig' \) \
       -print -quit | grep -q .
 
 ENV PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \

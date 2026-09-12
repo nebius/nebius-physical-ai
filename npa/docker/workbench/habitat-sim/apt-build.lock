@@ -14,6 +14,11 @@ ca_bootstrap:
   config_sha256: bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d
   bundle_bytes: 182140
   bundle_sha256: 9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
+  x509_parser:
+    command: /usr/bin/openssl
+    packages:
+      - {binary: openssl, version: 3.0.2-0ubuntu1.29, bytes: 1184520, sha256: bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817, source: openssl}
+      - {binary: libssl3, version: 3.0.2-0ubuntu1.29, bytes: 1906444, sha256: c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146, source: openssl}
 compatibility:
   installed_perl_base: 5.34.0-3ubuntu1.8
   candidate_perl_base: 5.34.0-3ubuntu1.8
