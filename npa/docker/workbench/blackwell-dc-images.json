@@ -529,6 +529,17 @@
       ]
     },
     {
+      "name": "npa-gymnasium-robotics",
+      "dockerfile": "gymnasium-robotics/Dockerfile",
+      "build_script": "gymnasium-robotics/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "blocked_reason": "The genuine Shadow Dexterous Hand capability requires MuJoCo EGL rendering. B200/B300 have no RT cores, so they cannot execute this RTX rendering workload; no datacenter-Blackwell compatibility is claimed.",
+      "upstream_tracking": "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
+      "smoke": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1 runs 120 MuJoCo steps and 2,400 substeps with contacts, touch response, object-orientation change, and distinct EGL RGB frames on exactly one RTX PRO 6000 Blackwell",
+      "notes": "This is a neutral pre-registration candidate and no current image exists. Historical RTX PRO 6000 evidence does not qualify current candidate bytes; never route this rendering workload to B200/B300."
+    },
+    {
       "name": "npa-isaac-lab",
       "dockerfile": "isaac-lab/Dockerfile",
       "verdict": "blocked",
