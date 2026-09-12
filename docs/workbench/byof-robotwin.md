@@ -42,7 +42,9 @@ file with a byte bound and `O_NOFOLLOW` before config discovery, image work,
 storage, networking, scheduling, or GPU activity. Its closed schema binds the
 workflow hash, source/CuRobo/asset revisions, runtime-lock hash, one immutable
 bootstrap image digest, one STRICT RTX reservation, four independent decisions,
-and one output root/run ID.
+and one output root/run ID. Phase A deliberately rejects even a well-formed
+context: no manager-approved receipt format, verifier key, or immutable evidence
+binding exists, so the four booleans cannot self-certify those decisions.
 
 Only validated bytes cross the existing secret-value transport. The CPU worker
 materializes temporary context/config files below a 0700 directory as exclusive
@@ -52,21 +54,40 @@ on every exit. The public YAML and plan retain `tool://robotwin`,
 CPU-only and the inner profile contains the sole accelerator request:
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`.
 
-A future live submit must receive an already verified, content-addressed
+A future live submit would have to receive an already verified, content-addressed
 `NPA_SRC_S3_URI` from the operator environment. Its final path component must
 equal the current local source fingerprint, and its bucket must differ from the
 manager-authorized workload-output bucket. RoboTwin rejects saved source
 coordinates and `--stage-src`: it neither uploads nor persists a source URI.
+The current code also refuses this input because the existing source-stage
+metadata does not authenticate every remote path, mode, and digest. A separately
+reviewed manifest verification design is required before any source download or
+editable install can occur. If that design is later approved, the URI value may
+cross only SkyPilot's secret-value transport; submitted YAML and setup logs keep
+only the variable name and a generic sync message.
 The confidential path also bypasses the generic first-run, submission, launch,
 and provisioning journals, so the manager-selected project, context, and
 destination remain in process memory and are absent from CLI results and local
 submission state. Non-RoboTwin workflows retain the normal durable-state path.
+
+Direct RoboTwin BYOF CLI/script invocation is inert even when a caller supplies
+an internal-looking transport value. The CPU outer-to-worker bridge is also
+disabled until genuine manager receipt, source-byte verification, and an
+independently attestable outer identity are designed and reviewed. Non-RoboTwin
+BYOF behavior is unchanged.
 
 The image bootstrap independently validates the transported context and
 run/image/output bindings. Phase A then exits 78 with
 `ROBOTWIN_RUNTIME_REFUSED:runtime-lock-incomplete` before it can create source,
 asset, cache, or output paths or access the network. Its CPU golden eval runs
 `robotwin-runtime assert-refusal`; this is packaging/refusal evidence only.
+
+The RoboTwin byte scanner is likewise unavailable in Phase A. Path and regex
+denials remain defense in depth, but they cannot prove absence after arbitrary
+renaming or re-encoding. Even a completed-looking policy file is rejected until
+a separately reviewed implementation binds the shared fresh-native exact-content
+scanner, detector identities, and reviewed candidate-byte population. No image
+absence or publication claim exists yet.
 
 ## Local validation
 

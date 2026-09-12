@@ -32,6 +32,15 @@ from npa.orchestration.npa_workflow import robotwin_preflight
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _supply_genuine_receipt_only_inside_unit_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        robotwin_preflight, "_require_genuine_runtime_use_receipt", lambda _raw: None
+    )
+
+
 def test_byof_runner_resolves_from_staged_npa_source(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -397,14 +406,14 @@ def test_robotwin_worker_transport_failure_keeps_private_details_out_of_cli(
     result = runner.invoke(app, ["workbench", "byof", "run", *argv])
 
     assert result.exit_code != 0
-    assert "RoboTwin worker authorization refused" in result.output
+    assert "Phase A worker bridge is disabled" in result.output
     assert private_canary not in result.output
     assert private_digest not in result.output
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
 
 
-def test_robotwin_worker_transport_uses_only_authorized_internal_runner(
+def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -433,6 +442,6 @@ def test_robotwin_worker_transport_uses_only_authorized_internal_runner(
 
     result = runner.invoke(app, ["workbench", "byof", "run", *argv])
 
-    assert result.exit_code == 0, result.output
-    assert observed["argv"] == argv
-    assert observed["authorization"] is not None
+    assert result.exit_code == 2
+    assert "Phase A worker bridge is disabled" in result.output
+    assert observed == {}

@@ -171,21 +171,58 @@ def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
     } <= kinds
 
 
-def test_cli_report_records_a_clean_offline_scan(tmp_path: Path) -> None:
+def test_phase_a_cli_refuses_before_any_candidate_can_pass(tmp_path: Path) -> None:
     rootfs = _tar(
         tmp_path / "rootfs.tar",
         {"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA bootstrap notice"},
     )
     output = tmp_path / "report.json"
-    assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 0
-    report = json.loads(output.read_text(encoding="utf-8"))
-    assert report == {
-        "format": "npa_robotwin_image_byte_scan_v1",
-        "image": "offline-rootfs",
-        "status": "pass",
-        "archives_scanned": 1,
-        "findings": [],
-    }
+    assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 2
+    assert not output.exists()
+
+
+def test_complete_looking_policy_cannot_activate_unimplemented_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.image-native-content-policy.v1",
+                "detector_identity": {
+                    "config_sha256": "a" * 64,
+                    "helper_sha256": "b" * 64,
+                },
+                "entries": [{"untrusted": "catalog-entry"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scanner, "PUBLIC_POLICY_PATH", policy)
+    monkeypatch.setattr(
+        scanner,
+        "docker_save_material",
+        lambda *_args, **_kwargs: pytest.fail(
+            "unimplemented exact-content policy reached candidate bytes"
+        ),
+    )
+    image = tmp_path / "candidate.tar"
+    image.write_bytes(b"not-an-image")
+
+    assert scanner.main(["--docker-save", str(image)]) == 2
+
+
+def test_private_image_stdin_reader_remains_byte_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = b"x" * (scanner.MAX_IMAGE_REFERENCE_BYTES + 1)
+    monkeypatch.setattr(
+        scanner.sys,
+        "stdin",
+        io.TextIOWrapper(io.BytesIO(oversized), encoding="utf-8"),
+    )
+    with pytest.raises(ValueError, match="too large"):
+        scanner._read_image_stdin()
 
 
 def test_private_image_stdin_is_bounded_and_never_echoed_on_failure(

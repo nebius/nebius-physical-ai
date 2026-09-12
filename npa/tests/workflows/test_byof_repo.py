@@ -73,6 +73,13 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
 
 
 def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
     monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
     payload = _robotwin_context(**updates)
     for field, filename in (
@@ -572,11 +579,16 @@ def test_robotwin_image_scanner_receives_private_digest_only_on_stdin(
 ) -> None:
     module = _load_module()
     image = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "unrelated-storage-canary")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://unrelated-source-canary/prefix")
+    monkeypatch.setenv("DOCKER_CONFIG", "/owner-only/docker-config")
 
     def fake_run(cmd: list[str], **kwargs):
         assert image not in cmd
         assert "--image-stdin" in cmd
         assert kwargs["stdin"] == image
+        assert kwargs["inherit_env"] is False
+        assert kwargs["env"] == {"DOCKER_CONFIG": "/owner-only/docker-config"}
         report_path = Path(cmd[cmd.index("--output") + 1])
         report_path.write_text(
             json.dumps(
