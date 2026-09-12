@@ -79,9 +79,11 @@ discarding unrelated capabilities that can be packaged and proven safely.
    node-local ephemeral caching when durable-cache permission or isolation is
    not established. Mount a completed durable cache read-only in authorized
    consumers; never copy it into another image.
-8. Keep the workflow useful without credentials: planning and image validation
-   must work, while the artifact-dependent runtime path fails early with a
-   specific remediation and without provisioning or partial downloads.
+8. Keep planning and image validation useful without credentials. When the
+   selected artifact requires credentials, its artifact-dependent runtime path
+   fails early with a specific remediation and without provisioning or partial
+   downloads. Anonymous artifacts may run without credentials, subject to any
+   separate documented product-specific acceptance gate.
 
 ## Required Proof
 

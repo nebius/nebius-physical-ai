@@ -46,7 +46,7 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 
 | Gate | Command/evidence | Result |
 | --- | --- | --- |
-| Applicable refusal before network | `<missing gated entitlement, explicit documented opt-out, or missing exact product opt-in; command and named failure>` | `<pass/fail or not applicable for anonymous access>` |
+| Applicable refusal before network | `<missing gated entitlement, explicit documented opt-out, or missing exact product opt-in; command and named failure>` | `<pass/fail; not applicable only for anonymous access with no documented acceptance gate>` |
 | Empty image/cache and byte-level payload scan | `<scanner and image digest>` | `<pass/fail>` |
 | SBOM, vulnerability, license, and secret scans | `<artifacts>` | `<pass/fail>` |
 | Private staging digest before public publication | `<registry digest>` | `<pass/fail>` |
