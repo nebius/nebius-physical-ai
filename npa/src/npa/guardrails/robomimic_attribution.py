@@ -125,6 +125,7 @@ _RELEASE_KEY_12 = _PublicProof(
     "ftp-master.debian.org",
 )
 _SIGNING_KEYS = (_ARCHIVE_KEY_12, _ARCHIVE_KEY_13, _RELEASE_KEY_12)
+_OPENPGP_TIMEOUT_SECONDS = 30
 
 
 def _digest(payload: bytes) -> str:
@@ -245,6 +246,7 @@ def _create_keyring(gpg: str, key_home: Path, key_paths: list[Path]) -> Path:
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        timeout=_OPENPGP_TIMEOUT_SECONDS,
     )
     if imported.returncode:
         raise ValueError("official signing keys could not be imported")
@@ -260,6 +262,7 @@ def _create_keyring(gpg: str, key_home: Path, key_paths: list[Path]) -> Path:
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=_OPENPGP_TIMEOUT_SECONDS,
     )
     if exported.returncode or not exported.stdout:
         raise ValueError("official signing keyring could not be created")
@@ -294,6 +297,7 @@ def _verify_openpgp_signature(proof_directory: Path) -> None:
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            timeout=_OPENPGP_TIMEOUT_SECONDS,
         )
         if verified.returncode:
             raise ValueError("snapshot release signature verification failed")
