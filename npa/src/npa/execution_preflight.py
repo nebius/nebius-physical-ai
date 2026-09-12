@@ -37,6 +37,7 @@ LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
+    "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
     "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
     "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
     "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
@@ -688,7 +689,7 @@ def preflight_skypilot_submission(
             # legacy top-level declaration before persisting prepared YAML also
             # prevents the payload's pods/get permission from reading literal
             # credential values back from its own Pod specification.
-            for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+            for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES:
                 env.pop(name, None)
 
     if libero_submission:
@@ -696,23 +697,22 @@ def preflight_skypilot_submission(
             if isinstance(value, Mapping):
                 envs = value.get("envs")
                 if isinstance(envs, Mapping) and any(
-                    name in envs
-                    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+                    name in envs for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES
                 ):
                     raise ExecutionPreflightError(
                         "worker_environment",
-                        "LIBERO storage credentials must use the redacted task secret channel",
+                        "LIBERO authorization and storage material must use the redacted task secret channel",
                     )
                 pod_env = value.get("env")
                 if isinstance(pod_env, list) and any(
                     isinstance(entry, Mapping)
                     and entry.get("name")
-                    in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+                    in LIBERO_SKYPILOT_SECRET_ENV_NAMES
                     for entry in pod_env
                 ):
                     raise ExecutionPreflightError(
                         "worker_environment",
-                        "LIBERO pod configuration may not inline storage credentials",
+                        "LIBERO pod configuration may not inline authorization or storage material",
                     )
                 for child in value.values():
                     reject_inline_storage_secret(child)

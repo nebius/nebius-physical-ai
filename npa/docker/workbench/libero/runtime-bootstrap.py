@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,11 @@ EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
+MANAGER_ACCEPTANCE_PUBLIC_KEY = Path(
+    "/opt/npa/libero/manager-acceptance-public-key.b64"
+)
+MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID = 0
+MANAGER_ACCEPTANCE_NAMESPACE = b"npa.libero.acceptance"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
         "files.pythonhosted.org",
@@ -127,6 +133,7 @@ STORAGE_SECRET_ENV_NAMES = frozenset(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
     }
 )
 RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES = frozenset(
@@ -615,8 +622,204 @@ def _remove_current_cache_link(cache_root: Path, final: Path) -> None:
         current.unlink()
 
 
+def _ssh_string(value: bytes) -> bytes:
+    return struct.pack(">I", len(value)) + value
+
+
+def _canonical_unsigned_acceptance(payload: dict[str, Any]) -> bytes:
+    unsigned = json.loads(json.dumps(payload))
+    acceptance = unsigned.get("acceptance")
+    if not isinstance(acceptance, dict):
+        raise BootstrapRefusal("manager acceptance record is unavailable")
+    acceptance.pop("manager_signature", None)
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _manager_signature_payload(payload: dict[str, Any]) -> bytes:
+    canonical = _canonical_unsigned_acceptance(payload)
+    return b"".join(
+        (
+            b"SSHSIG",
+            _ssh_string(MANAGER_ACCEPTANCE_NAMESPACE),
+            _ssh_string(b""),
+            _ssh_string(b"sha512"),
+            _ssh_string(hashlib.sha512(canonical).digest()),
+        )
+    )
+
+
+def _manager_sshsig(public_key: bytes, signature: bytes) -> bytes:
+    public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
+    signature_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(signature)
+    payload = b"".join(
+        (
+            b"SSHSIG",
+            struct.pack(">I", 1),
+            _ssh_string(public_key_blob),
+            _ssh_string(MANAGER_ACCEPTANCE_NAMESPACE),
+            _ssh_string(b""),
+            _ssh_string(b"sha512"),
+            _ssh_string(signature_blob),
+        )
+    )
+    encoded = base64.b64encode(payload).decode("ascii")
+    lines = [encoded[index : index + 70] for index in range(0, len(encoded), 70)]
+    return (
+        "-----BEGIN SSH SIGNATURE-----\n"
+        + "\n".join(lines)
+        + "\n-----END SSH SIGNATURE-----\n"
+    ).encode()
+
+
+def _trusted_manager_public_key(expected_sha256: str) -> bytes:
+    try:
+        metadata = MANAGER_ACCEPTANCE_PUBLIC_KEY.lstat()
+        encoded = MANAGER_ACCEPTANCE_PUBLIC_KEY.read_bytes()
+    except OSError as exc:
+        raise BootstrapRefusal("manager acceptance trust root is unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID
+        or stat.S_IMODE(metadata.st_mode) != 0o444
+        or encoded != encoded.strip()
+    ):
+        raise BootstrapRefusal("manager acceptance trust root is mutable or invalid")
+    try:
+        public_key = base64.b64decode(encoded, validate=True)
+    except ValueError as exc:
+        raise BootstrapRefusal("manager acceptance trust root is invalid") from exc
+    if (
+        len(public_key) != 32
+        or not _is_hex(expected_sha256, 64)
+        or hashlib.sha256(public_key).hexdigest() != expected_sha256
+    ):
+        raise BootstrapRefusal("manager acceptance trust root differs")
+    return public_key
+
+
+def _verify_manager_signature(
+    payload: dict[str, Any], signature_record: dict[str, Any]
+) -> None:
+    public_key = _trusted_manager_public_key(
+        str(signature_record.get("public_key_sha256") or "")
+    )
+    try:
+        signature = base64.b64decode(
+            str(signature_record.get("signature_b64") or ""), validate=True
+        )
+    except ValueError as exc:
+        raise BootstrapRefusal("manager acceptance signature is invalid") from exc
+    if len(signature) != 64:
+        raise BootstrapRefusal("manager acceptance signature is invalid")
+    canonical = _canonical_unsigned_acceptance(payload)
+    public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
+    allowed_signer = (
+        "npa-manager ssh-ed25519 "
+        + base64.b64encode(public_key_blob).decode("ascii")
+        + "\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-libero-manager-signature-") as root:
+        root_path = Path(root)
+        allowed_path = root_path / "allowed-signers"
+        signature_path = root_path / "acceptance.sig"
+        allowed_path.write_text(allowed_signer, encoding="ascii")
+        signature_path.write_bytes(_manager_sshsig(public_key, signature))
+        os.chmod(allowed_path, 0o600)
+        os.chmod(signature_path, 0o600)
+        completed = subprocess.run(
+            [
+                "/usr/bin/ssh-keygen",
+                "-Y",
+                "verify",
+                "-f",
+                str(allowed_path),
+                "-I",
+                "npa-manager",
+                "-n",
+                MANAGER_ACCEPTANCE_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature_path),
+            ],
+            input=canonical,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": "/nonexistent", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+    if completed.returncode:
+        raise BootstrapRefusal("manager acceptance signature is invalid")
+
+
+def _validate_manager_acceptance(
+    path: Path, *, manifest_sha256: str, decision_sha256: str
+) -> dict[str, Any]:
+    """Verify the image-local decision against a non-substitutable trust root."""
+
+    if not _is_private_regular_file(path):
+        raise BootstrapRefusal("manager acceptance must be an owner-only regular file")
+    payload = _load_json(path)
+    acceptance = payload.get("acceptance")
+    signature_record = (
+        acceptance.get("manager_signature") if isinstance(acceptance, dict) else None
+    )
+    if (
+        payload.get("schema") != "npa.workbench.image-manifest.v1"
+        or payload.get("tool") != "libero"
+        or payload.get("image_name") != "npa-libero"
+        or payload.get("runtime_payloads_baked") is not False
+        or payload.get("runtime_use_decision_required") is not True
+        or not isinstance(acceptance, dict)
+        or acceptance.get("schema") != "npa.libero.qualification-acceptance.v3"
+        or acceptance.get("status") != "accepted"
+        or not isinstance(signature_record, dict)
+        or set(signature_record)
+        != {"algorithm", "public_key_sha256", "signature_b64"}
+        or signature_record.get("algorithm") != "ed25519"
+        or acceptance.get("runtime_manifest_sha256") != manifest_sha256
+        or acceptance.get("runtime_use_decision_sha256") != decision_sha256
+    ):
+        raise BootstrapRefusal("manager acceptance does not authorize this runtime")
+    infrastructure = acceptance.get("infrastructure")
+    if not isinstance(infrastructure, dict):
+        raise BootstrapRefusal("manager acceptance infrastructure is invalid")
+    observed_infrastructure = hashlib.sha256(
+        json.dumps(
+            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if observed_infrastructure != acceptance.get("infrastructure_bundle_sha256"):
+        raise BootstrapRefusal("manager acceptance infrastructure differs")
+    try:
+        accepted_at = datetime.fromisoformat(
+            str(acceptance["accepted_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BootstrapRefusal("manager acceptance timestamps are invalid") from exc
+    now = datetime.now(timezone.utc)
+    if (
+        accepted_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or accepted_at > now + timedelta(minutes=5)
+        or accepted_at >= expires_at
+        or expires_at <= now
+        or expires_at - accepted_at > timedelta(days=7)
+    ):
+        raise BootstrapRefusal("manager acceptance is expired or replayable")
+    _verify_manager_signature(payload, signature_record)
+    return acceptance
+
+
 def _validate_decision(
-    path: Path, expected_sha256: str, manifest: dict[str, Any], manifest_sha256: str
+    path: Path,
+    expected_sha256: str,
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+    acceptance: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
     if not _is_hex(expected_sha256, 64):
         raise BootstrapRefusal("expected decision SHA-256 is required")
@@ -629,6 +832,7 @@ def _validate_decision(
         raise BootstrapRefusal("runtime-use decision hash does not match")
     decision = _load_json(path)
     source = manifest["source"]
+    infrastructure = acceptance["infrastructure"]
     boundaries = decision.get("authorized_boundaries")
     expected_keys = {
         "schema",
@@ -656,17 +860,19 @@ def _validate_decision(
         or decision.get("decision") != "authorized"
         or decision.get("runtime_fetch_authorized") is not True
         or decision.get("acceptance_id")
-        != os.environ.get("NPA_LIBERO_EXPECTED_ACCEPTANCE_ID")
-        or decision.get("candidate_image") != os.environ.get("BYOF_IMAGE")
+        != acceptance.get("acceptance_id")
+        or decision.get("candidate_image") != acceptance.get("candidate_image")
         or decision.get("publication_bundle_sha256")
-        != os.environ.get("NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256")
+        != acceptance.get("publication_bundle_sha256")
         or decision.get("infrastructure_bundle_sha256")
-        != os.environ.get("NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256")
+        != acceptance.get("infrastructure_bundle_sha256")
         or decision.get("runtime_manifest_sha256") != manifest_sha256
         or decision.get("upstream_source_revision") != source["revision"]
-        or decision.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
+        or decision.get("run_id") != infrastructure.get("run_id")
         or decision.get("namespace_sha256")
-        != os.environ.get("NPA_LIBERO_EXPECTED_NAMESPACE_SHA256")
+        != infrastructure.get("namespace_sha256")
+        or os.environ.get("BYOF_IMAGE") != acceptance.get("candidate_image")
+        or os.environ.get("NPA_BYOF_RUN_ID") != infrastructure.get("run_id")
         or decision.get("issuer") != "npa-manager"
         or not isinstance(boundaries, list)
         or frozenset(boundaries) != EXPECTED_DECISION_BOUNDARIES
@@ -1280,8 +1486,17 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.manifest)
     manifest, manifest_sha256 = _validate_manifest(manifest_path)
     decision_path = Path(args.decision)
+    acceptance = _validate_manager_acceptance(
+        Path(args.acceptance),
+        manifest_sha256=manifest_sha256,
+        decision_sha256=args.decision_sha256,
+    )
     _, decision_sha256 = _validate_decision(
-        decision_path, args.decision_sha256, manifest, manifest_sha256
+        decision_path,
+        args.decision_sha256,
+        manifest,
+        manifest_sha256,
+        acceptance,
     )
     requirement_lines, requirements_sha256 = _validate_requirements(
         Path(args.requirements), manifest
@@ -1908,6 +2123,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cache-root", default=str(DEFAULT_CACHE))
     parser.add_argument("--decision", default="")
     parser.add_argument("--decision-sha256", default="")
+    parser.add_argument("--acceptance", default="")
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--smoke-exit-code", type=int, default=1)
     return parser.parse_args(argv)

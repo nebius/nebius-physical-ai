@@ -26,7 +26,8 @@ from urllib.parse import urlparse
 import yaml
 
 from npa.deploy.images import (
-    libero_accepted_image_manifest,
+    libero_image_manifest,
+    validate_libero_accepted_image_manifest,
     validate_libero_runtime_decision,
 )
 from npa.execution_preflight import (
@@ -78,6 +79,29 @@ LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
 LIBERO_CONTROLLER_ROLE = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role"
 LIBERO_CONTROLLER_ROLE_BINDING = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role-binding"
+LIBERO_CONTROLLER_RULES = [
+    {
+        "apiGroups": [""],
+        "resources": ["pods"],
+        "verbs": ["create", "delete", "get", "list", "patch", "watch"],
+    },
+    {
+        "apiGroups": [""],
+        "resources": ["pods/exec"],
+        "verbs": ["create", "get"],
+    },
+    {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
+    {
+        "apiGroups": [""],
+        "resources": ["services"],
+        "verbs": ["create", "delete", "get", "list", "patch", "watch"],
+    },
+    {
+        "apiGroups": [""],
+        "resources": ["configmaps", "secrets"],
+        "verbs": ["create", "delete", "get"],
+    },
+]
 LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
 LIBERO_RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -111,6 +135,7 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         "HF_TOKEN",
     ),
     "libero": (
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
         "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
@@ -409,6 +434,9 @@ class LiberoAccessState:
     service_account_uid: str
     role_uid: str
     role_binding_uid: str
+    controller_service_account_uid: str = ""
+    controller_role_uid: str = ""
+    controller_role_binding_uid: str = ""
     execution_kubeconfig: Path | None = None
     execution_context: str = ""
 
@@ -417,6 +445,7 @@ class LiberoAccessState:
 class LiberoRuntimeBinding:
     evidence: dict[str, str]
     access_state: LiberoAccessState
+    manager_acceptance_b64: str = ""
 
 
 def _libero_namespaced_inventory(
@@ -425,9 +454,16 @@ def _libero_namespaced_inventory(
     inventory: dict[str, list[str]] = {}
     expected = {
         "pods": set(),
-        "serviceaccounts": {"default", LIBERO_PAYLOAD_SERVICE_ACCOUNT},
-        "roles": {LIBERO_PAYLOAD_ROLE},
-        "rolebindings": {LIBERO_PAYLOAD_ROLE_BINDING},
+        "serviceaccounts": {
+            "default",
+            LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+        },
+        "roles": {LIBERO_PAYLOAD_ROLE, LIBERO_CONTROLLER_ROLE},
+        "rolebindings": {
+            LIBERO_PAYLOAD_ROLE_BINDING,
+            LIBERO_CONTROLLER_ROLE_BINDING,
+        },
         "secrets": set(),
     }
     for kind, expected_names in expected.items():
@@ -482,13 +518,12 @@ def _libero_namespaced_inventory(
 
 def _libero_controller_rbac_evidence(
     kubeconfig: Path, context: str, namespace: str
-) -> dict[str, str]:
-    """Verify SkyPilot's generated engine identity after managed launch.
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Verify the manager-precreated engine identity before managed launch.
 
-    SkyPilot 0.12.2 needs a wildcard Role to manage workload objects, but that
-    authority must remain confined to the exact run namespace.  The fetched
-    payload never receives this account: it keeps the independent pods/get-only
-    identity verified above.
+    The role enumerates only the namespaced primitives SkyPilot uses for this
+    container job. The fetched payload never receives this account: it keeps
+    the independent pods/get-only identity verified above.
     """
 
     account = _libero_resource(
@@ -508,8 +543,14 @@ def _libero_controller_rbac_evidence(
         "rolebinding",
         LIBERO_CONTROLLER_ROLE_BINDING,
     )
-    rules = [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}]
-    subjects = [{"kind": "ServiceAccount", "name": SKYPILOT_ENGINE_SERVICE_ACCOUNT}]
+    rules = LIBERO_CONTROLLER_RULES
+    subjects = [
+        {
+            "kind": "ServiceAccount",
+            "name": SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+            "namespace": namespace,
+        }
+    ]
     role_ref = {
         "apiGroup": "rbac.authorization.k8s.io",
         "kind": "Role",
@@ -545,7 +586,7 @@ def _libero_controller_rbac_evidence(
         raise RuntimeError(
             "LIBERO SkyPilot controller may not receive a ClusterRoleBinding"
         )
-    return {
+    evidence = {
         "controller_service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
         ).hexdigest(),
@@ -559,6 +600,12 @@ def _libero_controller_rbac_evidence(
             {"rules": rules, "subjects": subjects, "roleRef": role_ref}
         ),
     }
+    identities = {
+        "controller_service_account_uid": account["metadata"]["uid"],
+        "controller_role_uid": role["metadata"]["uid"],
+        "controller_role_binding_uid": binding["metadata"]["uid"],
+    }
+    return evidence, identities
 
 
 def _libero_rbac_evidence(
@@ -669,7 +716,8 @@ def _bind_libero_runtime_contract(
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
         raise ValueError("LIBERO requires verified isolated Sky API shutdown")
     try:
-        acceptance = libero_accepted_image_manifest()
+        signed_manifest = libero_image_manifest()
+        acceptance = validate_libero_accepted_image_manifest(signed_manifest)
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     image = str(args.image or "").strip().removeprefix("docker:")
@@ -754,8 +802,13 @@ def _bind_libero_runtime_contract(
     evidence, access_state = _libero_rbac_evidence(
         payload_kubeconfig, payload_context, namespace, run_id
     )
+    controller_evidence, controller_identities = _libero_controller_rbac_evidence(
+        execution_kubeconfig, execution_context, namespace
+    )
+    evidence.update(controller_evidence)
     access_state = replace(
         access_state,
+        **controller_identities,
         execution_kubeconfig=execution_kubeconfig,
         execution_context=execution_context,
     )
@@ -792,7 +845,28 @@ def _bind_libero_runtime_contract(
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = (
             storage_authorization["policy_sha256"]
         )
-    return LiberoRuntimeBinding(evidence=evidence, access_state=access_state)
+    manager_acceptance = json.dumps(
+        signed_manifest, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return LiberoRuntimeBinding(
+        evidence=evidence,
+        access_state=access_state,
+        manager_acceptance_b64=base64.b64encode(manager_acceptance).decode("ascii"),
+    )
+
+
+def _verify_libero_controller_unchanged(binding: LiberoRuntimeBinding) -> None:
+    execution_kubeconfig = binding.access_state.execution_kubeconfig
+    if execution_kubeconfig is None:
+        raise RuntimeError("LIBERO execution kubeconfig is unavailable")
+    observed, _ = _libero_controller_rbac_evidence(
+        execution_kubeconfig,
+        binding.access_state.execution_context,
+        binding.access_state.namespace,
+    )
+    for name, value in observed.items():
+        if binding.evidence.get(name) != value:
+            raise RuntimeError("LIBERO controller RBAC changed after acceptance")
 
 
 def _validate_libero_output_storage_authorization(
@@ -1444,6 +1518,27 @@ def _cleanup_libero_access_objects(
     preconditions = kubernetes_client.V1Preconditions
     operations = (
         (
+            "controller-rolebinding",
+            LIBERO_CONTROLLER_ROLE_BINDING,
+            state.controller_role_binding_uid,
+            rbac.delete_namespaced_role_binding,
+            rbac.read_namespaced_role_binding,
+        ),
+        (
+            "controller-role",
+            LIBERO_CONTROLLER_ROLE,
+            state.controller_role_uid,
+            rbac.delete_namespaced_role,
+            rbac.read_namespaced_role,
+        ),
+        (
+            "controller-serviceaccount",
+            SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+            state.controller_service_account_uid,
+            core.delete_namespaced_service_account,
+            core.read_namespaced_service_account,
+        ),
+        (
             "rolebinding",
             LIBERO_PAYLOAD_ROLE_BINDING,
             state.role_binding_uid,
@@ -1466,6 +1561,9 @@ def _cleanup_libero_access_objects(
         ),
     )
     for kind, name, uid, delete, read in operations:
+        if not uid:
+            cleanup.errors.append(f"LIBERO {kind} cleanup identity is unavailable")
+            return cleanup
         try:
             delete(
                 name,
@@ -1606,6 +1704,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
+        previous_manager_acceptance = os.environ.get(
+            "NPA_LIBERO_MANAGER_ACCEPTANCE_B64"
+        )
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
         )
@@ -1645,6 +1746,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 infra=infra,
                 run_id=run_id,
             )
+            if libero_binding is not None:
+                os.environ["NPA_LIBERO_MANAGER_ACCEPTANCE_B64"] = (
+                    libero_binding.manager_acceptance_b64
+                )
             _write_yaml_documents(rendered_yaml, docs)
             preflight_output_storage(output_root=output_root, run_id=run_id)
             _ensure_infra_enabled(
@@ -1653,6 +1758,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
             )
+            # Recheck the accepted namespaced controller grant immediately
+            # before submission. Any ClusterRoleBinding or wildcard drift stops
+            # before the untrusted payload can be created.
+            if libero_binding is not None:
+                _verify_libero_controller_unchanged(libero_binding)
             if args.direct_launch:
                 return _direct_launch(
                     rendered_yaml=rendered_yaml,
@@ -1721,6 +1831,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             try:
                 teardown_guard.mark_launched()
                 submit_config_path = Path(config_path) if config_path else None
+                if libero_binding is not None:
+                    _verify_libero_controller_unchanged(libero_binding)
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,
@@ -1759,20 +1871,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
                 if libero_binding is not None:
-                    execution_kubeconfig = (
-                        libero_binding.access_state.execution_kubeconfig
-                    )
-                    if execution_kubeconfig is None:
-                        raise RuntimeError(
-                            "LIBERO execution kubeconfig is unavailable for controller RBAC verification"
-                        )
-                    libero_binding.evidence.update(
-                        _libero_controller_rbac_evidence(
-                            execution_kubeconfig,
-                            libero_binding.access_state.execution_context,
-                            libero_binding.access_state.namespace,
-                        )
-                    )
+                    _verify_libero_controller_unchanged(libero_binding)
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
                     not is_libero
@@ -1942,6 +2041,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ.pop("KUBECONFIG", None)
             else:
                 os.environ["KUBECONFIG"] = previous_kubeconfig
+            if previous_manager_acceptance is None:
+                os.environ.pop("NPA_LIBERO_MANAGER_ACCEPTANCE_B64", None)
+            else:
+                os.environ["NPA_LIBERO_MANAGER_ACCEPTANCE_B64"] = (
+                    previous_manager_acceptance
+                )
             if (
                 os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
                 and not api_stop_attempted

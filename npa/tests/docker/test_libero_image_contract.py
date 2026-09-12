@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -76,6 +80,12 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "base|dependency|direct)" in text
     assert "pip install" not in text
     assert "runtime-bootstrap.py ensure" not in text
+    assert (
+        "--mount=type=secret,id=npa_libero_manager_acceptance_public_key_b64,required=true"
+        in text
+    )
+    assert "manager-acceptance-public-key.b64" in text
+    assert "chmod 0444 /opt/npa/libero/manager-acceptance-public-key.b64" in text
     for forbidden in (
         "nvidia/cuda:",
         "pytorch/pytorch:",
@@ -366,6 +376,12 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "Deleted the complete exact failed public LIBERO OCI graph" in text
     assert 'gh api --method DELETE "$package_api"' in text
     assert "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" in text
+    assert (
+        "--secret id=npa_libero_manager_acceptance_public_key_b64,"
+        "env=NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64"
+    ) in text
+    assert "Deleted the complete exact requested public LIBERO OCI graph" in text
+    assert '"failure","cancelled"' in text
     for immutable_action in (
         "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
         "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
@@ -376,3 +392,92 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34",
     ):
         assert immutable_action in text
+
+
+def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
+    tmp_path: Path,
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    job = spec["jobs"]["cleanup-requested"]
+    step = next(item for item in job["steps"] if item.get("name", "").startswith("Delete"))
+    script = step["run"]
+    sha = "1" * 40
+    root = "sha256:" + "a" * 64
+    platform = "sha256:" + "b" * 64
+    attestation = "sha256:" + "c" * 64
+    expected = sorted([root, platform, attestation])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import json,os,sys\n"
+        "args=sys.argv[1:]\n"
+        "if '--paginate' in args:\n"
+        " print(json.dumps([json.loads(os.environ['FIXTURE_VERSIONS'])])); raise SystemExit(0)\n"
+        "if '--method' in args and 'DELETE' in args:\n"
+        " open(os.environ['DELETE_RECORD'],'a').write(args[-1]+'\\n'); raise SystemExit(0)\n"
+        "if '-i' in args:\n"
+        " print('HTTP/2.0 404 Not Found'); raise SystemExit(1)\n"
+        "query=args[args.index('--jq')+1] if '--jq' in args else ''\n"
+        "print('public' if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    crane = bin_dir / "crane"
+    crane.write_text(
+        f"#!{sys.executable}\nimport os\nprint(os.environ['LIBERO_ACCEPTED_OCI_DIGEST'])\n",
+        encoding="utf-8",
+    )
+    crane.chmod(0o700)
+    delete_record = tmp_path / "deletes"
+    common = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "IMAGE": f"ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-{sha}",
+        "TOOL": "libero",
+        "LIBERO_ACCEPTED_OCI_DIGEST": root,
+        "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": json.dumps(expected),
+        "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
+        "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+        "DELETE_RECORD": str(delete_record),
+    }
+    exact_versions = [
+        {"name": root, "metadata": {"container": {"tags": [f"dev-{sha}"]}}},
+        {"name": platform, "metadata": {"container": {"tags": []}}},
+        {"name": attestation, "metadata": {"container": {"tags": []}}},
+    ]
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={**common, "FIXTURE_VERSIONS": json.dumps(exact_versions)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert delete_record.read_text(encoding="utf-8").splitlines() == [
+        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero"
+    ]
+
+    delete_record.unlink()
+    unrelated = [
+        *exact_versions,
+        {"name": "sha256:" + "d" * 64, "metadata": {"container": {"tags": []}}},
+    ]
+    refused = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={**common, "FIXTURE_VERSIONS": json.dumps(unrelated)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode != 0
+    assert not delete_record.exists()
+
+
+def test_failed_build_cleanup_runs_for_failure_and_cancellation() -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    condition = str(spec["jobs"]["cleanup-failed-build"]["if"])
+    assert '"failure","cancelled"' in condition
+    assert "always()" in condition

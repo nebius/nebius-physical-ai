@@ -47,14 +47,18 @@ setup: |
   test "$(id -un)" = ubuntu
   test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}"
   test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  test -n "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}"
   test -n "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64}"
   decision="$(mktemp /tmp/npa-libero-runtime-use-decision.XXXXXXXX)"
+  acceptance="$(mktemp /tmp/npa-libero-manager-acceptance.XXXXXXXX)"
   cleanup_decision() {
-    rm -f "${decision}"
+    rm -f "${decision}" "${acceptance}"
   }
   trap cleanup_decision EXIT INT TERM
   printf '%s' "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}" | base64 -d > "${decision}"
   chmod 0600 "${decision}"
+  printf '%s' "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}" | base64 -d > "${acceptance}"
+  chmod 0600 "${acceptance}"
   test "$(sha256sum "${decision}" | cut -d ' ' -f 1)" = \
     "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
@@ -67,6 +71,7 @@ setup: |
     --cache-root /workspace/.cache/npa/libero \
     --decision "${decision}" \
     --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
+    --acceptance "${acceptance}" \
     --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
     rm -f "${bootstrap_receipt}.partial"
     exit 1
@@ -77,6 +82,7 @@ setup: |
   cleanup_decision
   trap - EXIT INT TERM
   unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
+  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
   test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
   test -d "${BYOF_REPO_ROOT}/libero/lifelong"
   test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
@@ -84,6 +90,7 @@ setup: |
 run: |
   set -euo pipefail
   unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
+  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
   nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
