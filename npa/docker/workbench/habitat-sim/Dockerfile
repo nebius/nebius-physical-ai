@@ -56,7 +56,7 @@ RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-cer
         certificate_path="${ca_cert_dir}/${certificate}"; \
         test -f "${certificate_path}" || return 1; \
         test "$(tail -c 1 "${certificate_path}" | od -An -t u1 | tr -d ' ')" = 10 || return 1; \
-        openssl x509 -in "${certificate_path}" -noout >/dev/null 2>&1 || return 1; \
+        /usr/bin/openssl x509 -in "${certificate_path}" -noout >/dev/null 2>&1 || return 1; \
         cat "${certificate_path}" >> "${ca_bundle}" || return 1; \
       done < "${ca_config}" && \
       test "$(stat -c %s "${ca_bundle}")" -eq "${CA_BUNDLE_BYTES}" && \
