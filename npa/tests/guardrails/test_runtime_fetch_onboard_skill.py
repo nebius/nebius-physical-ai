@@ -10,6 +10,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKILL = REPO_ROOT / "skills/workflows/runtime-fetch-onboard/SKILL.md"
 CONTRACT = SKILL.parent / "references/onboarding-contract.md"
+OPENAI_YAML = SKILL.parent / "agents/openai.yaml"
 INDEX = REPO_ROOT / "skills/index.yaml"
 
 
@@ -24,6 +25,12 @@ def _section(text: str, heading: str, next_heading: str | None = None) -> str:
     return text[start:end]
 
 
+def _assert_only_in(first: str, second: str, phrases: tuple[str, ...]) -> None:
+    for phrase in phrases:
+        assert phrase in first, phrase
+        assert phrase not in second, phrase
+
+
 def test_runtime_fetch_onboard_is_discoverable_for_legal_packaging_blocks() -> None:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
     entry = next(
@@ -33,8 +40,12 @@ def test_runtime_fetch_onboard_is_discoverable_for_legal_packaging_blocks() -> N
     assert entry["category"] == "workflows"
     assert REPO_ROOT / entry["path"] == SKILL
     trigger = entry["when_to_use"].lower()
-    for phrase in ("legal", "model weights", "runtime"):
+    for phrase in ("legal", "model weights", "runtime", "build-your-own"):
         assert phrase in trigger
+
+    interface = yaml.safe_load(OPENAI_YAML.read_text(encoding="utf-8"))["interface"]
+    assert "runtime fetch" in interface["default_prompt"].lower()
+    assert "private operator build" in interface["default_prompt"].lower()
 
 
 def test_skill_uses_runtime_fetch_as_remediation_not_a_license_bypass() -> None:
@@ -159,27 +170,26 @@ def test_proof_and_worksheet_requirements_are_packaging_shape_specific() -> None
     runtime_proof = _section(
         skill, "### runtime-fetch shapes only", "### build-your-own shape only"
     )
-    build_proof = _section(
-        skill, "### build-your-own shape only", "## deliverables"
+    build_proof = _section(skill, "### build-your-own shape only", "## deliverables")
+    _assert_only_in(
+        runtime_proof,
+        build_proof,
+        ("byte absence", "positive fetch", "cache behavior", "leaves the cache empty"),
     )
-    for phrase in (
-        "byte absence",
-        "positive fetch",
-        "cache behavior",
-        "leaves the cache empty",
-    ):
-        assert phrase in runtime_proof, phrase
-        assert phrase not in build_proof, phrase
-    for phrase in (
-        "restricted-input provenance",
-        "resulting-byte inventory",
-        "build-secret absence",
-        "private-registry containment",
-        "do not claim their absence",
-    ):
-        assert phrase in build_proof, phrase
-        assert phrase not in runtime_proof, phrase
+    _assert_only_in(
+        build_proof,
+        runtime_proof,
+        (
+            "restricted-input provenance",
+            "resulting-byte inventory",
+            "build-secret absence",
+            "private-registry containment",
+            "do not claim their absence",
+        ),
+    )
 
+
+def test_contract_delivery_blocks_are_shape_specific() -> None:
     contract = _normalized(CONTRACT)
     runtime_delivery = _section(
         contract, "## runtime-fetch delivery only", "## build-your-own delivery only"
@@ -187,25 +197,45 @@ def test_proof_and_worksheet_requirements_are_packaging_shape_specific() -> None
     build_delivery = _section(
         contract, "## build-your-own delivery only", "## shared validation ledger"
     )
-    for phrase in ("cache reuse permission", "temporary-download path"):
-        assert phrase in runtime_delivery, phrase
-        assert phrase not in build_delivery, phrase
-    for phrase in (
-        "restricted build inputs",
-        "resulting image inventory",
-        "private-registry containment",
-    ):
-        assert phrase in build_delivery, phrase
-        assert phrase not in runtime_delivery, phrase
+    _assert_only_in(
+        runtime_delivery,
+        build_delivery,
+        ("cache reuse permission", "temporary-download path"),
+    )
+    _assert_only_in(
+        build_delivery,
+        runtime_delivery,
+        (
+            "restricted build inputs",
+            "resulting image inventory",
+            "private-registry containment",
+        ),
+    )
 
     assert "not applicable — build-your-own" in runtime_delivery
     assert "not applicable — runtime-fetch shape" in build_delivery
+
+
+def test_contract_validation_blocks_are_shape_specific() -> None:
+    contract = _normalized(CONTRACT)
+    runtime_validation = _section(
+        contract,
+        "### runtime-fetch validation only",
+        "### build-your-own validation only",
+    )
+    build_validation = _section(
+        contract, "### build-your-own validation only", "## claim disposition"
+    )
+    assert "not applicable — build-your-own" in runtime_validation
+    assert "not applicable — runtime-fetch shape" in build_validation
     runtime_cache_row = next(
         line
         for line in CONTRACT.read_text(encoding="utf-8").splitlines()
         if line.startswith("| Runtime cache |")
     ).lower()
-    assert "not applicable for build-your-own without runtime fetch" in runtime_cache_row
+    assert (
+        "not applicable for build-your-own without runtime fetch" in runtime_cache_row
+    )
 
 
 def test_primary_onboarding_skills_route_to_runtime_fetch() -> None:

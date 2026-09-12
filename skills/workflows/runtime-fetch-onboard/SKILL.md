@@ -1,6 +1,6 @@
 ---
 name: runtime-fetch-onboard
-description: Use when legal, license, or gated-access restrictions prevent baking source, SDKs, weights, datasets, or assets into an NPA image but the operator may obtain them at runtime; design and validate a redistributable bootstrap container without treating runtime fetch as a license bypass.
+description: Use when legal, license, or gated-access restrictions prevent baking source, SDKs, weights, datasets, or assets into a public NPA image; design and validate either a redistributable runtime-fetch bootstrap or an operator-built private derivative without treating delivery as a license bypass.
 ---
 
 # Runtime-Fetch Onboarding
@@ -99,11 +99,16 @@ discarding unrelated capabilities that can be packaged and proven safely.
    read-only in authorized consumers; never copy it into another image. A
    build-your-own image does not need a runtime downloader or runtime cache
    unless its declared capability independently fetches another artifact.
-8. Keep planning and image validation useful without credentials. When the
-   selected artifact requires credentials, its artifact-dependent runtime path
-   fails early with a specific remediation and without provisioning or partial
-   downloads. Anonymous artifacts may run without credentials, subject to any
-   separate documented product-specific acceptance gate.
+8. Keep planning and image validation useful without credentials. For either
+   runtime-fetch shape, when the selected artifact requires credentials, its
+   artifact-dependent runtime path fails early with a specific remediation and
+   without provisioning or partial downloads. Anonymous artifacts may run
+   without credentials, subject to any separate documented product-specific
+   acceptance gate. For build-your-own, the trusted builder instead performs
+   the exact entitlement and product-acceptance preflight before retrieving a
+   restricted input or mutating the private registry. A missing build-only
+   credential or acceptance fails before download or build and names the
+   operator remediation; do not invent a runtime refusal for that image.
 
 ## Required Proof
 

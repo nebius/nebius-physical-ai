@@ -80,6 +80,10 @@ section `not applicable — runtime-fetch shape`.
 
 ### Runtime-fetch validation only
 
+Use for either runtime-fetch shape. For `build-your-own`, mark this entire
+validation block `not applicable — build-your-own` rather than fabricating
+pass/fail download, restricted-byte-absence, or cache evidence.
+
 | Gate | Command/evidence | Result |
 | --- | --- | --- |
 | Applicable refusal before network | `<missing gated entitlement, explicit documented opt-out, or missing exact product opt-in; command and named failure>` | `<pass/fail; not applicable only for anonymous access with no documented acceptance gate>` |
@@ -89,6 +93,10 @@ section `not applicable — runtime-fetch shape`.
 | Restart/cache reuse and concurrent-population safety | `<test evidence>` | `<pass/fail>` |
 
 ### Build-your-own validation only
+
+Use for `build-your-own`. For either runtime-fetch shape, mark this entire
+validation block `not applicable — runtime-fetch shape` rather than fabricating
+private-build input or containment evidence.
 
 | Gate | Command/evidence | Result |
 | --- | --- | --- |

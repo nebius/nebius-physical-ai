@@ -972,7 +972,7 @@ skills:
         path: skills/workflows/oss-solution-registry-onboard/SKILL.md
   - name: runtime-fetch-onboard
     category: workflows
-    when_to_use: "Keep a solution containerizable when legal, license, or gated-access restrictions prevent baking source, SDKs, model weights, datasets, or assets: ship a clean bootstrap image and fetch exact artifacts at runtime under operator authorization."
+    when_to_use: "Keep a solution containerizable when legal, license, or gated-access restrictions prevent baking source, SDKs, model weights, datasets, or assets into a public image: use a clean runtime-fetch bootstrap or a build-your-own private operator image."
     path: skills/workflows/runtime-fetch-onboard/SKILL.md
     smoke:
       - type: file_exists
