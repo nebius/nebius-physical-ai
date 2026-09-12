@@ -202,6 +202,14 @@ Pinned: `Lifelong-Robot-Learning/LIBERO`
 
 Hard-gate capability: `libero_spatial_bc_rnn_train_reload_heldout`.
 
+The public candidate is a quarantined, unbuilt neutral bootstrap: it contains
+only the pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
+scripts, and immutable manifests. It must contain no LIBERO, GPU runtime,
+model, demonstration, task/render asset, cache, checkpoint, credential, or
+output bytes. Do not add it to the public table or release manifest until a
+trusted exact-SHA build passes complete-byte and independent base-provenance
+scans, anonymous pull, and the exact-digest hard gate.
+
 The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
 LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL
 and initial-state hashes, split whole trajectories into disjoint train and
@@ -216,9 +224,11 @@ The source is MIT and the upstream LIBERO publisher declares its datasets CC BY
 4.0. Preserve the publisher's license when a mirror card conflicts. Keep the
 demonstration in a run-scoped runtime cache outside `$NPA_SMOKE_OUTPUT_DIR` and
 never bake it. The selected task names Google Scanned Objects and a HOPE
-distractor; the headless qualification deletes the entire unused render-asset
-tree during the private build while retaining the hash-bound MIT task
-definitions. Do not publish a LIBERO image. Rendered closed-loop sweeps, all 130
+distractor; the headless qualification's runtime sparse checkout never fetches
+the unused render-asset tree while retaining the hash-bound MIT task
+definitions. Require a manager-issued manifest/source/boundary-bound use
+decision before any cache or network mutation; never invent an acceptance
+variable or treat fetch/authentication as permission. Rendered closed-loop sweeps, all 130
 tasks, lifelong-algorithm comparison, and physical-robot use remain deferred.
 
 ### ManiSkill (`byof-maniskill.yaml`)

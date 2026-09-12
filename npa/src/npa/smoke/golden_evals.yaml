@@ -34,6 +34,43 @@
 format: npa_golden_evals_v1
 
 containers:
+  libero:
+    image: npa-libero
+    dockerfile: npa/docker/workbench/libero/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Trains and reloads LIBERO's upstream BC-RNN policy on one official
+        LIBERO-Spatial demonstration with genuine held-out evaluation.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
+      network: >-
+        Manager-authorized immutable runtime fetch from pinned GitHub, PyPI,
+        PyTorch, and Hugging Face endpoints plus operator S3 output
+      external_fetch:
+        - github-libero-runtime
+        - pypi-runtime
+        - pytorch-runtime
+        - huggingface-libero-demo-runtime
+        - huggingface-bert-runtime
+        - s3-runtime
+      notes: >-
+        The public candidate is an unbuilt, quarantined neutral bootstrap. It
+        contains no LIBERO, GPU runtime, model, demonstration, task/render
+        asset, cache, checkpoint, credential, or output bytes. A manager-issued
+        exact-manifest use decision and explicit immutable acceptance-candidate
+        digest are mandatory. The eval remains blocked until byte, anonymous
+        pull, and exact-digest one-B200 evidence is accepted.
+    golden_eval:
+      kind: container-smoke
+      command: sh /opt/npa/libero/smoke.sh
+      artifact: /workspace/byof-runs/libero-smoke.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 7200
+      status: needs-image-update
+
   openpi:
     image: npa-openpi
     dockerfile: npa/docker/workbench/openpi/Dockerfile
