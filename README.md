@@ -35,19 +35,20 @@ tools also expose Python interfaces.
 ### How Workbench runs a task
 
 ```mermaid
-flowchart LR
+flowchart TB
     you["You"] <--> agent["Your coding agent<br/>Codex · Claude Code · other"]
-    agent --> npa["npa Workbench<br/>configure · preflight · plan · submit · inspect"]
+    agent <-->|"requests and results"| npa["Workbench control plane<br/>npa: configure · preflight · plan · submit · inspect"]
     spec["npa.workflow YAML"] --> npa
 
     subgraph nebius["Nebius AI Cloud"]
-        npa --> sky["SkyPilot orchestration"]
-        sky --> tools["Containerized tools<br/>simulate · train · generate · evaluate"]
+        direction LR
+        sky["SkyPilot orchestration"] --> tools["Containerized tools<br/>simulate · train · generate · evaluate"]
         tools <--> s3["S3 artifacts<br/>inputs · checkpoints · media · reports"]
         tools -->|"when selected"| tf["Token Factory<br/>hosted inference"]
     end
 
-    s3 --> agent
+    npa <-->|"plan · submit · status"| sky
+    s3 -->|"artifacts"| npa
 ```
 
 `npa` gives the agent one bounded interface for readiness checks, infrastructure,
