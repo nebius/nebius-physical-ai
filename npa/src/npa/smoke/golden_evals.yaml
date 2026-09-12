@@ -37,25 +37,27 @@ containers:
   gymnasium-robotics:
     image: npa-gymnasium-robotics
     internal: true
-    default_tag: phase-a-unbuilt
+    default_tag: neutral-unbuilt
     dockerfile: npa/docker/workbench/gymnasium-robotics/Dockerfile
     physical_ai:
       useful: true
       role: >-
-        Pre-registration candidate for real Shadow Dexterous Hand manipulation
-        physics, continuous touch sensing, contacts, and EGL rendering.
+        Neutral pre-registration bootstrap for a runtime-cached genuine Shadow
+        Dexterous Hand manipulation, touch, contacts, and EGL hard gate.
     safety:
       runs_as: ubuntu
       base_image: ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
-      network: none in Phase A; the incomplete evidence gate refuses before network
-      external_fetch: []
+      network: runtime fetch only after a complete immutable lock
+      external_fetch:
+        - exact Gymnasium-Robotics source and hashed Python wheels into an operator-owned cache
       notes: >-
-        No image exists. Source and runtime are intended to be baked only after
-        exact reciprocal-source and package locks are independently accepted.
-        No model, dataset, NVIDIA runtime, cache, credential, or output is baked.
+        No image exists. Candidate layers contain only neutral bootstrap bytes;
+        upstream source, Shadow assets, MuJoCo/Python workload, populated cache,
+        model, dataset, vendor runtime, credential, checkpoint, and output bytes
+        are excluded. Fetching later is delivery, not rights acceptance.
     golden_eval:
       kind: container-smoke
-      command: python /opt/npa/gymnasium-robotics/capability_smoke.py
+      command: bash /usr/local/bin/npa-gymnasium-entrypoint run-smoke
       gpu: required
       timeout_seconds: 1800
       status: needs-image-update

@@ -21,6 +21,7 @@ envs:
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
   NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS: "900"
+  NPA_GYMNASIUM_RUNTIME_CACHE: "/workspace/.cache/npa/gymnasium-robotics"
   NVIDIA_DRIVER_CAPABILITIES: "graphics,utility"
   MUJOCO_GL: "egl"
   PYOPENGL_PLATFORM: "egl"
@@ -28,11 +29,16 @@ envs:
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
   set -euo pipefail
-  test -x /opt/venv/bin/python
+  test -x /usr/bin/python3
   test -f /opt/npa/gymnasium-robotics/capability_smoke.py
+  test -f /opt/npa/gymnasium-robotics/runtime-bootstrap.py
   test -f /opt/npa/gymnasium-robotics/source-lock.json
-  /opt/venv/bin/python -I -B /opt/npa/gymnasium-robotics/verify_image.py
-  /opt/venv/bin/python - <<'PY'
+  /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
+  install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
+  /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
+  RUNTIME_PYTHON="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/runtime/bin/python"
+  test -x "${RUNTIME_PYTHON}"
+  "${RUNTIME_PYTHON}" -I - <<'PY'
   import gymnasium_robotics
   import mujoco
 
@@ -41,6 +47,11 @@ setup: |
   PY
 run: |
   set -euo pipefail
+  RUNTIME_PYTHON="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/runtime/bin/python"
+  BYOF_REPO_ROOT="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/source"
+  export BYOF_REPO_ROOT
+  test -x "${RUNTIME_PYTHON}"
+  test -d "${BYOF_REPO_ROOT}"
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
@@ -80,7 +91,7 @@ run: |
     fi
     sleep 1
   done
-  export NPA_BYOF_POD_IMAGE_ID="$(/opt/venv/bin/python - <<'PY'
+  export NPA_BYOF_POD_IMAGE_ID="$("${RUNTIME_PYTHON}" -I - <<'PY'
   import json
   import os
   import re
@@ -157,7 +168,7 @@ run: |
     test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
   fi
   export SMOKE_EXIT_CODE
-  /opt/venv/bin/python <<'PY'
+  "${RUNTIME_PYTHON}" -I - <<'PY'
   import hashlib
   import json
   import os

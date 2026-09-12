@@ -151,12 +151,12 @@ def _load_config(path: Path) -> dict[str, object]:
 
 
 def _smoke_contract(path: Path, config: dict[str, object]) -> str:
-    """Read an embedded smoke or the one fixed Phase A image smoke."""
+    """Read an embedded smoke or the fixed neutral-bootstrap hard gate."""
 
     smoke = str(config.get("smoke_command") or "")
     if path.name != "byof-gymnasium-robotics.yaml":
         return smoke
-    expected = "/opt/npa/gymnasium-robotics/capability_smoke.py"
+    expected = "/usr/local/bin/npa-gymnasium-entrypoint run-smoke"
     assert expected in smoke
     packaged = ROOT / "npa/docker/workbench/gymnasium-robotics/capability_smoke.py"
     return smoke + "\n" + packaged.read_text(encoding="utf-8")

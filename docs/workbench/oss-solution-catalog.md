@@ -38,7 +38,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
-| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; Phase A public candidate unbuilt** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has no image/current-head/public proof and remains pre-registration quarantined. |
+| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; neutral public bootstrap unbuilt** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has no image/current-head/public proof and remains pre-registration quarantined. |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -98,8 +98,10 @@ This remains a minimal BYOF candidate. It has no model, external dataset,
 gated asset, terms acceptance, RL training claim, expert score, other
 environment-family claim, or physical-robot transfer claim. See
 [`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
-The Phase A direct-public design is unbuilt and pre-registration quarantined;
-historical private evidence does not transfer to redesigned bytes.
+The neutral zero-Shadow-payload public bootstrap is unbuilt and
+pre-registration quarantined. Pinned source, Shadow assets, MuJoCo/Python
+runtime, and populated caches are runtime-only; historical private evidence
+does not transfer to redesigned image or executable bytes.
 
 ### RoboCasa
 

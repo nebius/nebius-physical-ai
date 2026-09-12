@@ -3,10 +3,10 @@ kind: Workflow
 metadata:
   name: byof-gymnasium-robotics
   description: >
-    Phase A pre-registration workflow for the Farama Foundation
-    Gymnasium-Robotics Shadow Hand capability. The placeholder image is
-    intentionally non-resolving; a future authorized gate must inject a
-    reviewed immutable candidate digest and skip all build behavior.
+    Pre-registration workflow for the neutral Gymnasium-Robotics bootstrap.
+    The placeholder image is intentionally non-resolving; a future authorized
+    gate must inject a reviewed immutable candidate digest. Pinned upstream
+    runtime and Shadow Hand bytes are acquired only into an operator cache.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/Farama-Foundation/Gymnasium-Robotics.git"
@@ -14,14 +14,14 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: "registry.example.invalid/gymnasium-robotics:phase-a-unbuilt"
+  base_image: "registry.example.invalid/gymnasium-robotics:neutral-unbuilt"
   build_command: ""
   workload: solution-smoke
   smoke_command: |
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
     export NVIDIA_DRIVER_CAPABILITIES=graphics,utility
-    exec /opt/venv/bin/python -I -B /opt/npa/gymnasium-robotics/capability_smoke.py
+    exec /usr/local/bin/npa-gymnasium-entrypoint run-smoke
   solution_name: "gymnasium-robotics"
   capability_name: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
   smoke_artifact_name: "gymnasium-robotics-smoke.json"
@@ -43,9 +43,10 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Run the fixed in-image registered Shadow Hand smoke from a separately
-      authorized exact candidate digest on one RTX PRO 6000 Blackwell. Phase A
-      has no runnable image and does not authorize submission.
+      Populate an external operator-owned cache from complete pinned runtime
+      locks, then run the genuine registered Shadow Hand smoke from a separately
+      authorized exact candidate digest on one RTX PRO 6000 Blackwell. The
+      current placeholder and incomplete locks do not authorize submission.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

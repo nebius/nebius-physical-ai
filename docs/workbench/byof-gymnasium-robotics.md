@@ -5,21 +5,30 @@ Gymnasium-Robotics. It is not a first-class NPA tool and does not claim policy
 training, expert performance, other environment families, or physical-robot
 transfer.
 
-## Phase A public-image quarantine
+## Neutral public-image quarantine
 
-The repository now contains a direct-public packaging design, not a built
+The repository describes a zero-Shadow-payload neutral bootstrap, not a built
 image. `npa-gymnasium-robotics` remains in **pre-registration quarantine**: it
 has no supported tag, accepted manifest, SM120 compatibility record, registry
-object, or anonymous-pull evidence. The Dockerfile's first executable gate
-fails before network access because the immutable APT/Python closure, actual
-corresponding source for retained reciprocal binaries, and the Shadow Hand
-preferred-form/transformation chain are not yet complete. Do not bypass that
-refusal with a URL, private registry, credential, runtime fetch, or consent
-proxy.
+object, or anonymous-pull evidence. The candidate layers exclude the upstream
+solution tree, Shadow Hand assets, MuJoCo/Python wheels, runtime cache, CUDA or
+other vendor runtime, credentials, datasets, checkpoints, and outputs. The
+Dockerfile's first executable gate fails before package network access because
+the exact neutral Ubuntu/Python bootstrap closure and its corresponding source
+are incomplete. A URL, credential, private registry, or consent proxy must not
+bypass that refusal.
+
+At execution time, the bootstrap reads a repository-pinned manifest before any
+fetch, permits only the declared credential-free HTTPS origins, checks exact
+redirect targets, sizes, and SHA-256 digests, safely extracts the upstream
+source, validates wheel archives, installs offline in private staging, and
+atomically publishes a complete version to an external operator-owned cache.
+An incomplete lock, missing anonymous access, malformed archive, mismatched
+byte, unsafe cache, or partial existing version is a terminal refusal.
 
 The accepted private result at repository head `c308945a` is historical proof
 for its exact private digest and workflow bytes only. It is not evidence for
-this Phase A source, a redesigned executable image, the current head, or a
+this redesigned source, an executable image, the current head, or a
 future public digest. Fresh private and anonymous-public exact-digest RTX runs
 remain required after a manager-authorized evidence closure and build.
 
@@ -41,8 +50,8 @@ Robot `sr_common` `kinetic-devel` source resolves to commit
 license. The asset provenance is therefore conservatively documented as
 GPL-2.0 plus the packaged Apache-2.0 attribution rather than MIT-only. The
 historical private image contained the complete pinned Gymnasium-Robotics
-source and its notices. This repository does not copy the XML, meshes, or
-textures, and no Phase A image exists.
+source and its notices. The neutral candidate copies no XML, mesh, texture, or
+upstream source byte into its layers.
 
 The runtime pins official Google DeepMind MuJoCo 3.12.0 (Apache-2.0), release
 commit `13827e9ee56f097f57acf69ae52b078f9839682d`. Its CPython 3.12
@@ -59,34 +68,35 @@ and its sole layer is
 `sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58`.
 Ubuntu is a package collection under the individual package licenses. Prior
 owner-only assessment inventory counts are not release evidence and are not
-carried into the Phase A locks. An authorized closure transaction must persist
+carried into the repository locks. An authorized closure transaction must persist
 the exact installed binary/source package manifests, copyright material, and
 common-license bytes before any build can proceed; until then no conclusion
 about the complete package set or interactive-license state is claimed.
 
-No model, dataset, gated asset, or terms acceptance is used. There is no
-checkpoint, external runtime asset download, or secret beyond ordinary private
-registry and output-storage credentials. The generated JSON is factual
-operator telemetry. RGB frames remain in memory and contribute only hashes;
-no upstream asset bytes are republished as an output.
+No model, external dataset, gated artifact, or terms-acceptance flag is used.
+There is no checkpoint. The official pinned source archive contains the Shadow
+assets and is acquired anonymously into the operator cache only after the
+runtime lock is complete. The generated JSON is factual operator telemetry.
+RGB frames remain in memory and contribute only hashes; no upstream asset byte
+is republished as an output.
 
 | Artifact class | Delivery and decision |
 | --- | --- |
-| Source | Exact official commit and MIT grant are reviewed inputs. A future image would convey the archive and license; Phase A fetches and bakes nothing. |
-| Baked runtime | Exact base and MuJoCo identities are reviewed, but the full APT/Python binary, license, and corresponding-source closure is incomplete. No Phase A image exists. |
+| Source | Exact official commit and MIT grant are reviewed inputs. The source archive is runtime-cache-only and must never enter candidate layers. |
+| Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact binary, license, and corresponding-source closure is incomplete. MuJoCo and the Python workload graph are runtime-cache-only. |
 | Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
-| Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded, but public baking is blocked until preferred-form and transformation-source delivery is proven. |
-| Cache | No cache is required. Phase A performs no build or fetch; future layer scans must reject package caches, credentials, runtime state, and prior outputs. |
+| Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded. The assets remain runtime-cache-only; their preferred-form, transformation, use, and derivative questions remain unresolved. |
+| Runtime cache | External, private to the runtime operator, versioned by the exact manifest hash, and atomically published only after full verification. It is neither an image layer nor a rights grant. |
 | Outputs | Operator-generated factual JSON telemetry and execution logs. RGB frames are transient; only hashes and measurements are durable. No upstream asset byte is republished. |
 
-Runtime fetch is unnecessary for this capability because there is no separately
-gated model, dataset, SDK, or asset payload. Private delivery does not change
-the applicable licenses or grant broader usage/output permission. The built
-bytes must still be scanned to prove the absence of secrets, weights, external
-datasets, and persistent caches before the exact digest can run.
+Runtime fetch changes delivery only. It does not grant or resolve rights to
+use, create derivative works, retain outputs, or provide a hosted service, and
+private custody does not change that boundary. The built bytes must still be
+scanned to prove the absence of upstream source/assets, MuJoCo/Python workload
+runtime, vendor runtime, secrets, datasets, checkpoints, and persistent caches.
 The future acceptance scanner binds independently reviewed hashes for every
-completed evidence lock and the Ubuntu base diff ID; Phase A intentionally pins
-none of those completion hashes. It also checks the exact Docker config, every
+completed neutral-image lock and the Ubuntu base diff ID; this source pins none
+of those completion hashes. It also checks the exact Docker config, every
 raw ordered layer (including header/padding bytes), all retained regular files,
 directories, links and metadata, and recursively nested source/package
 archives. A locally self-consistent lock or rootfs classification cannot pass.
@@ -176,10 +186,12 @@ npa/.venv/bin/npa workbench workflow plan-spec \
   --run-id gymnasium-robotics-review --json
 ```
 
-The Phase A workflow uses `base_profile: prebuilt`, an intentionally
-non-resolving placeholder, an empty build command, and the fixed in-image
-capability script. A later qualification transaction must inject an already
-scanned immutable digest; no workflow-side package installation is permitted.
+The workflow uses `base_profile: prebuilt`, an intentionally non-resolving
+placeholder, an empty build command, and the fixed neutral entrypoint. A later
+qualification transaction must inject an already scanned immutable digest.
+The entrypoint may populate only the external operator-owned cache from the
+complete immutable runtime lock before invoking the fixed capability script;
+it must never modify image layers or treat fetch success as rights acceptance.
 Set `NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE` only to that reviewed reference before
 enabling the dedicated live E2E gate. Exact registry, storage, cluster, reservation,
 pod, and run identifiers belong only in owner-only evidence.

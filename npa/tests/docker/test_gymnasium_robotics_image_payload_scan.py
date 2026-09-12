@@ -28,12 +28,16 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "_validated_tar_members(path, content)",
         "_nested_archive_members(path, content)",
         '"requirements.lock": None',
-        "corresponding-source annex is empty",
-        "corresponding-source artifact roles changed",
-        "corresponding-source role digest changed",
-        "final rootfs contains missing or unclassified entries",
+        "KNOWN_FORBIDDEN_CONTENT_SHA256",
+        "forbidden upstream/runtime byte",
+        "six-boundary runtime delivery classification changed",
+        "runtime artifact closure is incomplete",
+        "neutral image corresponding-source closure is incomplete",
         "final image must declare the non-root ubuntu user",
         '"unresolved_findings": 0',
+        '"upstream_runtime_payload_count": 0',
+        '"shadow_asset_count": 0',
+        '"runtime_cache_entry_count": 0',
         '"whiteout_metadata_sha256"',
         '"release_authorized": False',
     ):
@@ -57,9 +61,9 @@ def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
         assert gate in text
 
 
-def test_trusted_workflow_refuses_phase_a_selection_before_build() -> None:
+def test_trusted_workflow_refuses_pre_registration_selection_before_build() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    refusal = text.index("Phase A pre-registration candidate has no build authority")
+    refusal = text.index("pre-registration candidate has no build authority")
     build = text.index("docker buildx build")
     assert refusal < build
 
@@ -71,3 +75,13 @@ def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> Non
     proof = dockerfile.index('RUN test "$(id -u ubuntu)" = 1000')
     user = dockerfile.index("USER ubuntu")
     assert proof < user
+
+
+def test_dockerfile_never_copies_runtime_or_upstream_payload() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "COPY --from=" not in dockerfile
+    assert "/opt/venv" not in dockerfile
+    assert ".whl" not in dockerfile
+    assert "runtime-bootstrap.py" in dockerfile
