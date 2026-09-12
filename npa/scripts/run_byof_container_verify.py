@@ -222,12 +222,18 @@ VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
 
 
 def _is_libero_invocation(
-    args: argparse.Namespace, documents: list[dict[str, Any]]
+    args: argparse.Namespace, _documents: list[dict[str, Any]]
 ) -> bool:
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         return True
     if Path(args.yaml_path).name == LIBERO_PROFILE_FILENAME:
         return True
+    return False
+
+
+def _uses_libero_payload_service_account(documents: list[dict[str, Any]]) -> bool:
+    """Detect the reserved identity without treating its name as authorization."""
+
     for document in documents:
         config = document.get("config")
         if not isinstance(config, dict):
@@ -239,9 +245,11 @@ def _is_libero_invocation(
         if not isinstance(pod_config, dict):
             continue
         pod_spec = pod_config.get("spec")
-        if not isinstance(pod_spec, dict):
-            continue
-        if pod_spec.get("serviceAccountName") == LIBERO_PAYLOAD_SERVICE_ACCOUNT:
+        if (
+            isinstance(pod_spec, dict)
+            and pod_spec.get("serviceAccountName")
+            == LIBERO_PAYLOAD_SERVICE_ACCOUNT
+        ):
             return True
     return False
 
@@ -504,19 +512,110 @@ def _reject_libero_cluster_role_bindings(
     items = cluster_bindings.get("items")
     if not isinstance(items, list):
         raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
-    if any(
-        isinstance(item, dict)
-        and any(
-            isinstance(subject, dict)
-            and subject.get("kind") == "ServiceAccount"
-            and subject.get("namespace") == namespace
-            for subject in item.get("subjects") or []
-        )
-        for item in items
-    ):
-        raise RuntimeError(
-            "LIBERO namespace service accounts may not receive ClusterRoleBindings"
-        )
+    namespace_service_account_user = f"system:serviceaccount:{namespace}:"
+    namespace_service_account_group = f"system:serviceaccounts:{namespace}"
+    broad_authenticated_groups = {
+        "system:authenticated",
+        "system:unauthenticated",
+    }
+    for item in items:
+        if not isinstance(item, dict):
+            raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
+        subjects = item.get("subjects") or []
+        if not isinstance(subjects, list):
+            raise RuntimeError("LIBERO cluster RoleBinding subjects are invalid")
+        for subject in subjects:
+            if not isinstance(subject, dict):
+                raise RuntimeError("LIBERO cluster RoleBinding subject is invalid")
+            kind = subject.get("kind")
+            name = subject.get("name")
+            direct_namespace_grant = (
+                kind == "ServiceAccount" and subject.get("namespace") == namespace
+            )
+            service_account_user_grant = (
+                kind == "User"
+                and isinstance(name, str)
+                and name.startswith(namespace_service_account_user)
+            )
+            service_account_group_grant = kind == "Group" and name in {
+                "system:serviceaccounts",
+                namespace_service_account_group,
+            }
+            if (
+                direct_namespace_grant
+                or service_account_user_grant
+                or service_account_group_grant
+            ):
+                raise RuntimeError(
+                    "LIBERO namespace service accounts may not receive "
+                    "ClusterRoleBindings"
+                )
+            if kind == "Group" and name in broad_authenticated_groups:
+                role_ref = item.get("roleRef")
+                if (
+                    not isinstance(role_ref, dict)
+                    or role_ref.get("kind") != "ClusterRole"
+                    or not isinstance(role_ref.get("name"), str)
+                    or not role_ref["name"]
+                ):
+                    raise RuntimeError(
+                        "LIBERO broad-group ClusterRoleBinding is invalid"
+                    )
+                cluster_role = _kubectl_json(
+                    [
+                        "--context",
+                        context,
+                        "get",
+                        "clusterrole",
+                        role_ref["name"],
+                    ],
+                    purpose="LIBERO broad-group ClusterRole",
+                    kubeconfig=kubeconfig,
+                )
+                rules = cluster_role.get("rules")
+                if not isinstance(rules, list) or not _libero_safe_public_group_rules(
+                    rules
+                ):
+                    raise RuntimeError(
+                        "LIBERO broad authenticated groups may not receive "
+                        "workload resource access"
+                    )
+
+
+def _libero_safe_public_group_rules(rules: list[Any]) -> bool:
+    """Allow only discovery and self-access review for Kubernetes public groups."""
+
+    self_review_resources = {
+        "selfsubjectaccessreviews",
+        "selfsubjectrulesreviews",
+        "selfsubjectreviews",
+    }
+    for rule in rules:
+        if not isinstance(rule, dict):
+            return False
+        resources = rule.get("resources") or []
+        non_resource_urls = rule.get("nonResourceURLs") or []
+        if resources:
+            if (
+                not isinstance(resources, list)
+                or not set(resources) <= self_review_resources
+                or set(rule.get("apiGroups") or []) != {"authorization.k8s.io"}
+                or set(rule.get("verbs") or []) != {"create"}
+                or non_resource_urls
+                or rule.get("resourceNames")
+            ):
+                return False
+        elif (
+            not isinstance(non_resource_urls, list)
+            or not non_resource_urls
+            or any(
+                not isinstance(url, str) or not url.startswith("/")
+                for url in non_resource_urls
+            )
+            or set(rule.get("verbs") or []) - {"get"}
+        ):
+            return False
+    return True
 
 
 def _libero_namespaced_inventory(
@@ -613,28 +712,7 @@ def _libero_controller_rbac_evidence(
         raise RuntimeError(
             "LIBERO SkyPilot controller RoleBinding differs from the reviewed contract"
         )
-    cluster_bindings = _kubectl_json(
-        ["--context", context, "get", "clusterrolebindings"],
-        purpose="LIBERO controller ClusterRoleBinding inventory",
-        kubeconfig=kubeconfig,
-    )
-    items = cluster_bindings.get("items")
-    if not isinstance(items, list):
-        raise RuntimeError("LIBERO controller ClusterRoleBinding inventory is invalid")
-    if any(
-        isinstance(item, dict)
-        and any(
-            isinstance(subject, dict)
-            and subject.get("kind") == "ServiceAccount"
-            and subject.get("name") == SKYPILOT_ENGINE_SERVICE_ACCOUNT
-            and subject.get("namespace") == namespace
-            for subject in item.get("subjects") or []
-        )
-        for item in items
-    ):
-        raise RuntimeError(
-            "LIBERO SkyPilot controller may not receive a ClusterRoleBinding"
-        )
+    _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
     evidence = {
         "controller_service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
@@ -1977,6 +2055,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         smoke_artifact_name=args.smoke_artifact_name,
     )
     is_libero = _is_libero_invocation(args, docs)
+    if _uses_libero_payload_service_account(docs) and not is_libero:
+        raise ValueError(
+            "the reserved LIBERO payload service account requires an explicit "
+            "LIBERO solution or profile"
+        )
     if is_libero and args.solution_name != LIBERO_SOLUTION_NAME:
         raise ValueError("the LIBERO profile requires --solution-name libero")
     if is_libero:

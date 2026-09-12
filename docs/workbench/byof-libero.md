@@ -188,7 +188,8 @@ complete sentinel rule before replacing it with that one Pod's exact
 can read only itself afterward. The controller Role has no wildcard: it
 enumerates only the namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service
 operations needed by this fixed container job. The host verifies both identities and rejects
-every ClusterRoleBinding before submission, then repeats the complete empty
+every workload-granting ClusterRoleBinding that reaches the namespace's service
+accounts before submission, then repeats the complete empty
 namespace/payload grant and controller checks after infrastructure preflight
 immediately adjacent to submission. It rechecks the bound Role, sole Pod UID,
 job label, image, and no-ClusterRoleBinding result immediately after binding and
@@ -207,6 +208,18 @@ uses UID preconditions for both controller and payload RoleBindings, Roles, and
 ServiceAccounts before the namespace, polls every object to 404, stops the
 isolated API, and only then removes the payload kubeconfig and exact-run local
 SkyPilot state. Any ambiguity is a failed cleanup and preserves recovery state.
+
+The ClusterRoleBinding check covers direct ServiceAccount and User subjects,
+the global and namespace `system:serviceaccounts` groups, and resource-bearing
+grants to `system:authenticated` or `system:unauthenticated`. Only Kubernetes
+non-resource discovery and self-access-review rules are allowed for those broad
+public groups.
+
+The accepted publication-enforcement bundle includes a closed manifest of known
+LIBERO and shared policy tests. A future shared test that protects this contract
+must put the exact line `# npa: publication-enforcement=libero` in its source;
+the bundle discovers that explicit marker and does not infer policy ownership
+from an incidental word match.
 
 ## Acceptance artifact
 

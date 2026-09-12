@@ -84,6 +84,7 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/src/npa/workbench/gpu_classes.py",
     "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
     "npa/tests/deploy/test_public_publish.py",
+    "npa/tests/docker/test_image_byte_publish_contract.py",
     "npa/tests/docker/test_libero_image_contract.py",
     "npa/tests/docker/test_libero_image_payload_scan.py",
     "npa/tests/docker/test_libero_runtime_bootstrap.py",
@@ -94,6 +95,7 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/tests/workflows/test_byof_container_verify.py",
     "npa/tests/workflows/test_byof_libero.py",
     "npa/tests/workflows/test_byof_repo.py",
+    "npa/tests/workflows/test_byof_solution_smokes.py",
 )
 LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS = (
     "npa/scripts",
@@ -102,6 +104,9 @@ LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS = (
 )
 LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS = (
     "npa/tests",
+)
+LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER = (
+    b"# npa: publication-enforcement=libero"
 )
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
     "https://slsa.dev/provenance/v1",
@@ -610,7 +615,9 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
                     "LIBERO enforcement test must be a regular file: "
                     f"{candidate.relative_to(repository_root).as_posix()}"
                 )
-            if b"libero" in candidate.read_bytes().lower():
+            if LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER in (
+                candidate.read_bytes().splitlines()
+            ):
                 paths.add(candidate.relative_to(repository_root).as_posix())
     return tuple(sorted(paths))
 

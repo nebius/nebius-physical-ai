@@ -192,7 +192,7 @@ def test_libero_profile_refuses_unsafe_run_id_before_render_output(
         module._submit_and_wait(args)
 
 
-def test_libero_payload_account_triggers_contract_independent_of_filename() -> None:
+def test_libero_payload_account_is_not_self_attested_authorization() -> None:
     module = _load_module()
     args = SimpleNamespace(solution_name="", yaml_path=Path("generic.yaml"))
     documents = [
@@ -207,7 +207,42 @@ def test_libero_payload_account_triggers_contract_independent_of_filename() -> N
         }
     ]
 
-    assert module._is_libero_invocation(args, documents) is True
+    assert module._is_libero_invocation(args, documents) is False
+    assert module._uses_libero_payload_service_account(documents) is True
+
+
+def test_reserved_libero_payload_account_requires_explicit_solution(monkeypatch) -> None:
+    module = _load_module()
+    args = module._parse_args(
+        [
+            "--yaml",
+            "byof-container-smoke-rtxpro",
+            "--run-id",
+            "generic-run",
+            "--render-only",
+        ]
+    )
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_args, **_kwargs: [
+            {},
+            {
+                "config": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {
+                                "serviceAccountName": "npa-byof-libero-payload"
+                            }
+                        }
+                    }
+                }
+            },
+        ],
+    )
+
+    with pytest.raises(ValueError, match="requires an explicit LIBERO"):
+        module._submit_and_wait(args)
 
 
 def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None:
@@ -1177,10 +1212,113 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         }
 
     monkeypatch.setattr(module, "_kubectl_json", cluster_bound)
-    with pytest.raises(RuntimeError, match="may not receive a ClusterRoleBinding"):
+    with pytest.raises(RuntimeError, match="may not receive ClusterRoleBindings"):
         module._libero_controller_rbac_evidence(
             Path("/private/execution-kubeconfig"), "execution-context", namespace
         )
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        {"kind": "Group", "name": "system:serviceaccounts"},
+        {"kind": "Group", "name": "system:serviceaccounts:isolated-namespace"},
+        {
+            "kind": "User",
+            "name": "system:serviceaccount:isolated-namespace:any-account",
+        },
+    ],
+)
+def test_libero_rejects_indirect_cluster_binding_to_namespace_accounts(
+    monkeypatch, subject
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_kubectl_json",
+        lambda *_args, **_kwargs: {
+            "items": [
+                {
+                    "subjects": [subject],
+                    "roleRef": {"kind": "ClusterRole", "name": "cluster-admin"},
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="may not receive ClusterRoleBindings"):
+        module._reject_libero_cluster_role_bindings(
+            Path("/private/payload-kubeconfig"),
+            "payload-context",
+            "isolated-namespace",
+        )
+
+
+def test_libero_rejects_workload_access_for_authenticated_group(monkeypatch) -> None:
+    module = _load_module()
+
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "clusterrolebindings":
+            return {
+                "items": [
+                    {
+                        "subjects": [
+                            {"kind": "Group", "name": "system:authenticated"}
+                        ],
+                        "roleRef": {
+                            "kind": "ClusterRole",
+                            "name": "unsafe-pod-reader",
+                        },
+                    }
+                ]
+            }
+        assert arguments[-2:] == ["clusterrole", "unsafe-pod-reader"]
+        return {
+            "rules": [
+                {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
+            ]
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    with pytest.raises(RuntimeError, match="may not receive workload resource"):
+        module._reject_libero_cluster_role_bindings(
+            Path("/private/payload-kubeconfig"),
+            "payload-context",
+            "isolated-namespace",
+        )
+
+
+def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> None:
+    module = _load_module()
+
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "clusterrolebindings":
+            return {
+                "items": [
+                    {
+                        "subjects": [
+                            {"kind": "Group", "name": "system:authenticated"}
+                        ],
+                        "roleRef": {
+                            "kind": "ClusterRole",
+                            "name": "system:discovery",
+                        },
+                    }
+                ]
+            }
+        assert arguments[-2:] == ["clusterrole", "system:discovery"]
+        return {
+            "rules": [
+                {"nonResourceURLs": ["/api", "/apis"], "verbs": ["get"]}
+            ]
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    module._reject_libero_cluster_role_bindings(
+        Path("/private/payload-kubeconfig"),
+        "payload-context",
+        "isolated-namespace",
+    )
 
 
 def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> None:

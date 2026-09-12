@@ -573,6 +573,22 @@ def test_locally_invented_manager_acceptance_refuses_before_network_or_cache(
     assert not Path(args.cache_root).exists()
 
 
+def test_manager_acceptance_payload_cannot_select_its_trust_root(tmp_path) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    authoritative_key = module._trusted_manager_public_key()
+    payload = json.loads(Path(args.acceptance).read_text(encoding="utf-8"))
+    payload["acceptance"]["manager_signature"]["public_key_sha256"] = "0" * 64
+    _write_json(Path(args.acceptance), payload)
+
+    assert module._trusted_manager_public_key() == authoritative_key
+    with pytest.raises(module.BootstrapRefusal, match="trust root differs"):
+        module._validate_manager_acceptance(
+            Path(args.acceptance),
+            manifest_sha256=module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+            decision_sha256=args.decision_sha256,
+        )
+
+
 @pytest.mark.parametrize("field", ["size_bytes", "license_expression"])
 def test_incomplete_runtime_artifact_review_refuses_before_cache_mutation(
     tmp_path, field
