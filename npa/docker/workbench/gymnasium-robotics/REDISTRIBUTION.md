@@ -18,6 +18,15 @@ operator-owned cache. Every reuse verifies that exact tree. Missing access and
 incomplete locks are refusals; there
 is no terms-acceptance or consent variable.
 
+The image-baked system Python and Ubuntu `python3-boto3` package are trusted
+bootstrap/bookkeeping dependencies, not part of the fetched workload runtime.
+Their complete binary, copyright, license, and corresponding-source graph must
+be closed before build. Receipt validation, summary creation, and artifact
+upload use only that image-baked interpreter. Runtime installation and the
+Shadow Hand smoke run with AWS credential variables removed and execute the
+fetched interpreter only through its validated directory and file descriptors;
+the mutable `current` convenience link is never an execution input.
+
 Runtime fetch changes delivery only. It does not grant or resolve rights to
 use, modify, create derivative works, retain outputs, or provide a hosted
 service. The Phase 1 review found unresolved preferred-form/transformation and

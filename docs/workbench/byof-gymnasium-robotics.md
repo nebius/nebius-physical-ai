@@ -26,6 +26,12 @@ exact no-follow manifest of every retained path, type, mode, size, and file
 hash, and atomically publishes a complete version to an external operator-owned cache.
 An incomplete lock, missing anonymous access, malformed archive, mismatched
 byte, unsafe cache, or partial existing version is a terminal refusal.
+The fetched interpreter is opened and executed by validated file descriptor,
+never through the mutable `current` convenience link. Runtime installation and
+the capability smoke have AWS credential variables removed. Pod-receipt
+validation and artifact bookkeeping stay on the image-baked system Python and
+Ubuntu `python3-boto3`; their transitive binary/source/license closure is still
+part of the build blocker.
 
 The accepted private result at repository head `c308945a` is historical proof
 for its exact private digest and workflow bytes only. It is not evidence for

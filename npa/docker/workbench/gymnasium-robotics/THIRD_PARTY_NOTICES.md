@@ -22,7 +22,10 @@ accompany runtime-fetched material.
   license, and third-party-notice hashes are recorded in `source-lock.json`.
 - Ubuntu Noble neutral-bootstrap packages: mixed free-software licenses. Exact
   binary, copyright, corresponding-source, and build-material closure remains
-  incomplete and blocks the image build before package network access.
+  incomplete and blocks the image build before package network access. The
+  requested neutral set includes Ubuntu's system `python3-boto3` only for
+  trusted receipt, summary, and artifact bookkeeping; it is not a fetched
+  workload wheel and carries no permission for runtime-fetched material.
 
 No NVIDIA redistributable runtime is included. NVIDIA EGL/GL libraries are
 supplied by the assigned GPU node at run time and must be observed, never
