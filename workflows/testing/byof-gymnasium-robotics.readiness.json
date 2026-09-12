@@ -24,7 +24,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "Reviewed source/runtime identities are recorded, but the complete Python wheel graph is absent and Shadow preferred-form, transformation, use, and derivative questions remain unresolved. Runtime acquisition therefore refuses before network access.",
+      "reason": "The exact source archive, 19-wheel Python runtime graph, and Ubuntu bootstrap/corresponding-source inputs are content-locked and approved only for private non-conveying qualification. Public worker input remains blocked because two Shadow forearm meshes lack identified preferred-form source, public use/derivative rights remain unresolved, and no exact image has passed the post-build byte gates.",
       "evidence": [
         "npa/docker/workbench/gymnasium-robotics/source-lock.json",
         "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"

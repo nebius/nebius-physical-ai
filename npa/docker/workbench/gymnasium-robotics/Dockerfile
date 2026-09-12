@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Neutral public bootstrap candidate. The build gate precedes every package
-# network operation and remains closed until the exact Ubuntu bootstrap binary
-# and corresponding-source closure is independently accepted.
+# network operation and binds the independently reviewed Ubuntu bootstrap binary
+# and corresponding-source closure before APT can run.
 ARG BASE_IMAGE=ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
 FROM ${BASE_IMAGE} AS runtime
 
@@ -10,7 +10,7 @@ COPY npa/docker/workbench/gymnasium-robotics/apt-runtime.lock.json ./apt-runtime
 COPY npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json ./corresponding-source.lock.json
 COPY npa/docker/workbench/gymnasium-robotics/build.sh ./build.sh
 RUN chmod 0755 ./build.sh && ./build.sh verify-bootstrap-locks
-RUN --mount=type=secret,id=npa_host_ca_bundle,required=true,target=/run/npa-host-ca-bundle.crt \
+RUN --mount=type=secret,id=npa_host_ca_bundle,required=true,target=/run/npa-host-ca-bundle.crt,mode=0444 \
     ./build.sh install-bootstrap
 
 ARG SOURCE_SHA
