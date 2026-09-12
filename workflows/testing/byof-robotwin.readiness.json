@@ -31,7 +31,7 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "No manager runtime context or credential was used. Credentials and secret transport are mechanisms, never acceptance of runtime or output terms.",
+      "reason": "No manager runtime context, upstream access probe, or credential was used. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. Credentials and secret transport are mechanisms, never acceptance of runtime or output terms.",
       "evidence": []
     },
     "source_image": {
@@ -41,7 +41,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "CUDA/cuDNN acceptance, CuRobo v0.7.8 noncommercial research/evaluation use and service boundary, aggregate asset/output rights, exact image bytes, writable storage, and STRICT RTX context remain manager/human gates. B200 is invalid.",
+      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. CUDA/cuDNN delivery/use, CuRobo v0.7.8 service/output limits beyond that compatible field of use, aggregate asset/output treatment, exact access probes, image bytes, writable storage, and STRICT RTX context remain gates. B200 is invalid.",
       "evidence": []
     }
   }

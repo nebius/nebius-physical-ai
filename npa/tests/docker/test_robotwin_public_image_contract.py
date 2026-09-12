@@ -61,7 +61,14 @@ def test_phase_a_locks_are_explicitly_incomplete_and_fetch_nothing() -> None:
     assert lock["status"] == "incomplete"
     assert lock["runtime_artifacts"] == []
     assert lock["weights"] == []
+    assert lock["access"]["status"] == "not-probed"
+    assert lock["access"]["timing"] == "before-provisioning"
+    assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
+    assert lock["access"]["credential_persistence"] is False
     assert lock["cache"]["status"] == "disabled-until-lock-complete"
+    assert lock["cache"]["tier"] == "node-local-ephemeral"
+    assert lock["cache"]["owner_access"] == "single-customer-single-workload"
+    assert lock["cache"]["contains_credentials"] is False
     assert "INCOMPLETE" in (IMAGE_ROOT / "apt-packages.lock").read_text()
     requirements = (IMAGE_ROOT / "runtime-requirements.lock").read_text()
     assert "INCOMPLETE" in requirements

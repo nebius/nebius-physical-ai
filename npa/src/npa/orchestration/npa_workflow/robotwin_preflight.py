@@ -49,7 +49,7 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef"
+RUNTIME_LOCK_SHA256 = "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c"
 RUNTIME_LOCK_STATUS = "incomplete"
 RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v1"
 RTX_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
@@ -584,13 +584,17 @@ def _validate_authorization_fields(payload: dict[str, Any], raw: bytes) -> dict[
 
 
 def _require_genuine_runtime_use_receipt(raw: bytes) -> None:
-    """Refuse self-certified decisions until a manager receipt is hash-bound.
+    """Refuse unbound decisions until the run-level manager receipt is hash-bound.
 
     Phase A has no manager-approved receipt format, verifier key, or immutable
-    receipt digest.  The four booleans in the legacy private context are useful
-    only for closed-schema parsing; they are not authority.  Keep this boundary
-    deliberately non-overridable in production.  A later, separately reviewed
-    change must bind genuine manager evidence before this function can return.
+    receipt digest.  The CuRobo boolean binds a workload to the operator's
+    already-recorded, run-scoped ``noncommercial`` statement; it is not a new
+    per-image declaration or terms proxy.  The other decision bindings remain
+    useful only for closed-schema parsing; none is authority by itself.  Keep
+    this boundary deliberately non-overridable in production.  A later,
+    separately reviewed change must bind the genuine manager scope record,
+    provider-specific access evidence, and remaining decisions before this
+    function can return.
     """
 
     raise _refusal("manager-runtime-use-receipt-unavailable", raw)

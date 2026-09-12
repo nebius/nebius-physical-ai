@@ -260,9 +260,12 @@ images:
       Phase A zero-vendor-payload bootstrap candidate. RoboTwin, CuRobo v0.7.8,
       CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, assets, caches, credentials,
       and outputs are absent and runtime-only. The base, apt, and runtime locks
-      remain incomplete, so builds and runs fail closed. Public redistribution
-      and real RTX capability claims remain quarantined pending exact-byte and
-      human/legal acceptance evidence.
+      remain incomplete, so builds and runs fail closed. The bounded operator
+      scope is noncommercial validation/evaluation; customer credentials are
+      runtime-only and exact gated payload probes must precede provisioning.
+      Cache reuse defaults to isolated node-local ephemeral storage. Public
+      redistribution and real RTX capability claims remain quarantined pending
+      exact-byte and remaining human/legal evidence.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service
