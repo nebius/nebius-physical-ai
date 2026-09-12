@@ -84,6 +84,35 @@ INVOCATION = {
     "yaml": "byof-solution-smoke-robotwin-rtxpro-gpu",
     "task": "beat_block_hammer",
 }
+
+
+def is_robotwin_request(
+    *,
+    solution_name: str = "",
+    repo_url: str = "",
+    base_image: str = "",
+    image: str = "",
+    smoke_command: str = "",
+    capability_name: str = "",
+    yaml_path: str = "",
+) -> bool:
+    """Recognize public inputs that could otherwise relabel the RoboTwin path."""
+
+    normalized_repo = repo_url.strip().rstrip("/").lower().removesuffix(".git")
+    official_repo = INVOCATION["repo_url"].removesuffix(".git").lower()
+    return any(
+        (
+            solution_name.strip().lower() == "robotwin",
+            normalized_repo == official_repo,
+            base_image.strip().lower() == "tool://robotwin",
+            "/npa-robotwin@sha256:" in image.strip().lower(),
+            smoke_command.strip() == "/opt/npa/robotwin/robotwin-runtime run",
+            capability_name.strip() == INVOCATION["capability_name"],
+            Path(yaml_path).name.removesuffix(".yaml") == INVOCATION["yaml"],
+        )
+    )
+
+
 _CONTEXT_FIELDS = frozenset(
     {
         "solution",

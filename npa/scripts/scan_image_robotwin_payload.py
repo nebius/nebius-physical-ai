@@ -21,7 +21,8 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "robotwin_source",
         re.compile(
-            r"(?:^|/)(?:opt|workspace|src)/(?:RoboTwin|robotwin-source)(?:/|$)",
+            r"(?:^|/)(?:(?:opt|workspace|src)/(?:RoboTwin|robotwin-source)(?:/|$)|"
+            r"script/collect_data\.py$|envs/_base_task\.py$|task_config/[^/]+\.ya?ml$)",
             re.I,
         ),
     ),
@@ -87,6 +88,10 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
+    (
+        "source_control_metadata",
+        re.compile(r"(?:^|/)\.(?:git|hg|svn)(?:/|$)", re.I),
+    ),
 )
 
 FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -126,6 +131,13 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
     re.I,
 )
 
+SECRET_CONTENT = (
+    *walker.SECRET_CONTENT,
+    re.compile(
+        rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'
+    ),
+)
+
 
 def scan(rootfs_tar: Path, config: dict[str, Any]) -> list[walker.Finding]:
     """Scan one tar plus image history under the RoboTwin boundary policy."""
@@ -141,7 +153,7 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         forbidden_history=FORBIDDEN_HISTORY,
         audited_secret_files={},
         audited_libraries={},
-        secret_content=(),
+        secret_content=SECRET_CONTENT,
         forbidden_elf_dependency=FORBIDDEN_ELF_DEPENDENCY,
     ):
         return walker.scan_tars(tars, config)

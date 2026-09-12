@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 import stat
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -164,6 +165,33 @@ def test_robotwin_dry_run_carries_only_runtime_context_variable_name(
     assert secret not in " ".join(argv)
 
 
+def test_robotwin_direct_cli_refuses_before_loading_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(TRANSPORT_CONTEXT_ENV, raising=False)
+    monkeypatch.setattr(
+        byof_cli,
+        "_load_runner",
+        lambda: pytest.fail("direct RoboTwin CLI loaded the live BYOF runner"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "byof",
+            "run",
+            "--repo-url",
+            "https://github.com/RoboTwin-Platform/RoboTwin.git",
+            "--runtime-context-env",
+            PUBLIC_CONTEXT_ENV,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "only through normal" in result.output
+
+
 def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
     workflow = yaml.safe_load(
         (
@@ -267,12 +295,17 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
 
     expectation = pytest.raises(failure) if failure is not None else nullcontext()
     with expectation:
-        with byof_cli._robotwin_runtime_materialization(runner_module, argv):
+        with byof_cli._robotwin_runtime_materialization(
+            runner_module, argv
+        ) as authorization:
             assert TRANSPORT_CONTEXT_ENV not in os.environ
             context = Path(os.environ[PUBLIC_CONTEXT_ENV])
             kubeconfig = Path(os.environ[MATERIALIZED_KUBECONFIG_ENV])
             skypilot = Path(os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV])
             materialized_paths.extend((context, kubeconfig, skypilot))
+            assert authorization is not None
+            assert authorization.kubeconfig_source == str(kubeconfig)
+            assert authorization.skypilot_config_source == str(skypilot)
             assert stat.S_IMODE(context.parent.stat().st_mode) == 0o700
             assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in materialized_paths)
             if failure is not None:
@@ -281,3 +314,37 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
     assert all(not path.exists() for path in materialized_paths)
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
+
+
+def test_robotwin_worker_transport_uses_only_authorized_internal_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_runner = byof_cli._load_runner()
+    argv, transport = _robotwin_transport_fixture(tmp_path)
+    observed: dict[str, object] = {}
+
+    def run_authorized(
+        received: list[str], *, authorization: object
+    ) -> int:
+        observed["argv"] = received
+        observed["authorization"] = authorization
+        return 0
+
+    monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
+    monkeypatch.delenv(PUBLIC_CONTEXT_ENV, raising=False)
+    monkeypatch.setattr(
+        byof_cli,
+        "_load_runner",
+        lambda: SimpleNamespace(
+            _parse_args=real_runner._parse_args,
+            main=lambda *_args: pytest.fail("worker used the direct script boundary"),
+            _run_authorized_robotwin=run_authorized,
+        ),
+    )
+
+    result = runner.invoke(app, ["workbench", "byof", "run", *argv])
+
+    assert result.exit_code == 0, result.output
+    assert observed["argv"] == argv
+    assert observed["authorization"] is not None
