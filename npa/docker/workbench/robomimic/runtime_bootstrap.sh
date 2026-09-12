@@ -59,7 +59,7 @@ case "${1:-}" in
       kill -s "${signal_name}" -- "-${target_pid}" 2>/dev/null || true
       for ((attempt = 0; attempt < 50; attempt += 1)); do
         process_group_running "${target_pid}" || break
-        sleep 0.05
+        sleep 0.1
       done
       process_group_running "${target_pid}" \
         && kill -s KILL -- "-${target_pid}" 2>/dev/null || true

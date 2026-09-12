@@ -235,7 +235,7 @@ def _communicate_or_kill(
     process: subprocess.Popen[str], *, child_process_group: int
 ) -> tuple[str, str]:
     try:
-        return process.communicate(timeout=7)
+        return process.communicate(timeout=10)
     except subprocess.TimeoutExpired:
         _kill_process_groups(process, child_process_group=child_process_group)
         process.communicate(timeout=5)
@@ -874,7 +874,7 @@ def test_repeated_signal_escalates_and_reaps_ignoring_group(tmp_path: Path) -> N
         signal_elapsed = time.monotonic() - signal_started
 
         assert process.returncode == 143
-        assert 4.5 <= signal_elapsed < 7
+        assert 5 <= signal_elapsed < 10
         _assert_process_group_gone(payload_pid)
         assert not snapshot_root.parent.exists()
     finally:
