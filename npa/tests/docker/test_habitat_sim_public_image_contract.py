@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 import re
+import subprocess
 
 from npa.deploy import images
 
@@ -11,6 +14,42 @@ from npa.deploy import images
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 DOCKERFILE = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+
+
+def _bootstrap_function() -> str:
+    start = DOCKERFILE.index("npa_bootstrap_ca()")
+    end = DOCKERFILE.index("    npa_bootstrap_ca /\n", start)
+    return DOCKERFILE[start:end].replace("\\\n", "\n")
+
+
+def _run_bootstrap(
+    root: Path,
+    *,
+    certificate_count: int,
+    config_sha256: str,
+    bundle_bytes: int,
+    bundle_sha256: str,
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        **os.environ,
+        "CA_CERT_COUNT": str(certificate_count),
+        "CA_CONFIG_SHA256": config_sha256,
+        "CA_BUNDLE_BYTES": str(bundle_bytes),
+        "CA_BUNDLE_SHA256": bundle_sha256,
+    }
+    return subprocess.run(
+        [
+            "bash",
+            "-ceu",
+            _bootstrap_function() + '\nnpa_bootstrap_ca "$1"',
+            "npa-ca-bootstrap",
+            str(root),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_candidate_is_public_eligible_but_unbuilt_and_unpublishable() -> None:
@@ -40,10 +79,244 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     )
     assert "URIs: https://snapshot.ubuntu.com/ubuntu/" in DOCKERFILE
     assert "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in DOCKERFILE
-    assert DOCKERFILE.index("dpkg-deb -x /tmp/ca-certificates.deb") < DOCKERFILE.index(
-        "URIs: https://snapshot.ubuntu.com/ubuntu/"
-    )
+    for expected in (
+        "ARG CA_CERT_COUNT=121",
+        "ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d",
+        "ARG CA_BUNDLE_BYTES=182140",
+        "ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd",
+    ):
+        assert expected in DOCKERFILE
+    assert DOCKERFILE.count("npa_bootstrap_ca /") == 1
+    trust_stage = DOCKERFILE.index("FROM ${BASE_IMAGE} AS npa-ca-trust")
+    bootstrap = DOCKERFILE.index("npa_bootstrap_ca /", trust_stage)
+    build_stage = DOCKERFILE.index("FROM ${BASE_IMAGE} AS build")
+    assert trust_stage < bootstrap < build_stage
+    for stage in ("build", "runtime"):
+        stage_start = DOCKERFILE.index(f"FROM ${{BASE_IMAGE}} AS {stage}")
+        config_copy = DOCKERFILE.index(
+            "COPY --from=npa-ca-trust /etc/ca-certificates.conf", stage_start
+        )
+        bundle_copy = DOCKERFILE.index(
+            "COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt",
+            stage_start,
+        )
+        https = DOCKERFILE.index(
+            "URIs: https://snapshot.ubuntu.com/ubuntu/", stage_start
+        )
+        assert stage_start < config_copy < bundle_copy < https
+    assert DOCKERFILE.count("source=/ca-certificates.deb") == 1
+    assert "COPY --from=npa-ca-bootstrap" not in DOCKERFILE
     assert not re.search(r"URIs:\s+http://", DOCKERFILE)
+
+
+def test_ca_bootstrap_creates_exact_nonempty_config_and_bundle(
+    tmp_path: Path,
+) -> None:
+    cert_dir = tmp_path / "usr/share/ca-certificates/mozilla"
+    cert_dir.mkdir(parents=True)
+    certificates = {
+        "Zed.crt": b"-----BEGIN CERTIFICATE-----\nZed\n-----END CERTIFICATE-----\n",
+        "Alpha.crt": b"-----BEGIN CERTIFICATE-----\nAlpha\n-----END CERTIFICATE-----\n",
+    }
+    for name, payload in certificates.items():
+        (cert_dir / name).write_bytes(payload)
+    config = b"mozilla/Alpha.crt\nmozilla/Zed.crt\n"
+    bundle = certificates["Alpha.crt"] + certificates["Zed.crt"]
+
+    result = _run_bootstrap(
+        tmp_path,
+        certificate_count=2,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(bundle),
+        bundle_sha256=hashlib.sha256(bundle).hexdigest(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "etc/ca-certificates.conf").read_bytes() == config
+    assert (tmp_path / "etc/ssl/certs/ca-certificates.crt").read_bytes() == bundle
+
+
+def test_ca_bootstrap_refuses_hash_or_incomplete_certificate_input(
+    tmp_path: Path,
+) -> None:
+    cert_dir = tmp_path / "usr/share/ca-certificates/mozilla"
+    cert_dir.mkdir(parents=True)
+    certificate = b"-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n"
+    (cert_dir / "Fixture.crt").write_bytes(certificate)
+    config = b"mozilla/Fixture.crt\n"
+
+    bad_hash = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_sha256="0" * 64,
+        bundle_bytes=len(certificate),
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+    assert bad_hash.returncode != 0
+
+    bad_count = _run_bootstrap(
+        tmp_path,
+        certificate_count=2,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate),
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+    assert bad_count.returncode != 0
+
+    (cert_dir / "Fixture.crt").write_bytes(certificate.rstrip(b"\n"))
+    missing_newline = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate) - 1,
+        bundle_sha256=hashlib.sha256(certificate.rstrip(b"\n")).hexdigest(),
+    )
+    assert missing_newline.returncode != 0
+
+
+def test_https_and_repository_signature_failures_have_no_bypass() -> None:
+    for stage in DOCKERFILE.split("FROM ${BASE_IMAGE} AS runtime"):
+        if "apt-get update" not in stage:
+            continue
+        assert stage.index("COPY --from=npa-ca-trust") < stage.index(
+            "URIs: https://snapshot.ubuntu.com/ubuntu/"
+        ) < stage.index("apt-get update")
+    for forbidden in (
+        "Acquire::https::Verify-Peer=false",
+        "Acquire::https::Verify-Host=false",
+        "--allow-unauthenticated",
+        "AllowInsecureRepositories",
+        "trusted=yes",
+        "apt-get update ||",
+    ):
+        assert forbidden not in DOCKERFILE
+    assert DOCKERFILE.count(
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
+    ) == 2
+
+
+def test_generated_bundle_rejects_an_untrusted_tls_certificate(
+    tmp_path: Path,
+) -> None:
+    cert_dir = tmp_path / "root/usr/share/ca-certificates/mozilla"
+    cert_dir.mkdir(parents=True)
+
+    def create_ca(name: str) -> Path:
+        key = tmp_path / f"{name}.key"
+        certificate = tmp_path / f"{name}.crt"
+        result = subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-subj",
+                f"/CN={name}",
+                "-days",
+                "1",
+                "-keyout",
+                str(key),
+                "-out",
+                str(certificate),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return certificate
+
+    trusted = create_ca("trusted-fixture")
+    untrusted = create_ca("untrusted-fixture")
+    trusted_payload = trusted.read_bytes()
+    (cert_dir / "Trusted.crt").write_bytes(trusted_payload)
+    config = b"mozilla/Trusted.crt\n"
+    root = tmp_path / "root"
+    bootstrap = _run_bootstrap(
+        root,
+        certificate_count=1,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(trusted_payload),
+        bundle_sha256=hashlib.sha256(trusted_payload).hexdigest(),
+    )
+    assert bootstrap.returncode == 0, bootstrap.stderr
+    bundle = root / "etc/ssl/certs/ca-certificates.crt"
+
+    trusted_result = subprocess.run(
+        ["openssl", "verify", "-CAfile", str(bundle), str(trusted)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    untrusted_result = subprocess.run(
+        ["openssl", "verify", "-CAfile", str(bundle), str(untrusted)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert trusted_result.returncode == 0, trusted_result.stderr
+    assert untrusted_result.returncode != 0
+    assert "verification failed" in untrusted_result.stderr
+
+
+def test_snapshot_signature_mismatch_is_rejected(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    distribution = repository / "dists/stable"
+    distribution.mkdir(parents=True)
+    (distribution / "Release").write_text(
+        "Origin: fixture\n"
+        "Label: fixture\n"
+        "Suite: stable\n"
+        "Codename: stable\n"
+        "Date: Fri, 11 Sep 2026 00:00:00 UTC\n"
+        "Architectures: amd64\n"
+        "Components: main\n"
+        "Description: signature-refusal fixture\n",
+        encoding="utf-8",
+    )
+    (distribution / "Release.gpg").write_bytes(b"not-a-valid-signature\n")
+    keyring = tmp_path / "fixture-keyring.gpg"
+    keyring.write_bytes(b"not-a-valid-keyring\n")
+    sources = tmp_path / "sources.list"
+    sources.write_text(
+        f"deb [signed-by={keyring}] file:{repository} stable main\n",
+        encoding="utf-8",
+    )
+    lists = tmp_path / "lists"
+    (lists / "partial").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    (cache / "archives/partial").mkdir(parents=True)
+
+    result = subprocess.run(
+        [
+            "apt-get",
+            "-o",
+            f"Dir::Etc::sourcelist={sources}",
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            f"Dir::State::Lists={lists}",
+            "-o",
+            f"Dir::Cache={cache}",
+            "-o",
+            "Dir::State::status=/dev/null",
+            "-o",
+            "Debug::NoLocking=1",
+            "-o",
+            "Acquire::AllowInsecureRepositories=false",
+            "update",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Signed file isn't valid" in output
 
 
 def test_snapshot_pair_refuses_incompatible_perl_family() -> None:

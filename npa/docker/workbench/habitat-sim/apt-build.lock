@@ -9,6 +9,11 @@ ca_bootstrap:
   bytes: 140666
   sha256: 6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
   source: ca-certificates
+  certificate_count: 121
+  config_bytes: 4930
+  config_sha256: bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d
+  bundle_bytes: 182140
+  bundle_sha256: 9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
 compatibility:
   installed_perl_base: 5.34.0-3ubuntu1.8
   candidate_perl_base: 5.34.0-3ubuntu1.8
