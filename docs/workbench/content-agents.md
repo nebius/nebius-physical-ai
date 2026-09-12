@@ -77,7 +77,7 @@ exact built digest passes the byte/layer scan and real RTX workflow:
 ```bash
 npa/docker/workbench/content-agents/build.sh --push
 npa/.venv/bin/python npa/scripts/scan_content_agents_image.py \
-  <candidate-image>@sha256:<digest> --expected-npa-source-sha "$(git rev-parse HEAD)"
+  "<candidate-image>@sha256:<digest>" --expected-npa-source-sha "$(git rev-parse HEAD)"
 ```
 
 The accepted public image is
@@ -150,10 +150,10 @@ npa cluster up ... --gpu-driver-mode operator
 npa workbench health preflight --checks s3,token_factory --json
 npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" --run-id content-agents-check \
-  --var bucket=<private-bucket>
+  --var bucket="<private-bucket>"
 npa workbench workflow submit "$SPEC" --runtime \
   --run-id content-agents-check \
-  --var bucket=<private-bucket> \
+  --var bucket="<private-bucket>" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY

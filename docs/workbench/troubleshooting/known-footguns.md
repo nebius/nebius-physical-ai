@@ -5,9 +5,9 @@
 Start with the failed run's exact ID and project:
 
 ```bash
-npa workbench workflow status <run-id> --project <alias>
-npa workbench workflow logs <run-id> --project <alias>
-npa workbench workflow artifacts <run-id> --project <alias> --json
+npa workbench workflow status "<run-id>" --project "<alias>"
+npa workbench workflow logs "<run-id>" --project "<alias>"
+npa workbench workflow artifacts "<run-id>" --project "<alias>" --json
 ```
 
 | Symptom | Check |
@@ -19,20 +19,42 @@ npa workbench workflow artifacts <run-id> --project <alias> --json
 | Kubernetes reports anonymous `403` | [Kubeconfig authentication](#sky-check-reports-http-403-anonymous) |
 | Teardown stops partway | [Cancel verification](#controller-teardown-refuses-right-after-workflow-cancel) and [cleanup recovery](#teardown-is-seven-ordered-steps-with-no-single-entry-point) |
 | Gated model download fails | [Cosmos access preflight](../cosmos3-access-preflight.md) |
+| Provisioning preview reports `blocked` | [Quota and preview status](#provisioning-preview-exits-zero-but-reports-blocked) |
 
 The cases below include earlier validation incidents. Capacity and permissions
 must be checked on your selected project and cluster.
 
-## L40S Capacity Is On-Demand-Zero
+## Provisioning preview exits zero but reports blocked
+
+`npa provision-if-absent --dry-run --output-format json` can exit zero while
+its JSON reports `status: blocked` and `preflight.decision: blocked`. Exit zero
+means the preview completed; inspect the decision and reasons before provisioning:
+
+```bash
+npa provision-if-absent --project "<alias>" --dry-run --output-format json \
+  | jq '{status, decision: .preflight.decision, reasons: .preflight.reasons}'
+```
+
+Reserved GPU capacity does not supply missing block-storage or CPU quota.
+Check the selected project's requested disks and node shapes against the reported
+quota. Resolve the named shortage or choose a workload that fits; an `unknown`
+decision also needs investigation. Keep the actual provisioning command's
+resource selections consistent with the preview.
+
+<a id="l40s-capacity-is-on-demand-zero"></a>
+
+## An L40S job waits for capacity
 
 Symptom: SkyPilot keeps backing off while trying to schedule an L40S job.
 
 Root cause: the workbench cluster may have no provisioned L40S capacity, and
 on-demand L40S availability can be zero for the target region.
 
-Current workaround: ask your Nebius support or operations contact to provision
-an L40S node group before the run. If your workflow can use another RT-core GPU
-and your region has it available, use RTX Pro 6000 in US Central.
+Check the selected project's quota, available capacity, and actual node pools.
+Prepare a compatible node group through [Workbench setup](../getting-started.md).
+If capacity is unavailable, consult your platform operator or Nebius support.
+An RTX PRO 6000 is an alternative only when the workload, image, region, and
+available node shape support it.
 
 ## Default L40S Preset Has Insufficient CPU
 
@@ -92,7 +114,7 @@ pull with the selected exact-host credentials and refuses to submit when a
 private image comes back `403`. Run it standalone with:
 
 ```bash
-npa workbench workflow preflight-images <spec.yaml>
+npa workbench workflow preflight-images "<spec.yaml>"
 ```
 
 Grant the run's identity pull access to that exact repository, then rerun image
@@ -120,10 +142,10 @@ output live and names this failure when it appears, instead of buffering silentl
 Symptom: a job fails `FAILED_PRECHECKS`, or never schedules, on a cluster that
 clearly has enough GPUs in total.
 
-Root cause: SkyPilot places all GPUs of one task on a **single node**. A cluster
-of 2 nodes × 1 GPU can never satisfy `NAME:2`, and adding nodes does not help.
-Multi-GPU fan-out documentation assumes N GPUs on one pod, which is a different
-cluster shape than "N single-GPU node presets".
+Root cause: `accelerators: NAME:2` requests two GPUs **per node**. Two nodes with
+one GPU each cannot satisfy that request. Use a node with two GPUs, or a supported
+multi-node workload that explicitly requests one GPU per node. Extra nodes do
+not automatically turn a single-node application into distributed execution.
 
 Mitigation: `npa workbench workflow gpus --cluster <name>` prints each
 accelerator's *requestable quantity per node*. Submit rejects a request above that
@@ -315,9 +337,9 @@ operator-actionable partial cleanup and exit 2. Use the project ID if the alias
 was already forgotten:
 
 ```bash
-npa storage service-account delete --project-id <project-id> --dry-run
-npa storage service-account delete --project-id <project-id> --yes
-npa cleanup --full --yes --project <alias>
+npa storage service-account delete --project-id "<project-id>" --dry-run
+npa storage service-account delete --project-id "<project-id>" --yes
+npa cleanup --full --yes --project "<alias>"
 ```
 
 For alias-free journaling, also pass `--id <exact-service-account-id>` and, when
@@ -344,7 +366,7 @@ For a human-readable inventory, use the CLI's supported output field selection
 and do not enable debug output:
 
 ```bash
-nebius iam v2 access-key list --parent-id <project-id> --all \
+nebius iam v2 access-key list --parent-id "<project-id>" --all \
   --format 'jsonpath={range .items[*]}{.metadata.id}{"\t"}{.metadata.name}{"\t"}{.status.state}{"\n"}{end}'
 ```
 

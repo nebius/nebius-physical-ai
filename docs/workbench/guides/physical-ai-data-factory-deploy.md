@@ -472,11 +472,11 @@ Explicit environment variables are optional overrides when scripting. They take
 precedence over configured values, but are not required for the quick start:
 
 ```bash
-export AWS_ACCESS_KEY_ID=<...>
-export AWS_SECRET_ACCESS_KEY=<...>
-export AWS_ENDPOINT_URL=https://storage.<region>.nebius.cloud
-export NEBIUS_TOKEN_FACTORY_KEY=<...>
-export HF_TOKEN=<...>                # optional
+export AWS_ACCESS_KEY_ID="<...>"
+export AWS_SECRET_ACCESS_KEY="<...>"
+export AWS_ENDPOINT_URL="https://storage.<region>.nebius.cloud"
+export NEBIUS_TOKEN_FACTORY_KEY="<...>"
+export HF_TOKEN="<...>"                # optional
 ```
 
 ### 2b. `~/.npa/config.yaml` (machine-managed project config)
@@ -512,8 +512,8 @@ If the bucket / cluster do not exist yet, `provision-if-absent` creates only wha
 is missing (dry-run first):
 
 ```bash
-npa provision-if-absent --project <alias> --dry-run --output-format json
-npa provision-if-absent --project <alias> \
+npa provision-if-absent --project "<alias>" --dry-run --output-format json
+npa provision-if-absent --project "<alias>" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand          # real
@@ -555,16 +555,16 @@ project:
 
 ```bash
 # Interactive: pick one of the projects `npa configure` saved, then deploy.
-npa agent setup --name <agent-name>
+npa agent setup --name "<agent-name>"
 ```
 
 For scripted / non-interactive deploys, pass the ids explicitly instead:
 
 ```bash
 npa agent fresh-setup \
-  --project <alias> --name <agent-name> \
-  --project-id <nebius-project-id> --tenant-id <nebius-tenant-id> \
-  --region <region>
+  --project "<alias>" --name "<agent-name>" \
+  --project-id "<nebius-project-id>" --tenant-id "<nebius-tenant-id>" \
+  --region "<region>"
 ```
 
 Both provision the VM and bake the UI/backend. To re-bake later (e.g. after an
@@ -572,7 +572,7 @@ agent code change) without reprovisioning:
 
 ```bash
 # Bake/refresh the UI + backend + nginx on the VM (~1 min; reuses auth/creds).
-npa agent bootstrap --project <alias> --name <agent-name>
+npa agent bootstrap --project "<alias>" --name "<agent-name>"
 ```
 
 Before IAM or VM creation, agent deploy probes the exact Terraform backend
@@ -612,7 +612,7 @@ agent config exists.
 Verify the deploy:
 
 ```bash
-NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name>
+NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project "<alias>" --name "<agent-name>"
 ```
 
 ### 3a. Auth and first connection
@@ -723,7 +723,7 @@ and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
 caption frames, and `provenance.json` under the canonical input prefix.
 
 ```bash
-BUCKET=<your-artifact-bucket>
+BUCKET="<your-artifact-bucket>"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
 ```
@@ -795,7 +795,7 @@ back the `image_id` lines to confirm the three images are pinned:
 ```bash
 npa workbench workflow submit "$SPEC" --run-id preflight --plan-only \
   --assume-decision promote_checkpoint --registry "$REGISTRY" \
-  --var bucket=<your-artifact-bucket> | grep -E 'image_id|accelerators'
+  --var bucket="<your-artifact-bucket>" | grep -E 'image_id|accelerators'
 ```
 
 > **Do not submit with cleared workbench images.** The submit CLI no longer treats
@@ -837,7 +837,7 @@ NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
 NPA_WORKFLOW_GPU_MEMORY=384Gi \
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4gpu-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=4 \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -888,7 +888,7 @@ is an instantaneous preflight snapshot, not a reservation.
 NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4x4-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=16 \
   --var augment_nodes=4 \
   --assume-decision promote_checkpoint \
@@ -963,7 +963,7 @@ letting the prompt change what it is *made of*:
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-seg-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var augment_control=seg \
   --var augment_control_prompt="robot arm, conveyor, bin" \
   --var augment_mask_prompt="robot arm" \
@@ -1030,9 +1030,9 @@ Run real curation standalone against a completed run's augmented output:
 
 ```bash
 npa workbench fiftyone curate-augmented \
-  --augment-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/cosmos_augmented/ \
-  --report-uri  s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/report.json \
-  --curator-report-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/cosmos_curator.json \
+  --augment-uri "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/cosmos_augmented/" \
+  --report-uri  "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/report.json" \
+  --curator-report-uri "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/cosmos_curator.json" \
   --require-fiftyone \
   --dedup-threshold 0.10
 ```
@@ -1070,7 +1070,7 @@ sign in, then:
 
 Useful authenticated JSON endpoints for scripted verification:
 
-```bash
+```text
 GET  /api/artifacts/runs?prefix=physical-ai-data-factory
 GET  /api/artifacts/run/<run-id>?prefix=physical-ai-data-factory
 GET  /api/artifacts/provenance/<run-id>
@@ -1116,13 +1116,13 @@ Then remove them:
 ```bash
 # 1. Cancel the workflow. Planned/staged runs that never launched are a
 #    successful repeat-safe no-op.
-npa workflow cancel <run-id> --project "$PROJECT" --json
+npa workflow cancel "<run-id>" --project "$PROJECT" --json
 
 # 2. Agent VM, its network, local record, and the IAM the deploy created for it.
-npa agent destroy --project "$PROJECT" --name <agent-name> --yes
+npa agent destroy --project "$PROJECT" --name "<agent-name>" --yes
 
 # 3. Remove the shared jobs controller only after every NPA workflow is terminal.
-npa skypilot cleanup-controller --project "$PROJECT" --context <context> --yes
+npa skypilot cleanup-controller --project "$PROJECT" --context "<context>" --yes
 
 # 4. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
 #    subnet — and clears ~/.npa/clusters/<context>/. It reads
@@ -1136,8 +1136,8 @@ npa storage bucket delete --project "$PROJECT" --yes --wait
 # 6. Storage IAM. Inspect first. If legacy state lacks ownership provenance,
 #    reconcile the exact immutable ID before returning to the guarded delete.
 npa storage service-account delete --project "$PROJECT" --dry-run
-npa storage service-account reconcile --project "$PROJECT" --id <exact-id> --dry-run
-npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
+npa storage service-account reconcile --project "$PROJECT" --id "<exact-id>" --dry-run
+npa storage service-account reconcile --project "$PROJECT" --id "<exact-id>" \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
@@ -1145,8 +1145,8 @@ npa storage service-account delete --project "$PROJECT" --yes
 # 7. Retire any separately created private registry through its provider.
 #    NPA has no top-level registry command. For an NPA-created disposable
 #    project, remove only its unique provider default topology.
-npa network delete-project-default --project "$PROJECT" --project-id <project-id> \
-  --tenant-id <tenant-id> --yes
+npa network delete-project-default --project "$PROJECT" --project-id "<project-id>" \
+  --tenant-id "<tenant-id>" --yes
 
 # 8. Optional: delete only a proven NPA-created, provider-empty project.
 npa destroy --project "$PROJECT" --all --delete-project --yes --json
@@ -1164,13 +1164,13 @@ If project configuration was already removed, take the opaque receipt ID printed
 before that rewrite and use the same NPA-only recovery surfaces:
 
 ```bash
-npa agent destroy --receipt <receipt-id> --name <agent-name> --yes
-npa skypilot cleanup-controller --receipt <receipt-id> --context <context> --yes
-npa cluster down --receipt <receipt-id> --context <context> --force
-npa storage service-account delete --receipt <receipt-id> --id <exact-id> --dry-run
-npa workflow cancel <run-id> --receipt <receipt-id> --json
+npa agent destroy --receipt "<receipt-id>" --name "<agent-name>" --yes
+npa skypilot cleanup-controller --receipt "<receipt-id>" --context "<context>" --yes
+npa cluster down --receipt "<receipt-id>" --context "<context>" --force
+npa storage service-account delete --receipt "<receipt-id>" --id "<exact-id>" --dry-run
+npa workflow cancel "<run-id>" --receipt "<receipt-id>" --json
 # Optional, after the provider proves every managed child absent:
-npa destroy --receipt <receipt-id> --all --delete-project --yes --json
+npa destroy --receipt "<receipt-id>" --all --delete-project --yes --json
 ```
 
 Exact flags override receipt fields, and receipt fields override live config;

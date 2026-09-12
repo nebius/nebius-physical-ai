@@ -87,18 +87,21 @@ Select the exact Fleet-generated kubeconfig for this cluster. In one terminal:
 ```bash
 export KUBECONFIG=/path/to/owned-kubeconfig
 kubectl -n ray-cluster get rayclusters,pods,services
-kubectl -n ray-cluster port-forward service/ray-cluster-head-svc 8265:8265
+kubectl -n ray-cluster port-forward --address 127.0.0.1 service/ray-cluster-head-svc 8265:8265
 ```
 
-In another terminal, use a client environment with `ray[default]==2.58.0`.
-Choose a unique submission ID and submit the shipped deterministic application:
+In another terminal, activate a client environment with `ray[default]==2.58.0`
+and run from the repository root. Keep the first terminal's port-forward running.
+Choose a fresh submission ID and use the explicit local Jobs address:
 
 ```bash
-export RAY_ADDRESS=http://127.0.0.1:8265
-ray job submit --submission-id cpu-worker-proof \
+unset RAY_ADDRESS RAY_API_SERVER_ADDRESS
+export RAY_API=http://127.0.0.1:8265
+export RAY_JOB=cpu-worker-proof
+ray job submit --address "$RAY_API" --submission-id "$RAY_JOB" \
   --working-dir npa/examples/fleet/kuberay -- python verify_workers.py
-ray job status cpu-worker-proof
-ray job logs cpu-worker-proof
+ray job status --address "$RAY_API" "$RAY_JOB"
+ray job logs --address "$RAY_API" "$RAY_JOB"
 ```
 
 The result checks a different deterministic square-sum and SHA-256 on each
@@ -108,7 +111,11 @@ output is text-only verification, with no training or visualization artifact.
 Save logs and any application outputs outside the cluster before teardown:
 Ray's object store and `/tmp` are ephemeral.
 
-Stop any remaining application jobs using `ray job stop <submission-id>`, then
+Require native status `SUCCEEDED` and a `KUBERAY_RESULT=` log record with the
+expected worker count. The template's two workers share one physical CPU node.
+
+Stop any remaining application jobs using
+`ray job stop --address "$RAY_API" "$RAY_JOB"`, confirm a terminal state, then
 stop the exact port-forward process and destroy the owned fleet target:
 
 ```bash

@@ -92,6 +92,10 @@ npa provision-if-absent --project "$project_alias" \
   --cluster-name "$cluster_name" --dry-run --output-format json
 ```
 
+Inspect `status` and `preflight.decision` in the JSON. A dry run can exit zero
+while reporting `blocked`; resolve its `preflight.reasons` before applying.
+Reserved GPU availability does not provide boot-disk quota.
+
 When its GPU/CPU topology matches the workload, run the same command without
 `--dry-run`. See [Kubernetes setup](kubernetes.md) for operational details.
 

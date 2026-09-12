@@ -38,19 +38,19 @@ s3://<bucket>/<prefix>/<run-id>/
 1. **Pre-stage a golden run** — Sync the validated run tree for offline walkthrough:
 
    ```bash
-   <private-operator-pack>/sim2real-rtxpro/prestage-offline-run.sh <pre-staged-run-id>
+   "<private-operator-pack>/sim2real-rtxpro/prestage-offline-run.sh" "<pre-staged-run-id>"
    # -> /tmp/sim2real-prestage/<run-id>/
-   rerun /tmp/sim2real-prestage/<pre-staged-run-id>/reports/sim2real.rrd
+   rerun "/tmp/sim2real-prestage/<pre-staged-run-id>/reports/sim2real.rrd"
    ```
 
    S3 canonical path: `s3://<bucket>/<prefix>/<pre-staged-run-id>/reports/sim2real.rrd`
 2. **Start a live job early** — 15–30 min before showtime:
 
-   ```bash
-   export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
+   ```text
+   export KUBECONFIG="$HOME/.npa/clusters/<cluster>/kubeconfig"
    npa workbench workflow submit \
      workflows/main/sim2real.yaml \
-     --runtime --resume --run-id <live-run-id> <operator-vars-and-secrets>
+     --runtime --resume --run-id "<live-run-id>" <operator-vars-and-secrets>
    ```
 
 3. **Optional: pre-stage a loop-back run** — Second run where `eval/gold-heldout/outer-XX/report.json` has `success_rate` below threshold and `outer_loop/loopback.json` exists (for held-out failure narrative).
@@ -111,10 +111,10 @@ Show one slide or browser tab: the 14-state graph from [sim2real-architecture.md
 > "One standard workflow owns every state, parallel lane, loop decision, retry,
 > and durable S3 checkpoint."
 
-```bash
+```text
 # What runs on cluster (abbreviated)
 npa workbench workflow submit workflows/main/sim2real.yaml \
-  --runtime --resume --run-id <run-id> <operator-vars-and-secrets>
+  --runtime --resume --run-id "<run-id>" <operator-vars-and-secrets>
 ```
 
 Mention: RTX PRO/L40S placement, queue admission, and retries remain visible to
@@ -189,7 +189,7 @@ Command to narrate loop-back:
 
 ```bash
 # canonical proof uses OUTER_ITERATIONS=3 and keeps gold held out until the final pass
-grep -E 'outer=|decision=' /tmp/sim2real-cluster/<live-run-id>.log
+grep -E 'outer=|decision=' "/tmp/sim2real-cluster/<live-run-id>.log"
 ```
 
 ### 8:00–8:45 — Stages 12–13 (external seam and retrigger record)
@@ -239,13 +239,13 @@ jq '.components[] | select(.name=="stage_14_rerun_viz") | {tier, message}' \
 npa workbench health preflight
 
 # Submit live run
-export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
+export KUBECONFIG="$HOME/.npa/clusters/<cluster>/kubeconfig"
 INNER_ITERATIONS=3 OUTER_ITERATIONS=3 ROLLOUT_COUNT=64 STEPS_PER_ROLLOUT=32 \
   VALIDATION_ENV_COUNT=64 HELDOUT_ENV_COUNT=64 SUCCESS_THRESHOLD=0.50 \
-  <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
+  "<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh"
 
 # Monitor
-<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<live-run-id>
+"<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh" "sim2real-<live-run-id>"
 
 # Canonical URIs from code (optional)
 npa/.venv/bin/python -c "

@@ -1,372 +1,159 @@
-# Isaac Lab Bring Your Own Fork Cookbook
+# Run a custom Isaac Lab image or training entrypoint
 
-[Cookbooks](../README.md)
+[Cookbooks](../README.md) · [Workbench setup](../../getting-started.md)
 
-This cookbook shows how to run a custom Isaac Lab fork, custom RSL-RL fork, or
-custom training wrapper on Workbench without changing the checked-in platform
-workflow. The worked example in this directory uses a synthetic image layer and
-`custom_train.py` to prove the BYOF mechanism.
+This example adds a small training wrapper to the NPA Isaac Lab image, runs
+Cartpole training, and checks that the wrapper and checkpoint actually reached
+S3. Use it to learn the two customization surfaces before packaging your own
+fork: `--image` selects container bytes; `--yaml` selects the task's `run:` block.
 
-The W10 validation exercised both override surfaces:
+| Input | Output |
+| --- | --- |
+| Compatible RT-core GPU, project storage, and candidate image | Training log, checkpoint, and checkpoint manifest |
+| Optional `custom_train.py` entrypoint | `byof_sentinel.json` proving the wrapper ran |
 
-- image override through `resources.image_id`, exposed by
-  `npa/scripts/run_isaac_lab_rl.py --image`;
-- command override through the SkyPilot YAML `run:` block, passed to the same
-  runner with `--yaml`.
+The current base is Isaac Lab 3 beta / Isaac Sim 6. The
+[historical W10 measurements](historical-validation.md) used generation 2 and
+are retained separately; they are not new validation of the current base.
 
-The reference workflow remains `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`;
-the reference runner remains `npa/scripts/run_isaac_lab_rl.py`.
+## 1. Prepare the environment
 
-The current base is Isaac Lab 3 beta / Isaac Sim 6 and uses `--visualizer none`.
-The W10 transcripts retained below are generation 2 historical evidence; their
-`--headless` field is not the generation 3 invocation contract.
+Complete [Workbench setup](../../getting-started.md) for an **L40S or RTX PRO
+6000** cluster. Isaac requires RT cores. Use the
+[contributor Python environment](../../../../npa/README.md#developing-and-testing-npa)
+for the scripts below, and run from the repository root.
 
-## What This Cookbook Covers
-
-Use this guide when you want to:
-
-- keep Workbench's Isaac Lab S3 artifact layout;
-- run a non-default Isaac Lab container image;
-- layer a forked Isaac Lab checkout or forked `rsl_rl` package into that image;
-- invoke a custom entrypoint while preserving the output contract;
-- verify that the custom image ran and training still produced a checkpoint.
-
-The example image does not contain customer code. It only adds:
-
-- a marker label;
-- `/opt/byof/custom_train.py`;
-- a digest-pinned Workbench Isaac Lab base image.
-
-That keeps the validation focused on the mechanism, not on a particular fork.
-
-## Prerequisites
-
-Before using this cookbook, complete
-[../../getting-started.md](../../getting-started.md). That guide is the
-canonical setup path for the local NPA install, Nebius credentials, AWS profile,
-S3 endpoint, workbench environment variables, Kubernetes context, registry pull
-secret, and isolated SkyPilot runtime.
-
-Isaac Lab requires RT cores. Use L40S or RTX PRO 6000. Do not route its
-graphics/PhysX workloads to B200, H100, or H200.
-
-Before you start, verify the three live dependencies:
+You also need Docker Buildx, a registry you control, and S3 write access.
+Configure exact-host authentication for a private registry. Export S3 credentials
+privately; the runner forwards `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+when present. An AWS profile used only by your local CLI is not enough to
+supply the remote task.
 
 ```bash
-aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
-"${NPA_SKYPILOT_BIN}" check
-npa skypilot status
+export PROJECT_ALIAS='<your-project-alias>'
+export KUBE_CONTEXT='<verified-kubernetes-context>'
+export NPA_S3_BUCKET='<your-bucket>'
+export AWS_ENDPOINT_URL='<your-bucket-endpoint>'
+export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
+
+npa workbench health preflight --checks nebius,s3 --json
+npa skypilot verify --cluster "$KUBE_CONTEXT" --output-format json
 ```
 
-The SkyPilot version must be `0.12.2` for this validation lineage.
-
-SkyPilot 0.12.2 does not interpolate environment variables inside YAML `envs`
-blocks at submission time. Use the runner script
-(`npa/scripts/run_isaac_lab_rl.py`), which materializes endpoint values before
-submission, or substitute the literal endpoint value in your YAML.
-
-## Files In This Example
-
-This directory contains `Dockerfile.example`, `custom_train.py`, and this
-README. The Dockerfile starts from the digest-pinned Workbench Isaac Lab image
-and copies `custom_train.py` to `/opt/byof/custom_train.py`.
-
-`custom_train.py` accepts the same argument shape used by the upstream RSL-RL
-training command:
+Select the profile matching your GPU. The first example below uses L40S;
+for RTX PRO 6000 select `isaac-lab-rl-train-rtxpro.yaml` instead:
 
 ```bash
---task Isaac-Cartpole-v0 \
---num_envs 64 \
---max_iterations 1 \
---visualizer none \
---experiment_name npa_byof \
---run_name "${RUN_ID}" \
-agent.save_interval=1
+export BYOF_PROFILE=npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml
 ```
 
-At startup it writes `/workspace/output/byof_sentinel.json`. When
-`NPA_ISAAC_LAB_OUTPUT_DIR` is set, it also writes
-`${NPA_ISAAC_LAB_OUTPUT_DIR}/byof_sentinel.json`; the second path is uploaded by
-the existing workflow artifact uploader.
+## 2. Build and publish your candidate
 
-## Building Your Image
-
-Export the registry namespace and choose an image tag:
+[Dockerfile.example](Dockerfile.example) adds only labels and
+[`custom_train.py`](custom_train.py) to a digest-pinned NPA base. The wrapper
+writes a sentinel, then delegates to the upstream RSL-RL training script with
+the original arguments.
 
 ```bash
-export BYOF_BUILD_ID="w10-byof-image-$(date -u +%Y%m%dT%H%M%SZ)"
-export BYOF_REGISTRY=<your-registry>/<namespace>
-export BYOF_IMAGE="${BYOF_REGISTRY}/isaac-lab-byof-test:${BYOF_BUILD_ID}"
-```
+export BYOF_BUILD_ID="byof-$(date -u +%Y%m%dT%H%M%SZ)"
+export BYOF_REGISTRY='<your-registry>/<namespace>'
+export BYOF_IMAGE="$BYOF_REGISTRY/isaac-lab-byof-test:$BYOF_BUILD_ID"
 
-Build from the repo root:
-
-```bash
-docker build \
-  --platform linux/amd64 \
-  --build-arg BYOF_RUN_ID="${BYOF_BUILD_ID}" \
+docker build --platform linux/amd64 \
+  --build-arg "BYOF_RUN_ID=$BYOF_BUILD_ID" \
   -f docs/workbench/cookbooks/byof-isaac-lab/Dockerfile.example \
-  -t "${BYOF_IMAGE}" \
-  docs/workbench/cookbooks/byof-isaac-lab
+  -t "$BYOF_IMAGE" docs/workbench/cookbooks/byof-isaac-lab
+docker push "$BYOF_IMAGE"
+docker buildx imagetools inspect "$BYOF_IMAGE"
 ```
 
-The example base image digest is
-`sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46`,
-the validated `npa-isaac-lab:3.0.0b2.post1` Workbench image. W10 used the
-historical generation 2 base; the digest above is the current generation 3
-contract. Refresh it only after a new platform base passes exact-digest GPU
-validation and guarded publication.
+Record the pushed digest and use that immutable reference for validation.
+The base fetches Isaac at runtime under the operator's accepted terms. Do not
+invoke `/isaac-sim/python.sh` during an image build: that would fetch and bake
+the runtime. Follow [BYOF onboarding](../../../../skills/workflows/byof-onboard/SKILL.md)
+and [packaging](../../container-packaging.md) when adding your own fork,
+dependencies, or assets. Public publication requires separate image acceptance.
 
-Common customizations:
-
-- copy a forked Isaac Lab tree into `/workspace/isaaclab`;
-- install a forked RSL-RL package with `/isaac-sim/python.sh -m pip install -e`;
-- add task config defaults under your fork;
-- copy private assets into a known path;
-- add internal provenance labels;
-- keep `/isaac-sim/python.sh` and the artifact upload contract available.
-
-## Pushing To The Registry
-
-Push the image:
+## 3. Preview an image-only run
 
 ```bash
-docker push "${BYOF_IMAGE}"
-```
-
-Inspect the pushed digest:
-
-```bash
-docker buildx imagetools inspect "${BYOF_IMAGE}"
-```
-
-W10 pushed
-`ghcr.io/nebius/nebius-physical-ai/isaac-lab-byof-test:w10-byof-image-20260520T223706Z`.
-The pushed manifest-list digest was
-`sha256:c3e104601e31afaa833e3e73558ec9f0c6478f1dce59261fa45073a4d03518bf`;
-the linux/amd64 platform digest was
-`sha256:d9abdad36137a2f7cb38a6dbd85313ab0c5594582c248e174c9c4a13883d399c`.
-Both differ from the vanilla base digest above.
-
-## Running With Image Override Only
-
-This path proves that `--image` replaces the default `image_id` while the
-upstream training command still runs.
-
-```bash
-export RUN_ID_A="w10-byof-image-only-$(date -u +%Y%m%dT%H%M%SZ)"
-export NPA_S3_BUCKET=<your-bucket>
-export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
-
-NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN}" \
+export RUN_ID_A="byof-image-$(date -u +%Y%m%dT%H%M%SZ)"
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py \
-  --project <project-alias> \
-  --context <kubernetes-context> \
-  --yaml npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml \
-  --image "${BYOF_IMAGE}" \
-  --task Isaac-Cartpole-v0 \
-  --iterations 1 \
-  --run-id "${RUN_ID_A}" \
-  --output-root "s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof" \
-  --cleanup
+  --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT" \
+  --yaml "$BYOF_PROFILE" --image "$BYOF_IMAGE" \
+  --task Isaac-Cartpole-v0 --iterations 1 --run-id "$RUN_ID_A" \
+  --output-root "s3://$NPA_S3_BUCKET/checkpoints/isaac-lab-byof" \
+  --cleanup --render-only
 ```
 
-W10 validated this surface with:
+The JSON reports the rendered YAML path and output locations. Inspect its
+image, accelerator, command, endpoint, and run prefix. `--render-only` creates
+no cloud job. Remove only `--render-only` to submit this training smoke.
+A completed one-iteration run proves checkpoint production, not convergence.
 
-```text
-Run ID: w10-byof-image-only-20260520T232650Z
-GPU: L40S
-Output: s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/w10-byof-image-only-20260520T232650Z/
-Manifest train_script: /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
-```
+## 4. Override the training entrypoint
 
-Expected artifacts are `npa_isaac_lab_checkpoint.pt`,
-`npa_isaac_lab_checkpoint_manifest.json`, `npa_isaac_lab_train_summary.json`,
-`isaac_lab_train.log`, and RSL-RL run logs under `logs/rsl_rl/`.
-
-## Running With Image Plus Command Override
-
-The runner does not have a `--run-cmd` flag. The command override surface is the
-SkyPilot YAML `run:` block, selected through `--yaml`.
-
-Create a customer YAML variant outside the platform workflow:
+Keep the original profile intact. Make a private copy:
 
 ```bash
-cp npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml /tmp/isaac-lab-byof-command.yaml
+export BYOF_PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-byof.XXXXXX")"
+cp "$BYOF_PROFILE" "$BYOF_PRIVATE_DIR/task.yaml"
 ```
 
-In that temporary YAML, replace only the training script assignment in `run:`:
+In the copy's `run:` block, change only the `TRAIN_SCRIPT` assignment to:
 
 ```bash
 TRAIN_SCRIPT="/opt/byof/custom_train.py"
 ```
 
-Keep the rest of the run block intact so checkpoint discovery, manifest
-creation, and S3 upload still use the platform contract. The command should
-still resolve to this shape:
+Keep checkpoint discovery, manifest creation, and S3 upload unchanged. The
+wrapper must preserve task, environment count, iteration count, experiment/run
+names, visualization flags, and Hydra argument passthrough. Generation 3 uses
+`--visualizer none`; `--headless` is only for generation 2 compatibility images.
+The runner has no `--run-cmd` option.
+
+Preview with the new YAML and a fresh run ID:
 
 ```bash
-"${PYTHON_BIN}" \
-  /opt/byof/custom_train.py \
-  --task "${ISAAC_LAB_TASK}" \
-  --num_envs "${ISAAC_LAB_NUM_ENVS}" \
-  --max_iterations "${ISAAC_LAB_ITERATIONS}" \
-  --visualizer none \
-  --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" \
-  --run_name "${ISAAC_LAB_RUN_NAME}" \
-  agent.save_interval=1
-```
-
-Launch with the custom YAML and image:
-
-```bash
-export RUN_ID_B="w10-byof-image-and-cmd-$(date -u +%Y%m%dT%H%M%SZ)"
-
-NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN}" \
+export RUN_ID_B="byof-entrypoint-$(date -u +%Y%m%dT%H%M%SZ)"
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py \
-  --project <project-alias> \
-  --context <kubernetes-context> \
-  --yaml /tmp/isaac-lab-byof-command.yaml \
-  --image "${BYOF_IMAGE}" \
-  --task Isaac-Cartpole-v0 \
-  --iterations 1 \
-  --run-id "${RUN_ID_B}" \
-  --output-root "s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof" \
-  --cleanup
+  --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT" \
+  --yaml "$BYOF_PRIVATE_DIR/task.yaml" --image "$BYOF_IMAGE" \
+  --task Isaac-Cartpole-v0 --iterations 1 --run-id "$RUN_ID_B" \
+  --output-root "s3://$NPA_S3_BUCKET/checkpoints/isaac-lab-byof" \
+  --cleanup --render-only
 ```
 
-W10 validated this surface with:
+Verify the custom script in the rendered command, then remove `--render-only`
+to execute. Keep the private YAML until the run and any recovery are complete.
 
-```text
-Run ID: w10-byof-image-and-cmd-20260520T233113Z
-GPU: L40S
-Output: s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/w10-byof-image-and-cmd-20260520T233113Z/
-Manifest train_script: /opt/byof/custom_train.py
-Sentinel: byof_sentinel.json
-```
+## 5. Verify the result and cleanup
 
-The validation sentinel included:
-
-```json
-{
-  "byof": true,
-  "script": "custom_train.py",
-  "run_id": "w10-byof-image-and-cmd-20260520T233113Z",
-  "task": "Isaac-Cartpole-v0",
-  "num_envs": "64",
-  "max_iterations": "1",
-  "headless": true,
-  "hydra_args": ["agent.save_interval=1"]
-}
-```
-
-This proves that a non-default image and a non-default entrypoint can run while
-still producing a normal Isaac Lab checkpoint.
-
-## Platform Guarantees And Image Responsibilities
-
-The platform guarantees:
-
-- a SkyPilot Kubernetes task;
-- L40S accelerator routing in the reference YAML;
-- image replacement through `resources.image_id`;
-- run id injection through `NPA_ISAAC_LAB_RUN_ID`;
-- task and iteration injection through `ISAAC_LAB_TASK` and `ISAAC_LAB_ITERATIONS`;
-- output prefix injection through `S3_OUTPUT_PREFIX`;
-- log capture to `isaac_lab_train.log`;
-- checkpoint discovery under `logs/rsl_rl/`;
-- stable checkpoint upload as `npa_isaac_lab_checkpoint.pt`;
-- manifest upload as `npa_isaac_lab_checkpoint_manifest.json`;
-- cleanup through the runner's existing SkyPilot cleanup path.
-
-Your image must provide:
-
-- `/isaac-sim/python.sh`, or a compatible Python fallback;
-- Isaac Lab and RSL-RL dependencies for the requested task;
-- the upstream training script if your wrapper delegates to it;
-- `boto3` availability or installability during setup;
-- write access to `/workspace/isaaclab/npa-runs`;
-- non-rendering Isaac Lab behavior (`--visualizer none` for generation 3);
-- any custom assets or packages your fork requires.
-
-Your custom command must preserve `--task`, `--num_envs`, `--max_iterations`,
-`--visualizer`, `--experiment_name`, `--run_name`, and Hydra override
-passthrough. The wrapper retains `--headless` only for generation 2 custom
-images.
-
-## Verifying Your Run
-
-List the output prefix:
+After success, inspect the run prefix with AWS CLI using the same endpoint and
+credentials. For the custom-entrypoint run:
 
 ```bash
-aws s3 ls \
-  "s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/${RUN_ID_B}/" \
-  --recursive \
-  --endpoint-url https://storage.eu-north1.nebius.cloud
+export BYOF_RUN_URI="s3://$NPA_S3_BUCKET/checkpoints/isaac-lab-byof/$RUN_ID_B"
+aws s3 ls "$BYOF_RUN_URI/" --recursive --endpoint-url "$AWS_ENDPOINT_URL"
+aws s3 cp "$BYOF_RUN_URI/npa_isaac_lab_checkpoint_manifest.json" - \
+  --endpoint-url "$AWS_ENDPOINT_URL"
+aws s3 cp "$BYOF_RUN_URI/byof_sentinel.json" - \
+  --endpoint-url "$AWS_ENDPOINT_URL"
 ```
 
-Fetch the manifest:
+| Evidence | Required result |
+| --- | --- |
+| Checkpoint manifest | `status: success`, at least one checkpoint, matching run ID and task, expected `train_script` |
+| Checkpoint and logs | `npa_isaac_lab_checkpoint.pt`, `npa_isaac_lab_train_summary.json`, `isaac_lab_train.log`, and `logs/rsl_rl/` |
+| Custom sentinel | `byof: true`, `script: custom_train.py`, matching run ID, expected arguments |
+| Runner summary | Terminal job status and successful cleanup for this run |
 
-```bash
-aws s3 cp \
-  "s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/${RUN_ID_B}/npa_isaac_lab_checkpoint_manifest.json" \
-  - \
-  --endpoint-url https://storage.eu-north1.nebius.cloud
-```
+The image-only run uses the upstream script and does not need a custom sentinel.
+`--cleanup` removes the run's compute; the shared jobs controller may remain.
+Use [teardown](../../../teardown.md) for separately owned infrastructure.
 
-Check:
-
-- `status` is `success`;
-- `checkpoint_count` is at least `1`;
-- `run_id` matches the submitted run;
-- `task` matches the requested task;
-- `train_script` is the expected upstream or custom path.
-
-For command override runs, fetch the sentinel:
-
-```bash
-aws s3 cp \
-  "s3://${NPA_S3_BUCKET}/checkpoints/isaac-lab-byof/${RUN_ID_B}/byof_sentinel.json" \
-  - \
-  --endpoint-url https://storage.eu-north1.nebius.cloud
-```
-
-Check:
-
-- `byof` is `true`;
-- `script` is `custom_train.py`;
-- `run_id` matches the submitted run;
-- `argv` contains the task, environment count, iteration count, and Hydra args.
-
-Confirm SkyPilot cleanup:
-
-```bash
-"${NPA_SKYPILOT_BIN}" status --refresh
-"${NPA_SKYPILOT_BIN}" jobs queue --refresh
-```
-
-There should be no live run cluster and no in-progress managed job after a
-successful `--cleanup` run. The shared jobs controller may remain up.
-
-## Known Constraints
-
-- Isaac Lab requires RT-core GPUs.
-- Batch jobs must disable visualization (`--visualizer none` for generation 3;
-  `--headless` only for generation 2 compatibility images).
-- The current path does not run Omniverse interactive rendering.
-- Omniverse rendering support is roadmap work, not part of this BYOF smoke.
-- The runner exposes image override directly but command override through YAML.
-- Private-registry credentials can expire; rotate only the explicitly configured
-  operator-managed secret. Public GHCR releases need no pull secret.
-- S3 access must be configured for the target bucket and endpoint.
-- The example uses a synthetic image, not a real customer image.
-- Multi-GPU and multi-iteration validation are separate prompts.
-
-## Where To Get Help
-
-Open an issue in this repository with the run id, image tag and digest,
-SkyPilot job id, manifest JSON, sentinel JSON for command override runs, and
-the relevant `sky jobs logs <job-id>` excerpt.
-
-For managed Nebius environments, include the same artifacts when contacting the
-support or account team.
+If setup fails, check image pull access, GPU spelling, the runtime's Isaac
+bootstrap, and the exact S3 endpoint. If training completes without the sentinel,
+verify the rendered `TRAIN_SCRIPT` and uploaded output directory. When reporting
+an issue, include sanitized versions, image digest, status, and log excerpts;
+keep credentials and live infrastructure identifiers private.

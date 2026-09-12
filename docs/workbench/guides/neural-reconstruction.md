@@ -86,9 +86,9 @@ RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
   workflows/main/nurec-reconstruct.yaml \
-  --run-id "$RUN_ID" --project <project-alias> --runtime \
-  --infra k8s/<your-rt-core-context> \
-  --var bucket=<your-bucket> \
+  --run-id "$RUN_ID" --project "<project-alias>" --runtime \
+  --infra "k8s/<your-rt-core-context>" \
+  --var bucket="<your-bucket>" \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
@@ -97,7 +97,7 @@ npa workbench workflow submit \
 Watch it:
 
 ```bash
-npa workbench workflow status "$RUN_ID" --project <project-alias> --watch
+npa workbench workflow status "$RUN_ID" --project "<project-alias>" --watch
 ```
 
 A healthy run looks like this — `reconstruct` is the long pole:

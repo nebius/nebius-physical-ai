@@ -346,7 +346,7 @@ aws s3 rm \
 Cancel a still-running job by ID if needed:
 
 ```bash
-nebius ai job cancel --id <JOB_ID>
+nebius ai job cancel --id "<JOB_ID>"
 ```
 
 ## Related Docs

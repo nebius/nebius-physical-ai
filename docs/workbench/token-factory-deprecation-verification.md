@@ -123,7 +123,7 @@ npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_token_factory_e2e.py \
   npa/tests/e2e/test_hosted_rollout_e2e.py \
   npa/tests/e2e/test_agent_token_factory_e2e.py -q \
-  --basetemp=<private-artifact-directory>
+  --basetemp="<private-artifact-directory>"
 ```
 
 Authentication preflight and `models` are useful prerequisites, not proof of

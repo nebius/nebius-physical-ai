@@ -114,12 +114,12 @@ release promotion.
 ```bash
 docker run -d --name cosmos3-serving --gpus all --ipc=host --shm-size 32g \
   --ulimit nofile=1048576:1048576 \
-  -v <runtime-dir>:/opt/npa-cosmos3-serving/runtime \
-  -v <hf-cache-dir>:/opt/npa-cosmos3-serving/hf-cache \
+  -v "<runtime-dir>:/opt/npa-cosmos3-serving/runtime" \
+  -v "<hf-cache-dir>:/opt/npa-cosmos3-serving/hf-cache" \
   -e NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES \
-  -e HF_TOKEN=<your-token> \
+  -e HF_TOKEN="<your-token>" \
   -p 8000:8000 \
-  ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:<validated-digest>
+  "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:<validated-digest>"
 ```
 
 Both mounted directories must be writable by uid 1000: the image runs as a non-root

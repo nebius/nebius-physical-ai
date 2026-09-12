@@ -52,7 +52,7 @@ Customer trigger URI and train-env URI definitions: [data contracts § Customer 
 export CUSTOMER_ASSET_PROFILE=industrial
 export CUSTOMER_TASK_ID=my-batch-20260614       # substitutes YOUR-TASK-ID in profile URIs
 export CUSTOMER_ROBOT_PRESET=flexiv             # optional; default ur5e in industrial profile
-<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh
+"<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh"
 ```
 
 Profiles: `<private-operator-pack>/sim2real-rtxpro/customer-asset-profiles/*.profile.example`.
@@ -66,7 +66,7 @@ Copy to `~/.npa/customer-asset.profile` and set `CUSTOMER_ASSET_PROFILE` to that
 Dry-run:
 
 ```bash
-CUSTOMER_ASSET_PROFILE=industrial <private-operator-pack>/sim2real-rtxpro/apply-customer-asset-profile.sh
+CUSTOMER_ASSET_PROFILE=industrial "<private-operator-pack>/sim2real-rtxpro/apply-customer-asset-profile.sh"
 ```
 
 Customer JSON templates (`YOUR-BUCKET` / `YOUR-TASK-ID` placeholders):
@@ -289,7 +289,7 @@ Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
 Fetch and inspect (replace bucket/run id):
 
 ```bash
-PREFIX=s3://<bucket>/sim2real-b/<run-id>
+PREFIX="s3://<bucket>/sim2real-b/<run-id>"
 aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{decision, success_rate, threshold, checkpoint_uri}'
 aws s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \

@@ -25,11 +25,11 @@ For a LeRobot workbench, supply your configured project alias and choose a
 workbench name. These parent selectors precede the subcommand:
 
 ```bash
-npa workbench lerobot -p <project-alias> -n <workbench-name> deploy \
+npa workbench lerobot -p "<project-alias>" -n "<workbench-name>" deploy \
   --runtime container \
-  --project-id <project-id> --tenant-id <tenant-id> --region <region>
-npa workbench lerobot -p <project-alias> -n <workbench-name> status
-npa workbench lerobot -p <project-alias> -n <workbench-name> system-info
+  --project-id "<project-id>" --tenant-id "<tenant-id>" --region "<region>"
+npa workbench lerobot -p "<project-alias>" -n "<workbench-name>" status
+npa workbench lerobot -p "<project-alias>" -n "<workbench-name>" system-info
 ```
 
 Use the tool's deploy help to select GPU sizing and the matching image. A
@@ -41,10 +41,10 @@ separate commands with their own dataset and checkpoint requirements.
 Deploy to a VM you already operate:
 
 ```bash
-npa workbench lerobot -p <project-alias> -n <workbench-name> deploy \
-  --runtime byovm --host <ssh-host> \
+npa workbench lerobot -p "<project-alias>" -n "<workbench-name>" deploy \
+  --runtime byovm --host "<ssh-host>" \
   --ssh-user ubuntu --ssh-key ~/.ssh/id_ed25519
-npa workbench lerobot -p <project-alias> -n <workbench-name> system-info
+npa workbench lerobot -p "<project-alias>" -n "<workbench-name>" system-info
 ```
 
 NPA probes `nvidia-smi` and saves the detected GPU names and count. If needed,

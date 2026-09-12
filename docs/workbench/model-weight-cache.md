@@ -40,7 +40,7 @@ On by default wherever the answer is not "invent storage nobody asked for":
   default to; name a Nebius filesystem and every job attaches it:
 
   ```bash
-  export NPA_MODEL_CACHE_FILESYSTEM=<filesystem>   # not an s3:// bucket
+  export NPA_MODEL_CACHE_FILESYSTEM="<filesystem>"   # not an s3:// bucket
   ```
 
 Nothing here provisions storage. NPA will not create a claim, guess a class, or bill

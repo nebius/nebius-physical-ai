@@ -52,7 +52,7 @@ Reachy dataset you want (a Pollen Robotics / LeRobot Hub repo ID):
 ```bash
 npa workbench lerobot train \
   --policy-type act \
-  --dataset pollen-robotics/<reachy-dataset> \
+  --dataset "pollen-robotics/<reachy-dataset>" \
   --job-name reachy-act-hello \
   --steps 2000 \
   --batch-size 8 \

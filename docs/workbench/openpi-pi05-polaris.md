@@ -256,8 +256,8 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/npa workbench workflow plan-spec \
   workflows/testing/openpi-pi05-full-droid-finetune.yaml \
   --run-id openpi-full-droid-plan \
-  --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest> \
-  --var durable_pvc=<run-owned-claim>
+  --var runtime_image="registry.example.invalid/operator/openpi@sha256:<digest>" \
+  --var durable_pvc="<run-owned-claim>"
 ```
 
 Before live submission, prove the selected project/tenant/region, eight reserved
@@ -281,7 +281,7 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/npa workbench workflow plan-spec \
   workflows/testing/openpi-pi05-four-mode.yaml \
   --run-id openpi-four-mode-plan \
-  --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest>
+  --var runtime_image="registry.example.invalid/operator/openpi@sha256:<digest>"
 ```
 
 On a fresh isolated B200 MK8s context, the canonical E2E builds the source,
@@ -293,10 +293,10 @@ and inference regression, and submits the connected graph through
 ```bash
 NPA_INTEGRATION_E2E=1 \
 NPA_BYOF_OPENPI_LIVE_B200=1 \
-NPA_E2E_PROJECT=<project-alias> \
-NPA_E2E_S3_BUCKET=<existing-project-bucket> \
-NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
-NPA_BYOF_OPENPI_REGISTRY=<operator-registry>/<namespace> \
+NPA_E2E_PROJECT="<project-alias>" \
+NPA_E2E_S3_BUCKET="<existing-project-bucket>" \
+NPA_BYOF_S3_ENDPOINT="https://storage.<bucket-region>.nebius.cloud" \
+NPA_BYOF_OPENPI_REGISTRY="<operator-registry>/<namespace>" \
 NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py

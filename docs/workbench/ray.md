@@ -120,9 +120,9 @@ Then submit a durable batch from a CPU client:
 
 ```bash
 npa workbench cosmos3 ray-batch \
-  --input-path s3://<bucket>/<prefix>/batch.json \
-  --output-path s3://<bucket>/<prefix>/outputs/ \
-  --endpoint http://<private-service>:8000
+  --input-path "s3://<bucket>/<prefix>/batch.json" \
+  --output-path "s3://<bucket>/<prefix>/outputs/" \
+  --endpoint "http://<private-service>:8000"
 ```
 
 The bearer token comes from `NPA_COSMOS3_RAY_TOKEN`, not the command line. The

@@ -28,8 +28,8 @@ path. Managed deployments default to the reproducible container:
 ```bash
 npa workbench isaac-lab deploy \
   --runtime container \
-  --gpu-type <discovered-rtx-platform> \
-  --gpu-preset <matching-preset>
+  --gpu-type "<discovered-rtx-platform>" \
+  --gpu-preset "<matching-preset>"
 ```
 
 Native `--runtime vm` installation is intentionally unsupported for generation
@@ -45,9 +45,9 @@ barrier:
 ```bash
 npa workbench workflow submit \
   workflows/testing/isaac-lab-rl-sweep.yaml \
-  --run-id <unique-run-id> \
+  --run-id "<unique-run-id>" \
   --runtime \
-  --var bucket=<configured-bucket> \
+  --var bucket="<configured-bucket>" \
   --image ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:3.0.0b2.post1 \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -59,7 +59,7 @@ export. RGB capture is enabled by default for that post-training rollout:
 ```bash
 npa workbench isaac-lab train \
   --task Isaac-Cartpole-v0 \
-  --output-dir <output-directory> \
+  --output-dir "<output-directory>" \
   --export-trajectories
 ```
 

@@ -68,7 +68,7 @@ mode or as `run_id` with `--output-format json`. Find durable runs with:
 
 ```bash
 npa workbench workflow list \
-  --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
+  --s3-bucket "<bucket>" --workflow-s3-prefix "<parent-prefix>" --json
 ```
 
 When tasks need source, submission automatically stages a content-addressed
@@ -218,8 +218,8 @@ and launches it. Runtime-required workflows select the driver automatically.
 `--runtime` adds a driver that executes the graph wave by wave:
 
 ```bash
-npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
-  --project <alias> --infra k8s/<cluster> --var bucket=<bucket>
+npa workbench workflow submit "<spec.yaml>" --run-id "<id>" --runtime \
+  --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
 
 | Capability | Behaviour |

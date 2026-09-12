@@ -455,7 +455,7 @@ wave that reached a genuine terminal `FAILED` status is preserved as-is and
 gated-model license, for example). Add `--retries 1` to authorize one new
 attempt at that specific wave:
 
-```bash
+```text
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --retries 1 --max-wait-seconds 0 \

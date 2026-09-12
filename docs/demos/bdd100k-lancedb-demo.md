@@ -154,7 +154,7 @@ service requires an output path:
 ```bash
 npa workbench detection-training deploy \
   --namespace workbench \
-  --output-path s3://<YOUR_BUCKET>/bdd100k-pipeline/
+  --output-path "s3://<YOUR_BUCKET>/bdd100k-pipeline/"
 ```
 
 The OSS LanceDB VM path is still operator-owned in this build. For local smoke,

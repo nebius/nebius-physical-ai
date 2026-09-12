@@ -243,7 +243,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    <your-registry>/<namespace>/npa-isaac-lab:3.0.0b2.post1
+    "<your-registry>/<namespace>/npa-isaac-lab:3.0.0b2.post1"
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -264,9 +264,9 @@ reports must finish with `VERDICT: clean`.
 is nothing credentialed left to pull:
 
 ```bash
-npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
-npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant k8s
-npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
+npa/docker/workbench/isaac-lab/build.sh --registry "<your-registry>/<namespace>" --push
+npa/docker/workbench/sonic/build.sh    --registry "<your-registry>/<namespace>" --push --variant k8s
+npa/docker/workbench/groot/build.sh    --registry "<your-registry>/<namespace>" --push
 ```
 
 ### Public development and release — mind the order
@@ -289,10 +289,10 @@ Promote only the validated digest to its supported release tag:
 ```bash
 npa/.venv/bin/python -m npa.deploy.publish_public \
   --target ghcr.io/nebius/nebius-physical-ai \
-  --development-sha <full-git-sha> --dry-run
+  --development-sha "<full-git-sha>" --dry-run
 npa/.venv/bin/python -m npa.deploy.publish_public \
   --target ghcr.io/nebius/nebius-physical-ai \
-  --development-sha <full-git-sha>
+  --development-sha "<full-git-sha>"
 ```
 
 The publisher resolves each development tag once and copies only by immutable
@@ -334,7 +334,7 @@ Prove the development image anonymously with an empty Docker config:
 
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
-crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> >/dev/null
+crane manifest "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha>" >/dev/null
 ```
 
 ### Publication intent and registry state

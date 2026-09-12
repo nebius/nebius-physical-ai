@@ -1,9 +1,25 @@
 # NCore CPU ingestion image
 
+[Container catalog](../../../../docs/workbench/container-image-catalog.md) · [Neural reconstruction guide](../../../../docs/workbench/guides/neural-reconstruction.md)
+
 This image packages the official pinned NCore COLMAP converter and V4 reader.
 It remains a quarantined development candidate; no image acceptance or GPU
 readiness is implied. See [REDISTRIBUTION.md](REDISTRIBUTION.md) for the source,
 application dependency and acceptance boundaries.
+
+Use the [neural reconstruction guide](../../../../docs/workbench/guides/neural-reconstruction.md)
+for capture-to-scene workflows. This directory is the packaging reference for
+maintainers preparing a candidate image.
+
+| Need | Read |
+| --- | --- |
+| Source and runtime redistribution boundaries | [REDISTRIBUTION.md](REDISTRIBUTION.md) |
+| Exact base, native-library selection, and notices | [BASE-SOURCES.md](BASE-SOURCES.md) |
+| Build, scan, and publication sequence | [OCI publication procedure](../../../../docs/workbench/ncore-oci-publication.md) |
+| Startup cache requirements | [Runtime setup](#runtime-setup) below |
+| Supplemental selected-file scan | [Publication evidence](#selected-base-publication-evidence) below |
+
+## Candidate status
 
 The selected base now pins CPython 3.12.14 to address CVE-2026-6100. Its 665
 interpreter/stdlib paths and 61 ELF hashes come from the official linux/amd64
@@ -18,6 +34,8 @@ building. Its `--keyring` option defaults to
 `<analysis-root>/keyring/debian-archive-keyring.gpg`; CI supplies the prepared
 path explicitly. Packaging guards execute the complete committed snapshot and
 require successful test execution, including setup and teardown.
+
+## Runtime setup
 
 At container startup, the unprivileged user fetches two exact Debian native
 libraries needed by real APT/curl. The fixed isolated root installer verifies
@@ -60,7 +78,9 @@ purls. Partial-package scope is explicit; no installed dpkg state or package
 license conclusion is invented.
 
 After independently verifying the final OCI index, sole linux/amd64 child and
-config, derive a merged filesystem tar from that exact platform and run:
+config, derive a merged filesystem tar from that exact platform. Set the five
+variables below to those verified inputs and a fresh evidence directory, then
+run from the repository root:
 
 ```bash
 npa/.venv/bin/python -m npa.deploy.ncore_selected_sbom \

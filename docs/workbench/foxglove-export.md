@@ -124,7 +124,7 @@ CLI callers can convert/export locally with `npa workbench foxglove export-run`
 and build a web-only link for an already indexed recording with:
 
 ```bash
-npa workbench foxglove open --recording-id <recording-id>
+npa workbench foxglove open --recording-id "<recording-id>"
 ```
 
 ## Real Isaac motion qualification

@@ -1,5 +1,10 @@
 # LeRobot on Nebius
 
+**Historical standalone deployment reference.** For new LeRobot work, use the
+[current Workbench guide](../../docs/workbench/guides/reachy2-lerobot-policy.md). The commands below belong to the older
+Terraform/VM setup and have not been revalidated by this documentation update.
+
+
 Deploy a preemptible H200 GPU instance on Nebius Cloud for LeRobot training.
 LeRobot is treated as an **installed dependency** (pinned PyPI version) — this
 repo owns only infrastructure and orchestration.

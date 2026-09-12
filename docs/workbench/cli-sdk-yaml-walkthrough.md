@@ -133,7 +133,7 @@ exact URI, media type, schema, size, and SHA-256.
 If you submitted without waiting, monitor it with:
 
 ```bash
-npa workbench detection-training status --service --run-id <run-id-from-train>
+npa workbench detection-training status --service --run-id "<run-id-from-train>"
 ```
 
 After completion, discover the actual checkpoint from the service's run

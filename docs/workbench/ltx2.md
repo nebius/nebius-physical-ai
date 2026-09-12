@@ -157,7 +157,7 @@ proves the refusal works and that proving it downloaded nothing; it fails if any
 LTX, weight, or CUDA payload appears in any layer.
 
 ```bash
-npa/docker/workbench/ltx2/build.sh --registry <your-registry> --push
+npa/docker/workbench/ltx2/build.sh --registry "<your-registry>" --push
 ```
 
 **2. Scan the pushed bytes, not the Dockerfile.** The claim is about bytes in
@@ -166,7 +166,7 @@ directions by `npa/tests/docker/test_ltx_image_payload_scan.py`.
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-  <your-registry>/npa-ltx2:dev-<full-git-sha>
+  "<your-registry>/npa-ltx2:dev-<full-git-sha>"
 ```
 
 Only the immutable public development tag is tested before release promotion.
@@ -175,7 +175,7 @@ Only the immutable public development tag is tested before release promotion.
 build ran, now against the artifact anyone would pull.
 
 ```bash
-docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime assert-refusal
+docker run --rm "<your-registry>/npa-ltx2@sha256:<digest>" ltx-runtime assert-refusal
 ```
 
 It must print `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`. Confirm the
@@ -183,7 +183,7 @@ unentitled refusal separately, and that it names the token rather than one of
 the gates behind it:
 
 ```bash
-docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime ensure
+docker run --rm "<your-registry>/npa-ltx2@sha256:<digest>" ltx-runtime ensure
 # exits 78, names HF_TOKEN and the gated repository, downloads nothing
 ```
 
@@ -200,7 +200,7 @@ the generation, which is a much less obvious failure).
 
 ```bash
 export NPA_INTEGRATION_E2E=1 NPA_LTX2_LIVE_GPU=1
-export NPA_LTX2_REUSE_IMAGE=<your-registry>/npa-ltx2@sha256:<digest>
+export NPA_LTX2_REUSE_IMAGE="<your-registry>/npa-ltx2@sha256:<digest>"
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_ltx2_live_e2e.py -q
 ```
 

@@ -46,7 +46,7 @@ Extra tools required by specific commands:
 
 ## CLI layout
 
-```bash
+```text
 npa workbench lerobot ...
 npa workbench genesis ...
 npa workbench cosmos ...
@@ -88,30 +88,36 @@ See [configuration](../docs/configuration.md) for project setup, credential
 precedence, the credential-file layout, token access, and cross-project storage.
 Use the [first-run prompts](../docs/workbench/agent-first-run.md) with a coding agent.
 
-Terraform remote state for managed workbenches is stored in the Nebius S3
-bucket under:
-
-```text
-npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate
-```
-
-Deploy saves the S3 backend bucket, endpoint, and access key under
-`projects.<alias>.terraform_state` in `~/.npa/config.yaml` and writes that file
-with `0600` permissions. Destroy reuses those exact backend credentials. If
-Terraform still fails with `AccessDenied` while saving state after destroy, the
-service account/access key used for `terraform_state` needs S3 `PutObject` on
-`arn:aws:s3:::<bucket>/npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate`
-plus `GetObject` on that object and `ListBucket` on the bucket/prefix.
+Managed workbench teardown reuses the saved Terraform backend. See
+[Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
+for its storage path and permissions.
 
 ## SDK examples
 
-For Workbench integration, start with the documented module for your tool:
+Plan a workflow from Python without credentials or cloud resources. Run this
+from the repository root in the environment where you installed `npa`:
+
+```python
+from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
+
+spec = load_spec("workflows/testing/cosmos3-generate.yaml")
+validate_spec(spec)
+plan = build_plan(spec, run_id="demo")
+for step in plan.steps:
+    print(step.state, step.tool_ref)
+```
+
+Expect `generate workbench.cosmos3.generate`. The plan resolves the checked-in
+example; execution still requires real input, storage, credentials, and GPUs.
+
+After submitting a real run, read its artifacts through the monitoring SDK.
+Set `NPA_RUN_ID` and `NPA_WORKFLOW_S3_URI` to the values returned by submission,
+and configure the project's S3 credentials first:
 
 ```python
 import os
 from npa.sdk.workbench import workflow
 
-# Read an existing run's durable artifacts after workflow submission.
 artifacts = workflow.artifacts(
     os.environ["NPA_RUN_ID"],
     workflow_s3_uri=os.environ["NPA_WORKFLOW_S3_URI"],
@@ -157,10 +163,28 @@ targets from the repo root:
 python3 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
-make test PYTHON="$(pwd)/npa/.venv/bin/python"        # unit suite
 make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
 make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
+Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
+can run the focused checks above but does not reproduce the full Linux gate.
+The interpreter must provide `os.memfd_create`; some Conda builds omit it.
+Install CI's CPU checkpoint/export dependencies in this same environment:
+
+```bash
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install -e "npa[sonic]"
+umask 077  # Private files are required by publication handoff tests.
+PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
+  make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
+```
+
+The CPU wheel exercises real checkpoint loading without a GPU. See
+[the CI environment](../.github/workflows/test.yml) for the complete coverage
+gate; some optional checks also use Node, tmux, or Docker.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment

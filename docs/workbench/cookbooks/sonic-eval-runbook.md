@@ -19,7 +19,7 @@ template is retired).
   ```bash
   npa skypilot bootstrap
   export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-  npa skypilot verify --cluster <npa-cluster-name>
+  npa skypilot verify --cluster "<npa-cluster-name>"
   ```
 
 - The policy checkpoint is readable from the SkyPilot task. Use an `s3://`
@@ -49,8 +49,8 @@ checkpoint and select its URI explicitly:
 npa workbench workflow submit \
   workflows/testing/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
-  --project <alias> --infra k8s/<cluster> --runtime \
-  --var bucket=<bucket> --var checkpoint_uri=s3://<bucket>/<checkpoint-path> \
+  --project "<alias>" --infra "k8s/<cluster>" --runtime \
+  --var bucket="<bucket>" --var checkpoint_uri="s3://<bucket>/<checkpoint-path>" \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```

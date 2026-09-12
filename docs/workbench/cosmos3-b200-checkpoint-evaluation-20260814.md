@@ -198,7 +198,7 @@ npa workbench workflow validate-spec \
   workflows/testing/cosmos3-checkpoint-eval.yaml
 npa workbench workflow plan-spec \
   workflows/testing/cosmos3-checkpoint-eval.yaml \
-  --run-id <run-id>
+  --run-id "<run-id>"
 npa workbench workflow submit \
   workflows/testing/cosmos3-checkpoint-eval.yaml \
   --image "${NPA_COSMOS3_DIGEST_REF}" \

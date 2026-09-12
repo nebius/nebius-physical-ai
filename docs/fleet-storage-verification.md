@@ -8,7 +8,7 @@ uses a temporary ReadWriteMany PVC and pods pinned to each exact worker to
 prove shared reads and writes across the cluster.
 
 ```bash
-npa fleet verify-storage --spec <private-fleet.yaml> --output json
+npa fleet verify-storage --spec "<private-fleet.yaml>" --output json
 ```
 
 Use the same owner-private spec used to deploy the Fleet. The command resolves
@@ -35,9 +35,9 @@ model weights, or GPU allocation.
 The existing Fleet selectors restrict verification before any probe is created:
 
 ```bash
-npa fleet verify-storage --spec <private-fleet.yaml> \
-  --only-projects <project-key> --only-clusters <cluster-name> \
-  --profile <operator-profile> --output json
+npa fleet verify-storage --spec "<private-fleet.yaml>" \
+  --only-projects "<project-key>" --only-clusters "<cluster-name>" \
+  --profile "<operator-profile>" --output json
 ```
 
 `--only-projects` accepts comma-separated project keys or display names.
@@ -93,8 +93,8 @@ for `--output`; JSON emits one document and verification failure exits nonzero.
 Provide an owner-private directory outside the checkout to retain exact evidence:
 
 ```bash
-npa fleet verify-storage --spec <private-fleet.yaml> \
-  --evidence-dir <owner-private-directory> --output json
+npa fleet verify-storage --spec "<private-fleet.yaml>" \
+  --evidence-dir "<owner-private-directory>" --output json
 ```
 
 Keep that directory outside Git and public collaboration surfaces. Share only
@@ -128,8 +128,8 @@ come from that declaration:
 
 ```bash
 NPA_INTEGRATION_E2E=1 NPA_FLEET_STORAGE_VERIFY=1 \
-  NPA_FLEET_STORAGE_VERIFY_SPEC=<private-fleet.yaml> \
-  NPA_FLEET_STORAGE_EVIDENCE_DIR=<owner-private-directory> \
+  NPA_FLEET_STORAGE_VERIFY_SPEC="<private-fleet.yaml>" \
+  NPA_FLEET_STORAGE_EVIDENCE_DIR="<owner-private-directory>" \
   npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_fleet_storage_verification_live.py -q
 ```

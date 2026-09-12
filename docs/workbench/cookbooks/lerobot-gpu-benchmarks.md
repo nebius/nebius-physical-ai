@@ -18,16 +18,16 @@ power draw, or energy efficiency.
 For the headline result, reproduce Diffusion Policy on H200 first:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-h200 deploy \
-  --project-id <NEBIUS_PROJECT_ID> \
-  --tenant-id <NEBIUS_TENANT_ID> \
-  --region <NEBIUS_REGION> \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-h200 deploy \
+  --project-id "<NEBIUS_PROJECT_ID>" \
+  --tenant-id "<NEBIUS_TENANT_ID>" \
+  --region "<NEBIUS_REGION>" \
   --runtime container \
   --gpu-type gpu-h200-sxm \
   --gpu-preset 1gpu-16vcpu-200gb \
   --disk-size 500
 
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-h200 profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-h200 profile-train \
   --run diffusion:lerobot/pusht:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -127,10 +127,10 @@ platform and preset with the Nebius shape available in your project for B300,
 L40S, or RTX PRO 6000.
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-h200 deploy \
-  --project-id <NEBIUS_PROJECT_ID> \
-  --tenant-id <NEBIUS_TENANT_ID> \
-  --region <NEBIUS_REGION> \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-h200 deploy \
+  --project-id "<NEBIUS_PROJECT_ID>" \
+  --tenant-id "<NEBIUS_TENANT_ID>" \
+  --region "<NEBIUS_REGION>" \
   --runtime container \
   --gpu-type gpu-h200-sxm \
   --gpu-preset 1gpu-16vcpu-200gb \
@@ -141,10 +141,10 @@ For B300 and RTX PRO 6000 VM deploys, use a CUDA 13 image family when your
 project requires it:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-b300 deploy \
-  --project-id <NEBIUS_PROJECT_ID> \
-  --tenant-id <NEBIUS_TENANT_ID> \
-  --region <NEBIUS_REGION> \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-b300 deploy \
+  --project-id "<NEBIUS_PROJECT_ID>" \
+  --tenant-id "<NEBIUS_TENANT_ID>" \
+  --region "<NEBIUS_REGION>" \
   --runtime container \
   --gpu-type gpu-b300-sxm \
   --gpu-preset 1gpu-24vcpu-346gb \
@@ -155,7 +155,7 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-b300 deploy \
 Run the benchmark-style profiler:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-h200 profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-h200 profile-train \
   --run vqbet:lerobot/pusht:100 \
   --run act:lerobot/pusht:100 \
   --run diffusion:lerobot/pusht:100 \
@@ -176,9 +176,9 @@ stage-level profiler path, but it is the forward-compatible reproduction path
 for LeRobot training on Nebius Serverless Jobs.
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type diffusion \
   --dataset lerobot/pusht \
   --job-name diffusion-h200-100 \
@@ -186,15 +186,15 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
   --batch-size 8 \
   --gpu-type h200 \
   --gpu-count 1 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-100/"
 ```
 
 For B300:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type diffusion \
   --dataset lerobot/pusht \
   --job-name diffusion-b300-100 \
@@ -202,7 +202,7 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
   --batch-size 8 \
   --gpu-type b300 \
   --gpu-count 1 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-b300-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-b300-100/"
 ```
 
 The CLI warns when you run Diffusion Policy on B300 because of the PTX JIT issue.
@@ -226,7 +226,7 @@ single-sample inference latency, faster than H200's 11.58 ms.
 **Benchmark-style profile:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run vqbet:lerobot/pusht:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -236,16 +236,16 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
 **Serverless training:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type vqbet \
   --dataset lerobot/pusht \
   --job-name vqbet-h200-100 \
   --steps 100 \
   --batch-size 8 \
   --gpu-type h200 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/vqbet-h200-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/vqbet-h200-100/"
 ```
 
 **Validation:** Compare `throughput_steps_per_sec` against the research values:
@@ -267,7 +267,7 @@ run.
 **Benchmark-style profile:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run act:lerobot/pusht:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -277,16 +277,16 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
 **Serverless training:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type act \
   --dataset lerobot/pusht \
   --job-name act-h200-100 \
   --steps 100 \
   --batch-size 8 \
   --gpu-type h200 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/act-h200-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/act-h200-100/"
 ```
 
 **Validation:** Expected research throughput is H200 35.5, B300 37.0,
@@ -310,7 +310,7 @@ inference also measured 36.48 ms versus H200 at 10.06 ms.
 **Benchmark-style profile:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run diffusion:lerobot/pusht:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -320,7 +320,7 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
 **With torch.compile on H200:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run diffusion:lerobot/pusht:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -331,16 +331,16 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
 **Serverless training:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type diffusion \
   --dataset lerobot/pusht \
   --job-name diffusion-h200-100 \
   --steps 100 \
   --batch-size 8 \
   --gpu-type h200 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-100/"
 ```
 
 **Validation:** This is the headline reproduction. H200 should be around
@@ -364,7 +364,7 @@ benchmark.
 **Benchmark-style profile:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run smolvla:lerobot/aloha_sim_insertion_human:100 \
   --mode wallclock \
   --batch-size 8 \
@@ -374,16 +374,16 @@ npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
 **Serverless training:**
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type smolvla \
   --dataset lerobot/aloha_sim_insertion_human \
   --job-name smolvla-b300-100 \
   --steps 100 \
   --batch-size 8 \
   --gpu-type b300 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/smolvla-b300-100/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/smolvla-b300-100/"
 ```
 
 **Validation:** Expected research throughput is H200 10.5, B300 11.8,
@@ -401,7 +401,7 @@ the loop. Warmup steps are excluded. The metric to compare is
 Use `profile-train --mode profiler` when you need per-stage diagnostics:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run diffusion:lerobot/pusht:100 \
   --mode profiler \
   --batch-size 8 \
@@ -416,7 +416,7 @@ GPU architectures benefit differently from kernel pipelining.
 For inference latency, use:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n <WORKBENCH_NAME> profile-train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n "<WORKBENCH_NAME>" profile-train \
   --run diffusion:lerobot/pusht:100 \
   --mode inference
 ```
@@ -447,18 +447,18 @@ Check quota, regional capacity, and GPU type. Serverless Jobs may need an
 explicit subnet if the project has multiple VPC subnets:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type act \
   --dataset lerobot/pusht \
   --job-name act-h200-queued-debug \
   --steps 100 \
   --batch-size 8 \
   --gpu-type h200 \
-  --subnet-id <VPC_SUBNET_ID> \
+  --subnet-id "<VPC_SUBNET_ID>" \
   --submit-only \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/act-h200-queued-debug/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/act-h200-queued-debug/"
 ```
 
 ### Training Reaches `failed`
@@ -468,16 +468,16 @@ Common causes are a missing Hugging Face token, an output path that is not an
 text output and inspect the Job in Nebius:
 
 ```bash
-npa workbench lerobot -p <PROJECT_ALIAS> -n lerobot-jobs train \
+npa workbench lerobot -p "<PROJECT_ALIAS>" -n lerobot-jobs train \
   --runtime serverless \
-  --project-id <NEBIUS_PROJECT_ID> \
+  --project-id "<NEBIUS_PROJECT_ID>" \
   --policy-type diffusion \
   --dataset lerobot/pusht \
   --job-name diffusion-h200-debug \
   --steps 100 \
   --batch-size 8 \
   --gpu-type h200 \
-  --output-path s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-debug/
+  --output-path "s3://<YOUR_BUCKET>/lerobot-benchmarks/diffusion-h200-debug/"
 ```
 
 If the command returns a Job ID, fetch logs with the Nebius CLI available in

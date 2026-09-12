@@ -52,15 +52,15 @@ For a BYOF candidate:
 
 ```bash
 npa/.venv/bin/npa workbench byof run \
-  --repo-url <public-repository-url> \
-  --repo-ref <immutable-ref> \
+  --repo-url "<public-repository-url>" \
+  --repo-ref "<immutable-ref>" \
   --base-profile ubuntu \
   --workload solution-smoke \
   --build-command '<pinned-install-command>' \
   --smoke-command '<real-capability-command>' \
-  --solution-name <solution> \
-  --capability-name <capability> \
-  --smoke-artifact-name <solution>_<capability>.json \
+  --solution-name "<solution>" \
+  --capability-name "<capability>" \
+  --smoke-artifact-name "<solution>_<capability>.json" \
   --skip-push --skip-run --dry-run --output json
 ```
 

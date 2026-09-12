@@ -5,7 +5,7 @@
 Preview the cleanup plan for the project you intend to retire:
 
 ```bash
-npa destroy --project <alias> --all
+npa destroy --project "<alias>" --all
 ```
 
 The preview is read-only. Review its targets before adding `--yes`; the combined
@@ -30,29 +30,29 @@ than guessing. It **retains the Nebius project by default**.
 combined run stopped partway.
 
 ```bash
-npa workflow cancel <run-id> --project <alias> --json
-npa agent destroy --project <alias> --name <name> --yes
-npa skypilot cleanup-controller --project <alias> --context <context> --yes
-npa cluster down --project <alias> --force
-npa storage bucket delete --project <alias> --yes --wait
-npa storage service-account delete --project <alias> --dry-run
+npa workflow cancel "<run-id>" --project "<alias>" --json
+npa agent destroy --project "<alias>" --name "<name>" --yes
+npa skypilot cleanup-controller --project "<alias>" --context "<context>" --yes
+npa cluster down --project "<alias>" --force
+npa storage bucket delete --project "<alias>" --yes --wait
+npa storage service-account delete --project "<alias>" --dry-run
 # Only when the previous command reports missing ownership provenance:
-npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run
-npa storage service-account reconcile --project <alias> --id <exact-id> \
+npa storage service-account reconcile --project "<alias>" --id "<exact-id>" --dry-run
+npa storage service-account reconcile --project "<alias>" --id "<exact-id>" \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
-npa storage service-account delete --project <alias> --dry-run
-npa storage service-account delete --project <alias> --yes
+npa storage service-account delete --project "<alias>" --dry-run
+npa storage service-account delete --project "<alias>" --yes
 # Retire any separately created private registry through its provider before
 # deleting the project. NPA has no top-level registry command.
 
 # NPA-created disposable projects may contain one provider-created default
 # topology. This command refuses any extra, shared, or non-default topology:
-npa network delete-project-default --project <alias> --project-id <project-id> \
-  --tenant-id <tenant-id> --yes
+npa network delete-project-default --project "<alias>" --project-id "<project-id>" \
+  --tenant-id "<tenant-id>" --yes
 # Optional and ownership-gated; omit to retain the project (the safe default):
-npa destroy --project <alias> --all --delete-project --yes --json
-npa cleanup --full --yes --project <alias>
-npa configure --forget-project <alias>
+npa destroy --project "<alias>" --all --delete-project --yes --json
+npa cleanup --full --yes --project "<alias>"
+npa configure --forget-project "<alias>"
 ```
 
 ## Cloud spend vs local clutter
@@ -72,12 +72,12 @@ id** before it rewrites configuration. If teardown must continue past that
 point, stay inside NPA and select the same immutable identity explicitly:
 
 ```bash
-RECEIPT=<id printed by npa configure --forget-project>
-npa agent destroy --receipt "$RECEIPT" --name <name> --yes
-npa skypilot cleanup-controller --receipt "$RECEIPT" --context <context> --yes
-npa cluster down --receipt "$RECEIPT" --context <context> --force
-npa storage service-account delete --receipt "$RECEIPT" --id <exact-id> --dry-run
-npa workflow cancel <run-id> --receipt "$RECEIPT" --json
+RECEIPT="<id printed by npa configure --forget-project>"
+npa agent destroy --receipt "$RECEIPT" --name "<name>" --yes
+npa skypilot cleanup-controller --receipt "$RECEIPT" --context "<context>" --yes
+npa cluster down --receipt "$RECEIPT" --context "<context>" --force
+npa storage service-account delete --receipt "$RECEIPT" --id "<exact-id>" --dry-run
+npa workflow cancel "<run-id>" --receipt "$RECEIPT" --json
 # Optional, after every exact child cleanup has converged:
 npa destroy --receipt "$RECEIPT" --all --delete-project --yes --json
 ```
@@ -225,7 +225,7 @@ reverting to `unknown` on an idempotent retry.
 
 ```bash
 npa cleanup --list-receipts
-npa cleanup --prune-receipts --receipt-retention-days <days> --yes
+npa cleanup --prune-receipts --receipt-retention-days "<days>" --yes
 ```
 
 Prune only old, fully terminal receipts, and only explicitly.
@@ -270,8 +270,8 @@ environment still exists, inspect or retry with the exact commands printed in
 the receipt:
 
 ```bash
-npa uninstall --status <receipt-id>
-npa uninstall --remove-environment --yes --retry <receipt-id>
+npa uninstall --status "<receipt-id>"
+npa uninstall --remove-environment --yes --retry "<receipt-id>"
 ```
 
 Successful removal naturally removes that environment's `npa` executable; the

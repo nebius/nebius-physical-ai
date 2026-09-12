@@ -33,7 +33,7 @@ variable or pull secret is required:
 
 ```bash
 docker manifest inspect \
-  ghcr.io/nebius/nebius-physical-ai/npa-sonic:<tag>
+  "ghcr.io/nebius/nebius-physical-ai/npa-sonic:<tag>"
 ```
 
 It is the default only for supported RTX PRO Kubernetes routing. Prepare the
@@ -98,8 +98,8 @@ publication runs only through the guarded workflow, which creates an immutable
 
 ```bash
 gh workflow run publish-public-images.yml \
-  --ref <prepared-branch> \
-  -f development_sha=<full-git-sha> \
+  --ref "<prepared-branch>" \
+  -f development_sha="<full-git-sha>" \
   -f build_development_tools=sonic-mujoco \
   -f dry_run=true
 ```

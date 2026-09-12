@@ -38,7 +38,7 @@ Then validate and plan:
 
 ```bash
 npa workbench workflow validate-spec /tmp/sonic-train.yaml
-npa workbench workflow plan-spec /tmp/sonic-train.yaml --run-id <run-id> --json
+npa workbench workflow plan-spec /tmp/sonic-train.yaml --run-id "<run-id>" --json
 ```
 
 Inspect the resolved data, checkpoint, output, and GPU profile. The plan is not

@@ -87,6 +87,11 @@ npa configure --no-interactive --no-provision --tenant-id "$TENANT_ID" \
   --project-alias "$PROJECT_ALIAS"
 ```
 
+Retain the create/get receipts privately. This project was created outside NPA,
+so `npa destroy --delete-project` cannot use NPA ownership records to delete it.
+Use NPA to remove its owned workloads and storage, then retire the empty project
+through the Nebius console or administrative CLI if you also own that lifecycle.
+
 ### Federation or SSO profiles with many tenants
 
 For an SSO or federation profile without `tenant-id` / `parent-id`, bind the
@@ -95,8 +100,8 @@ profile to the project you want **before**
 tenant:
 
 ```bash
-nebius config set tenant-id <id>
-nebius config set parent-id <project-id>
+nebius config set tenant-id "<id>"
+nebius config set parent-id "<project-id>"
 ```
 
 Say **yes** to the object-storage prompt: the agent VM and the Physical AI Data
@@ -179,7 +184,7 @@ owner-only creation provenance in `~/.npa/credentials.yaml`, and prints the
 restart-safe recovery command:
 
 ```bash
-npa provision-if-absent --project <PROJECT_ALIAS> --skip-k8s
+npa provision-if-absent --project "<PROJECT_ALIAS>" --skip-k8s
 ```
 
 That recovery reconciles storage before any cluster work. It rolls back only
@@ -425,3 +430,20 @@ accepted inside the legacy `tokens:` map. Keep the credentials file private
 with `chmod 600 ~/.npa/credentials.yaml`; Workbench warns if other users can
 read it. Loaded tokens are forwarded to remote workbench SSH commands as
 environment variables.
+
+## Terraform state for managed workbenches
+
+Terraform remote state for managed workbenches is stored in the Nebius S3
+bucket under:
+
+```text
+npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate
+```
+
+Deploy saves the S3 backend bucket, endpoint, and access key under
+`projects.<alias>.terraform_state` in `~/.npa/config.yaml` and writes that file
+with `0600` permissions. Destroy reuses those exact backend credentials. If
+Terraform still fails with `AccessDenied` while saving state after destroy, the
+service account/access key used for `terraform_state` needs S3 `PutObject` on
+`arn:aws:s3:::<bucket>/npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate`
+plus `GetObject` on that object and `ListBucket` on the bucket/prefix.

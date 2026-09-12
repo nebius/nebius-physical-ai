@@ -15,8 +15,8 @@ npa workbench workflow plan-spec \
   --run-id sonic-b300-routing-preview --json
 npa workbench workflow submit \
   workflows/testing/sonic-b300-routing-evidence.yaml \
-  --run-id <new-run-id> --var bucket=<configured-bucket> \
-  --var tested_commit_sha=<git-sha>
+  --run-id "<new-run-id>" --var bucket="<configured-bucket>" \
+  --var tested_commit_sha="<git-sha>"
 ```
 
 The run-scoped prefix contains `manifest.json`, `test-report.json`, and

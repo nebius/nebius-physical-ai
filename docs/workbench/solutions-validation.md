@@ -23,7 +23,7 @@ CLI namespace and the `npa.sdk.workbench` SDK namespace.
 Workbench currently covers tools such as Isaac Lab, FiftyOne, LeRobot, LanceDB,
 Cosmos, GR00T, Genesis, and SONIC. These tools follow a consistent CLI pattern:
 
-```bash
+```text
 npa workbench <tool> <verb> [options]
 ```
 
