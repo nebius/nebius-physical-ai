@@ -2,10 +2,11 @@
 
 `npa-isaac-arena` is public-redistributable because its added application
 payload is the Apache-2.0 Isaac Lab-Arena source at commit
-`ed0fd12be862078be316c73eb7cf423ba9b1c5cd`. The image inherits the accepted
-payload-clean `npa-isaac-lab` digest and does not contain Isaac Sim, Isaac Lab,
-Omniverse Kit, model weights, datasets, operator inputs, generated evaluations,
-credentials, or populated runtime caches.
+`ed0fd12be862078be316c73eb7cf423ba9b1c5cd` plus its hash-locked open-source
+Pinocchio, Pink, ONNX Runtime, and solver dependency closure. The image
+inherits the accepted payload-clean `npa-isaac-lab` digest and does not contain
+Isaac Sim, Isaac Lab, Omniverse Kit, model weights, datasets, operator inputs,
+generated evaluations, credentials, or populated runtime caches.
 
 At first execution, NVIDIA delivers the pinned Isaac Sim/Lab wheels directly
 to the operator's writable cache after the shared `ACCEPT_EULA` preflight. An

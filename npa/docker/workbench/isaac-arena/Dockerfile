@@ -13,6 +13,7 @@ LABEL npa.tool="isaac-arena" \
       npa.version="${ISAAC_ARENA_VERSION}" \
       npa.isaac_arena_revision="${ISAAC_ARENA_REVISION}" \
       npa.isaac_arena_release_channel="alpha" \
+      npa.isaac_arena_dependency_lock_sha256="a96f7b2afe874037ad7738166f124b2eca6eae0e35daec377d7786c26274660c" \
       npa.isaac_provisioning="runtime-fetch" \
       npa.architecture="arena-source-no-baked-omniverse-kit" \
       org.opencontainers.image.source="https://github.com/isaac-sim/IsaacLab-Arena" \
@@ -39,6 +40,7 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY docker/workbench/isaac-arena/npa-cli-requirements.txt /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt
+COPY docker/workbench/isaac-arena/runtime-requirements.txt /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
@@ -76,6 +78,10 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       /opt/npa/src/npa/cli/workbench/isaac_arena.py \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
+      --require-hashes -r /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt \
+    && /opt/npa/sim/venv/bin/python -c \
+      "import importlib.metadata as m; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual)" \
     && env -u ACCEPT_EULA /usr/local/bin/npa workbench isaac-arena evaluate \
       --output-path /tmp/npa-arena-build-probe --dry-run --output-format json \
       | grep -q '"status": "dry_run"' \
