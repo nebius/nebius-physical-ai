@@ -300,6 +300,20 @@ def test_scanner_requires_neutral_bootstrap_symlink(tmp_path) -> None:
     assert any(item.kind == "neutral_bootstrap_link" for item in findings)
 
 
+def test_scanner_refuses_wrong_neutral_bootstrap_symlink_target(tmp_path) -> None:
+    module = _load_module()
+    layer = tmp_path / "wrong-link.tar"
+    with tarfile.open(layer, "w") as archive:
+        link = tarfile.TarInfo("opt/byof")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/workspace/.cache/npa/libero/other/source"
+        archive.addfile(link)
+
+    findings, _inventory = module._layer_graph_findings([layer])
+
+    assert any(item.kind == "neutral_bootstrap_link" for item in findings)
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -585,7 +599,7 @@ def test_scanner_refuses_duplicate_outer_archive_member(tmp_path) -> None:
     with tarfile.open(archive, "w") as output:
         for name, content in (
             ("manifest.json", manifest),
-            ("manifest.json", manifest),
+            ("./manifest.json", manifest),
             ("config.json", b"{}"),
         ):
             member = tarfile.TarInfo(name)
@@ -647,6 +661,208 @@ def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
     )
 
     assert module._docker_save_outer_findings(archive) == []
+
+
+def test_scanner_refuses_oci_document_media_type_drift(tmp_path) -> None:
+    module = _load_module()
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "config": {},
+            "layers": [],
+        },
+        separators=(",", ":"),
+    ).encode()
+    descriptor = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:" + hashlib.sha256(image_manifest).hexdigest(),
+        "size": len(image_manifest),
+    }
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    member = "blobs/sha256/" + str(descriptor["digest"])[7:]
+    archive = _layer(
+        tmp_path / "media-type-drift.tar",
+        {
+            "manifest.json": b'[{"Config":"","Layers":[]}]',
+            "index.json": index,
+            member: image_manifest,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="media type differs from descriptor"):
+        module._docker_save_outer_findings(archive)
+
+
+@pytest.mark.parametrize(
+    ("attestation", "kind", "runtime_identity"),
+    [
+        ({"predicate": "AKIA0000000000000000"}, "credential_content", False),
+        (
+            {"predicate": "neutral runtime artifact"},
+            "exact_runtime_payload_bytes",
+            True,
+        ),
+    ],
+)
+def test_scanner_refuses_restricted_content_in_oci_attestation(
+    monkeypatch, tmp_path, attestation, kind, runtime_identity
+) -> None:
+    module = _load_module()
+
+    def descriptor(content: bytes, media_type: str) -> dict[str, object]:
+        return {
+            "mediaType": media_type,
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    config = b"{}"
+    payload = json.dumps(attestation, separators=(",", ":")).encode()
+    if runtime_identity:
+        monkeypatch.setattr(
+            module,
+            "_runtime_payload_hashes",
+            lambda: frozenset({hashlib.sha256(payload).hexdigest()}),
+        )
+    config_descriptor = descriptor(config, "application/vnd.oci.empty.v1+json")
+    layer_descriptor = descriptor(payload, "application/vnd.in-toto+json")
+    attestation_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [layer_descriptor],
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = descriptor(
+        attestation_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    layer_path = "blobs/sha256/" + str(layer_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    archive = _layer(
+        tmp_path / f"attestation-{kind}.tar",
+        {
+            "manifest.json": json.dumps(
+                [{"Config": config_path, "Layers": []}], separators=(",", ":")
+            ).encode(),
+            "index.json": index,
+            config_path: config,
+            layer_path: payload,
+            manifest_path: attestation_manifest,
+        },
+    )
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(item.kind == kind and item.path == layer_path for item in findings)
+
+
+def test_scanner_refuses_oci_runtime_layer_absent_from_docker_manifest(
+    tmp_path,
+) -> None:
+    module = _load_module()
+
+    def descriptor(content: bytes, media_type: str) -> dict[str, object]:
+        return {
+            "mediaType": media_type,
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    config = b"{}"
+    auxiliary_layer = b"unlisted runtime layer"
+    config_descriptor = descriptor(config, "application/vnd.oci.image.config.v1+json")
+    layer_descriptor = descriptor(
+        auxiliary_layer, "application/vnd.oci.image.layer.v1.tar+gzip"
+    )
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [layer_descriptor],
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = descriptor(
+        image_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    layer_path = "blobs/sha256/" + str(layer_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    archive = _layer(
+        tmp_path / "auxiliary-layer.tar",
+        {
+            "manifest.json": json.dumps(
+                [{"Config": config_path, "Layers": []}], separators=(",", ":")
+            ).encode(),
+            "index.json": index,
+            config_path: config,
+            layer_path: auxiliary_layer,
+            manifest_path: image_manifest,
+        },
+    )
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(
+        item.kind == "auxiliary_oci_runtime_layer" and item.path == layer_path
+        for item in findings
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "media_type"),
+    [
+        ("config", "application/vnd.oci.image.config.v1+json"),
+        ("layer", "application/vnd.in-toto+json"),
+    ],
+)
+def test_scanner_refuses_nonobject_oci_json_leaf(role, media_type) -> None:
+    module = _load_module()
+
+    with pytest.raises(RuntimeError, match=f"OCI {role} JSON descriptor target"):
+        module._oci_descriptor_content_findings(
+            member_name="blobs/sha256/" + "0" * 64,
+            blob=b"[]",
+            media_type=media_type,
+            role=role,
+            legacy_layers=frozenset(),
+            runtime_payload_hashes=frozenset(),
+        )
+
+
+def test_scanner_refuses_restricted_content_in_outer_metadata(tmp_path) -> None:
+    module = _load_module()
+    archive = _layer(
+        tmp_path / "metadata-secret.tar",
+        {
+            "manifest.json": b'[{"Config":"config.json","Layers":[]}]',
+            "config.json": b"{}",
+            "repositories": b"AKIA0000000000000000",
+        },
+    )
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(
+        item.kind == "credential_content" and item.path == "repositories"
+        for item in findings
+    )
 
 
 def test_scanner_refuses_oci_descriptor_byte_drift(tmp_path) -> None:
@@ -714,6 +930,70 @@ def test_scanner_refuses_missing_or_nonregular_oci_descriptor_target(
         else "invalid_oci_descriptor_member"
     )
     assert any(item.kind == expected for item in findings)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "non-regular"])
+def test_scanner_refuses_missing_or_nonregular_recursive_oci_config(
+    tmp_path, mutation
+) -> None:
+    module = _load_module()
+
+    def descriptor(content: bytes, media_type: str) -> dict[str, object]:
+        return {
+            "mediaType": media_type,
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    config = b"{}"
+    config_descriptor = descriptor(config, "application/vnd.oci.image.config.v1+json")
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [],
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = descriptor(
+        image_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    archive_path = tmp_path / f"recursive-{mutation}.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        members = (
+            (
+                "manifest.json",
+                json.dumps(
+                    [{"Config": config_path, "Layers": []}], separators=(",", ":")
+                ).encode(),
+            ),
+            ("index.json", index),
+            (manifest_path, image_manifest),
+        )
+        for name, payload in members:
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        if mutation == "non-regular":
+            member = tarfile.TarInfo(config_path)
+            member.type = tarfile.DIRTYPE
+            archive.addfile(member)
+
+    findings = module._docker_save_outer_findings(archive_path)
+
+    expected = (
+        "missing_oci_descriptor_member"
+        if mutation == "missing"
+        else "invalid_oci_descriptor_member"
+    )
+    assert any(item.kind == expected and item.path == config_path for item in findings)
 
 
 def test_scanner_refuses_non_manifest_oci_index_root(tmp_path) -> None:

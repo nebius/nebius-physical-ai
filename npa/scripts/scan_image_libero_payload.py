@@ -833,10 +833,29 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
         if manifest_stream is None:
             raise RuntimeError("docker save archive has no readable manifest.json")
         manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
-        descriptor_members, descriptor_findings = _oci_descriptor_members(archive)
-    if not isinstance(manifests, list) or len(manifests) != 1:
-        raise RuntimeError("docker save archive must contain exactly one image")
-    manifest = manifests[0]
+        if not isinstance(manifests, list) or len(manifests) != 1:
+            raise RuntimeError("docker save archive must contain exactly one image")
+        manifest = manifests[0]
+        legacy_layers = frozenset(str(item) for item in (manifest.get("Layers") or []))
+        runtime_payload_hashes = _runtime_payload_hashes()
+        for metadata_name in _ARCHIVE_METADATA_FILES.intersection(archive.getnames()):
+            member = archive.getmember(metadata_name)
+            if not member.isfile():
+                continue
+            metadata_stream = archive.extractfile(member)
+            if metadata_stream is None:
+                raise RuntimeError("docker-save metadata member is unreadable")
+            findings.extend(
+                _opaque_content_findings(
+                    member_name=metadata_name,
+                    blob=metadata_stream.read(),
+                    runtime_payload_hashes=runtime_payload_hashes,
+                    description="docker-save metadata",
+                )
+            )
+        descriptor_members, descriptor_findings = _oci_descriptor_members(
+            archive, legacy_layers, runtime_payload_hashes
+        )
     allowed = {
         *_ARCHIVE_METADATA_FILES,
         str(manifest.get("Config") or ""),
@@ -1001,8 +1020,76 @@ def _oci_descriptor_children(blob: bytes, media_type: str) -> list[tuple[str, ob
     return children
 
 
+def _opaque_content_findings(
+    *,
+    member_name: str,
+    blob: bytes,
+    runtime_payload_hashes: frozenset[str],
+    description: str,
+) -> list[walker.Finding]:
+    findings: list[walker.Finding] = []
+    if any(pattern.search(blob) for pattern in SECRET_CONTENT):
+        findings.append(
+            walker.Finding(
+                "credential_content",
+                member_name,
+                f"secret-like bytes in {description}",
+            )
+        )
+    if any(pattern.search(blob) for pattern in FORBIDDEN_PAYLOAD_CONTENT):
+        findings.append(
+            walker.Finding(
+                "renamed_runtime_payload_content",
+                member_name,
+                f"forbidden source signature in {description}",
+            )
+        )
+    if hashlib.sha256(blob).hexdigest() in runtime_payload_hashes:
+        findings.append(
+            walker.Finding(
+                "exact_runtime_payload_bytes",
+                member_name,
+                f"{description} equals a runtime-only artifact",
+            )
+        )
+    return findings
+
+
+def _oci_descriptor_content_findings(
+    *,
+    member_name: str,
+    blob: bytes,
+    media_type: str,
+    role: str,
+    legacy_layers: frozenset[str],
+    runtime_payload_hashes: frozenset[str],
+) -> list[walker.Finding]:
+    findings = _opaque_content_findings(
+        member_name=member_name,
+        blob=blob,
+        runtime_payload_hashes=runtime_payload_hashes,
+        description="an OCI descriptor target",
+    )
+    if role == "config" or media_type == "application/vnd.in-toto+json":
+        document = json.loads(blob)
+        if not isinstance(document, dict):
+            raise RuntimeError(f"OCI {role} JSON descriptor target is not an object")
+    if role == "layer" and media_type != "application/vnd.in-toto+json":
+        if member_name not in legacy_layers:
+            findings.append(
+                walker.Finding(
+                    "auxiliary_oci_runtime_layer",
+                    member_name,
+                    "OCI runtime layer is absent from the Docker image manifest",
+                )
+            )
+    return findings
+
+
 def _oci_descriptor_members(
     archive: tarfile.TarFile,
+    legacy_layers: frozenset[str],
+    runtime_payload_hashes: frozenset[str],
 ) -> tuple[set[str], list[walker.Finding]]:
     """Bind every OCI-index descendant by descriptor digest and size."""
 
@@ -1012,7 +1099,11 @@ def _oci_descriptor_members(
     if stream is None:
         raise RuntimeError("docker-save OCI index is unreadable")
     index = json.load(io.TextIOWrapper(stream, encoding="utf-8"))
-    if index.get("schemaVersion") != 2 or not isinstance(index.get("manifests"), list):
+    if (
+        not isinstance(index, dict)
+        or index.get("schemaVersion") != 2
+        or not isinstance(index.get("manifests"), list)
+    ):
         raise RuntimeError("docker-save OCI index is malformed")
     pending = [("manifest", item) for item in index["manifests"]]
     allowed: set[str] = set()
@@ -1027,10 +1118,20 @@ def _oci_descriptor_members(
         if blob is None:
             continue
         allowed.add(member_name)
+        media_type = str(descriptor.get("mediaType"))
+        findings.extend(
+            _oci_descriptor_content_findings(
+                member_name=member_name,
+                blob=blob,
+                media_type=media_type,
+                role=role,
+                legacy_layers=legacy_layers,
+                runtime_payload_hashes=runtime_payload_hashes,
+            )
+        )
         if member_name in expanded:
             continue
         expanded.add(member_name)
-        media_type = str(descriptor.get("mediaType"))
         pending.extend(_oci_descriptor_children(blob, media_type))
     return allowed, findings
 
