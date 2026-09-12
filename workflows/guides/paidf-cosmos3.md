@@ -546,15 +546,19 @@ download. The example uses a new local directory and a dataset prefix unique
 to that run, so it does not depend on an earlier upload or workflow output.
 
 ```bash
+if [ -z "${RUN_ID:-}" ]; then
+  echo 'Run R2 first to reserve a new run ID' >&2
+  exit 1
+fi
 DATASET_REVISION=6a43d500f101255823a9d2b9dc244eeb01a2cd31
-LEROBOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-lerobot.XXXXXX")"
+LEROBOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-lerobot.XXXXXX")" || exit 1
 DATASET_BASE="https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human/resolve/$DATASET_REVISION"
 for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
   videos/observation.images.top/chunk-000/file-000.mp4; do
   mkdir -p "$(dirname "$LEROBOT_DIR/$file")"
   curl --fail --location "$DATASET_BASE/$file" --output "$LEROBOT_DIR/$file" || exit 1
 done
-python3.12 - "$LEROBOT_DIR" <<'PY'
+python3.12 - "$LEROBOT_DIR" <<'PY' || exit 1
 import hashlib
 import sys
 from pathlib import Path
@@ -574,7 +578,7 @@ for name, digest in expected.items():
 print("Verified all four pinned dataset files")
 PY
 LEROBOT_URI="s3://$BUCKET/datasets/paidf-cosmos3/$RUN_ID/aloha-sim-transfer-cube"
-aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius
+aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius || exit 1
 ```
 
 Stop if a download, checksum check, or upload fails. Keep the dataset prefix
@@ -748,6 +752,10 @@ aws s3 cp "s3://$BUCKET/paidf-cosmos3/$RUN_ID/npa-workflow/runtime.json" - \
   --profile nebius | jq '{status, waves: [.waves[] | {key, status, job_id, sky_status, replayed}]}'
 ```
 
+For progress during a long stage, use its live logs as well: the durable record
+can retain `sky_status: SUBMITTED` while the payload is already executing.
+The generation stage publishes its variants after all requested variants finish,
+so an empty `cosmos_augmented/` prefix during sampling is expected.
 Each wave reports whether it is running or succeeded. A missing stage row or
 `manifest_pending` in the summary does not establish that no job launched;
 check this record and the stage logs before deciding to resume or submit again.
@@ -1089,27 +1097,59 @@ against the task's visual and motion requirements before using them as data.
 
 ### LeRobot v3 episode and multiple generation windows
 
-R3a's pinned simulated ALOHA example was exercised at revision `4b09042f` on
-September 11, 2026, with the shipped settings. Episode 1 occupies seconds 8–16
-of the selected camera's shared `file-000.mp4`. The staged original contains
-400 frames at 50 fps; independently comparing every decoded frame with that
-upstream interval confirmed the correct episode was selected. Preparation
-produced 192 frames at 24 fps, retaining the eight-second duration.
+R3a's full command completed all 15 stages at revision `730e7e24` on September
+12, 2026, based on main revision `90f0b7d4`. It used a fresh Linux operator
+environment, Python 3.12.14, SkyPilot 0.12.2, and an existing RTX PRO 6000
+Blackwell cluster. The command exited with code `0` with the shipped settings.
+No pipeline implementation or YAML changes were needed for this run.
+
+All four pinned upstream files were downloaded anew, checksum-verified, and
+uploaded to the new run's dataset prefix. Dataset, input, output, and staged
+source-code prefixes were verified empty before upload; input cache and
+isolated API state were new. No earlier run artifacts or state were copied,
+and every stage executed without replay or adoption.
+
+Episode 1 occupies seconds 8–16 of the selected camera's shared
+`file-000.mp4`. All 400 decoded frames of both the operator-staged and
+worker-staged original matched an independent extraction of that interval.
+Preparation changed 50 fps to 24 fps and produced 192 frames at 832×480,
+retaining the eight-second duration. Source annotation produced eight
+nonempty captions.
 
 Each of the two generated variants used three native generation windows. Both
 published videos fully decode to the reference's 192 frames, dimensions, and
 eight-second timeline, with zero timestamp error. Native control readback, text
 guardrails, and configured video postprocessing passed. The evaluator accepted
-both on the first pass:
-aggregate score `0.675465` against `0.2`, and attribute scores `0.5` each against
-`0.25`. All eight attribute answers were complete; four attributes matched.
-The thresholds were unchanged for this run.
+both on the first pass: aggregate score `0.559892` against `0.2`, and attribute
+scores `0.25` and `0.5` against `0.25`. All eight attribute answers were
+complete; three matched. Both temporal diagnostics failed in advisory mode;
+both appearance diagnostics passed. The thresholds were unchanged.
+
+Accepted annotation produced 16 nonempty captions, eight per variant, bound
+to the evaluated video hashes. Cosmos Curator produced six clips: four with
+72 frames (three seconds) and two with 48 frames (two seconds), all at 24 fps.
+It reported no errors or warnings. FiftyOne Brain kept both variants and
+flagged both as redundant for review, using `embedding-fallback` uniqueness
+and PCA visualization. These findings are available in the curation reports.
+
+The [completed-run LeRobot regression test](../../npa/tests/e2e/test_paidf_cosmos3_lerobot_live.py)
+passed with the optional freshness audit enabled. An independent audit fully
+decoded all 12 MP4/control files and verified both Rerun recordings against
+this run's media hashes, frame timestamps, evaluator, gate, disposition, and
+input provenance. The final recording also matched both curation reports.
+All eight source captions appeared in both recordings; the final recording's
+augmented panel correctly previewed 12 of the 16 complete JSON annotations.
+The guide's AWS final-report download, `jq` completion gate, and headless Rerun
+verification and inspection commands passed against these outputs.
 
 Matched-time inspection, including generation-window boundaries, showed the
-recognizable cube-transfer action with altered gripper details and lighting
-artifacts. One variant visibly changes lighting at a window boundary. Matching
-timestamps and passing these exploratory criteria do not establish physical
-fidelity or make the outputs a trainable LeRobot dataset.
+recognizable cube-transfer action with altered gripper details and shadows.
+Variant 0 abruptly adds a frame-like background at the join between frames
+180 and 181; variant 1 introduces warm frame-like scenery between frames 92
+and 93 (zero-based indices). Matching timestamps and passing these exploratory
+criteria do not establish physical fidelity or make the outputs a trainable
+LeRobot dataset. Review window joins as well as the beginning and end of each
+video.
 
 ### Automated checks and remaining scope
 
@@ -1214,6 +1254,12 @@ available source/generated frames, generation prompts, captions, evaluator
 decisions, and pipeline evidence. A rejected run may contain a useful recording
 without accepted data or a final curation report. Check the variant MP4s and
 the evaluator's individual dispositions as well as its aggregate score.
+
+Each Rerun caption panel previews the first 12 entries. For the complete
+annotations, inspect `labeled_original/captions.json` and
+`labeled_augmented/captions.json` under the run prefix. The eight-second
+LeRobot example produces 16 augmented captions, so four are outside the panel's
+preview even though they are present in the JSON.
 
 The commands above retrieve evidence from your own run. For browser viewing
 or sharing, see [Rerun sharing](../../docs/workbench/rerun-sharing.md).
