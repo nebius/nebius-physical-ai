@@ -550,6 +550,9 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert 'find "${snapshot_parent}" -type d -exec chmod u+w' in text
     assert '${empty_root}.proof' not in text
     assert "trap - EXIT" not in text
+    assert "EPOCHREALTIME" not in text
+    assert "</proc/uptime" in text
+    assert "ps -e" not in text
 
 
 def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> None:
@@ -919,21 +922,21 @@ def test_payload_observes_snapshot_until_supervisor_reaps_it(tmp_path: Path) -> 
             _remove_snapshot_parent(snapshot_root)
 
 
-def test_repeated_signal_escalates_and_reaps_ignoring_group(tmp_path: Path) -> None:
+def test_monotonic_deadline_does_not_depend_on_a_hanging_ps(tmp_path: Path) -> None:
     script = _bootstrap_with_fake_snapshot(tmp_path)
-    slow_bin = tmp_path / "slow-bin"
-    slow_bin.mkdir()
-    real_ps = shutil.which("ps")
-    assert real_ps is not None
-    slow_ps = slow_bin / "ps"
-    slow_ps.write_text(
-        f'#!/bin/sh\nsleep 0.15\nexec "{real_ps}" "$@"\n', encoding="utf-8"
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    hostile_ps = hostile_bin / "ps"
+    hostile_ps.write_text(
+        '#!/bin/sh\n: >"${NPA_TEST_PS_CALLED}"\nwhile :; do sleep 1; done\n',
+        encoding="utf-8",
     )
-    slow_ps.chmod(0o755)
+    hostile_ps.chmod(0o755)
     environment = _exec_environment(
         tmp_path, import_mode="success", exec_mode="ignore"
     )
-    environment["PATH"] = f"{slow_bin}:{environment['PATH']}"
+    environment["PATH"] = f"{hostile_bin}:{environment['PATH']}"
+    environment["NPA_TEST_PS_CALLED"] = str(tmp_path / "ps-called")
     process = subprocess.Popen(
         ["bash", str(script), "exec", "smoke.py"],
         stdout=subprocess.PIPE,
@@ -963,6 +966,7 @@ def test_repeated_signal_escalates_and_reaps_ignoring_group(tmp_path: Path) -> N
 
         assert process.returncode == 143
         assert 5 <= signal_elapsed < 10
+        assert not (tmp_path / "ps-called").exists()
         _assert_process_group_gone(payload_pid)
         assert not snapshot_root.parent.exists()
     finally:
