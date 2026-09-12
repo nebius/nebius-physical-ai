@@ -49,7 +49,7 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "libero_source_outside_neutral_bootstrap",
         re.compile(
-            r"(?:^|/)(?:opt/byof|opt/(?:libero|robomimic|robosuite)|"
+            r"(?:^|/)(?:opt/byof/.+|opt/(?:libero|robomimic|robosuite)|"
             r"usr/src/(?:libero|robomimic|robosuite)|"
             r"workspace/(?:libero|robomimic|robosuite))(?:/|$)",
             re.I,
@@ -96,14 +96,19 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "model_weight_checkpoint_or_dataset",
         re.compile(
-            r"(?:\.(?:safetensors|ckpt|pth|hdf5)$|(?:^|/)(?:pytorch_model|model|weights?|checkpoint)[^/]*\.bin$)",
+            r"(?:^(?!usr/local/lib/python[0-9.]+/(?:site-packages/|"
+            r"ensurepip/_bundled/setuptools-[^/]+\.whl!/)"
+            r"distutils-precedence\.pth$).*\.(?:safetensors|ckpt|pth|hdf5|h5|onnx)$|"
+            r"(?:^|/)(?:pytorch_model|model|weights?|checkpoint)[^/]*"
+            r"\.(?:bin|pth|pt)$)",
             re.I,
         ),
     ),
     (
         "libero_task_or_render_asset",
         re.compile(
-            r"(?:^|/)(?:libero/libero/(?:assets|bddl_files|init_files)|[^/]+\.(?:bddl|init))(?=/|$)",
+            r"(?:libero/libero/(?:assets|bddl_files|init_files)(?:/|$)|"
+            r"^(?!etc/security/namespace\.init$).*\.(?:bddl|init)$)",
             re.I,
         ),
     ),
@@ -188,9 +193,30 @@ NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
 RUNTIME_INJECTED_EXPORT_PATHS = frozenset(
-    {".dockerenv", "etc/hostname", "etc/hosts", "etc/resolv.conf"}
+    {
+        ".dockerenv",
+        "dev/console",
+        "etc/hostname",
+        "etc/hosts",
+        "etc/mtab",
+        "etc/resolv.conf",
+    }
 )
 IMAGE_INVENTORY_SCHEMA = "npa.libero.neutral-image-inventory.v1"
+
+# The pinned neutral base contains two libraries with secret-shaped binary
+# substrings.  These exact path+byte identities are already independently
+# audited by the shared complete-byte scanner.  Reusing only those immutable
+# identities keeps binary scanning enabled and turns any base-byte drift into a
+# refusal instead of adding a path exclusion.
+AUDITED_SECRET_LITERAL_FILE_SHA256 = {
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3": (
+        "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b"
+    ),
+    "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0": (
+        "bc5951aa3d6eaba20ff9688efa3420dc95785aae3709ec48ff6df46d6f409ee5"
+    ),
+}
 
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
     rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
@@ -406,6 +432,8 @@ def _base_provenance_findings(
 
 def _normalized_tar_path(name: str) -> str:
     candidate = name
+    if candidate in {".", "./"}:
+        return "."
     while candidate.startswith("./"):
         candidate = candidate[2:]
     if not candidate or candidate.startswith("/"):
@@ -578,6 +606,17 @@ def _apply_layer_records(
     findings: list[walker.Finding] = []
     seen: set[str] = set()
     for member, path, descriptor in records:
+        if path == ".":
+            if descriptor == ("directory",):
+                continue
+            findings.append(
+                walker.Finding(
+                    "unsafe_archive_member",
+                    path,
+                    f"archive root record is not a directory in {source}",
+                )
+            )
+            continue
         if path in seen:
             findings.append(
                 walker.Finding(
@@ -701,6 +740,18 @@ def _layer_graph_findings(
         findings.extend(_apply_layer_records(records, state, source=layer.name))
     flattened, hardlink_findings = _resolve_hardlinks(state)
     findings.extend(hardlink_findings)
+    byof = flattened.get("opt/byof")
+    if byof is not None and byof != (
+        "symlink",
+        "/workspace/.cache/npa/libero/current/source",
+    ):
+        findings.append(
+            walker.Finding(
+                "neutral_bootstrap_link",
+                "opt/byof",
+                "neutral source path is not the exact empty-cache symlink",
+            )
+        )
     for path in flattened:
         for kind, pattern in FORBIDDEN_PATHS:
             if pattern.search(path):
@@ -784,6 +835,7 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
         if manifest_stream is None:
             raise RuntimeError("docker save archive has no readable manifest.json")
         manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
+        descriptor_members, descriptor_findings = _oci_descriptor_members(archive)
     if not isinstance(manifests, list) or len(manifests) != 1:
         raise RuntimeError("docker save archive must contain exactly one image")
     manifest = manifests[0]
@@ -792,6 +844,8 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
         str(manifest.get("Config") or ""),
         *(str(item) for item in (manifest.get("Layers") or [])),
     }
+    allowed.update(descriptor_members)
+    findings.extend(descriptor_findings)
     for member, normalized, descriptor in records:
         if descriptor[0] != "directory" and normalized not in allowed:
             findings.append(
@@ -810,6 +864,113 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
                 )
             )
     return findings
+
+
+def _oci_descriptor_members(
+    archive: tarfile.TarFile,
+) -> tuple[set[str], list[walker.Finding]]:
+    """Bind every OCI-index descendant by descriptor digest and size."""
+
+    if "index.json" not in archive.getnames():
+        return set(), []
+    stream = archive.extractfile(archive.getmember("index.json"))
+    if stream is None:
+        raise RuntimeError("docker-save OCI index is unreadable")
+    index = json.load(io.TextIOWrapper(stream, encoding="utf-8"))
+    if index.get("schemaVersion") != 2 or not isinstance(index.get("manifests"), list):
+        raise RuntimeError("docker-save OCI index is malformed")
+    manifest_media_types = {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    }
+    if any(
+        not isinstance(item, dict)
+        or str(item.get("mediaType") or "") not in manifest_media_types
+        for item in index["manifests"]
+    ):
+        raise RuntimeError("OCI index contains a non-manifest root descriptor")
+    pending = list(index["manifests"])
+    allowed: set[str] = set()
+    findings: list[walker.Finding] = []
+    expanded: set[str] = set()
+    while pending:
+        descriptor = pending.pop()
+        if not isinstance(descriptor, dict):
+            raise RuntimeError("OCI descriptor is not an object")
+        digest = str(descriptor.get("digest") or "")
+        size = descriptor.get("size")
+        media_type = str(descriptor.get("mediaType") or "")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            raise RuntimeError("OCI descriptor has no immutable SHA-256")
+        if not isinstance(size, int) or size < 0:
+            raise RuntimeError("OCI descriptor has no valid byte size")
+        member_name = "blobs/sha256/" + digest.removeprefix("sha256:")
+        try:
+            member = archive.getmember(member_name)
+        except KeyError:
+            findings.append(
+                walker.Finding(
+                    "missing_oci_descriptor_member",
+                    member_name,
+                    "OCI descriptor target is absent from docker-save archive",
+                )
+            )
+            continue
+        if not member.isfile():
+            findings.append(
+                walker.Finding(
+                    "invalid_oci_descriptor_member",
+                    member_name,
+                    "OCI descriptor target is not a regular file",
+                )
+            )
+            continue
+        blob_stream = archive.extractfile(member)
+        if blob_stream is None:
+            raise RuntimeError("OCI descriptor target is unreadable")
+        blob = blob_stream.read()
+        if len(blob) != size or hashlib.sha256(blob).hexdigest() != digest.removeprefix(
+            "sha256:"
+        ):
+            findings.append(
+                walker.Finding(
+                    "oci_descriptor_identity_mismatch",
+                    member_name,
+                    "OCI descriptor digest or size does not match stored bytes",
+                )
+            )
+            continue
+        allowed.add(member_name)
+        if member_name in expanded:
+            continue
+        expanded.add(member_name)
+        if media_type not in manifest_media_types:
+            continue
+        document = json.loads(blob)
+        keys = (
+            ("manifests",)
+            if "index" in media_type or "manifest.list" in media_type
+            else ("config", "layers", "subject")
+        )
+        for key in keys:
+            value = document.get(key)
+            if isinstance(value, list):
+                if key == "manifests" and any(
+                    not isinstance(item, dict)
+                    or str(item.get("mediaType") or "") not in manifest_media_types
+                    for item in value
+                ):
+                    raise RuntimeError(
+                        "OCI index contains a non-manifest child descriptor"
+                    )
+                pending.extend(value)
+            elif isinstance(value, dict):
+                pending.append(value)
+            elif key in {"manifests", "config", "layers"}:
+                raise RuntimeError(f"OCI {key} descriptor collection is malformed")
+    return allowed, findings
 
 
 def _docker_save_config_digest(path: Path) -> str:
@@ -865,7 +1026,7 @@ def scan_tars(
         with walker.payload_policy(
             forbidden_paths=FORBIDDEN_PATHS,
             forbidden_history=FORBIDDEN_HISTORY,
-            audited_secret_files={},
+            audited_secret_files=AUDITED_SECRET_LITERAL_FILE_SHA256,
             audited_libraries={},
         ):
             findings = walker.scan_tars(tars, config)
