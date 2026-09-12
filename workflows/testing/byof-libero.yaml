@@ -759,11 +759,12 @@ config:
                         "base_image_digest_pinned"
                     ],
                     "base_image_provenance": "generated_build_metadata_and_oci_config_labels",
-                    "dataset_baked": False,
-                    "weights_baked": False,
-                    "render_assets_baked": False,
+                    "dataset_delivery": "runtime_fetch_to_run_scoped_cache",
+                    "weights_delivery": "runtime_fetch_to_run_scoped_cache",
+                    "render_assets_present_in_final_filesystem": False,
                     "render_assets_removed_path": SOURCE_PRUNE_PATH,
-                    "git_objects_baked": False,
+                    "git_objects_present_in_final_filesystem": False,
+                    "independent_oci_layer_scan_required_before_live_use": True,
                 },
                 "boundaries": {
                     "cache": "/workspace/libero-cache/$NPA_BYOF_RUN_ID/<dataset-and-model-revisions>",

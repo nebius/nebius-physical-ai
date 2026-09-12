@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -22,7 +23,10 @@ from npa.deploy.images import (
     wan_accepted_image_manifest,
 )
 from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
-from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.byof.live import (
+    resolve_byof_kubernetes_target,
+    resolve_byof_profile_path,
+)
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
@@ -44,6 +48,24 @@ BYOF_REPO_MOUNT = "/opt/byof"
 LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
+LIBERO_REPOSITORY_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_BASE_IMAGE = (
+    "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
+    "sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+)
+LIBERO_SOURCE_PRUNE_PATH = "libero/libero/assets"
+LIBERO_BUILD_COMMAND_SHA256 = (
+    "e77d6ecf52b3b37edd33269a9c22e31350a60575cb0dad5c38daf82e95049a87"
+)
+LIBERO_SMOKE_COMMAND_SHA256 = (
+    "9dfd7e586fd0c090a9a2a455d74501ece7c395c7dcc4d6af4836b1b6eb74a343"
+)
+LIBERO_CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
+LIBERO_SMOKE_ARTIFACT = "libero-smoke.json"
+LIBERO_TASK = (
+    "libero_spatial/"
+    "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate"
+)
 
 # SkyPilot 0.12.2 checks these package capabilities synchronously while starting a
 # Kubernetes worker.  Ubuntu's ``fuse3`` package provides the logical ``fuse``
@@ -133,6 +155,40 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         raise ValueError("LIBERO requires the solution-smoke workload")
     if profile != LIBERO_PROFILE_NAME:
         raise ValueError("LIBERO requires its exact B200 solution-smoke profile")
+    selected_profile = resolve_byof_profile_path(args.yaml).resolve()
+    packaged_profile = resolve_byof_profile_path(LIBERO_PROFILE_NAME).resolve()
+    if selected_profile != packaged_profile:
+        raise ValueError("LIBERO requires the packaged B200 solution-smoke profile")
+    exact_values = {
+        "repository": (args.repo_url, f"{LIBERO_REPOSITORY}.git"),
+        "source revision": (args.repo_ref, LIBERO_REPOSITORY_REF),
+        "repository authentication": (args.repo_auth, "none"),
+        "base profile": (args.base_profile, "ubuntu"),
+        "base image": (args.base_image, LIBERO_BASE_IMAGE),
+        "source prune path": (args.source_prune_path, LIBERO_SOURCE_PRUNE_PATH),
+        "capability": (args.capability_name, LIBERO_CAPABILITY),
+        "smoke artifact": (args.smoke_artifact_name, LIBERO_SMOKE_ARTIFACT),
+        "task": (args.task, LIBERO_TASK),
+        "iteration count": (args.iterations, 1),
+        "environment count": (args.num_envs, 1),
+        "demonstration count": (args.num_demos, 1),
+    }
+    for label, (observed, expected) in exact_values.items():
+        if observed != expected:
+            raise ValueError(f"LIBERO requires its exact {label} contract")
+    command_hashes = {
+        "build command": (
+            hashlib.sha256(args.build_command.encode()).hexdigest(),
+            LIBERO_BUILD_COMMAND_SHA256,
+        ),
+        "smoke command": (
+            hashlib.sha256(args.smoke_command.encode()).hexdigest(),
+            LIBERO_SMOKE_COMMAND_SHA256,
+        ),
+    }
+    for label, (observed, expected) in command_hashes.items():
+        if observed != expected:
+            raise ValueError(f"LIBERO requires its exact {label} contract")
 
 
 def _image_repository_name(image_ref: str) -> str:

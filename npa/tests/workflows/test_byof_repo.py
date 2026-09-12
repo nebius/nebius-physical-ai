@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -29,6 +30,49 @@ LIBERO_YAML_PATH = (
     / "profiles"
     / "byof-solution-smoke-libero-b200-gpu.yaml"
 )
+LIBERO_WORKFLOW_PATH = ROOT / "workflows" / "testing" / "byof-libero.yaml"
+
+
+def _libero_contract_args() -> list[str]:
+    config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
+    return [
+        "--repo-url", config["repo_url"],
+        "--repo-ref", config["repo_ref"],
+        "--repo-auth", config["repo_auth"],
+        "--base-profile", config["base_profile"],
+        "--base-image", config["base_image"],
+        "--source-prune-path", config["source_prune_path"],
+        "--build-command", config["build_command"],
+        "--workload", config["workload"],
+        "--smoke-command", config["smoke_command"],
+        "--solution-name", config["solution_name"],
+        "--capability-name", config["capability_name"],
+        "--smoke-artifact-name", config["smoke_artifact_name"],
+        "--yaml", config["resource_profile_yaml"],
+        "--task", config["task"],
+        "--iterations", str(config["iterations"]),
+        "--num-envs", str(config["num_envs"]),
+        "--num-demos", str(config["num_demos"]),
+    ]
+
+
+def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
+    module = _load_module()
+    config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
+
+    assert config["repo_url"] == f"{module.LIBERO_REPOSITORY}.git"
+    assert config["repo_ref"] == module.LIBERO_REPOSITORY_REF
+    assert config["base_image"] == module.LIBERO_BASE_IMAGE
+    assert config["source_prune_path"] == module.LIBERO_SOURCE_PRUNE_PATH
+    assert config["capability_name"] == module.LIBERO_CAPABILITY
+    assert config["smoke_artifact_name"] == module.LIBERO_SMOKE_ARTIFACT
+    assert config["task"] == module.LIBERO_TASK
+    assert hashlib.sha256(config["build_command"].encode()).hexdigest() == (
+        module.LIBERO_BUILD_COMMAND_SHA256
+    )
+    assert hashlib.sha256(config["smoke_command"].encode()).hexdigest() == (
+        module.LIBERO_SMOKE_COMMAND_SHA256
+    )
 
 
 def _load_module():
@@ -727,15 +771,8 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
         [
             "--run-id",
             "libero-managed-route",
-            "--skip-build",
-            "--base-profile",
-            "ubuntu",
-            "--workload",
-            "solution-smoke",
-            "--solution-name",
-            "libero",
-            "--yaml",
-            str(LIBERO_YAML_PATH),
+            "--skip-push",
+            *_libero_contract_args(),
         ]
     )
 
@@ -808,6 +845,61 @@ def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
 
     with pytest.raises(ValueError, match=message):
         module.main(["--skip-build", "--skip-run", *extra])
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "message"),
+    [
+        ("--repo-url", "https://github.com/example/LIBERO.git", "repository contract"),
+        ("--repo-ref", "main", "source revision contract"),
+        ("--repo-auth", "github", "repository authentication contract"),
+        ("--base-profile", "isaac-lab", "base profile contract"),
+        ("--base-image", "ubuntu:22.04", "base image contract"),
+        ("--source-prune-path", "libero/other", "source prune path contract"),
+        ("--build-command", "true", "build command contract"),
+        ("--smoke-command", "true", "smoke command contract"),
+        ("--capability-name", "other", "capability contract"),
+        ("--smoke-artifact-name", "other.json", "smoke artifact contract"),
+        ("--task", "other", "task contract"),
+        ("--iterations", "2", "iteration count contract"),
+        ("--num-envs", "2", "environment count contract"),
+        ("--num-demos", "2", "demonstration count contract"),
+    ],
+)
+def test_main_binds_exact_libero_inputs_before_registry_or_build(
+    monkeypatch, flag, value, message
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+    arguments = ["--run-id", "libero-contract-refusal", *_libero_contract_args()]
+    index = arguments.index(flag)
+    arguments[index + 1] = value
+
+    with pytest.raises(ValueError, match=message):
+        module.main(arguments)
+
+
+def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+    profile = tmp_path / "byof-solution-smoke-libero-b200-gpu.yaml"
+    profile.write_text("resources: {}\n", encoding="utf-8")
+    arguments = ["--run-id", "libero-profile-refusal", *_libero_contract_args()]
+    index = arguments.index("--yaml")
+    arguments[index + 1] = str(profile)
+
+    with pytest.raises(ValueError, match="packaged B200 solution-smoke profile"):
+        module.main(arguments)
 
 
 def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
