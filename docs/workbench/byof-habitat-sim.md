@@ -19,6 +19,12 @@ satisfy its hard gate.
   size/hash bound before HTTPS package transport, Ubuntu archive `Signed-By`,
   and exact Perl-family compatibility refusal.
 
+The runtime's GPL-3.0+ `rsync` bootstrap binary is accompanied in the image by
+the complete four-file Ubuntu source package from the same signed immutable
+snapshot. `apt-runtime.lock` binds the signed `Sources.xz` metadata and every
+source artifact's name, size, and SHA-256; the OCI verifier requires those exact
+bytes. No mutable source offer is used.
+
 The build obtains only official GitHub codeload archives bound by size and SHA-256.
 It materializes an allowlisted projection, excludes unused audio and GUI gitlinks,
 and emits a path/size/SHA-256 inventory for every resulting build-source file. The
