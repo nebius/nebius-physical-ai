@@ -555,7 +555,13 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
 
 
-def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("cleanup_argv", "expected_cleanup"),
+    [([], "--cleanup"), (["--no-cleanup"], "--no-cleanup")],
+)
+def test_main_forwards_solution_smoke_to_container_runner(
+    monkeypatch, cleanup_argv: list[str], expected_cleanup: str
+) -> None:
     module = _load_module()
     seen: dict[str, object] = {}
 
@@ -617,6 +623,7 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
             "demo-capability",
             "--smoke-artifact-name",
             "demo_artifact.json",
+            *cleanup_argv,
         ]
     )
 
@@ -629,6 +636,11 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert "--solution-name" in cmd and "demo-solution" in cmd
     assert "--capability-name" in cmd and "demo-capability" in cmd
     assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    assert expected_cleanup in cmd
+    rejected_cleanup = (
+        "--no-cleanup" if expected_cleanup == "--cleanup" else "--cleanup"
+    )
+    assert rejected_cleanup not in cmd
     env = seen.get("env")
     assert isinstance(env, dict)
     assert env["KUBECONFIG"] == "/tmp/kubeconfig"
