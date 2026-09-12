@@ -186,16 +186,19 @@ run: |
   root = Path(f"/workspace/byof-runs/{run_id}")
   smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
   artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
-  artifact_path = root / artifact_name if artifact_name else None
-  artifact_evidence = None
-  if artifact_path is not None and artifact_path.is_file():
-      payload = artifact_path.read_bytes()
-      artifact_evidence = {
-          "name": artifact_name,
-          "media_type": "application/json",
-          "size_bytes": len(payload),
-          "sha256": hashlib.sha256(payload).hexdigest(),
-      }
+  if artifact_name != "gymnasium-robotics-smoke.json":
+      raise SystemExit("unexpected Gymnasium qualification artifact name")
+  artifact_path = root / artifact_name
+  if not artifact_path.is_file():
+      raise SystemExit("Gymnasium qualification artifact is missing")
+  artifact_payload = artifact_path.read_bytes()
+  json.loads(artifact_payload)
+  artifact_evidence = {
+      "name": artifact_name,
+      "media_type": "application/json",
+      "size_bytes": len(artifact_payload),
+      "sha256": hashlib.sha256(artifact_payload).hexdigest(),
+  }
   metadata = json.loads(
       Path("/opt/npa/gymnasium-robotics/source-lock.json").read_text(encoding="utf-8")
   )
@@ -219,6 +222,8 @@ run: |
       json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
   )
   print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+  if smoke_exit_code != 0:
+      raise SystemExit(smoke_exit_code)
 
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
@@ -242,21 +247,37 @@ run: |
               client_kwargs["aws_session_token"] = session_token
       s3 = boto3.client("s3", **client_kwargs)
       prefix = parsed.path.lstrip("/")
-      uploaded = 0
-      for path in root.rglob("*"):
-          if path.is_file() and path.name != "npa_pod_image_receipt.json":
-              key = prefix + str(path.relative_to(root))
-              s3.put_object(
-                  Bucket=parsed.netloc,
-                  Key=key,
-                  Body=path.read_bytes(),
-                  IfNoneMatch="*",
-              )
-              uploaded += 1
-      s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
-      if artifact_name:
-          s3.head_object(Bucket=parsed.netloc, Key=prefix + artifact_name)
-      print(f"uploaded_file_count={uploaded}", flush=True)
+      upload_paths = (artifact_path, root / "npa_byof_summary.json")
+      expected_keys = {prefix + path.name for path in upload_paths}
+      for path in upload_paths:
+          payload = path.read_bytes()
+          json.loads(payload)
+          digest = hashlib.sha256(payload).hexdigest()
+          key = prefix + path.name
+          s3.put_object(
+              Bucket=parsed.netloc,
+              Key=key,
+              Body=payload,
+              ContentType="application/json",
+              Metadata={"sha256": digest},
+              IfNoneMatch="*",
+          )
+          head = s3.head_object(Bucket=parsed.netloc, Key=key)
+          if head.get("ContentLength") != len(payload):
+              raise SystemExit("qualification object size changed after upload")
+          if head.get("ContentType") != "application/json":
+              raise SystemExit("qualification object media type changed after upload")
+          if head.get("Metadata", {}).get("sha256") != digest:
+              raise SystemExit("qualification object hash metadata changed after upload")
+      pages = s3.get_paginator("list_objects_v2").paginate(
+          Bucket=parsed.netloc, Prefix=prefix
+      )
+      observed_keys = {
+          item["Key"] for page in pages for item in page.get("Contents", [])
+      }
+      if observed_keys != expected_keys:
+          raise SystemExit("qualification output prefix contains unexpected objects")
+      print(f"uploaded_file_count={len(upload_paths)}", flush=True)
   PY
   if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
     exit "${SMOKE_EXIT_CODE}"

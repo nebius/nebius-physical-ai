@@ -434,6 +434,10 @@ images:
     redistribution: public
     final_user: ubuntu
     phase: pre-registration-quarantine
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final workload runs as uid 1000;
+      SSH host keys are generated per container and no credentials are baked.
     notes: >-
       Neutral zero-Shadow-payload bootstrap for the future Farama
       Gymnasium-Robotics 1.4.2 / MuJoCo 3.12.0 runtime cache. Candidate layers
