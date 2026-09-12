@@ -36,12 +36,13 @@ CC BY 4.0 dataset declaration.
 
 `npa/docker/workbench/libero/Dockerfile` describes the candidate but Phase A
 does not build or publish it. The non-root `ubuntu` user has only a finite sudo
-grant for starting or restarting the preinstalled SSH daemon. The complete
-SkyPilot 0.12.2 synchronous package set is baked, including `curl`, `wget`, and
-the `fuse3` provider. When every package and command verifies, the guard bypasses
-SkyPilot's redundant package-index transaction. Missing packages fail closed;
-the deadline wrapper applies TERM and a kill-after escalation and emits an
-unambiguous failure sentinel.
+grant for generating missing per-Pod SSH host keys with the exact `-A` argument
+and for starting or restarting the preinstalled SSH daemon. No host key is baked
+into an image layer. The complete SkyPilot 0.12.2 synchronous package set is
+baked, including `curl`, `wget`, and the `fuse3` provider. When every package and
+command verifies, the guard bypasses SkyPilot's redundant package-index
+transaction. Missing packages fail closed; the deadline wrapper applies TERM
+and a kill-after escalation and emits an unambiguous failure sentinel.
 
 Before any public byte is disclosed, a separately authorized private stage must
 first emit a canonical complete-image inventory. It binds every byte in each

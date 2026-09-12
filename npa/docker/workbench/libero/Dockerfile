@@ -45,12 +45,13 @@ RUN set -eux; \
       test "$(dpkg-query -W -f='${Status}' "$package")" = 'install ok installed'; \
     done; \
     test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.1.180-1'; \
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     rm -rf /var/lib/apt/lists/*; \
     useradd --uid 1000 --create-home --shell /bin/bash ubuntu; \
     install -d -m 0700 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero /workspace/byof-runs; \
     install -d -m 0755 /run/sshd /opt/npa/libero; \
     printf '%s\n' \
-      'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
+      'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
       > /etc/sudoers.d/npa-skypilot-ssh; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
@@ -73,6 +74,7 @@ RUN set -eux; \
     chmod 0755 /opt/npa/libero/runtime-bootstrap.py /opt/npa/libero/smoke.sh /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/npa-libero-entrypoint; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \
     ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout; \
+    ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/ssh-keygen; \
     ln -s /workspace/.cache/npa/libero/current/source /opt/byof; \
     /usr/local/sbin/npa-skypilot-bootstrap-guard verify; \
     /opt/npa/libero/runtime-bootstrap.py status | grep -F '"materialized": false'; \

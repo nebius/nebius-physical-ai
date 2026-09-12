@@ -154,6 +154,16 @@ def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
         ("usr/lib/python3/site-packages/torch/__init__.py", b"", "torch_distribution"),
         ("workspace/demo.hdf5", b"data", "model_weight_checkpoint_or_dataset"),
         ("root/.aws/credentials", b"neutral", "credential_or_private_configuration"),
+        (
+            "etc/ssh/ssh_host_ed25519_key",
+            b"private host key",
+            "credential_or_private_configuration",
+        ),
+        (
+            "etc/ssh/ssh_host_ed25519_key.pub",
+            b"public host key",
+            "credential_or_private_configuration",
+        ),
         ("opt/cache/readme", b"AKIA0000000000000000", "credential_content"),
         ("usr/lib/libcudart.so.12", b"ELF", "cuda_or_nvidia_payload"),
         ("workspace/.cache/npa/libero/current/file", b"x", "populated_runtime_cache"),
