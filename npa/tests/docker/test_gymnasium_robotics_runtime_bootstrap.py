@@ -324,6 +324,50 @@ def test_failed_post_publish_validation_removes_only_the_exact_sealed_target(
     assert not any(path.name.startswith(".") for path in (cache / "versions").iterdir())
 
 
+def test_exec_handles_remain_bound_when_validated_target_path_is_swapped(
+    tmp_path: Path,
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    result = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        cache,
+        opener=_opener(content, []),
+        installer=_installer,
+        retain_runtime_handles=True,
+    )
+    target = Path(str(result["runtime_root"]))
+    directory_fd = int(result["_runtime_directory_fd"])
+    python_fd = int(result["_runtime_python_fd"])
+    displaced = target.with_name("displaced")
+    target.rename(displaced)
+    target.mkdir(mode=0o700)
+    replacement = target / "runtime/bin"
+    replacement.mkdir(parents=True)
+    (replacement / "python").write_text("malicious replacement", encoding="utf-8")
+    try:
+        bound_root = Path(f"/proc/self/fd/{directory_fd}")
+        assert bound_root.resolve() == displaced.resolve()
+        assert (bound_root / "runtime/bin/python").read_text() == "#!/bin/sh\nexit 0\n"
+        assert os.read(python_fd, 64) == b"#!/bin/sh\nexit 0\n"
+        assert (replacement / "python").read_text() == "malicious replacement"
+    finally:
+        os.close(python_fd)
+        os.close(directory_fd)
+        BOOTSTRAP._discard_stage(displaced)
+        BOOTSTRAP._discard_stage(target)
+
+
+def test_exec_path_uses_descriptor_bound_interpreter_and_runtime_root() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert 'bound_root = Path(f"/proc/self/fd/{directory_fd}")' in source
+    assert 'f"/proc/self/fd/{directory_fd}"' in source
+    assert 'python_name = f"/proc/self/fd/{python_fd}"' in source
+    assert "os.execve(" in source
+    assert "python_fd," in source
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

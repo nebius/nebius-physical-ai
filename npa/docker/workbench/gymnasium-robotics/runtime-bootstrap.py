@@ -745,8 +745,13 @@ def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
     return sorted(entries, key=lambda entry: str(entry["path"]))
 
 
-def _validated_existing(target: Path, runtime_lock: RuntimeLock) -> dict[str, object]:
-    metadata = target.lstat()
+def _validated_existing(
+    target: Path,
+    runtime_lock: RuntimeLock,
+    *,
+    root_metadata: os.stat_result | None = None,
+) -> dict[str, object]:
+    metadata = root_metadata if root_metadata is not None else target.lstat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
@@ -804,6 +809,90 @@ def _validated_existing(target: Path, runtime_lock: RuntimeLock) -> dict[str, ob
     return receipt
 
 
+def _open_validated_runtime(
+    target: Path, runtime_lock: RuntimeLock
+) -> tuple[dict[str, object], int, int]:
+    """Bind validation and execution to one directory and interpreter inode."""
+
+    try:
+        before = target.lstat()
+        directory_fd = os.open(
+            target,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        _refuse(f"runtime target cannot be opened safely: {error}")
+    python_fd: int | None = None
+    try:
+        opened = os.fstat(directory_fd)
+        if (
+            before.st_dev != opened.st_dev
+            or before.st_ino != opened.st_ino
+            or not stat.S_ISDIR(opened.st_mode)
+        ):
+            _refuse("runtime target changed while its directory was opened")
+        bound_root = Path(f"/proc/self/fd/{directory_fd}")
+        if not bound_root.exists():
+            _refuse("descriptor-bound runtime traversal is unavailable")
+        receipt = _validated_existing(
+            bound_root,
+            runtime_lock,
+            root_metadata=opened,
+        )
+        after = target.lstat()
+        if after.st_dev != opened.st_dev or after.st_ino != opened.st_ino:
+            _refuse("runtime target changed while it was validated")
+        python_fd = os.open(
+            "runtime/bin/python",
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        python_metadata = os.fstat(python_fd)
+        if (
+            not stat.S_ISREG(python_metadata.st_mode)
+            or python_metadata.st_uid != os.geteuid()
+            or python_metadata.st_gid != os.getegid()
+            or stat.S_IMODE(python_metadata.st_mode) & 0o222
+            or not stat.S_IMODE(python_metadata.st_mode) & 0o111
+        ):
+            _refuse("runtime Python is not a sealed operator-owned executable")
+        try:
+            tree = json.loads(
+                _read_owned_control(bound_root / "tree-manifest.json")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            _refuse(f"runtime tree manifest changed before execution: {error}")
+        if not isinstance(tree, dict) or not isinstance(tree.get("entries"), list):
+            _refuse("runtime tree manifest changed before execution")
+        expected_python = [
+            entry
+            for entry in tree.get("entries", [])
+            if isinstance(entry, dict)
+            and entry.get("path") == "runtime/bin/python"
+        ]
+        with os.fdopen(os.dup(python_fd), "rb") as stream:
+            python_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+        os.lseek(python_fd, 0, os.SEEK_SET)
+        if expected_python != [
+            {
+                "path": "runtime/bin/python",
+                "kind": "regular",
+                "mode": stat.S_IMODE(python_metadata.st_mode),
+                "size_bytes": python_metadata.st_size,
+                "sha256": python_sha256,
+            }
+        ]:
+            _refuse("runtime Python differs from the validated tree manifest")
+        os.set_inheritable(directory_fd, True)
+        os.set_inheritable(python_fd, True)
+        return receipt, directory_fd, python_fd
+    except BaseException:
+        if python_fd is not None:
+            os.close(python_fd)
+        os.close(directory_fd)
+        raise
+
+
 def prepare(
     manifest: Path,
     requirements: Path,
@@ -811,6 +900,7 @@ def prepare(
     *,
     opener: Callable[[str], contextlib.AbstractContextManager[BinaryIO]] = _open_url,
     installer: Callable[[Path, Path], None] = _install_runtime,
+    retain_runtime_handles: bool = False,
 ) -> dict[str, object]:
     """Fetch, validate, materialize, and atomically select one runtime version."""
 
@@ -923,12 +1013,22 @@ def prepare(
             os.replace(temporary_link, link)
         finally:
             temporary_link.unlink(missing_ok=True)
-    return {
+        handles: tuple[int, int] | None = None
+        if retain_runtime_handles:
+            receipt, directory_fd, python_fd = _open_validated_runtime(
+                target, runtime_lock
+            )
+            handles = (directory_fd, python_fd)
+    result: dict[str, object] = {
         **receipt,
         "runtime_root": str(target),
         "cache_root": str(cache_root),
         "cache_reused": cache_reused,
     }
+    if handles is not None:
+        result["_runtime_directory_fd"] = handles[0]
+        result["_runtime_python_fd"] = handles[1]
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -945,7 +1045,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        receipt = prepare(args.manifest, args.requirements, args.cache_root)
+        receipt = prepare(
+            args.manifest,
+            args.requirements,
+            args.cache_root,
+            retain_runtime_handles=args.command == "exec",
+        )
+        directory_fd = receipt.pop("_runtime_directory_fd", None)
+        python_fd = receipt.pop("_runtime_python_fd", None)
         rendered = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
         if args.json:
             args.json.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -957,9 +1064,24 @@ def main(argv: list[str] | None = None) -> int:
                 command.pop(0)
             if not command:
                 _refuse("exec requires a script or module argument")
-            python = Path(str(receipt["runtime_root"])) / "runtime/bin/python"
-            os.environ["NPA_GYMNASIUM_RUNTIME_ROOT"] = str(receipt["runtime_root"])
-            os.execv(str(python), [str(python), "-I", "-B", *command])
+            if not isinstance(directory_fd, int) or not isinstance(python_fd, int):
+                _refuse("exec did not retain descriptor-bound runtime handles")
+            if os.execve not in os.supports_fd:
+                _refuse("this platform cannot execute a descriptor-bound runtime")
+            os.environ["NPA_GYMNASIUM_RUNTIME_ROOT"] = (
+                f"/proc/self/fd/{directory_fd}"
+            )
+            python_name = f"/proc/self/fd/{python_fd}"
+            try:
+                os.execve(
+                    python_fd,
+                    [python_name, "-I", "-B", *command],
+                    os.environ,
+                )
+            except OSError as error:
+                os.close(python_fd)
+                os.close(directory_fd)
+                _refuse(f"descriptor-bound runtime execution failed: {error}")
         print(rendered, end="")
         return 0
     except BootstrapRefusal as error:
