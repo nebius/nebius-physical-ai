@@ -23,6 +23,7 @@ from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
     libero_accepted_image_manifest,
+    libero_publication_lineage_values,
     validate_libero_runtime_decision,
     wan_accepted_image_manifest,
 )
@@ -234,6 +235,11 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         )
     try:
         acceptance = libero_accepted_image_manifest()
+        libero_publication_lineage_values(
+            acceptance,
+            SCRIPT_DIR.parents[1],
+            development_sha=acceptance["development_sha"],
+        )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     args._libero_acceptance = acceptance

@@ -27,6 +27,7 @@ import yaml
 
 from npa.deploy.images import (
     libero_image_manifest,
+    libero_publication_lineage_values,
     validate_libero_accepted_image_manifest,
     validate_libero_runtime_decision,
 )
@@ -718,6 +719,11 @@ def _bind_libero_runtime_contract(
     try:
         signed_manifest = libero_image_manifest()
         acceptance = validate_libero_accepted_image_manifest(signed_manifest)
+        libero_publication_lineage_values(
+            acceptance,
+            Path(__file__).resolve().parents[2],
+            development_sha=acceptance["development_sha"],
+        )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     image = str(args.image or "").strip().removeprefix("docker:")

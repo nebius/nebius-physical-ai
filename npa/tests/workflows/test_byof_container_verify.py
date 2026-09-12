@@ -409,6 +409,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     }
     acceptance = {
         "acceptance_id": decision["acceptance_id"],
+        "development_sha": "a" * 40,
         "expires_at": decision["expires_at"],
         "candidate_image": candidate,
         "canonical_build_metadata_sha256": "c" * 64,
@@ -433,6 +434,14 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         module,
         "validate_libero_accepted_image_manifest",
         lambda payload: payload["acceptance"],
+    )
+    lineage_calls = []
+    monkeypatch.setattr(
+        module,
+        "libero_publication_lineage_values",
+        lambda value, repository_root, *, development_sha: lineage_calls.append(
+            (value, repository_root, development_sha)
+        ),
     )
     args = SimpleNamespace(
         solution_name="libero", direct_launch=False, cleanup=True, image=candidate
@@ -480,6 +489,13 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     assert json.loads(module.base64.b64decode(binding.manager_acceptance_b64)) == (
         signed_manifest
     )
+    assert lineage_calls == [
+        (
+            acceptance,
+            module.Path(module.__file__).resolve().parents[2],
+            acceptance["development_sha"],
+        )
+    ]
 
     invalid_decision = {**decision, "authorized_boundaries": ["source"]}
     invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
@@ -587,6 +603,43 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
+        )
+
+
+def test_libero_runtime_binding_refuses_local_enforcement_drift_before_access(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    acceptance = {"development_sha": "a" * 40}
+    monkeypatch.setattr(
+        module, "libero_image_manifest", lambda: {"acceptance": acceptance}
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_libero_accepted_image_manifest",
+        lambda _payload: acceptance,
+    )
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("LIBERO neutral build inputs differ from acceptance")
+
+    monkeypatch.setattr(module, "libero_publication_lineage_values", refuse)
+    monkeypatch.setattr(
+        module,
+        "_libero_payload_kubeconfig",
+        lambda: pytest.fail("access state must not be read after lineage drift"),
+    )
+    args = SimpleNamespace(
+        solution_name="libero", direct_launch=False, cleanup=True, image="unused"
+    )
+
+    with pytest.raises(ValueError, match="neutral build inputs differ"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={},
+            infra="k8s/execution-context",
+            run_id="libero-lineage-drift",
         )
 
 
