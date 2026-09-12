@@ -524,10 +524,10 @@ runcmd:
     "$LEROBOT_VENV/bin/pip" install --upgrade pip setuptools wheel || { echo "ERROR: Failed to upgrade pip"; exit 1; }
 
     echo "Installing LeRobot ${lerobot_version}..."
-    # 0.6.0 ships a lean base install; workbench needs training/eval + PushT/LIBERO extras.
+    # 0.6.0 ships a lean base install; policy constructors enforce their extras.
     # 0.5.1 (default) keeps the historic [pusht,libero] bundle.
     if [ "${lerobot_version}" = "0.6.0" ]; then
-      LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"
+      LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${lerobot_version}"
     else
       LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"
     fi
