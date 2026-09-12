@@ -588,12 +588,7 @@ def _python_findings(
                 continue
             record_entries.add(target)
             if not hash_field:
-                allowed_unhashed = {
-                    record_path,
-                    str(PurePosixPath(record_path).with_name("RECORD.jws")),
-                    str(PurePosixPath(record_path).with_name("RECORD.p7s")),
-                }
-                if size_field or target not in allowed_unhashed:
+                if size_field or target not in final_files:
                     findings.append(
                         {"code": "python_record_entry_unbound", "path": target}
                     )
