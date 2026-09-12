@@ -99,6 +99,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "fiftyone",
         "groot",
+        "gymnasium-robotics",
         "isaac-lab",
         "isaac-arena",
         "openarm",

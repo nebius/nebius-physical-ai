@@ -46,7 +46,9 @@ states:
       Populate an external operator-owned cache from complete pinned runtime
       locks, then run the genuine registered Shadow Hand smoke from a separately
       authorized exact candidate digest on one RTX PRO 6000 Blackwell. The
-      current placeholder and incomplete locks do not authorize submission.
+      complete private-use content locks still require an exact built-image byte
+      scan and manager-authorized qualification; the placeholder and unresolved
+      public Shadow rights do not authorize submission.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:
