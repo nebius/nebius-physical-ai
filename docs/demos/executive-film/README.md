@@ -6,9 +6,92 @@ The editable [storyboard](storyboard.json) contains narration and shot timings.
 The renderer produces a 1920 × 1080, 30 fps H.264 MP4, an AAC narration and
 original music mix, player-selectable SRT captions, a poster, and a hash manifest.
 
+## Fast editing
+
+Use a private project directory for the editable storyboard and media. Keep the
+delivered master separately so previews cannot overwrite it. A `film-project.json`
+file gives the editor four paths; relative paths resolve against that file:
+
+```json
+{
+  "storyboard": "storyboard.json",
+  "assets": "assets.json",
+  "voice_dir": "narration",
+  "output_dir": "renders",
+  "voice": "en-US-AndrewMultilingualNeural"
+}
+```
+
+The four paths are required. `voice` is optional and defaults to the voice shown.
+Copy the bundled storyboard into this private project, supply the asset manifest
+described below, and archive or generate its narration. Then use one entry point:
+
+```bash
+npa/.venv/bin/python docs/demos/executive-film/edit.py --project /path/to/film-project.json scenes
+npa/.venv/bin/python docs/demos/executive-film/edit.py --project /path/to/film-project.json preview
+npa/.venv/bin/python docs/demos/executive-film/edit.py --project /path/to/film-project.json preview --scene 07-robotics --open
+npa/.venv/bin/python docs/demos/executive-film/edit.py --project /path/to/film-project.json final
+```
+
+Edit headlines, labels, narration, timing, and scene order in `storyboard.json`.
+Change clips and their hashes/crops in `assets.json`; shared typography and colors
+live in `graphics.py`. A role can be used by multiple scenes; create a new role
+and reference it in just one scene when only that occurrence should change.
+The complete storyboard must remain 120 seconds, with
+positive whole-second durations and unique lowercase scene IDs. Scene previews
+can be shorter and retain the original chapter number, music position, and
+aligned captions. `scenes` lists IDs, titles, and start times.
+
+`preview` composes at 960 × 540 and uses a fast H.264 preset. `final` preserves
+1920 × 1080 at 30 fps with the delivery encoding settings. Both reuse unchanged
+scenes, normalized narration clips, and the audio mix. A title change rebuilds its
+scene; changing only narration leaves visual scenes cached. Scene reuse checks
+content hashes, selected assets/crops, chapter position, font, renderer source,
+and the FFmpeg/Python/Pillow/NumPy versions. A changed global graphics module
+invalidates all affected visual caches. Cached output bytes are verified before
+reuse. Failed builds do not publish a partial replacement.
+
+Outputs go into `renders/preview/` or `renders/final/`; a selected scene uses its
+own subdirectory, such as `renders/preview/07-robotics/`. Each contains the video,
+captions, poster, provenance, and `render-timing.json` with actual encode/reuse
+counts and elapsed time. `render-storyboard.json` preserves the exact storyboard
+snapshot used by that output; its bytes match the manifest's storyboard hash.
+Changing renderer code during a render aborts publication and asks for a rerun.
+`--plan` lists visual cache hits without encoding;
+`--workers` controls concurrent scene encodes (default `2`); `--open` opens a
+completed render in the default macOS/Linux player. The private `renders/.cache`
+retains prior variants for reuse when an edit is reverted. Renders sharing a
+project wait on a local lock rather than publishing over each other.
+
+After changing spoken wording, run `edit.py ... narrate`: it regenerates only
+changed or missing speech clips. Visual edits need no speech-service access.
+`narrate --force` regenerates everything. For human-recorded or otherwise supplied
+MP3/SRT pairs, `narrate --recorded` registers their identity without network access.
+Unchanged registered recordings remain reusable even when a generated voice is
+configured for other scenes.
+Rendering rejects stale narration receipts so a text edit cannot silently ship
+the old spoken script. The speech generator records each completed scene before
+moving on, so interrupted generation resumes from its completed recordings.
+
+Measured on the two-minute film on one macOS workstation, including command
+startup and validation, with the source clips and narration already local:
+
+| Edit | Wall time |
+| --- | ---: |
+| Unchanged preview or final | 0.7 seconds |
+| Changed ten-second scene, 540p preview | 3.9 seconds |
+| Complete 1080p film after one scene's title change | 5.2 seconds |
+| All twelve 1080p scenes rebuilt, audio reused | 29.8 seconds |
+
+These measurements exclude fetching media and running models. Source codecs,
+hardware, global graphics changes, and newly generated narration affect timing.
+The same exercise verified edit/revert cache reuse, generated only one changed
+speech clip while reusing eleven, and kept the preceding preview intact when
+renderer source changed during an encode.
+
 ## Rebuild the film
 
-Use Python 3.12 in this checkout's `npa/.venv`, with `npa[dev]` installed, and
+Use macOS or Linux with Python 3.12 in this checkout's `npa/.venv`, with `npa[dev]` installed, and
 FFmpeg with `libx264` plus `ffprobe` on `PATH`. The Manrope variable font and its
 OFL license are bundled; [font provenance](fonts/source.json) pins the source.
 
@@ -44,12 +127,13 @@ must fit inside the decoded image. Compute each digest with
 }
 ```
 
-Populate **all ten roles** before running. Missing files, digest mismatches,
+The bundled storyboard requires **all ten roles**. An edited storyboard can use
+additional or different roles, provided its referenced entries exist. Missing files, digest mismatches,
 unsupported media, invalid crops, and an incorrect storyboard duration fail
 before encoding. The renderer never synthesizes missing model outputs.
 
-Generate narration once, or supply recorded narration and sentence captions as
-`<scene-id>.mp3` and `<scene-id>.srt` for every scene. The optional generator uses
+Generate narration once, or supply and register recorded narration and sentence
+captions as `<scene-id>.mp3` and `<scene-id>.srt` for every scene. The optional generator uses
 Microsoft Edge's online speech service through
 [edge-tts](https://github.com/rany2/edge-tts); only storyboard narration is sent.
 It defaults to `en-US-AndrewMultilingualNeural`; `--voice` selects another voice.
@@ -73,11 +157,15 @@ npa/.venv/bin/python docs/demos/executive-film/render.py \
   --output-dir /path/to/private-film/render
 ```
 
-`--workers` controls concurrent scene encodes (default `2`). Narration has a
+The direct renderer defaults to the bundled storyboard and the `final` profile;
+use `--storyboard` for an edited copy, `--profile preview` for a smaller render,
+and `--scene` for one shot. The complete film appears under `render/final/`.
+`--check` verifies source assets without encoding, and `--plan` reports which
+selected visual scenes need work. Narration has a
 350 ms lead-in per scene and is modestly accelerated only when needed; a clip
 requiring more than 15% acceleration fails with a request to shorten its text.
 The original instrumental bed is deterministic and contains no sampled music.
-The final check requires exactly 3,600 video frames and 120 seconds, then
+The complete-film check requires exactly 3,600 video frames and 120 seconds, then
 decodes the complete file with FFmpeg's error-exit mode. Encoder/library
 versions can change the resulting bytes; archive the output manifest and
 environment alongside each delivery.

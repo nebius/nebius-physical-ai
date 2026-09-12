@@ -5,6 +5,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
+from film_cache import _build_cached, _hash
 
 _RATE = 48000
 
@@ -62,19 +63,31 @@ def _duration(path):
     ], text=True).strip())
 
 
-def _narration(scenes, voice_dir, output_dir):
+def _normalize_voice(scene, source, target):
+    available = scene["duration"] - 0.85
+    speed = max(1, _duration(source) / available)
+    if speed > 1.15:
+        raise ValueError(f"Narration too long for {scene['id']}; shorten its text")
+    filters = (f"atempo={speed},loudnorm=I=-18:TP=-2:LRA=9,"
+               f"adelay=350:all=1,apad,atrim=duration={scene['duration']}")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source),
+                    "-af", filters, "-ar", str(_RATE), "-ac", "2", str(target)], check=True)
+
+
+def _narration(scenes, voice_dir, output_dir, cache_root=None):
     parts = []
     for index, scene in enumerate(scenes):
         source = voice_dir / f"{scene['id']}.mp3"
         target = output_dir / f"voice-{index:02d}.wav"
-        available = scene["duration"] - 0.85
-        speed = max(1, _duration(source) / available)
-        if speed > 1.15:
-            raise ValueError(f"Narration too long for {scene['id']}; shorten its text")
-        filters = (f"atempo={speed},loudnorm=I=-18:TP=-2:LRA=9,"
-                   f"adelay=350:all=1,apad,atrim=duration={scene['duration']}")
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source),
-                        "-af", filters, "-ar", str(_RATE), "-ac", "2", str(target)], check=True)
+        if cache_root is None:
+            _normalize_voice(scene, source, target)
+        else:
+            inputs = {"audio": _hash(source), "duration": scene["duration"],
+                      "code": _hash(Path(__file__)),
+                      "ffmpeg": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0]}
+            cached, _ = _build_cached(cache_root, "voices", inputs,
+                lambda staging, scene=scene, source=source: _normalize_voice(scene, source, staging / "voice.wav"))
+            target = cached / "voice.wav"
         parts.append(target)
     target = output_dir / "narration.wav"
     with wave.open(str(target), "wb") as output:
@@ -85,10 +98,10 @@ def _narration(scenes, voice_dir, output_dir):
     return target
 
 
-def _mix(scenes, voice_dir, output_dir):
+def _mix(scenes, voice_dir, output_dir, cache_root=None):
     music = output_dir / "original-score.wav"
     _score(music, sum(s["duration"] for s in scenes))
-    narration = _narration(scenes, Path(voice_dir), output_dir)
+    narration = _narration(scenes, Path(voice_dir), output_dir, cache_root)
     result = output_dir / "mix.m4a"
     subprocess.run([
         "ffmpeg", "-v", "error", "-y", "-i", str(narration), "-i", str(music),
