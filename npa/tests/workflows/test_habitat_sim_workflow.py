@@ -279,6 +279,7 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
     registry_path.write_text(json.dumps(registry_evidence), encoding="utf-8")
     registry_path.chmod(0o600)
     return {
+        "transaction_started_at": "2026-09-10T23:59:59Z",
         "registry": "private.invalid/task-owned",
         "image": image,
         "registry_evidence": {
@@ -353,6 +354,66 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
         }
         with pytest.raises(AssertionError):
             LIVE._assert_private_image(receipt)
+
+
+def test_provider_binding_requires_ready_transaction_fresh_readback(tmp_path) -> None:
+    receipt = _live_receipt(tmp_path)
+    provider_path = Path(receipt["reservation"]["provider_receipt_path"])
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+
+    provider["state"] = receipt["reservation"]["state"] = "FAILED"
+    provider_path.write_text(json.dumps(provider), encoding="utf-8")
+    receipt["reservation"]["provider_receipt_sha256"] = hashlib.sha256(
+        provider_path.read_bytes()
+    ).hexdigest()
+    with pytest.raises(AssertionError):
+        LIVE._assert_provider_binding(receipt)
+
+    freshness = tmp_path / "freshness"
+    freshness.mkdir()
+    receipt = _live_receipt(freshness)
+    receipt["transaction_started_at"] = "2026-09-11T00:00:01Z"
+    with pytest.raises(AssertionError):
+        LIVE._assert_provider_binding(receipt)
+
+
+def test_named_smoke_proof_declares_schema_at_artifact_root() -> None:
+    import numpy as np
+
+    records = {
+        H.SCENE_NAME: {"bytes": 1},
+        H.NAVMESH_NAME: {"bytes": 2},
+    }
+    traversal = {
+        "count": 2,
+        "finite_depth": np.array([1.0, 2.0], dtype=np.float32),
+        "start": np.array([0.0, 0.0, 0.0]),
+        "end": np.array([1.0, 0.0, 0.0]),
+        "goal": np.array([2.0, 0.0, 0.0]),
+        "displacement": 1.0,
+        "geodesic": 2.0,
+        "actions": ["move_forward", "move_forward"],
+        "collisions": 0,
+        "physics_start": 0.0,
+        "physics_end": 0.2,
+        "fps": 10.0,
+        "egl": {"backend": "EGL"},
+        "rgb_hash": "a" * 64,
+        "depth_hash": "b" * 64,
+        "records": [],
+    }
+    proof = H._proof(
+        {"revision": H.SOURCE_REVISION},
+        "private.invalid/task/image@sha256:" + "c" * 64,
+        "sha256:" + "c" * 64,
+        {"model": "fixture", "architecture": "Blackwell", "count": 1},
+        {"bytes": 3, "sha256": "d" * 64},
+        records,
+        traversal,
+    )
+
+    assert proof["schema_version"] == "npa.habitat-sim.smoke.v1"
+    assert "schema_version" not in proof["scene"]
 
 
 def test_live_selector_binds_pod_node_to_provider_receipt(tmp_path) -> None:

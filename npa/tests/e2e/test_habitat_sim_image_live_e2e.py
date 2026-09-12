@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -31,6 +32,13 @@ PUBLIC_REGISTRY_HOSTS = {
     "registry.k8s.io",
 }
 MAX_PRIVATE_RECEIPT_BYTES = 1024 * 1024
+
+
+def _utc_instant(value: object) -> datetime:
+    assert isinstance(value, str) and value.endswith("Z")
+    instant = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    assert instant.utcoffset() is not None and instant.utcoffset().total_seconds() == 0
+    return instant
 
 
 def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -141,6 +149,10 @@ def _assert_provider_binding(receipt: dict[str, object]) -> dict[str, object]:
         "verified_at",
     ):
         assert provider[key] == reservation[key]
+    assert provider["state"] == reservation["state"] == "READY"
+    assert _utc_instant(provider["verified_at"]) >= _utc_instant(
+        receipt["transaction_started_at"]
+    )
     for key in ("kubernetes_context", "project", "project_id"):
         assert provider[key] == receipt[key]
     expected_policy = {
@@ -281,6 +293,7 @@ def _assert_observation_readback(
 
 
 def _assert_proof(proof: dict[str, object], receipt: dict[str, object]) -> None:
+    assert proof["schema_version"] == "npa.habitat-sim.smoke.v1"
     assert proof["solution"] == "habitat-sim"
     assert proof["source_revision"] == SOURCE_REVISION
     assert proof["scene_sha256"] == SCENE_SHA256
