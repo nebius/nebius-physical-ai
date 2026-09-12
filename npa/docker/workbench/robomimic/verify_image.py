@@ -74,6 +74,50 @@ def _json_object(path: Path) -> dict[str, Any]:
     return value
 
 
+def _bounded_json_object(
+    path: Path, *, maximum_size: int
+) -> tuple[dict[str, Any], bytes]:
+    """Read one regular JSON object through a no-link hard byte ceiling.
+
+    Args:
+        path: Runtime metadata file to read.
+        maximum_size: Maximum accepted file size and read length in bytes.
+
+    Returns:
+        The parsed JSON object and the exact bytes that produced it.
+
+    Raises:
+        VerificationError: The file is absent, unsafe, oversized, or invalid JSON.
+    """
+
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise VerificationError(f"required regular file is absent: {path}") from exc
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise VerificationError(f"required regular file is absent: {path}")
+        if details.st_size > maximum_size:
+            raise VerificationError(f"runtime metadata exceeds size limit: {path}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(maximum_size + 1)
+        if len(raw) > maximum_size:
+            raise VerificationError(f"runtime metadata exceeds size limit: {path}")
+    except OSError as exc:
+        raise VerificationError(f"invalid JSON at {path}: {exc}") from exc
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise VerificationError(f"invalid JSON at {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise VerificationError(f"expected JSON object at {path}")
+    return value, raw
+
+
 def _canonical_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
@@ -794,9 +838,13 @@ def verify_external_runtime(
     lock_hash = _sha256(runtime_lock_path)
     marker_path = runtime_root / ".ready.json"
     inventory_path = runtime_root / "inventory.json"
-    marker = _json_object(marker_path)
-    inventory = _json_object(inventory_path)
-    inventory_sha256 = _sha256(inventory_path)
+    marker, _marker_bytes = _bounded_json_object(
+        marker_path, maximum_size=RUNTIME_METADATA_MAX_BYTES
+    )
+    inventory, inventory_bytes = _bounded_json_object(
+        inventory_path, maximum_size=RUNTIME_METADATA_MAX_BYTES
+    )
+    inventory_sha256 = hashlib.sha256(inventory_bytes).hexdigest()
     if inventory_sha256 != expected_inventory_sha256:
         raise VerificationError(
             "runtime inventory does not match the manager-approved digest"
@@ -1032,7 +1080,9 @@ def _copy_runtime_inventory(
         expected_sha256=expected_inventory_sha256,
         maximum_size=RUNTIME_METADATA_MAX_BYTES,
     )
-    inventory = _json_object(staging / "inventory.json")
+    inventory, _inventory_bytes = _bounded_json_object(
+        staging / "inventory.json", maximum_size=RUNTIME_METADATA_MAX_BYTES
+    )
     files = _checked_entries(inventory.get("files"), symlinks=False)
     links = _checked_entries(inventory.get("symlinks"), symlinks=True)
     for relative, entry in files.items():
