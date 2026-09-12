@@ -69,6 +69,9 @@ regexes = [
     # Public content-addressable digest of the pinned SymPy 1.14.0 wheel. The
     # custom Nebius identifier rule matches it only because the hash starts e09.
     '''e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5''',
+    # Public file-content SHA-256 of the Gymnasium neutral image verifier. The
+    # custom Nebius identifier rule matches it only because the hash starts e00.
+    '''e0095400ccd21ea89d8ed1e1a591cc529b9c6e52e6c999e4456f28392e278d48''',
     # Public wheel hashes in the generated Cosmos3 serving requirements lock.
     # The custom Nebius identifier rule matches only their coincidental e00 prefix.
     '''e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825''',

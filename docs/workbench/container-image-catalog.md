@@ -20,6 +20,12 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
+The Gymnasium-Robotics public candidate is a proposed neutral bootstrap with no
+upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
+cache in its layers. It has no accepted or public build and remains
+pre-registration quarantined, has no public image row, and does not change
+public-release or mapped-tool counts.
+
 The main-branch public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-05**. All **32 current release tags**
 resolved and matched their recorded digests. All **43 retained table references**
@@ -46,12 +52,22 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
+The current source inventory, including the pending NCore integration and the
+Gymnasium-Robotics neutral-bootstrap candidate, has **38 packaging entries**
+(36 redistribution-eligible and two restricted) and
 **38 mapped tools**: 32 public-release members, two restricted tools, and four
 quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
+
+Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
+It is deliberately absent from the mapped-tool count, supported versions,
+public build matrix, and release table. It appears in the GPU compatibility
+matrix only as a quarantined pre-registration/no-image row. Its Dockerfile
+refuses before package network access until the exact neutral-bootstrap package
+and corresponding-source closure exists. Runtime fetching later changes
+delivery only, not use, derivative, output, or service rights. No image, scan,
+anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact

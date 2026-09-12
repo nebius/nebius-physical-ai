@@ -458,7 +458,10 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
     assert output["base_image"].endswith(":fallback")
 
 
-def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
+@pytest.mark.parametrize("cleanup_argv", [[], ["--no-cleanup"]])
+def test_main_forwards_yaml_override_to_runner(
+    monkeypatch, cleanup_argv: list[str]
+) -> None:
     module = _load_module()
     seen: dict[str, object] = {}
 
@@ -491,6 +494,7 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
             "isaac-lab",
             "--yaml",
             "/tmp/isaac-lab-rtxpro.yaml",
+            *cleanup_argv,
         ]
     )
 
@@ -499,6 +503,11 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
     assert isinstance(cmd, list)
     assert "--yaml" in cmd
     assert "/tmp/isaac-lab-rtxpro.yaml" in cmd
+    if cleanup_argv:
+        assert "--cleanup" not in cmd
+        assert "--no-cleanup" not in cmd
+    else:
+        assert "--cleanup" in cmd
 
 
 def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
@@ -555,7 +564,13 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
 
 
-def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("cleanup_argv", "expected_cleanup"),
+    [([], "--cleanup"), (["--no-cleanup"], "--no-cleanup")],
+)
+def test_main_forwards_solution_smoke_to_container_runner(
+    monkeypatch, cleanup_argv: list[str], expected_cleanup: str
+) -> None:
     module = _load_module()
     seen: dict[str, object] = {}
 
@@ -617,6 +632,7 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
             "demo-capability",
             "--smoke-artifact-name",
             "demo_artifact.json",
+            *cleanup_argv,
         ]
     )
 
@@ -629,6 +645,11 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert "--solution-name" in cmd and "demo-solution" in cmd
     assert "--capability-name" in cmd and "demo-capability" in cmd
     assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    assert expected_cleanup in cmd
+    rejected_cleanup = (
+        "--no-cleanup" if expected_cleanup == "--cleanup" else "--cleanup"
+    )
+    assert rejected_cleanup not in cmd
     env = seen.get("env")
     assert isinstance(env, dict)
     assert env["KUBECONFIG"] == "/tmp/kubeconfig"
@@ -1190,6 +1211,8 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "netcat-openbsd" in text
     assert "ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
+    install_layer = text.split("RUN id -u", 1)[0]
+    assert "rm -f /etc/ssh/ssh_host_*" in install_layer
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text

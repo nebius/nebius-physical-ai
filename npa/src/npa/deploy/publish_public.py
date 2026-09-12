@@ -97,9 +97,7 @@ def build_publish_plan(
     """
     if not target_registry.strip():
         raise ValueError("target_registry is required")
-    target_registry = images._ghcr_namespace(
-        target_registry, channel="public release"
-    )
+    target_registry = images._ghcr_namespace(target_registry, channel="public release")
     target = target_registry.rstrip("/")
     default_source_sha = _development_git_sha(development_git_sha)
 
@@ -125,8 +123,7 @@ def build_publish_plan(
                 f"refusing to publish restricted tool {tool!r} to a public registry"
             )
         source_sha = (
-            images.accepted_publication_development_sha(tool)
-            or default_source_sha
+            images.accepted_publication_development_sha(tool) or default_source_sha
         )
         source_ref = images.development_image_for_tool(
             tool, registry=target, git_sha=source_sha
@@ -220,9 +217,7 @@ def _crane_blob_json(repository: str, digest: str) -> dict[str, Any]:
     return payload
 
 
-def _github_attestation_predicates(
-    *, repository: str, digest: str
-) -> set[str]:
+def _github_attestation_predicates(*, repository: str, digest: str) -> set[str]:
     """Return structurally valid GitHub attestations bound to one OCI digest.
 
     Build-time actions create Sigstore bundles in GitHub's attestation store and
@@ -239,10 +234,11 @@ def _github_attestation_predicates(
         "ghcr.io/nebius/nebius-physical-ai/npa-ltx2",
         "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2",
     }:
-        raise RuntimeError("attestation lookup is limited to official image repositories")
+        raise RuntimeError(
+            "attestation lookup is limited to official image repositories"
+        )
     url = (
-        "https://api.github.com/repos/nebius/nebius-physical-ai/attestations/"
-        + digest
+        "https://api.github.com/repos/nebius/nebius-physical-ai/attestations/" + digest
     )
     request = urllib.request.Request(  # noqa: S310 - fixed GitHub API origin
         url,
@@ -254,7 +250,9 @@ def _github_attestation_predicates(
         ) as response:
             payload = json.load(response)
     except (OSError, ValueError) as exc:
-        raise RuntimeError(f"cannot read exact-digest GitHub attestations: {exc}") from exc
+        raise RuntimeError(
+            f"cannot read exact-digest GitHub attestations: {exc}"
+        ) from exc
     attestations = payload.get("attestations") if isinstance(payload, dict) else None
     if not isinstance(attestations, list) or not attestations:
         raise RuntimeError("exact digest has no GitHub attestations")
@@ -262,26 +260,38 @@ def _github_attestation_predicates(
     for record in attestations:
         bundle = record.get("bundle") if isinstance(record, dict) else None
         envelope = bundle.get("dsseEnvelope") if isinstance(bundle, dict) else None
-        material = bundle.get("verificationMaterial") if isinstance(bundle, dict) else None
+        material = (
+            bundle.get("verificationMaterial") if isinstance(bundle, dict) else None
+        )
         signatures = envelope.get("signatures") if isinstance(envelope, dict) else None
-        certificate = material.get("certificate") if isinstance(material, dict) else None
-        tlog_entries = material.get("tlogEntries") if isinstance(material, dict) else None
+        certificate = (
+            material.get("certificate") if isinstance(material, dict) else None
+        )
+        tlog_entries = (
+            material.get("tlogEntries") if isinstance(material, dict) else None
+        )
         if (
             not isinstance(signatures, list)
             or not signatures
-            or not all(isinstance(item, dict) and item.get("sig") for item in signatures)
+            or not all(
+                isinstance(item, dict) and item.get("sig") for item in signatures
+            )
             or not isinstance(certificate, dict)
             or not certificate.get("rawBytes")
             or not isinstance(tlog_entries, list)
             or not tlog_entries
             or envelope.get("payloadType") != "application/vnd.in-toto+json"
         ):
-            raise RuntimeError("GitHub attestation bundle lacks signed transparency material")
+            raise RuntimeError(
+                "GitHub attestation bundle lacks signed transparency material"
+            )
         encoded = str(envelope.get("payload") or "")
         try:
             statement = json.loads(base64.b64decode(encoded, validate=True))
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("GitHub attestation carries an invalid DSSE payload") from exc
+            raise RuntimeError(
+                "GitHub attestation carries an invalid DSSE payload"
+            ) from exc
         subjects = statement.get("subject") if isinstance(statement, dict) else None
         if not isinstance(subjects, list) or not any(
             isinstance(subject, dict)
@@ -289,7 +299,9 @@ def _github_attestation_predicates(
             and (subject.get("digest") or {}).get("sha256") == match.group(1)
             for subject in subjects
         ):
-            raise RuntimeError("GitHub attestation is not bound to the exact image digest")
+            raise RuntimeError(
+                "GitHub attestation is not bound to the exact image digest"
+            )
         predicate_type = str(statement.get("predicateType") or "")
         predicate = statement.get("predicate")
         if predicate_type == "https://spdx.dev/Document/v2.3":
@@ -410,8 +422,18 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     left to fail incidentally when the tag turns out not to exist.
     """
 
-    if item.tool not in images.PUBLICATION_QUARANTINE_TOOLS:
+    if item.tool not in (
+        images.PUBLICATION_QUARANTINE_TOOLS
+        | images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+    ):
         return True, "not applicable"
+    if item.tool in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
+        return False, (
+            f"{item.tool} is a pre-registration neutral-bootstrap candidate: "
+            "its exact corresponding-source/runtime closure, accepted manifest, "
+            "supported tag, and architecture record are withheld. Trusted build "
+            "and publication are blocked."
+        )
     return False, (
         f"{item.tool} has no accepted image: it has not been built, payload "
         "scanned, or GPU validated. Publication is blocked until that evidence "
@@ -462,12 +484,20 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         if not isinstance(proof, dict):
             raise RuntimeError("Wan accepted manifest has no single-GPU proof")
         if proof.get("gpu_count") != 1 or proof.get("observed_image_digest") != digest:
-            raise RuntimeError("Wan single-GPU proof is not bound to the accepted digest")
-        if set(proof.get("capabilities_exercised") or ()) != {
-            "wan2.2_ti2v_5b_text_to_video",
-            "wan2.2_decoded_mp4_validation",
-        } or proof.get("deferred") != []:
-            raise RuntimeError("Wan single-GPU proof does not cover the release capability")
+            raise RuntimeError(
+                "Wan single-GPU proof is not bound to the accepted digest"
+            )
+        if (
+            set(proof.get("capabilities_exercised") or ())
+            != {
+                "wan2.2_ti2v_5b_text_to_video",
+                "wan2.2_decoded_mp4_validation",
+            }
+            or proof.get("deferred") != []
+        ):
+            raise RuntimeError(
+                "Wan single-GPU proof does not cover the release capability"
+            )
         for key in (
             "artifact_sha256",
             "mp4_sha256",
@@ -544,7 +574,12 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         if scan_result.get("status") != "pass" or scan_result.get("findings"):
             raise RuntimeError("Wan exact-digest payload scan did not pass cleanly")
         live_vulnerability_scan = _scan_wan_trivy_exact_digest(digest_ref)
-        for field in ("critical_total", "critical_with_fix", "critical_unfixed", "secrets"):
+        for field in (
+            "critical_total",
+            "critical_with_fix",
+            "critical_unfixed",
+            "secrets",
+        ):
             if live_vulnerability_scan[field] != vulnerability_scan.get(field):
                 raise RuntimeError(
                     "Wan live Trivy result differs from the accepted manifest: "
@@ -588,8 +623,14 @@ def verify_ltx_publication_source(item: PublishItem) -> tuple[bool, str]:
         }
         if set(proof.get("capabilities_exercised") or ()) != required_capabilities:
             raise RuntimeError("LTX GPU proof does not cover the release capabilities")
-        if proof.get("deferred") != [] or proof.get("source_baked") is not False or proof.get("weights_baked") is not False:
-            raise RuntimeError("LTX GPU proof weakens the zero-payload capability claim")
+        if (
+            proof.get("deferred") != []
+            or proof.get("source_baked") is not False
+            or proof.get("weights_baked") is not False
+        ):
+            raise RuntimeError(
+                "LTX GPU proof weakens the zero-payload capability claim"
+            )
         for key in ("artifact_sha256", "refusal_sha256"):
             if re.fullmatch(r"[0-9a-f]{64}", str(proof.get(key) or "")) is None:
                 raise RuntimeError(f"LTX GPU proof has no valid {key}")
@@ -603,25 +644,37 @@ def verify_ltx_publication_source(item: PublishItem) -> tuple[bool, str]:
             or int(video.get("size_bytes") or 0) < 4096
         ):
             raise RuntimeError("LTX GPU video proof is invalid")
-        for identity_name, revision_key in (("source", "revision"), ("weights", "resolved_revision")):
+        for identity_name, revision_key in (
+            ("source", "revision"),
+            ("weights", "resolved_revision"),
+        ):
             identity = accepted.get(identity_name)
             if (
                 not isinstance(identity, dict)
-                or re.fullmatch(r"[0-9a-f]{40}", str(identity.get(revision_key) or "")) is None
+                or re.fullmatch(r"[0-9a-f]{40}", str(identity.get(revision_key) or ""))
+                is None
                 or identity.get("delivery") != "operator-entitled-runtime-fetch"
             ):
                 raise RuntimeError(f"LTX accepted {identity_name} identity is invalid")
         repository = _repository(item.source_ref)
-        required_predicates = set((accepted.get("attestations") or {}).get("required_predicates") or ())
+        required_predicates = set(
+            (accepted.get("attestations") or {}).get("required_predicates") or ()
+        )
         observed_predicates = _github_attestation_predicates(
             repository=repository, digest=digest
         )
-        if not required_predicates or not required_predicates.issubset(observed_predicates):
+        if not required_predicates or not required_predicates.issubset(
+            observed_predicates
+        ):
             raise RuntimeError("LTX exact digest lacks required SPDX/SLSA attestations")
         config = _crane_json(["config", f"{repository}@{digest}"])
         if config.get("architecture") != "amd64" or config.get("os") != "linux":
             raise RuntimeError("LTX accepted image is not a single linux/amd64 image")
-        scan_script = Path(__file__).resolve().parents[3] / "scripts" / "scan_image_ltx_payload.py"
+        scan_script = (
+            Path(__file__).resolve().parents[3]
+            / "scripts"
+            / "scan_image_ltx_payload.py"
+        )
         scan = subprocess.run(
             [sys.executable, str(scan_script), f"{repository}@{digest}"],
             capture_output=True,
@@ -651,7 +704,9 @@ def _scan_content_agents_payload_exact_digest(
     """Run both byte scanners against the immutable Content Agents source."""
 
     scripts = Path(__file__).resolve().parents[3] / "scripts"
-    with tempfile.TemporaryDirectory(prefix="npa-content-agents-publication-scan-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-content-agents-publication-scan-"
+    ) as tmp:
         specialized = subprocess.run(
             [
                 sys.executable,
@@ -709,9 +764,7 @@ def _scan_content_agents_payload_exact_digest(
             "entries_scanned": int(general_result.get("entries_scanned") or 0),
             "payload_hits": len(general_result.get("payload_hits") or []),
             "history_hits": len(general_result.get("history_hits") or []),
-            "weight_shaped_paths": len(
-                general_result.get("weight_shaped_paths") or []
-            ),
+            "weight_shaped_paths": len(general_result.get("weight_shaped_paths") or []),
         },
     }
 
@@ -771,8 +824,7 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
                 "attestation manifest"
             )
         if any(
-            not isinstance(entry, dict)
-            or str(entry.get("digest") or "") not in allowed
+            not isinstance(entry, dict) or str(entry.get("digest") or "") not in allowed
             for entry in manifests
         ):
             raise RuntimeError(
@@ -802,8 +854,7 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             if not isinstance(layer, dict):
                 continue
             predicate_type = str(
-                (layer.get("annotations") or {}).get("in-toto.io/predicate-type")
-                or ""
+                (layer.get("annotations") or {}).get("in-toto.io/predicate-type") or ""
             )
             if not predicate_type:
                 continue
@@ -839,7 +890,9 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
                 "Content Agents source requires bound SPDX and SLSA v0.2 attestations"
             )
         if not (spdx.get("predicate") or {}).get("packages"):
-            raise RuntimeError("Content Agents SPDX attestation has no package inventory")
+            raise RuntimeError(
+                "Content Agents SPDX attestation has no package inventory"
+            )
         provenance_predicate = provenance.get("predicate") or {}
         if not provenance_predicate.get("buildType") or not provenance_predicate.get(
             "materials"
@@ -851,15 +904,17 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
         runtime = accepted.get("runtime")
         if not isinstance(runtime, dict):
             raise RuntimeError("Content Agents accepted manifest has no runtime proof")
-        if runtime.get("version") != "0.3.0.312915" or runtime.get(
-            "delivery"
-        ) != "anonymous-runtime-fetch-from-nvidia":
+        if (
+            runtime.get("version") != "0.3.0.312915"
+            or runtime.get("delivery") != "anonymous-runtime-fetch-from-nvidia"
+        ):
             raise RuntimeError("Content Agents accepted OVRTX delivery is invalid")
         if re.fullmatch(r"[0-9a-f]{64}", str(runtime.get("lock_sha256") or "")) is None:
             raise RuntimeError("Content Agents accepted OVRTX lock hash is invalid")
-        if runtime.get("cache_tier") != "configured-filesystem" or runtime.get(
-            "reused_render_stages"
-        ) != 3:
+        if (
+            runtime.get("cache_tier") != "configured-filesystem"
+            or runtime.get("reused_render_stages") != 3
+        ):
             raise RuntimeError("Content Agents accepted runtime-cache proof is invalid")
 
         proof = accepted.get("rtx_proof")
@@ -883,7 +938,10 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             if int(proof.get(count_name) or 0) <= 0:
                 raise RuntimeError(f"Content Agents RTX proof has no {count_name}")
         for artifact_name in ("usd_sha256", "usdz_sha256"):
-            if re.fullmatch(r"[0-9a-f]{64}", str(proof.get(artifact_name) or "")) is None:
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", str(proof.get(artifact_name) or ""))
+                is None
+            ):
                 raise RuntimeError(f"Content Agents RTX proof has no {artifact_name}")
         rigid = proof.get("rigid_physics")
         if (
@@ -904,9 +962,11 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             ("general payload", general),
             ("vulnerability", vulnerability),
         ):
-            if not isinstance(record, dict) or re.fullmatch(
-                r"[0-9a-f]{64}", str(record.get("report_sha256") or "")
-            ) is None:
+            if (
+                not isinstance(record, dict)
+                or re.fullmatch(r"[0-9a-f]{64}", str(record.get("report_sha256") or ""))
+                is None
+            ):
                 raise RuntimeError(f"Content Agents accepted {name} scan is invalid")
         accepted_payload_counts = {
             "specialized": {
@@ -933,7 +993,9 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             raise RuntimeError("Content Agents accepted payload counts are unsafe")
         expected_source_sha = str(accepted.get("implementation_revision") or "")
         if re.fullmatch(r"[0-9a-f]{40}", expected_source_sha) is None:
-            raise RuntimeError("Content Agents accepted implementation revision is invalid")
+            raise RuntimeError(
+                "Content Agents accepted implementation revision is invalid"
+            )
         live_payload_counts = _scan_content_agents_payload_exact_digest(
             f"{repository}@{index_digest}", expected_source_sha=expected_source_sha
         )
@@ -1310,7 +1372,8 @@ def verify_ncore_publication_source(item: PublishItem) -> tuple[bool, str]:
             "live vulnerability counts differ from acceptance",
         )
         selected_scan = _scan_ncore_selected_base_exact_digest(
-            item.source_ref, platform_digest=platform,
+            item.source_ref,
+            platform_digest=platform,
             config_digest=accepted["config_digest"],
         )
         _validate_ncore_selected_live_scan(accepted, selected_scan)
@@ -1485,13 +1548,21 @@ def _anonymous_manifest_digest(
         authority = urllib.parse.urlsplit("https://" + parsed.registry)
         # Validate the authority before constructing either registry request.
         port = authority.port
-        if (not authority.hostname or authority.username or authority.password
-                or authority.path or authority.query or authority.fragment):
+        if (
+            not authority.hostname
+            or authority.username
+            or authority.password
+            or authority.path
+            or authority.query
+            or authority.fragment
+        ):
             raise ValueError
         component = r"[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*"
         if not re.fullmatch(component + r"(?:/" + component + r")*", parsed.repository):
             raise ValueError
-        if parsed.tag and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", parsed.tag):
+        if parsed.tag and not re.fullmatch(
+            r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", parsed.tag
+        ):
             raise ValueError
     except (ImageBootstrapContractError, ValueError):
         return False, "invalid registry-qualified image reference"
@@ -1503,19 +1574,39 @@ def _anonymous_manifest_digest(
     if authority.hostname == "ghcr.io" and port in (None, 443):
         # Anonymous bearer credentials are minted only for the repository pull
         # scope. A digest or optional tag must never become part of that scope.
-        url = "https://ghcr.io/token?" + urllib.parse.urlencode({
-            "scope": f"repository:{parsed.repository}:pull", "service": "ghcr.io",
-        })
+        url = "https://ghcr.io/token?" + urllib.parse.urlencode(
+            {
+                "scope": f"repository:{parsed.repository}:pull",
+                "service": "ghcr.io",
+            }
+        )
         try:
             with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed GHCR origin
                 payload = json.loads(response.read())
-            token = (payload.get("token") or payload.get("access_token")) if isinstance(payload, dict) else None
-            if not isinstance(token, str) or not token or any(character.isspace() for character in token):
+            token = (
+                (payload.get("token") or payload.get("access_token"))
+                if isinstance(payload, dict)
+                else None
+            )
+            if (
+                not isinstance(token, str)
+                or not token
+                or any(character.isspace() for character in token)
+            ):
                 return False, "anonymous token response is invalid"
         except urllib.error.HTTPError as exc:
-            hint = " (package is private or does not exist yet)" if exc.code in (401, 403) else ""
+            hint = (
+                " (package is private or does not exist yet)"
+                if exc.code in (401, 403)
+                else ""
+            )
             return False, f"anonymous token request failed: HTTP {exc.code}{hint}"
-        except (OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeError) as exc:
+        except (
+            OSError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeError,
+        ) as exc:
             return False, f"anonymous token request failed: {exc}"
 
     request = urllib.request.Request(  # noqa: S310 - validated HTTPS registry authority/path
@@ -1543,12 +1634,19 @@ def _anonymous_manifest_digest(
             if header and re.fullmatch(r"sha256:[0-9a-f]{64}", header) is None:
                 return False, "registry returned an invalid manifest digest header"
             if header and header != observed:
-                return False, "registry manifest digest header does not match response body"
+                return (
+                    False,
+                    "registry manifest digest header does not match response body",
+                )
             if parsed.digest and parsed.digest != observed:
                 return False, "registry manifest does not match requested digest"
             return True, observed
     except urllib.error.HTTPError as exc:
-        hint = " (package is private — set its visibility to Public in the package settings)" if exc.code in (401, 403) else ""
+        hint = (
+            " (package is private — set its visibility to Public in the package settings)"
+            if exc.code in (401, 403)
+            else ""
+        )
         return False, f"HTTP {exc.code}{hint}"
     except (OSError, http.client.HTTPException) as exc:
         return False, f"unreachable: {exc}"
@@ -1562,7 +1660,9 @@ def anonymous_pull_ok(
     As with container runtimes, an untagged reference selects ``latest``. An
     explicit digest always selects those exact bytes, including ``tag@digest``.
     """
-    ok, detail = _anonymous_manifest_digest(ref, timeout=timeout, require_explicit_reference=False)
+    ok, detail = _anonymous_manifest_digest(
+        ref, timeout=timeout, require_explicit_reference=False
+    )
     return (True, "HTTP 200") if ok else (False, detail)
 
 
@@ -1583,7 +1683,9 @@ def anonymous_digest(
 ) -> tuple[bool, str]:
     """Resolve an OCI manifest digest without consulting ambient credentials."""
 
-    return _anonymous_manifest_digest(ref, timeout=timeout, require_explicit_reference=True)
+    return _anonymous_manifest_digest(
+        ref, timeout=timeout, require_explicit_reference=True
+    )
 
 
 def accepted_release_plan(*, target_registry: str) -> list[PublishItem]:
@@ -2008,7 +2110,7 @@ def _preflight_or_explain(
             "In CI, grant the workflow GITHUB_TOKEN package access to the public\n"
             "development packages.\n"
             "Locally, log in with a GHCR package token and retry:\n"
-            "  printf '%s' \"$GHCR_TOKEN\" | crane auth login ghcr.io -u \"$GHCR_USER\" "
+            '  printf \'%s\' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" '
             "--password-stdin"
         )
     else:
@@ -2023,9 +2125,7 @@ def _preflight_or_explain(
                 "viewer on those repositories — fix the role, not the token."
             )
         if missing:
-            lines.append(
-                f"{len(missing)} public development tag(s) do not exist:"
-            )
+            lines.append(f"{len(missing)} public development tag(s) do not exist:")
             lines.extend(
                 f"  {item.source_ref}  ({_missing_reason(detail)})"
                 for item, detail in missing

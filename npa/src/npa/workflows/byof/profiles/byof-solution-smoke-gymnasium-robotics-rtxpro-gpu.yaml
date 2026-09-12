@@ -1,0 +1,284 @@
+# Gymnasium-Robotics Shadow Hand capability smoke on exactly one datacenter
+# RTX PRO 6000 Blackwell GPU. The cluster itself must already be manager-owned
+# and bound STRICT to the assigned reserved-capacity block.
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 4+
+  memory: 16+
+  disk_size: 20
+  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "descriptor-bound-runtime-cache"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS: "900"
+  NPA_GYMNASIUM_RUNTIME_CACHE: "/workspace/.cache/npa/gymnasium-robotics"
+  NVIDIA_DRIVER_CAPABILITIES: "graphics,utility"
+  MUJOCO_GL: "egl"
+  PYOPENGL_PLATFORM: "egl"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -x /usr/bin/python3
+  test -f /opt/npa/gymnasium-robotics/capability_smoke.py
+  test -f /opt/npa/gymnasium-robotics/runtime-bootstrap.py
+  test -f /opt/npa/gymnasium-robotics/source-lock.json
+  /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
+  /usr/bin/python3 -I -B -c 'import boto3, botocore'
+  install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
+  env \
+    -u AWS_ACCESS_KEY_ID \
+    -u AWS_SECRET_ACCESS_KEY \
+    -u AWS_SESSION_TOKEN \
+    -u AWS_PROFILE \
+    -u AWS_SHARED_CREDENTIALS_FILE \
+    -u AWS_WEB_IDENTITY_TOKEN_FILE \
+    -u AWS_ROLE_ARN \
+    /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  test -n "${BYOF_IMAGE}"
+  if ! printf '%s\n' "${BYOF_IMAGE}" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
+    echo "BYOF_IMAGE must be an immutable sha256 reference" >&2
+    exit 65
+  fi
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
+  test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 1
+  nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader,nounits \
+    > "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "RTX PRO 6000" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "Blackwell" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "12.0" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libEGL|libGL' \
+    > "${OUTPUT_DIR}/graphics_libraries_before_render.txt"
+
+  # The owner-side live gate reads this exact SkyPilot Pod through the
+  # task-owned kubeconfig and writes a receipt through pods/exec. The workload
+  # service account deliberately needs no Kubernetes API permission.
+  POD_IMAGE_RECEIPT="${OUTPUT_DIR}/npa_pod_image_receipt.json"
+  RECEIPT_TIMEOUT_SECONDS="${NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS}"
+  case "${RECEIPT_TIMEOUT_SECONDS}" in
+    ""|*[!0-9]*) echo "receipt timeout must be a positive integer" >&2; exit 65 ;;
+  esac
+  if [ "${RECEIPT_TIMEOUT_SECONDS}" -le 0 ]; then
+    echo "receipt timeout must be a positive integer" >&2
+    exit 65
+  fi
+  RECEIPT_DEADLINE=$((SECONDS + RECEIPT_TIMEOUT_SECONDS))
+  while [ ! -s "${POD_IMAGE_RECEIPT}" ]; do
+    if [ "${SECONDS}" -ge "${RECEIPT_DEADLINE}" ]; then
+      echo "timed out waiting for the owner-side Pod image receipt" >&2
+      exit 124
+    fi
+    sleep 1
+  done
+  export NPA_BYOF_POD_IMAGE_ID="$(/usr/bin/python3 -I -B - <<'PY'
+  import json
+  import os
+  import re
+  from pathlib import Path
+
+  expected = os.environ["BYOF_IMAGE"]
+  match = re.search(r"sha256:[0-9a-f]{64}$", expected)
+  if match is None:
+      raise SystemExit("BYOF_IMAGE is not immutable")
+  expected_digest = match.group(0)
+  receipt_path = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "npa_pod_image_receipt.json"
+  payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+  required = {
+      "schema_version",
+      "source",
+      "run_id",
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "node_name",
+      "container_name",
+      "spec_image",
+      "image_id",
+      "expected_digest",
+      "observed_digest",
+      "observed_unix",
+  }
+  if set(payload) != required:
+      raise SystemExit("owner-side Pod image receipt has an unexpected schema")
+  if payload["schema_version"] != "npa.byof.pod-image-receipt.v1":
+      raise SystemExit("owner-side Pod image receipt has an unexpected version")
+  if payload["source"] != "owner-side-kubernetes-status":
+      raise SystemExit("Pod image receipt did not come from the owner-side gate")
+  if payload["run_id"] != os.environ["NPA_BYOF_RUN_ID"]:
+      raise SystemExit("Pod image receipt belongs to a different run")
+  if payload["spec_image"] != expected:
+      raise SystemExit("Pod spec image differs from BYOF_IMAGE")
+  if payload["expected_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt expected digest differs from BYOF_IMAGE")
+  if payload["observed_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt observed a different digest")
+  image_id = str(payload["image_id"])
+  if expected_digest not in image_id:
+      raise SystemExit("Kubernetes imageID differs from BYOF_IMAGE")
+  for key in (
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "node_name",
+      "container_name",
+  ):
+      if not isinstance(payload[key], str) or not payload[key]:
+          raise SystemExit(f"Pod image receipt is missing {key}")
+  print(image_id)
+  PY
+  )"
+  test -n "${NPA_BYOF_POD_IMAGE_ID}"
+  # The owner-side receipt contains run-private Kubernetes identifiers. Keep
+  # only its digest result in the public smoke summary and remove the receipt
+  # before any artifact collection can begin.
+  rm -f -- "${POD_IMAGE_RECEIPT}"
+
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd /
+      env \
+        -u AWS_ACCESS_KEY_ID \
+        -u AWS_SECRET_ACCESS_KEY \
+        -u AWS_SESSION_TOKEN \
+        -u AWS_PROFILE \
+        -u AWS_SHARED_CREDENTIALS_FILE \
+        -u AWS_WEB_IDENTITY_TOKEN_FILE \
+        -u AWS_ROLE_ARN \
+        /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  /usr/bin/python3 -I -B - <<'PY'
+  import hashlib
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+  artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
+  if artifact_name != "gymnasium-robotics-smoke.json":
+      raise SystemExit("unexpected Gymnasium qualification artifact name")
+  artifact_path = root / artifact_name
+  if not artifact_path.is_file():
+      raise SystemExit("Gymnasium qualification artifact is missing")
+  artifact_payload = artifact_path.read_bytes()
+  json.loads(artifact_payload)
+  artifact_evidence = {
+      "name": artifact_name,
+      "media_type": "application/json",
+      "size_bytes": len(artifact_payload),
+      "sha256": hashlib.sha256(artifact_payload).hexdigest(),
+  }
+  metadata = json.loads(
+      Path("/opt/npa/gymnasium-robotics/source-lock.json").read_text(encoding="utf-8")
+  )
+  summary = {
+      "status": "success" if smoke_exit_code == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-gymnasium-robotics-rtxpro",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "pod_observed_image_id": os.environ.get("NPA_BYOF_POD_IMAGE_ID", ""),
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_artifact_name": artifact_name,
+      "smoke_artifact": artifact_evidence,
+      "smoke_exit_code": smoke_exit_code,
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(
+      json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+  )
+  print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+  if smoke_exit_code != 0:
+      raise SystemExit(smoke_exit_code)
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      endpoint = (
+          os.environ.get("AWS_ENDPOINT_URL")
+          or os.environ.get("NEBIUS_S3_ENDPOINT")
+          or ""
+      ).strip() or None
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
+      prefix = parsed.path.lstrip("/")
+      upload_paths = (artifact_path, root / "npa_byof_summary.json")
+      expected_keys = {prefix + path.name for path in upload_paths}
+      for path in upload_paths:
+          payload = path.read_bytes()
+          json.loads(payload)
+          digest = hashlib.sha256(payload).hexdigest()
+          key = prefix + path.name
+          s3.put_object(
+              Bucket=parsed.netloc,
+              Key=key,
+              Body=payload,
+              ContentType="application/json",
+              Metadata={"sha256": digest},
+              IfNoneMatch="*",
+          )
+          head = s3.head_object(Bucket=parsed.netloc, Key=key)
+          if head.get("ContentLength") != len(payload):
+              raise SystemExit("qualification object size changed after upload")
+          if head.get("ContentType") != "application/json":
+              raise SystemExit("qualification object media type changed after upload")
+          if head.get("Metadata", {}).get("sha256") != digest:
+              raise SystemExit("qualification object hash metadata changed after upload")
+      pages = s3.get_paginator("list_objects_v2").paginate(
+          Bucket=parsed.netloc, Prefix=prefix
+      )
+      observed_keys = {
+          item["Key"] for page in pages for item in page.get("Contents", [])
+      }
+      if observed_keys != expected_keys:
+          raise SystemExit("qualification output prefix contains unexpected objects")
+      print(f"uploaded_file_count={len(upload_paths)}", flush=True)
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+SCANNER = ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py"
+WORKFLOW = ROOT / ".github/workflows/publish-public-images.yml"
+
+
+def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None:
+    text = SCANNER.read_text(encoding="utf-8")
+    for token in (
+        '"manifest.json"',
+        '_scan_policy_bytes("exact image config", config_raw)',
+        'config_name != f"{config_digest}.json"',
+        'entry.get("Layers", [])',
+        'config_rootfs.get("diff_ids") != layer_diff_ids',
+        '_scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)',
+        "_whiteout_metadata(layer, item, path, layer_name)",
+        'leaf == ".wh..wh..opq"',
+        'leaf.startswith(".wh.")',
+        "rootfs[path] = content",
+        'kind = "symlink" if item.issym() else "hardlink"',
+        "zipfile.is_zipfile(io.BytesIO(content))",
+        "compression_kind = next(",
+        "is_tar = _looks_like_tar(content)",
+        "_validated_zip_infos(path, content)",
+        "_validated_tar_members(path, content)",
+        "_nested_archive_members(",
+        "allowed_system_wheel_path=",
+        '"requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a"',
+        "KNOWN_FORBIDDEN_CONTENT_SHA256",
+        "forbidden upstream/runtime byte",
+        "six-boundary runtime delivery classification changed",
+        "runtime artifact closure is incomplete",
+        "neutral image corresponding-source closure is incomplete",
+        "final image must declare the non-root ubuntu user",
+        '"unresolved_findings": 0',
+        '"upstream_runtime_payload_count": 0',
+        '"shadow_asset_count": 0',
+        '"runtime_cache_entry_count": 0',
+        '"whiteout_metadata_sha256"',
+        '"release_authorized": False',
+    ):
+        assert token in text
+
+
+def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.count("scan_image_gymnasium_robotics_payload.py") == 2
+    before_push = text.index("scan_image_gymnasium_robotics_payload.py")
+    push = text.index('docker push "$IMAGE"')
+    after_pull = text.rindex("scan_image_gymnasium_robotics_payload.py")
+    assert before_push < push < after_pull
+    for gate in (
+        "Generate pre-publication SBOM",
+        "Attest exact pushed digest provenance",
+        "Attest exact pushed digest SBOM",
+        "--scanners vuln,secret,license",
+        'anonymous_config="$(mktemp -d)"',
+    ):
+        assert gate in text
+
+
+def test_trusted_workflow_refuses_pre_registration_selection_before_build() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    refusal = text.index("pre-registration candidate has no build authority")
+    build = text.index("docker buildx build")
+    assert refusal < build
+
+
+def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    proof = dockerfile.index('RUN test "$(id -u ubuntu)" = 1000')
+    user = dockerfile.index("USER ubuntu")
+    assert proof < user
+
+
+def test_dockerfile_never_copies_runtime_or_upstream_payload() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "COPY --from=" not in dockerfile
+    assert "/opt/venv" not in dockerfile
+    assert ".whl" not in dockerfile
+    assert "runtime-bootstrap.py" in dockerfile

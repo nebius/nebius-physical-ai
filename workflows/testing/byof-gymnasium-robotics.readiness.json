@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "df161a438c28de10b77c896283a2bb95dc9a39c19560d25882882ec6e7b54e26",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The neutral-bootstrap workflow validates and plans as one prebuilt BYOF state with an intentionally non-resolving placeholder and no build command; this is static planning evidence only.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-gymnasium-robotics.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-neutral-review --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "The neutral entrypoint preserves the genuine runtime-cached Shadow Hand/MuJoCo contact, touch, orientation, EGL, RTX, and digest hard gate, but no redesigned image exists and no current-head capability run is claimed.",
+      "evidence": []
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Repository-only redesign authorizes no storage transaction; future exact-digest qualification must independently prove atomic write/read/delete under a run-owned prefix.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The exact source archive, 19-wheel Python runtime graph, and Ubuntu bootstrap/corresponding-source inputs are content-locked and approved only for private non-conveying qualification. Public worker input remains blocked because two Shadow forearm meshes lack identified preferred-form source, public use/derivative rights remain unresolved, and no exact image has passed the post-build byte gates.",
+      "evidence": [
+        "npa/docker/workbench/gymnasium-robotics/source-lock.json",
+        "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Runtime artifacts are credential-free and have no consent proxy. A future exact-digest run must separately preflight registry and output-storage credentials without treating them as upstream rights.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "No neutral-bootstrap image has been built. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
+      "evidence": [
+        "npa/docker/workbench/gymnasium-robotics/REDISTRIBUTION.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No current-head private or anonymous-public exact-digest RTX run is authorized or available; the placeholder must never be submitted.",
+      "evidence": []
+    }
+  }
+}

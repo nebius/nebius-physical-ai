@@ -325,6 +325,7 @@ def _dockerfile_text() -> str:
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
         "      git ca-certificates python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
+        "  && rm -f /etc/ssh/ssh_host_* \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
         "RUN install -d -m 0755 /run/sshd \\\n"
@@ -928,6 +929,8 @@ def _run_byof(
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
+            elif args.workload in {"datagen", "container-verify", "solution-smoke"}:
+                cmd.append("--no-cleanup")
             run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
