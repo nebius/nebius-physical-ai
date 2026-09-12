@@ -70,7 +70,7 @@ def _docker_save(
     layer_suffix: bytes = b"",
     config_name: str | None = None,
     configured_diff_ids: list[str] | None = None,
-) -> None:
+) -> tuple[str, list[str]]:
     base = _tar_bytes({"etc/neutral-base": b"base"})
     app = _tar_bytes(
         files,
@@ -113,10 +113,12 @@ def _docker_save(
         }
     )
     path.write_bytes(outer)
+    return hashlib.sha256(config).hexdigest(), diff_ids
 
 
 @pytest.fixture
 def structural_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(SCAN, "_reviewed_image_graph", lambda *_: None)
     monkeypatch.setattr(SCAN, "_neutral_candidate", lambda *_: None)
 
 
@@ -139,9 +141,41 @@ def test_structural_scan_covers_every_layer_and_rootfs_byte(
 def test_production_trust_roots_remain_withheld() -> None:
     assert all(value is None for value in SCAN.EXPECTED_NEUTRAL_FILE_SHA256.values())
     assert SCAN.EXPECTED_BASE["uncompressed_layer_digest"] is None
+    assert SCAN.EXPECTED_IMAGE_CONFIG_SHA256 is None
+    assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS is None
     assert all(
         value is None for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
     )
+
+
+@pytest.mark.parametrize("mutation", ["entrypoint", "notice", "extra", "partial"])
+def test_reviewed_image_graph_closes_every_candidate_added_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    accepted = tmp_path / "accepted.tar"
+    config_digest, layer_diff_ids = _docker_save(accepted, _required())
+    monkeypatch.setattr(SCAN, "EXPECTED_IMAGE_CONFIG_SHA256", config_digest)
+    monkeypatch.setattr(
+        SCAN, "EXPECTED_ORDERED_LAYER_DIFF_IDS", tuple(layer_diff_ids)
+    )
+    monkeypatch.setattr(SCAN, "_neutral_candidate", lambda *_: None)
+    assert SCAN.scan(accepted)["status"] == "passed"
+
+    changed = _required()
+    if mutation == "entrypoint":
+        changed["usr/local/bin/npa-gymnasium-entrypoint"] += b"\nchanged"
+    elif mutation == "notice":
+        changed[
+            "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md"
+        ] += b"\nchanged"
+    elif mutation == "extra":
+        changed["opt/innocent-extra.bin"] = b"arbitrary renamed payload"
+    else:
+        changed["opt/innocent-fragment.bin"] = b"truncated-or-encoded-payload-fragment"
+    candidate = tmp_path / f"{mutation}.tar"
+    _docker_save(candidate, changed)
+    with pytest.raises(ValueError, match="reviewed neutral image config bytes changed"):
+        SCAN.scan(candidate)
 
 
 @pytest.mark.parametrize(

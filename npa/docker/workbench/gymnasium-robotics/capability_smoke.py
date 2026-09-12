@@ -140,6 +140,9 @@ def _source_evidence() -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, 
         != component["archive_sha256"]
         or receipt.get("artifact_sha256", {}).get("mujoco-3.12.0-cp312-linux-x86_64")
         != EXPECTED_MUJOCO_WHEEL
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(receipt.get("tree_manifest_sha256") or "")
+        )
     ):
         raise RuntimeError("operator runtime-cache receipt changed")
     receipt["receipt_sha256"] = _sha256(receipt_path)
