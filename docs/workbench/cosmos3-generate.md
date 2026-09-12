@@ -77,7 +77,12 @@ models found, returning safe`. NPA restores the framework's shipped
 `VideoContentSafetyFilter` only when that list is empty, instruments the actual
 model calls, and fails closed if discovery, evaluation, or the receipt is absent
 or invalid. `RetinaFaceFilter` remains the generated-media postprocessor. This
-fallback does not suppress a safety rejection or reinterpret an unsafe result.
+also rejects two pinned-upstream fail-open results: Qwen3Guard returning
+`safe=True` after catching an internal model error, and the video filter returning
+safe after one or more sampled-frame classifier calls failed. The receipt's
+`evaluation_details` reports decisions and, for generated media, attempted and
+successful frame counts. The fallback does not suppress a safety rejection or
+reinterpret an unsafe result.
 `--no-guardrails` remains the only opt-out and is recorded as
 `status: explicit_opt_out`, `requested: false`, and `effective: false`.
 

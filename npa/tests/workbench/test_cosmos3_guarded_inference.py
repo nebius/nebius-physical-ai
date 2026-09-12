@@ -24,7 +24,11 @@ class VideoContentSafetyFilter:
     def __init__(self, *, offload_model_to_cpu=False):
         self.offload_model_to_cpu = offload_model_to_cpu
 
+    def __infer(self, value):
+        return value
+
     def is_safe(self, value):
+        self.__infer(value)
         return True, "safe"
 
 
@@ -114,13 +118,87 @@ def test_invalid_safety_decision_is_not_counted_as_evaluated(
             return "yes", "not a boolean"
 
     receipt = _reset(monkeypatch, tmp_path)
-    with pytest.raises(RuntimeError, match="non-boolean"):
+    with pytest.raises(RuntimeError, match="invalid safety decision"):
         guarded._guarded_safety_check(_runner([BrokenSafetyModel()]), object())
 
     state = json.loads(receipt.read_text(encoding="utf-8"))
     assert state["discovered"]["generated_media"] == ["BrokenSafetyModel"]
     assert state["evaluated"]["generated_media"] == []
     assert state["effective"] is False
+
+
+def test_upstream_fail_open_text_error_is_rejected(monkeypatch, tmp_path) -> None:
+    class FailOpenQwen3Guard:
+        def is_safe(self, value):
+            return True, "Unexpected error occurred when running Qwen3Guard guardrail."
+
+    receipt = _reset(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeError, match="internal evaluation error"):
+        guarded._guarded_safety_check(
+            _runner([Blocklist(), FailOpenQwen3Guard()]), "a benign prompt"
+        )
+
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    assert state["discovered"]["prompt_input"] == [
+        "Blocklist",
+        "FailOpenQwen3Guard",
+    ]
+    assert state["evaluated"]["prompt_input"] == ["Blocklist"]
+    assert state["evaluation_details"]["prompt_input"]["FailOpenQwen3Guard"] == {
+        "decision": "error"
+    }
+    assert state["failure"].endswith("evaluation_error")
+
+
+def test_media_filter_fails_closed_when_a_frame_classifier_error_is_swallowed(
+    monkeypatch, tmp_path
+) -> None:
+    class FailOpenVideoContentSafetyFilter:
+        def __infer(self, value):
+            if value == "bad-frame":
+                raise RuntimeError("classifier failed")
+            return value
+
+        def is_safe(self, values):
+            for value in values:
+                try:
+                    self.__infer(value)
+                except RuntimeError:
+                    pass
+            return True, "safe frames detected"
+
+    model = guarded._instrument_media_model(FailOpenVideoContentSafetyFilter())
+    receipt = _reset(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeError, match="every safety input"):
+        guarded._guarded_safety_check(_runner([model]), ["good-frame", "bad-frame"])
+
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    name = "FailOpenVideoContentSafetyFilter"
+    assert state["evaluated"]["generated_media"] == []
+    assert state["evaluation_details"]["generated_media"][name] == {
+        "decision": "safe",
+        "attempted_inputs": 2,
+        "successful_inputs": 1,
+    }
+    assert state["failure"].endswith("ineffective_evaluation")
+
+
+def test_instrumented_media_filter_records_all_successful_frames(
+    monkeypatch, tmp_path
+) -> None:
+    model = guarded._instrument_media_model(VideoContentSafetyFilter())
+    receipt = _reset(monkeypatch, tmp_path)
+
+    assert guarded._guarded_safety_check(_runner([model]), ["frame"])[0]
+
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    assert state["evaluation_details"]["generated_media"][
+        "VideoContentSafetyFilter"
+    ] == {
+        "decision": "safe",
+        "attempted_inputs": 1,
+        "successful_inputs": 1,
+    }
 
 
 def test_explicit_opt_out_is_auditable_but_never_called_effective(

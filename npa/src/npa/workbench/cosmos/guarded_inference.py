@@ -41,6 +41,7 @@ def _new_state(requested: bool | None = None) -> dict[str, Any]:
         "requested": enabled,
         "discovered": {role: [] for role in _ROLES},
         "evaluated": {role: [] for role in _ROLES},
+        "evaluation_details": {role: {} for role in _ROLES},
         "postprocessors": {"discovered": [], "evaluated": []},
         "effective": False,
         "status": "pending" if enabled else "explicit_opt_out",
@@ -102,6 +103,46 @@ def _fail(role: str, category: str) -> None:
     _write_state()
 
 
+def _upstream_reported_evaluation_error(message: str) -> bool:
+    """Recognize pinned upstream's fail-open model-error result.
+
+    Qwen3Guard catches every internal exception and returns ``(True, <error>)``.
+    Treating that tuple as a successful safety decision would merely move the
+    original fail-open behavior into this wrapper.
+    """
+
+    normalized = message.strip().lower()
+    return normalized.startswith("unexpected error occurred when running")
+
+
+def _instrument_media_model(model: Any) -> Any:
+    """Count successful frame classifications hidden by the upstream filter.
+
+    ``VideoContentSafetyFilter.is_safe_frames`` catches frame-level exceptions
+    and can return safe when every classifier call failed. Instrument its pinned
+    private inference method so the outer runner can reject partial or empty
+    classifier execution without changing any actual safety decision.
+    """
+
+    method_name = f"_{model.__class__.__name__}__infer"
+    infer = getattr(model, method_name, None)
+    if not callable(infer):
+        raise RuntimeError(
+            "VideoContentSafetyFilter cannot be instrumented for effective evaluation"
+        )
+    model._npa_guardrail_attempted_evaluations = 0
+    model._npa_guardrail_successful_evaluations = 0
+
+    def tracked_infer(*args: Any, **kwargs: Any) -> Any:
+        model._npa_guardrail_attempted_evaluations += 1
+        result = infer(*args, **kwargs)
+        model._npa_guardrail_successful_evaluations += 1
+        return result
+
+    setattr(model, method_name, tracked_infer)
+    return model
+
+
 def _guarded_safety_check(runner: Any, value: Any) -> tuple[bool, str]:
     """Evaluate every discovered model and reject empty or invalid runners."""
 
@@ -116,6 +157,10 @@ def _guarded_safety_check(runner: Any, value: Any) -> tuple[bool, str]:
         )
 
     for model, name in zip(models, names, strict=True):
+        attempted_before = getattr(model, "_npa_guardrail_attempted_evaluations", None)
+        successful_before = getattr(
+            model, "_npa_guardrail_successful_evaluations", None
+        )
         try:
             outcome = model.is_safe(value)
         except Exception:
@@ -125,9 +170,32 @@ def _guarded_safety_check(runner: Any, value: Any) -> tuple[bool, str]:
             _fail(role, f"{name}:invalid_result")
             raise RuntimeError(f"{name} returned an invalid guardrail result")
         safe, message = outcome
-        if not isinstance(safe, bool):
+        if not isinstance(safe, bool) or not isinstance(message, str):
             _fail(role, f"{name}:invalid_result")
-            raise RuntimeError(f"{name} returned a non-boolean safety decision")
+            raise RuntimeError(f"{name} returned an invalid safety decision")
+        detail: dict[str, Any] = {"decision": "safe" if safe else "blocked"}
+        if attempted_before is not None and successful_before is not None:
+            attempted = int(model._npa_guardrail_attempted_evaluations) - int(
+                attempted_before
+            )
+            successful = int(model._npa_guardrail_successful_evaluations) - int(
+                successful_before
+            )
+            detail.update(
+                {"attempted_inputs": attempted, "successful_inputs": successful}
+            )
+            if attempted <= 0 or successful != attempted:
+                _STATE["evaluation_details"][role][name] = detail
+                _fail(role, f"{name}:ineffective_evaluation")
+                raise RuntimeError(
+                    f"{name} did not successfully evaluate every safety input"
+                )
+        if safe and _upstream_reported_evaluation_error(message):
+            detail["decision"] = "error"
+            _STATE["evaluation_details"][role][name] = detail
+            _fail(role, f"{name}:evaluation_error")
+            raise RuntimeError(f"{name} reported an internal evaluation error")
+        _STATE["evaluation_details"][role][name] = detail
         _append_unique(_STATE["evaluated"][role], [name])
         _write_state()
         if not safe:
@@ -167,9 +235,8 @@ def _restore_media_safety(original_factory: Any) -> Any:
         runner = original_factory(offload_model_to_cpu=offload_model_to_cpu)
         if runner.safety_models:
             return runner
-        runner.safety_models = [
-            _media_safety_model_class()(offload_model_to_cpu=offload_model_to_cpu)
-        ]
+        model = _media_safety_model_class()(offload_model_to_cpu=offload_model_to_cpu)
+        runner.safety_models = [_instrument_media_model(model)]
         return runner
 
     return create_video_guardrail_runner
