@@ -105,7 +105,7 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "cuda_install_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*(?:download\.pytorch\.org/whl/cu|"
+            r"(?:download\.pytorch\.org/whl/cu|"
             r"(?:pip|uv)(?:\s+pip)?\s+install(?:(?!&&|\|\||;)[^\n])*"
             r"(?:nvidia-|torch==[^\s;&|]*\+cu|torchvision==[^\s;&|]*\+cu))",
             re.I,
@@ -114,14 +114,14 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "runtime_population_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*\brobomimic-runtime\s+(?:ensure|install|fetch|warm|exec)\b",
+            r"\brobomimic-runtime\s+(?:ensure|install|fetch|warm|exec)\b",
             re.I | re.S,
         ),
     ),
     (
         "dataset_fetch_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*(?:robomimic_datasets|low_dim_v15\.hdf5|huggingface-cli\s+download)",
+            r"(?:robomimic_datasets|low_dim_v15\.hdf5|huggingface-cli\s+download)",
             re.I | re.S,
         ),
     ),

@@ -49,8 +49,11 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
         "botocore",
         "certifi",
         "charset-normalizer",
+        "contourpy",
+        "cycler",
         "diffusers",
         "filelock",
+        "fonttools",
         "fsspec",
         "h11",
         "h5py",
@@ -62,10 +65,13 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
         "imageio",
         "importlib-metadata",
         "jmespath",
+        "kiwisolver",
+        "matplotlib",
         "numpy",
         "packaging",
         "pillow",
         "psutil",
+        "pyparsing",
         "python-dateutil",
         "pyyaml",
         "regex",
@@ -82,6 +88,24 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
     assert set(
         VERIFIER._locked_baked_packages(IMAGE_ROOT / "baked-requirements.lock")
     ) == (baked_names)
+    # Import reachability at the pinned source revision is broader than the BC
+    # code path itself: algo registration imports Diffusion Policy, while the
+    # observation stack imports vis_utils and therefore matplotlib eagerly.
+    assert {
+        "diffusers",
+        "huggingface-hub",
+        "imageio",
+        "matplotlib",
+    } <= baked_names
+    # These upstream install requirements are lazy and are not exercised by the
+    # headless, non-language, non-rendering gate.
+    assert {
+        "egl-probe",
+        "imageio-ffmpeg",
+        "tensorboard",
+        "tensorboardx",
+        "transformers",
+    }.isdisjoint(baked_names)
     lowered = baked.lower()
     for forbidden in (b"torch==", b"torchvision==", b"triton==", b"nvidia-"):
         assert forbidden not in lowered
