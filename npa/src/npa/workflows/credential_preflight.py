@@ -204,7 +204,7 @@ def check_s3(credentials: Any, probes: CredentialProbes) -> CheckResult:
         )
     try:
         client = probes.s3_client_factory()
-        client.list_checkpoints(bucket)
+        client.probe_list_access(bucket)
     except Exception as exc:  # noqa: BLE001 - surface any reachability/auth error
         text = str(exc)
         remedy = (

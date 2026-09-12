@@ -59,9 +59,9 @@ USER ubuntu
 # The group's NATTEN wheel matches Torch 2.13; the inherited Flash Attention
 # wheels target Torch 2.10 and must be removed. Inexact sync preserves the
 # parent's required qwen-vl-utils and boto3 inference additions. After syncing,
-# replace the complete Ray Serve dependency closure and NLTK via
-# hash-verified packages. uv-managed environments
-# intentionally omit pip — use `uv pip install --python` instead of the
+# replace the complete Ray Serve dependency closure with hash-verified packages,
+# then install NLTK from the hash-verified upstream security commit. uv-managed
+# environments intentionally omit pip — use `uv pip install --python` instead of the
 # nonexistent `.venv/bin/pip`. The image serves Python deployments and has no JVM;
 # remove Ray's unused Java worker bundle instead of distributing its old libraries.
 # Do NOT use --frozen for the serve extra alone
@@ -73,6 +73,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_env.py /opt
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/entrypoint.sh /usr/local/bin/cosmos3-ray-serve-entrypoint
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_functional.sh /opt/cosmos3-ray-serve/smoke_functional.sh
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt /tmp/cosmos3-ray-security-upgrades-requirements.txt
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/common/install_hardened_nltk.sh /opt/npa/install_hardened_nltk.sh
+COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_hardened_nltk.py /opt/npa/verify_hardened_nltk.py
 COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 
 RUN export UV_CACHE_DIR=/tmp/uv-cache \
@@ -82,12 +84,13 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && uv pip install --python .venv/bin/python --no-deps --require-hashes \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
+    && /opt/npa/install_hardened_nltk.sh .venv/bin/python \
     && .venv/bin/python -c 'from pathlib import Path; import ray; p=Path(ray.__file__).parent / "jars" / "ray_dist.jar"; p.unlink(missing_ok=True)' \
     && uv pip check --python .venv/bin/python \
     && .venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
-    && .venv/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("nltk") == "3.10.3"' \
+    && .venv/bin/python /opt/npa/verify_hardened_nltk.py \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
     && test ! -e /tmp/uv-cache && test ! -e /home/ubuntu/.cache/uv \

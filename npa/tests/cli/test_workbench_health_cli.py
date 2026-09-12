@@ -529,7 +529,7 @@ def test_preflight_fails_on_bad_s3(monkeypatch) -> None:
         s3_bucket = "s3://bkt/"
 
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden")
 
     captured_kwargs: dict = {}
@@ -562,7 +562,7 @@ def test_preflight_warn_only_suppresses_exit(monkeypatch) -> None:
         s3_bucket = "s3://bkt/"
 
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden")
 
     monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _Creds())

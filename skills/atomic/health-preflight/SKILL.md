@@ -29,6 +29,7 @@ Token Factory. Request the optional `nebius` check before provisioning:
 npa workbench health preflight --checks all
 npa workbench health preflight --checks nebius --json
 npa workbench health preflight --checks s3,token_factory
+npa workbench health preflight --project <alias> --checks s3,nebius
 npa workbench health preflight --checks all --offline  # presence only; Nebius is SKIP
 ```
 
@@ -37,6 +38,20 @@ Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`,
 work does not require a Nebius Cloud profile. Explicit `all` includes `nebius`.
 Empty selections and unknown check names are errors, including unknown names
 combined with `all`. Repeated names run once.
+
+Select `--project <alias>` (or `-p`) when checking a configured project's S3
+storage. This reads the project's bucket, endpoint, and credential pair through
+the project storage resolver, without adopting host credential files or shell S3 settings, or
+changing saved configuration. A complete exact-project record wins over ambient
+S3 settings. Unknown projects and missing or deselected project storage produce
+a JSON-compatible FAIL and a nonzero exit, including offline; `--warn-only`
+preserves that FAIL while returning zero. The flag scopes only the S3 check;
+other checks and Nebius auth profile selection are unchanged.
+
+The S3 probe issues one `ListObjectsV2` request with `MaxKeys=1`. An empty bucket
+or prefix is valid. It discards object names and continuation tokens instead of
+enumerating checkpoint directories, so a large dataset does not increase the
+number of requests. Listing permission still does not prove write access.
 
 Online `nebius` runs the selected Nebius CLI profile through `iam whoami` and
 `iam get-access-token` with browser launch and update checks disabled. It
@@ -125,10 +140,11 @@ the actual spec and ledger; `--s3-endpoint` binds both probe and worker endpoint
 S3 keys are selected as a pair from one source, with non-secret provenance;
 an incomplete explicit pair cannot borrow a saved principal's other key.
 
-The credential preflight resolves its bucket from `NPA_CHECKPOINT_BUCKET`, then
+Without `--project`, credential preflight resolves its bucket from `NPA_CHECKPOINT_BUCKET`, then
 `NEBIUS_S3_BUCKET`, then saved credentials. Setting only `NPA_S3_BUCKET` changes
 the workflow destination but does not select the credential preflight bucket.
-When checking an explicitly authorized workflow destination, set
+For configured project storage, prefer `--project <alias>`. When checking an
+explicitly authorized destination through environment credentials, set
 `NPA_CHECKPOINT_BUCKET` to an unsigned `s3://` URI for that same bucket in the
 private process environment and use the matching endpoint and credentials.
 The list probe requires a URI, so a bare bucket name fails before S3 access.
@@ -198,4 +214,13 @@ missing-profile, and offline paths (including stale ambient token scrubbing):
 ```bash
 NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_nebius_auth_preflight.py -q
+```
+
+For selected-project S3 coverage, use an explicitly configured disposable test
+project. The live tests use private configuration copies and clean up their
+unique fixture objects:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_E2E_PROJECT=<alias> npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_health_project_preflight_live.py -q
 ```

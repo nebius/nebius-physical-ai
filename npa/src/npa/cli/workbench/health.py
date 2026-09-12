@@ -11,18 +11,21 @@ import os
 import shutil
 import sys
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from npa.clients.credentials import load_credentials
+from npa.clients.config import ConfigError, list_projects, resolve_project_storage
+from npa.clients.credentials import CredentialsConfig, load_credentials
 from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 from npa.clients.kube import run_kubectl
 from npa.clients.nebius_auth import ProfileVerification, nebius_profile, verify_profile
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
-from npa.lifecycle_intent import json_stdout_contract
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 from npa.workflows.credential_preflight import (
     DEFAULT_CREDENTIAL_CHECKS,
     SUPPORTED_CREDENTIAL_CHECKS,
@@ -31,6 +34,7 @@ from npa.workflows.credential_preflight import (
 )
 from npa.workflows.sim2real_health import (
     ALL_CHECKS,
+    CheckResult,
     DoctorProbes,
     FAIL,
     KubeResult,
@@ -54,6 +58,14 @@ app = typer.Typer(
 )
 
 _STATUS_ICON = {PASS: "PASS", WARN: "WARN", FAIL: "FAIL", SKIP: "SKIP"}
+_PREFLIGHT_CHECKS_HELP = (
+    "Comma-separated checks to run, or 'all'. "
+    f"Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
+)
+_PREFLIGHT_OFFLINE_HELP = (
+    "Skip live provider probes; credential checks use presence only and "
+    "Nebius CLI authentication is skipped."
+)
 
 
 def _repo_root() -> Path:
@@ -121,37 +133,7 @@ def _nebius_profile_verifier() -> ProfileVerification:
     return verify_profile(nebius_profile())
 
 
-@app.command("preflight")
-@json_stdout_contract
-def preflight_command(
-    checks: str = typer.Option(
-        ",".join(DEFAULT_CREDENTIAL_CHECKS),
-        "--checks",
-        help=(
-            "Comma-separated checks to run, or 'all'. "
-            f"Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
-        ),
-    ),
-    offline: bool = typer.Option(
-        False,
-        "--offline",
-        help=(
-            "Skip live provider probes; credential checks use presence only and "
-            "Nebius CLI authentication is skipped."
-        ),
-    ),
-    warn_only: bool = typer.Option(
-        False, "--warn-only", help="Exit 0 even when a check fails."
-    ),
-    output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
-) -> None:
-    """Validate service credentials and optional Nebius CLI authentication.
-
-    A single PASS/WARN/FAIL/SKIP report over the credentials nearly every
-    workbench tool needs, so cold-start credential gaps surface here instead of
-    mid-run. Exits non-zero on any FAIL unless ``--warn-only`` is passed.
-    """
-
+def _selected_checks(checks: str) -> list[str]:
     selected = list(dict.fromkeys(item.strip() for item in checks.split(",") if item.strip()))
     if not selected:
         raise typer.BadParameter("select at least one check or 'all'.", param_hint="--checks")
@@ -164,28 +146,109 @@ def preflight_command(
             f"{', '.join(unknown)}. Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}.",
             param_hint="--checks",
         )
-    if "all" in selected:
-        selected = list(SUPPORTED_CREDENTIAL_CHECKS)
+    return list(SUPPORTED_CREDENTIAL_CHECKS) if "all" in selected else selected
 
-    credentials = load_credentials()
+
+def _project_credentials(project: str, credentials: CredentialsConfig) -> CredentialsConfig:
+    if project not in list_projects():
+        raise ConfigError("Unknown project alias. Pass an alias saved by `npa configure`.")
+    storage = resolve_project_storage(
+        project, include_shared_credentials=False, include_environment=False,
+    )
+    if not all((
+        storage.checkpoint_bucket, storage.endpoint_url,
+        storage.aws_access_key_id, storage.aws_secret_access_key,
+    )):
+        raise ConfigError("Configure a bucket, endpoint, and S3 key pair for this project.")
+    bucket = storage.checkpoint_bucket
+    if "://" not in bucket:
+        bucket = f"s3://{bucket}"
+    return replace(
+        credentials,
+        s3_bucket=bucket,
+        s3_endpoint=storage.endpoint_url,
+        s3_access_key_id=storage.aws_access_key_id,
+        s3_secret_access_key=storage.aws_secret_access_key,
+    )
+
+
+def _credential_probes(credentials: CredentialsConfig, *, offline: bool) -> CredentialProbes:
     if offline:
-        probes = CredentialProbes()
-    else:
-        probes = CredentialProbes(
-            hf_validator=validate_hf_identity,
-            ngc_validator=_ngc_auth_verifier,
-            # Probe with the resolved credentials (endpoint/keys often live in
-            # ~/.npa rather than the process env), not env-only defaults.
-            s3_client_factory=lambda: StorageClient.from_environment(
-                endpoint_url=credentials.s3_endpoint,
-                aws_access_key_id=credentials.s3_access_key_id,
-                aws_secret_access_key=credentials.s3_secret_access_key,
-            ),
-            token_factory_verifier=_token_factory_verifier,
-            nebius_profile_verifier=_nebius_profile_verifier,
-        )
+        return CredentialProbes()
+    return CredentialProbes(
+        hf_validator=validate_hf_identity,
+        ngc_validator=_ngc_auth_verifier,
+        s3_client_factory=lambda: StorageClient.from_environment(
+            endpoint_url=credentials.s3_endpoint,
+            aws_access_key_id=credentials.s3_access_key_id,
+            aws_secret_access_key=credentials.s3_secret_access_key,
+        ),
+        token_factory_verifier=_token_factory_verifier,
+        nebius_profile_verifier=_nebius_profile_verifier,
+    )
 
-    results = run_credential_preflight(credentials, probes=probes, checks=selected)
+
+def _credential_results(checks: list[str], *, project: str, offline: bool) -> list[CheckResult]:
+    credentials = load_credentials()
+    storage_failure = None
+    if project and "s3" in checks:
+        try:
+            credentials = _project_credentials(project, credentials)
+        except (ConfigError, ProjectCredentialStoreError) as exc:
+            storage_failure = CheckResult(
+                name="s3", status=FAIL,
+                summary="Selected project storage is not configured.", remedy=str(exc),
+            )
+    probe_checks = [name for name in checks if not (storage_failure and name == "s3")]
+    results = run_credential_preflight(
+        credentials, probes=_credential_probes(credentials, offline=offline), checks=probe_checks,
+    )
+    by_name = {result.name: result for result in results}
+    if storage_failure:
+        by_name["s3"] = storage_failure
+    return [by_name[name] for name in checks]
+
+
+@app.command(
+    "preflight", help="Validate service credentials and optional Nebius CLI authentication.",
+)
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def preflight_command(
+    project: str = typer.Option(
+        "", "--project", "-p",
+        help="Configured project alias for the S3 check; other checks keep their credential selection.",
+    ),
+    checks: str = typer.Option(
+        ",".join(DEFAULT_CREDENTIAL_CHECKS), "--checks", help=_PREFLIGHT_CHECKS_HELP,
+    ),
+    offline: bool = typer.Option(
+        False, "--offline", help=_PREFLIGHT_OFFLINE_HELP,
+    ),
+    warn_only: bool = typer.Option(
+        False, "--warn-only", help="Exit 0 even when a check fails."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+) -> None:
+    """Validate service credentials and optional Nebius CLI authentication.
+
+    Args:
+        project: Optional configured project alias for the S3 check.
+        checks: Comma-separated checks or all.
+        offline: Report presence without provider requests.
+        warn_only: Return success even when a check fails.
+        output_json: Emit one JSON report instead of text.
+
+    Returns:
+        None.
+
+    Raises:
+        typer.BadParameter: The check selection is invalid.
+        typer.Exit: A check failed and warn_only is false.
+    """
+    results = _credential_results(
+        _selected_checks(checks), project=project.strip(), offline=offline,
+    )
     _emit_results(results, output_json=output_json)
 
     if has_failure(results) and not warn_only:

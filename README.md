@@ -72,6 +72,17 @@ by default and needs project admin permission for that setup. Use
 `npa configure --no-provision` to save settings without creating storage.
 See [configuration](docs/configuration.md) for SSO, existing projects, and tokens.
 
+Check a project's saved storage with its configured alias in place of `<alias>`:
+
+```bash
+npa workbench health preflight --project '<alias>' --checks s3,nebius --json
+```
+
+Missing or invalid project storage fails without borrowing shell or host-file
+credentials or changing configuration. S3 readiness uses a bounded listing call;
+it does not enumerate the dataset or verify write access. Without `--project`,
+the S3 check keeps the existing host credential selection.
+
 ### 3. Run and inspect
 
 Choose one guide below and follow it through input preparation, GPU setup,
