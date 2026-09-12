@@ -97,6 +97,22 @@ def run_byte_scanner(argv, output):
     return result.returncode
 
 
+def stream_sha(stream):
+    """Hash a binary stream from its current position through EOF.
+
+    Args:
+        stream: Open binary stream positioned at the first byte to hash.
+    Returns:
+        SHA256 hex digest.
+    Raises:
+        OSError: The stream cannot be read.
+    """
+    digest = hashlib.sha256()
+    while chunk := stream.read(1024 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def file_sha(path):
     """Hash a file without retaining its contents.
 
@@ -108,7 +124,7 @@ def file_sha(path):
         OSError: The file cannot be read.
     """
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return stream_sha(stream)
 
 
 def write_json(path, value):
