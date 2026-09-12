@@ -5,7 +5,7 @@
 - Source: <https://github.com/isaac-sim/IsaacLab-Arena>
 - Commit: `ed0fd12be862078be316c73eb7cf423ba9b1c5cd`
 - License: Apache License 2.0
-- License text: `/opt/isaac-arena/LICENSE`
+- License text: `/opt/isaac-arena/LICENSE.md`
 
 The upstream documentation and tests are not included in this image. The
 official immutable source archive is checksum-verified during the build.

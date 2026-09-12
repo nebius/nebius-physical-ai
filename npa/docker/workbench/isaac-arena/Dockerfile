@@ -65,7 +65,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/isaac-arena -type d -exec chmod 0755 {} + \
     && find /opt/isaac-arena -type f -exec chmod 0644 {} + \
     && test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' /opt/isaac-arena/pyproject.toml | head -1)" = "${ISAAC_ARENA_VERSION}" \
-    && grep -q '^Apache License' /opt/isaac-arena/LICENSE \
+    && grep -q '^Apache License' /opt/isaac-arena/LICENSE.md \
     && test ! -e /opt/isaac-arena/isaaclab_arena/tests \
     && test -z "$(find /opt/isaac-arena -type f \( -name '*.pt' -o -name '*.pth' -o -name '*.ckpt' -o -name '*.safetensors' -o -name '*.hdf5' -o -name '*.mp4' \) -print -quit)" \
     && /opt/npa/sim/venv/bin/python -m py_compile \

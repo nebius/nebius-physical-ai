@@ -17,6 +17,7 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     )
     assert "--output /tmp/isaac-arena.tar.gz" in text
     assert "sha256sum -c -" in text
+    assert "grep -q '^Apache License' /opt/isaac-arena/LICENSE.md" in text
     assert 'test -z "$(find /opt/isaac-arena' in text
     assert text.rstrip().endswith(
         'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]'
