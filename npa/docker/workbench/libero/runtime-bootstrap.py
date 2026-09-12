@@ -142,12 +142,16 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
         _validate_terms_url(str(term.get("url") or ""))
         term_ids.add(term_id)
         term_boundaries.add(boundary)
-    if term_ids != EXPECTED_GOVERNING_TERMS or not {
-        "source",
-        "runtime_packages",
-        "demonstration",
-        "language_model",
-    } <= term_boundaries:
+    if (
+        term_ids != EXPECTED_GOVERNING_TERMS
+        or not {
+            "source",
+            "runtime_packages",
+            "demonstration",
+            "language_model",
+        }
+        <= term_boundaries
+    ):
         raise BootstrapRefusal("governing terms inventory is incomplete")
     source = manifest.get("source") or {}
     if (
@@ -254,7 +258,9 @@ def _validate_requirements(
         raise BootstrapRefusal("runtime requirements must be a regular image file")
     requirements_sha256 = _sha256(path)
     if requirements_sha256 != EXPECTED_RUNTIME_REQUIREMENTS_SHA256:
-        raise BootstrapRefusal("runtime requirements bytes differ from the image contract")
+        raise BootstrapRefusal(
+            "runtime requirements bytes differ from the image contract"
+        )
     lines = [
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -269,7 +275,9 @@ def _validate_requirements(
             f"--hash=sha256:{artifact['sha256']} # {artifact['url']}"
         )
         if line != expected_prefix:
-            raise BootstrapRefusal("runtime requirements do not bind the manifest order")
+            raise BootstrapRefusal(
+                "runtime requirements do not bind the manifest order"
+            )
     return lines, requirements_sha256
 
 
@@ -321,8 +329,7 @@ def _validate_redirect_url(
             or (
                 not terms
                 and (
-                    hostname.endswith(".hf.co")
-                    or hostname.endswith(".huggingface.co")
+                    hostname.endswith(".hf.co") or hostname.endswith(".huggingface.co")
                 )
             )
         )
@@ -461,10 +468,24 @@ def _download_verified(
     temporary.replace(destination)
 
 
-def _verify_governing_terms(manifest: dict[str, Any]) -> str:
-    """Resolve and hash every governing terms source before cache mutation."""
+def _governing_terms_identity(manifest: dict[str, Any]) -> str:
+    identities = [
+        {
+            "id": term["id"],
+            "boundary": term["boundary"],
+            "sha256": term["sha256"],
+            "size_bytes": term["size_bytes"],
+            "url": term["url"],
+        }
+        for term in manifest["governing_terms"]
+    ]
+    encoded = json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
-    identities = []
+
+def _verify_governing_terms(manifest: dict[str, Any]) -> str:
+    """Resolve and hash every governing terms source before cold cache mutation."""
+
     with tempfile.TemporaryDirectory(prefix="npa-libero-terms-") as temporary:
         root = Path(temporary)
         for index, term in enumerate(manifest["governing_terms"]):
@@ -476,17 +497,7 @@ def _verify_governing_terms(manifest: dict[str, Any]) -> str:
                 size=int(term["size_bytes"]),
                 terms=True,
             )
-            identities.append(
-                {
-                    "id": term["id"],
-                    "boundary": term["boundary"],
-                    "sha256": term["sha256"],
-                    "size_bytes": term["size_bytes"],
-                    "url": term["url"],
-                }
-            )
-    encoded = json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
+    return _governing_terms_identity(manifest)
 
 
 def _run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -691,9 +702,7 @@ def _write_content_inventory(root: Path) -> tuple[str, int]:
     entries = _inventory_entries(root)
     path = root / ".content-inventory.json"
     path.write_text(
-        json.dumps(
-            {"schema": INVENTORY_SCHEMA, "entries": entries}, sort_keys=True
-        )
+        json.dumps({"schema": INVENTORY_SCHEMA, "entries": entries}, sort_keys=True)
         + "\n",
         encoding="utf-8",
     )
@@ -876,14 +885,18 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     )
     output = Path(args.output_dir) if args.output_dir else None
     cache_root = _validate_cache_root(Path(args.cache_root), output)
-    governing_terms_sha256 = _verify_governing_terms(manifest)
+    final = cache_root / manifest_sha256
+    governing_terms_sha256 = (
+        _governing_terms_identity(manifest)
+        if final.is_dir()
+        else _verify_governing_terms(manifest)
+    )
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(cache_root, 0o700)
     lock_path = cache_root / ".bootstrap.lock"
     with lock_path.open("a+b") as lock:
         os.chmod(lock_path, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        final = cache_root / manifest_sha256
         current = cache_root / "current"
         warm_reuse = final.is_dir()
         if warm_reuse:

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +57,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "torch_runtime_outside_python_distribution",
-        re.compile(r"(?:^|/)(?:opt|usr/local|workspace)/(?:pytorch|torch)(?:/|$)", re.I),
+        re.compile(
+            r"(?:^|/)(?:opt|usr/local|workspace)/(?:pytorch|torch)(?:/|$)", re.I
+        ),
     ),
     (
         "libero_or_simulation_distribution",
@@ -173,9 +175,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
     re.compile(
         rb"(?m)^(?:from|import)\s+libero(?:\.|\s)|^class\s+(?:BCRNNPolicy|SequenceVLDataset)\b"
     ),
-    re.compile(
-        rb"(?m)^(?:from|import)\s+robomimic(?:\.|\s)|^class\s+RolloutPolicy\b"
-    ),
+    re.compile(rb"(?m)^(?:from|import)\s+robomimic(?:\.|\s)|^class\s+RolloutPolicy\b"),
     re.compile(
         rb"(?m)^(?:from|import)\s+(?:torch|torchvision|mujoco|robosuite)(?:\.|\s)|"
         rb"^class\s+Tensor\b|^__all__\s*=.*['\"]Tensor['\"]"
@@ -190,6 +190,7 @@ NEVER_MATCH_ELF = re.compile(rb"(?!)")
 RUNTIME_INJECTED_EXPORT_PATHS = frozenset(
     {".dockerenv", "etc/hostname", "etc/hosts", "etc/resolv.conf"}
 )
+IMAGE_INVENTORY_SCHEMA = "npa.libero.neutral-image-inventory.v1"
 
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
     rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
@@ -200,6 +201,24 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
 _ARCHIVE_METADATA_FILES = frozenset(
     {"manifest.json", "repositories", "index.json", "oci-layout"}
 )
+
+
+@dataclass(frozen=True)
+class _ArchiveIdentity:
+    """Identity of every byte in one uncompressed tar stream."""
+
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class _ImageInventory:
+    """Canonical ordered-layer and flattened-rootfs identity."""
+
+    sha256: str
+    entry_count: int
+    layer_count: int
+    payload: bytes
 
 
 def _config_findings(config: dict[str, Any]) -> list[walker.Finding]:
@@ -408,7 +427,9 @@ def _uncompressed_tar_bytes(path: Path) -> bytes:
     if payload.startswith(b"\x28\xb5\x2f\xfd"):
         if walker.zstd is None:
             raise RuntimeError("zstd archive cannot be accounted without zstandard")
-        with walker.zstd.ZstdDecompressor().stream_reader(io.BytesIO(payload)) as reader:
+        with walker.zstd.ZstdDecompressor().stream_reader(
+            io.BytesIO(payload)
+        ) as reader:
             return reader.read()
     return payload
 
@@ -418,8 +439,15 @@ def _archive_records(
     *,
     payload_hashes: frozenset[str] = frozenset(),
     scan_payload_content: bool = False,
-) -> tuple[list[tuple[tarfile.TarInfo, str, tuple[object, ...]]], list[walker.Finding]]:
+) -> tuple[
+    list[tuple[tarfile.TarInfo, str, tuple[object, ...]]],
+    list[walker.Finding],
+    _ArchiveIdentity,
+]:
     payload = _uncompressed_tar_bytes(path)
+    identity = _ArchiveIdentity(
+        sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload)
+    )
     findings: list[walker.Finding] = []
     if len(payload) % tarfile.BLOCKSIZE:
         findings.append(
@@ -479,7 +507,7 @@ def _archive_records(
                 )
             descriptor: tuple[object, ...]
             if member.isfile():
-                content = payload[member.offset_data:data_end]
+                content = payload[member.offset_data : data_end]
                 content_sha256 = hashlib.sha256(content).hexdigest()
                 descriptor = ("file", member.size, content_sha256)
                 if scan_payload_content and any(
@@ -538,7 +566,7 @@ def _archive_records(
                 "nonzero bytes remain after the final accounted member",
             )
         )
-    return records, findings
+    return records, findings, identity
 
 
 def _apply_layer_records(
@@ -559,9 +587,9 @@ def _apply_layer_records(
         seen.add(path)
         parent, _, name = path.rpartition("/")
         if name.startswith(".wh."):
-            valid_whiteout = (
-                (member.isfile() and member.size == 0)
-                or descriptor == ("whiteout-device", 0)
+            valid_whiteout = (member.isfile() and member.size == 0) or descriptor == (
+                "whiteout-device",
+                0,
             )
             if not valid_whiteout:
                 findings.append(
@@ -629,16 +657,46 @@ def _resolve_hardlinks(
     return resolved, findings
 
 
+def _image_inventory(
+    layer_identities: list[_ArchiveIdentity],
+    flattened: dict[str, tuple[object, ...]],
+) -> _ImageInventory:
+    entries = [
+        {"path": path, "descriptor": list(flattened[path])}
+        for path in sorted(flattened)
+    ]
+    layers = [
+        {"position": position, **asdict(identity)}
+        for position, identity in enumerate(layer_identities)
+    ]
+    document = {
+        "schema": IMAGE_INVENTORY_SCHEMA,
+        "layers": layers,
+        "rootfs_entries": entries,
+    }
+    payload = (
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    return _ImageInventory(
+        sha256=hashlib.sha256(payload).hexdigest(),
+        entry_count=len(entries),
+        layer_count=len(layers),
+        payload=payload,
+    )
+
+
 def _layer_graph_findings(
     layer_tars: list[Path], exported_rootfs: Path | None = None
-) -> list[walker.Finding]:
+) -> tuple[list[walker.Finding], _ImageInventory]:
     findings: list[walker.Finding] = []
     state: dict[str, tuple[object, ...]] = {}
+    layer_identities: list[_ArchiveIdentity] = []
     payload_hashes = _runtime_payload_hashes()
     for layer in layer_tars:
-        records, archive_findings = _archive_records(
+        records, archive_findings, identity = _archive_records(
             layer, payload_hashes=payload_hashes, scan_payload_content=True
         )
+        layer_identities.append(identity)
         findings.extend(archive_findings)
         findings.extend(_apply_layer_records(records, state, source=layer.name))
     flattened, hardlink_findings = _resolve_hardlinks(state)
@@ -654,7 +712,7 @@ def _layer_graph_findings(
                     )
                 )
     if exported_rootfs is not None:
-        records, archive_findings = _archive_records(
+        records, archive_findings, _identity = _archive_records(
             exported_rootfs,
             payload_hashes=payload_hashes,
             scan_payload_content=True,
@@ -684,11 +742,43 @@ def _layer_graph_findings(
                     "exported filesystem differs from the ordered OCI layers",
                 )
             )
+    return findings, _image_inventory(layer_identities, flattened)
+
+
+def _private_stage_identity_findings(
+    inventory: _ImageInventory,
+    observed_config_digest: str,
+    expected_image_inventory_sha256: str,
+    expected_config_digest: str,
+) -> list[walker.Finding]:
+    findings: list[walker.Finding] = []
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", expected_image_inventory_sha256) is None
+        or inventory.sha256 != expected_image_inventory_sha256
+    ):
+        findings.append(
+            walker.Finding(
+                "accepted_private_stage_identity",
+                "<complete-image-inventory>",
+                "ordered layers and rootfs do not match manager-accepted private-stage bytes",
+            )
+        )
+    if (
+        re.fullmatch(r"sha256:[0-9a-f]{64}", expected_config_digest) is None
+        or observed_config_digest != expected_config_digest
+    ):
+        findings.append(
+            walker.Finding(
+                "accepted_private_stage_identity",
+                "<oci-config>",
+                "OCI config does not match manager-accepted private-stage bytes",
+            )
+        )
     return findings
 
 
 def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
-    records, findings = _archive_records(path)
+    records, findings, _identity = _archive_records(path)
     with tarfile.open(path, "r:*") as archive:
         manifest_stream = archive.extractfile(archive.getmember("manifest.json"))
         if manifest_stream is None:
@@ -762,6 +852,10 @@ def scan_tars(
     exported_rootfs: Path | None = None,
     docker_save: Path | None = None,
     observed_config_digest: str = "",
+    expected_image_inventory_sha256: str,
+    expected_config_digest: str,
+    inventory_output: Path | None = None,
+    evidence: dict[str, object] | None = None,
 ) -> list[walker.Finding]:
     original_secret_content = walker.SECRET_CONTENT
     original_elf_dependency = walker.FORBIDDEN_ELF_DEPENDENCY
@@ -783,14 +877,31 @@ def scan_tars(
         if exported_rootfs is not None
         else tars
     )
+    graph_findings, inventory = _layer_graph_findings(layer_tars, exported_rootfs)
+    if inventory_output is not None:
+        inventory_output.write_bytes(inventory.payload)
+        inventory_output.chmod(0o600)
+    if evidence is not None:
+        evidence.update(
+            image_inventory_sha256=inventory.sha256,
+            image_inventory_layer_count=inventory.layer_count,
+            image_inventory_rootfs_entry_count=inventory.entry_count,
+            observed_config_digest=observed_config_digest,
+        )
     return [
         *findings,
         *_renamed_payload_content_findings(layer_tars, config),
-        *_layer_graph_findings(layer_tars, exported_rootfs),
+        *graph_findings,
         *(_docker_save_outer_findings(docker_save) if docker_save else []),
         *_config_findings(config),
         *_metadata_findings(build_metadata, observed_config_digest),
         *_base_provenance_findings(base_provenance_bytes, base_provenance),
+        *_private_stage_identity_findings(
+            inventory,
+            observed_config_digest,
+            expected_image_inventory_sha256,
+            expected_config_digest,
+        ),
     ]
 
 
@@ -800,6 +911,10 @@ def scan(
     build_metadata: dict[str, Any],
     base_provenance_bytes: bytes,
     base_provenance: dict[str, Any],
+    *,
+    observed_config_digest: str,
+    expected_image_inventory_sha256: str,
+    expected_config_digest: str,
 ) -> list[walker.Finding]:
     return scan_tars(
         [rootfs_tar],
@@ -807,6 +922,9 @@ def scan(
         build_metadata,
         base_provenance_bytes,
         base_provenance,
+        observed_config_digest=observed_config_digest,
+        expected_image_inventory_sha256=expected_image_inventory_sha256,
+        expected_config_digest=expected_config_digest,
     )
 
 
@@ -819,6 +937,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--build-metadata", type=Path, required=True)
     parser.add_argument("--base-provenance", type=Path, required=True)
+    parser.add_argument("--expected-image-inventory-sha256", required=True)
+    parser.add_argument("--expected-config-digest", required=True)
+    parser.add_argument("--image-inventory-output", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if sum(bool(item) for item in (args.image, args.docker_save, args.rootfs_tar)) != 1:
@@ -854,10 +975,12 @@ def main(argv: list[str] | None = None) -> int:
                     else {}
                 )
                 observed_config_digest = (
-                    "sha256:" + hashlib.sha256(args.config_json.read_bytes()).hexdigest()
+                    "sha256:"
+                    + hashlib.sha256(args.config_json.read_bytes()).hexdigest()
                     if args.config_json
                     else ""
                 )
+            evidence: dict[str, object] = {}
             findings = scan_tars(
                 tars,
                 config,
@@ -867,6 +990,10 @@ def main(argv: list[str] | None = None) -> int:
                 exported_rootfs=exported_rootfs,
                 docker_save=docker_save,
                 observed_config_digest=observed_config_digest,
+                expected_image_inventory_sha256=(args.expected_image_inventory_sha256),
+                expected_config_digest=args.expected_config_digest,
+                inventory_output=args.image_inventory_output,
+                evidence=evidence,
             )
     except Exception as exc:  # noqa: BLE001 - every unreadable byte fails closed
         print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
@@ -879,6 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
         "archives_scanned": len(tars),
         "base_manifest": BASE_MANIFEST,
         "base_rootfs_material": BASE_ROOTFS_MATERIAL,
+        **evidence,
         "findings": [asdict(item) for item in findings],
     }
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"

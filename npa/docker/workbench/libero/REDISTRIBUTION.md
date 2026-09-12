@@ -33,9 +33,12 @@ network access. Runtime fetch changes delivery only; it is not consent and
 does not grant use, redistribution, commercial, service, or output rights.
 The fetched cache stays non-root, atomic, sealed read-only, and separate from
 `NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. Warm reuse
-revalidates the governing terms plus a complete source/runtime/data/model file
-inventory and refuses unavailable terms, writable trees, or changed bytes. The
-qualification gate itself requires a cold-fetch receipt from the current run.
+revalidates the canonical governing-terms identity from the pinned manifest
+plus a complete source/runtime/data/model file inventory without network
+access, and refuses manifest drift, writable trees, or changed bytes. Cold
+population resolves and verifies the official terms sources before its first
+cache mutation. The qualification gate itself requires a cold-fetch receipt
+from the current run.
 
 The manifest separately pins seven official governing-terms documents by URL,
 size, and SHA-256. They are resolved into ephemeral storage only after the
@@ -44,7 +47,13 @@ refuses. The image-shipped runtime requirements lock must exactly match all 135
 artifact identities, and installation uses `--require-hashes --no-deps` from a
 read-only wheelhouse. These controls prove identity and refusal, not consent.
 
-The candidate remains unbuilt, unvalidated, and quarantined. It must pass the
-dedicated complete-byte/layer/exported-rootfs scanner,
-SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
-hard gate before any supported release or public catalog claim.
+The candidate remains unbuilt, unvalidated, and quarantined. A private stage
+must first emit a canonical complete-image inventory and OCI config digest for
+manager review. The inventory binds every byte in each ordered uncompressed
+layer tar and the canonical flattened-rootfs records. The public workflow
+refuses before building unless those exact accepted identities are supplied,
+and its dedicated complete-byte/layer/exported-rootfs scanner requires equality
+before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
+commit. It must also pass the SBOM/provenance/security gates, anonymous pull
+proof, and an exact-digest B200 hard gate before any supported release or public
+catalog claim.

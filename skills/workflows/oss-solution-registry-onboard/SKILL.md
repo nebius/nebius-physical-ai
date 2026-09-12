@@ -209,6 +209,13 @@ model, demonstration, task/render asset, cache, checkpoint, credential, or
 output bytes. Do not add it to the public table or release manifest until a
 trusted exact-SHA build passes complete-byte and independent base-provenance
 scans, anonymous pull, and the exact-digest hard gate.
+Before that trusted build, a separately authorized private stage must emit a
+canonical complete-image inventory that binds every byte in each ordered
+uncompressed layer tar, every flattened-rootfs record, and the observed OCI
+config digest for manager acceptance. The trusted workflow refuses a LIBERO
+build without those two accepted identities and requires exact equality before
+push; finite path or source-signature rules are defense in depth rather than an
+arbitrary-byte absence proof.
 
 The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
 LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL

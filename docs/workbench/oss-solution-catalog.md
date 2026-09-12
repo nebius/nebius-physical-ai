@@ -84,6 +84,12 @@ CUDA/NVIDIA runtime, task/render asset, populated cache, checkpoint, credential,
 or output byte. It remains unbuilt, absent from the release manifest and public
 image table, and quarantined until byte, provenance, anonymous-pull, and live
 acceptance. Historical private r15 bytes are old-head evidence only.
+The trusted public workflow also refuses before a LIBERO build unless the
+manager supplies the separately accepted private-stage complete-image
+inventory hash and OCI config digest. Its scanner binds every byte in each
+ordered uncompressed layer tar plus every canonical flattened-rootfs record,
+and requires the candidate to match both identities; finite payload signatures
+are only defense in depth.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

@@ -19,7 +19,9 @@ REVISION = "1" * 40
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("scan_image_libero_payload_test", SCANNER)
+    spec = importlib.util.spec_from_file_location(
+        "scan_image_libero_payload_test", SCANNER
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -64,9 +66,7 @@ def _metadata(module, *, provenance: object | None = None) -> dict[str, object]:
             "materials": [
                 {
                     "uri": f"pkg:docker/python@{module.BASE_MANIFEST}",
-                    "digest": {
-                        "sha256": module.BASE_MANIFEST.removeprefix("sha256:")
-                    },
+                    "digest": {"sha256": module.BASE_MANIFEST.removeprefix("sha256:")},
                 }
             ],
         },
@@ -109,6 +109,7 @@ def _scan(module, layers, config, metadata, *, base_provenance=None):
     if base_provenance is not None:
         provenance = base_provenance
         provenance_bytes = (json.dumps(provenance, sort_keys=True) + "\n").encode()
+    _findings, inventory = module._layer_graph_findings(layers)
     return module.scan_tars(
         layers,
         config,
@@ -116,6 +117,8 @@ def _scan(module, layers, config, metadata, *, base_provenance=None):
         provenance_bytes,
         provenance,
         observed_config_digest="sha256:" + "2" * 64,
+        expected_image_inventory_sha256=inventory.sha256,
+        expected_config_digest="sha256:" + "2" * 64,
     )
 
 
@@ -138,13 +141,9 @@ def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
     content = smoke.read_bytes()
     assert (
         hashlib.sha256(content).hexdigest()
-        == module.NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST[
-            "opt/npa/libero/libero_smoke.py"
-        ]
+        == module.NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST["opt/npa/libero/libero_smoke.py"]
     )
-    layer = _layer(
-        tmp_path / "layer.tar", {"opt/npa/libero/libero_smoke.py": content}
-    )
+    layer = _layer(tmp_path / "layer.tar", {"opt/npa/libero/libero_smoke.py": content})
 
     assert _scan(module, [layer], _config(module), _metadata(module)) == []
 
@@ -234,7 +233,9 @@ def test_scanner_refuses_exact_runtime_payload_bytes_under_neutral_name(
     module = _load_module()
     content = b"exact runtime artifact fixture"
     monkeypatch.setattr(
-        module, "_runtime_payload_hashes", lambda: frozenset({hashlib.sha256(content).hexdigest()})
+        module,
+        "_runtime_payload_hashes",
+        lambda: frozenset({hashlib.sha256(content).hexdigest()}),
     )
     layer = _layer(tmp_path / "layer.tar", {"srv/neutral-name": content})
 
@@ -286,11 +287,114 @@ def test_scanner_validates_whiteouts_and_flattened_rootfs(tmp_path) -> None:
     second = _layer(tmp_path / "second.tar", {"opt/.wh.neutral": b""})
     exported = _layer(tmp_path / "rootfs.tar", {"usr/bin/sh": b"shell"})
 
-    valid = module._layer_graph_findings([first, second])
-    mismatch = module._layer_graph_findings([first, second], exported)
+    valid, _inventory = module._layer_graph_findings([first, second])
+    mismatch, _inventory = module._layer_graph_findings([first, second], exported)
 
     assert valid == []
     assert any(item.kind == "flattened_rootfs_mismatch" for item in mismatch)
+
+
+def test_scanner_refuses_deleted_layer_bytes_outside_accepted_private_inventory(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    accepted_base = _layer(
+        tmp_path / "accepted-base.tar", {"opt/neutral": b"reviewed\n"}
+    )
+    accepted_delete = _layer(tmp_path / "accepted-delete.tar", {"srv/.wh.hidden": b""})
+    _findings, inventory = module._layer_graph_findings(
+        [accepted_base, accepted_delete]
+    )
+    candidate_base = _layer(
+        tmp_path / "candidate-base.tar",
+        {
+            "opt/neutral": b"reviewed\n",
+            "srv/hidden": b"opaque compiled payload with relative imports",
+        },
+    )
+    candidate_delete = _layer(
+        tmp_path / "candidate-delete.tar", {"srv/.wh.hidden": b""}
+    )
+    provenance_bytes, provenance = _base_provenance(module)
+
+    findings = module.scan_tars(
+        [candidate_base, candidate_delete],
+        _config(module),
+        _metadata(module),
+        provenance_bytes,
+        provenance,
+        observed_config_digest="sha256:" + "2" * 64,
+        expected_image_inventory_sha256=inventory.sha256,
+        expected_config_digest="sha256:" + "2" * 64,
+    )
+
+    assert any(item.kind == "accepted_private_stage_identity" for item in findings)
+
+
+def test_scanner_refuses_without_accepted_private_stage_identity(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/neutral": b"reviewed\n"})
+    provenance_bytes, provenance = _base_provenance(module)
+
+    findings = module.scan_tars(
+        [layer],
+        _config(module),
+        _metadata(module),
+        provenance_bytes,
+        provenance,
+        observed_config_digest="sha256:" + "2" * 64,
+        expected_image_inventory_sha256="",
+        expected_config_digest="",
+    )
+
+    assert sum(item.kind == "accepted_private_stage_identity" for item in findings) == 2
+
+
+def test_scanner_emits_complete_canonical_image_inventory(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(
+        tmp_path / "layer.tar",
+        {"opt/neutral": b"reviewed\n", "srv/other": b"other\n"},
+    )
+    _findings, accepted = module._layer_graph_findings([layer])
+    provenance_bytes, provenance = _base_provenance(module)
+    inventory_path = tmp_path / "inventory.json"
+    evidence = {}
+
+    findings = module.scan_tars(
+        [layer],
+        _config(module),
+        _metadata(module),
+        provenance_bytes,
+        provenance,
+        observed_config_digest="sha256:" + "2" * 64,
+        expected_image_inventory_sha256=accepted.sha256,
+        expected_config_digest="sha256:" + "2" * 64,
+        inventory_output=inventory_path,
+        evidence=evidence,
+    )
+
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    assert findings == []
+    assert inventory_path.stat().st_mode & 0o777 == 0o600
+    assert inventory["schema"] == module.IMAGE_INVENTORY_SCHEMA
+    assert len(inventory["layers"]) == 1
+    assert inventory["layers"][0]["position"] == 0
+    assert (
+        inventory["layers"][0]["sha256"]
+        == hashlib.sha256(layer.read_bytes()).hexdigest()
+    )
+    assert inventory["layers"][0]["size_bytes"] == len(layer.read_bytes())
+    assert [item["path"] for item in inventory["rootfs_entries"]] == [
+        "opt/neutral",
+        "srv/other",
+    ]
+    assert evidence == {
+        "image_inventory_sha256": accepted.sha256,
+        "image_inventory_layer_count": 1,
+        "image_inventory_rootfs_entry_count": 2,
+        "observed_config_digest": "sha256:" + "2" * 64,
+    }
 
 
 def test_scanner_refuses_malformed_whiteout(tmp_path) -> None:
@@ -327,7 +431,9 @@ def test_scanner_refuses_outer_member_not_bound_by_docker_manifest(tmp_path) -> 
     "mutation",
     ["user", "revision", "base-label", "provenance", "config-digest"],
 )
-def test_scanner_refuses_config_or_independent_lineage_drift(tmp_path, mutation) -> None:
+def test_scanner_refuses_config_or_independent_lineage_drift(
+    tmp_path, mutation
+) -> None:
     module = _load_module()
     layer = _layer(tmp_path / "layer.tar", {"opt/npa/libero/readme": b"neutral\n"})
     config = _config(module)
@@ -337,7 +443,9 @@ def test_scanner_refuses_config_or_independent_lineage_drift(tmp_path, mutation)
     elif mutation == "revision":
         config["config"]["Labels"]["org.opencontainers.image.revision"] = "main"
     elif mutation == "base-label":
-        config["config"]["Labels"]["org.nebius.npa.base-manifest"] = "sha256:" + "0" * 64
+        config["config"]["Labels"]["org.nebius.npa.base-manifest"] = (
+            "sha256:" + "0" * 64
+        )
     elif mutation == "provenance":
         metadata["buildx.build.provenance"] = {"materials": []}
     else:
@@ -383,7 +491,9 @@ def test_docker_save_scans_require_an_independent_exported_rootfs() -> None:
         )
 
 
-@pytest.mark.parametrize("mutation", ["subject", "rootfs", "source", "builder", "bytes"])
+@pytest.mark.parametrize(
+    "mutation", ["subject", "rootfs", "source", "builder", "bytes"]
+)
 def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> None:
     module = _load_module()
     layer = _layer(tmp_path / "layer.tar", {"opt/npa/libero/readme": b"neutral\n"})
@@ -397,7 +507,9 @@ def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> 
     elif mutation == "builder":
         provenance["predicate"]["builder"]["id"] = "https://example.invalid"
     else:
-        module.BASE_PROVENANCE_SHA256 = hashlib.sha256(provenance_bytes + b"x").hexdigest()
+        module.BASE_PROVENANCE_SHA256 = hashlib.sha256(
+            provenance_bytes + b"x"
+        ).hexdigest()
     if mutation != "bytes":
         provenance_bytes = (json.dumps(provenance, sort_keys=True) + "\n").encode()
 
@@ -408,6 +520,10 @@ def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> 
         provenance_bytes,
         provenance,
         observed_config_digest="sha256:" + "2" * 64,
+        expected_image_inventory_sha256=(
+            module._layer_graph_findings([layer])[1].sha256
+        ),
+        expected_config_digest="sha256:" + "2" * 64,
     )
 
     assert any(item.kind == "independent_base_provenance" for item in findings)

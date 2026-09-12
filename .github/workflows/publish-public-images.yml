@@ -43,6 +43,14 @@ on:
         description: "Runner label for public development image builds"
         required: false
         default: "ubuntu-latest"
+      libero_private_image_inventory_sha256:
+        description: "Manager-accepted private-stage LIBERO complete-image inventory SHA-256"
+        required: false
+        default: ""
+      libero_private_config_digest:
+        description: "Manager-accepted private-stage LIBERO OCI config digest"
+        required: false
+        default: ""
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -90,6 +98,8 @@ jobs:
           DEVELOPMENT_SHA: ${{ inputs.development_sha || github.sha }}
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
+          LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ inputs.libero_private_image_inventory_sha256 }}
+          LIBERO_PRIVATE_CONFIG_DIGEST: ${{ inputs.libero_private_config_digest }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -143,6 +153,13 @@ jobs:
           # deliberately name an older dev SHA after GPU evidence is committed.
           if matrix and head != sha:
               raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
+          if any(item["tool"] == "libero" for item in matrix):
+              inventory = os.environ["LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256"]
+              config_digest = os.environ["LIBERO_PRIVATE_CONFIG_DIGEST"]
+              if re.fullmatch(r"[0-9a-f]{64}", inventory) is None:
+                  raise SystemExit("libero: manager-accepted private image inventory is required")
+              if re.fullmatch(r"sha256:[0-9a-f]{64}", config_digest) is None:
+                  raise SystemExit("libero: manager-accepted private config digest is required")
 
           print(f"target={target}")
           print(f"development_sha={sha}")
@@ -188,6 +205,8 @@ jobs:
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ inputs.libero_private_image_inventory_sha256 }}
+      LIBERO_PRIVATE_CONFIG_DIGEST: ${{ inputs.libero_private_config_digest }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -381,10 +400,10 @@ jobs:
         run: |
           set -euo pipefail
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
-          if [[ "$TOOL" == curobo ]]; then
-            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
-            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
-            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          if [[ "$TOOL" == curobo || "$TOOL" == libero ]]; then
+            source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
           fi
           metadata_args=()
           if [[ "$TOOL" == libero ]]; then
@@ -467,6 +486,9 @@ jobs:
               --exported-rootfs "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
           fi
@@ -746,6 +768,9 @@ jobs:
               --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
           fi
