@@ -917,7 +917,7 @@
       "build_script": "robomimic/build.sh",
       "verdict": "unknown",
       "validation": "pending-build",
-      "redistribution": "public",
+      "redistribution": "unvalidated",
       "torch": "not baked; the CUDA-capable PyTorch closure is a separately authorized, exact-inventory, read-only operator runtime mount",
       "source_compiled_extensions": [],
       "smoke": "after authoritative CUDA/cuDNN runtime-use authorization, run the real upstream Lift PH low-dimensional behavior-cloning train, held-out validation, checkpoint reload, and finite held-out action inference gate on exactly one B200",

@@ -158,7 +158,8 @@ candidate remains quarantined and unbuilt, with no byte qualification, resolved
 CUDA/PyTorch runtime, or GPU result. Its exactly-one-B200 functional gate remains
 deferred behind the authoritative CUDA/cuDNN rights decision and separate
 manager transaction authorization; the row is not compatibility or public
-acceptance evidence.
+acceptance evidence. Its redistribution class remains `unvalidated` until an
+exact selected-byte licence review establishes a different class.
 
 `npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
 Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,
