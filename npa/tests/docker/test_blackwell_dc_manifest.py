@@ -251,6 +251,7 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
     # Base and helper images are not deployable tools, so they are not in the map.
     not_deployable_tools = {
         "npa-base",
+        "npa-gymnasium-robotics",
         "npa-workbench-cuda-base",
         "npa-sonic-mujoco",
         "npa-sonic-export",
