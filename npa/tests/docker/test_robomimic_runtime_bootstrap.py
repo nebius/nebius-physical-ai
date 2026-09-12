@@ -437,6 +437,29 @@ def test_production_verification_rejects_a_writable_mount(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize("metadata_name", (".ready.json", "inventory.json"))
+def test_runtime_verification_rejects_oversized_metadata_before_parsing(
+    tmp_path: Path, metadata_name: str
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    metadata = runtime_root / metadata_name
+    with metadata.open("ab") as handle:
+        handle.write(
+            b" " * (verifier.RUNTIME_METADATA_MAX_BYTES - metadata.stat().st_size + 1)
+        )
+    expected_inventory_sha256 = (
+        _sha(metadata) if metadata_name == "inventory.json" else inventory_sha256
+    )
+
+    with pytest.raises(verifier.VerificationError, match="metadata exceeds size limit"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            require_read_only_mount=False,
+        )
+
+
 def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> None:
     runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
     destination = tmp_path / "private" / "active-runtime"
