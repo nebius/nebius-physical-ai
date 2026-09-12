@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import json
 import os
@@ -33,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan_image_wan_payload as walker  # noqa: E402
 
 
-FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
+ROBOTWIN_FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "robotwin_source",
         re.compile(
@@ -109,8 +110,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"(?:^|/)\.(?:git|hg|svn)(?:/|$)", re.I),
     ),
 )
+FORBIDDEN_PATHS = (*walker.FORBIDDEN_PATHS, *ROBOTWIN_FORBIDDEN_PATHS)
 
-FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
+ROBOTWIN_FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "robotwin_asset_fetch_at_build",
         re.compile(
@@ -141,22 +143,31 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"\bFROM\s+(?:nvidia/cuda|nvcr\.io/|pytorch/)", re.I),
     ),
 )
+FORBIDDEN_HISTORY = (*walker.FORBIDDEN_HISTORY, *ROBOTWIN_FORBIDDEN_HISTORY)
 
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
-    rb"(?:libcuda|libcudnn|libcublas|libcudart|libnvrtc|libtorch)[^\x00]*\.so",
+    rb"(?:"
+    + walker.FORBIDDEN_ELF_DEPENDENCY.pattern
+    + rb")|(?:libtorch[^\x00]*\.so)",
     re.I,
 )
 
 SECRET_CONTENT = (
     *walker.SECRET_CONTENT,
-    re.compile(
-        rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'
-    ),
+    re.compile(rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'),
+    re.compile(rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v1"),
+    # Source bytes must remain forbidden after arbitrary renaming or nesting.
+    # These semantic signatures are absent from the neutral bootstrap but bind
+    # the upstream task/base-task implementation independently of its path.
+    re.compile(rb"(?is)from\s+envs\._base_task\s+import\s+Base_Task"),
+    re.compile(rb"(?is)class\s+beat_block_hammer\b.{0,8192}\bBase_Task\b"),
+    re.compile(rb"(?is)class\s+Base_Task\b.{0,8192}\b(?:sapien|create_actor)\b"),
 )
 MAX_IMAGE_REFERENCE_BYTES = 2048
 MAX_DOCKER_CONFIG_BYTES = 1024 * 1024
 MAX_REGISTRY_METADATA_BYTES = 8 * 1024 * 1024
 REGISTRY_TIMEOUT_SECONDS = 60
+PUBLIC_IMAGE_REPOSITORY = "ghcr.io/nebius/nebius-physical-ai/npa-robotwin"
 MANIFEST_ACCEPT = ", ".join(
     (
         "application/vnd.oci.image.index.v1+json",
@@ -164,6 +175,33 @@ MANIFEST_ACCEPT = ", ".join(
         "application/vnd.docker.distribution.manifest.list.v2+json",
         "application/vnd.docker.distribution.manifest.v2+json",
     )
+)
+INDEX_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    }
+)
+MANIFEST_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    }
+)
+CONFIG_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.config.v1+json",
+        "application/vnd.docker.container.image.v1+json",
+    }
+)
+LAYER_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.layer.v1.tar",
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        "application/vnd.oci.image.layer.v1.tar+zstd",
+        "application/vnd.docker.image.rootfs.diff.tar",
+        "application/vnd.docker.image.rootfs.diff.tar.gzip",
+    }
 )
 
 
@@ -426,16 +464,60 @@ def _json_object(raw: bytes, label: str) -> dict[str, Any]:
     return payload
 
 
-def _descriptor(record: Any, label: str) -> tuple[str, int | None]:
+def _document_media_type(
+    record: Mapping[str, Any], label: str, allowed: frozenset[str]
+) -> str:
+    if record.get("schemaVersion") != 2:
+        raise RuntimeError(f"OCI {label} schema version is invalid")
+    media_type = str(record.get("mediaType") or "")
+    if media_type not in allowed:
+        raise RuntimeError(f"OCI {label} media type is invalid")
+    return media_type
+
+
+def _descriptor(
+    record: Any, label: str, allowed_media_types: frozenset[str]
+) -> tuple[str, int, str]:
     if not isinstance(record, dict):
         raise RuntimeError(f"OCI {label} descriptor is invalid")
     digest = str(record.get("digest") or "")
     size_value = record.get("size")
+    media_type = str(record.get("mediaType") or "")
     if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
         raise RuntimeError(f"OCI {label} digest is invalid")
-    if size_value is not None and (type(size_value) is not int or size_value < 0):
+    if type(size_value) is not int or size_value < 0:
         raise RuntimeError(f"OCI {label} size is invalid")
-    return digest, size_value
+    if media_type not in allowed_media_types:
+        raise RuntimeError(f"OCI {label} media type is invalid")
+    return digest, size_value, media_type
+
+
+def _uncompressed_layer_digest(path: Path, media_type: str) -> str:
+    """Return the OCI diff ID for one verified compressed layer blob."""
+
+    stream: BinaryIO
+    raw_stream = path.open("rb")
+    try:
+        if media_type.endswith("+gzip") or media_type.endswith(".gzip"):
+            stream = gzip.GzipFile(fileobj=raw_stream)
+        elif media_type.endswith("+zstd"):
+            if walker.zstd is None:
+                raise RuntimeError("zstandard is required to verify OCI layer diff IDs")
+            stream = walker.zstd.ZstdDecompressor().stream_reader(raw_stream)
+        else:
+            stream = raw_stream
+        calculated = hashlib.sha256()
+        try:
+            while chunk := stream.read(1024 * 1024):
+                calculated.update(chunk)
+        finally:
+            if stream is not raw_stream:
+                stream.close()
+        return f"sha256:{calculated.hexdigest()}"
+    except (OSError, EOFError) as exc:
+        raise RuntimeError("OCI layer compression is invalid") from exc
+    finally:
+        raw_stream.close()
 
 
 def _write_flattened_rootfs(layers: list[Path], destination: Path, temp_dir: Path) -> None:
@@ -526,40 +608,86 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
         f"manifests/{quote(digest, safe=':')}", accept=MANIFEST_ACCEPT, digest=digest
     )
     manifest = _json_object(manifest_raw, "manifest")
-    if isinstance(manifest.get("manifests"), list):
-        candidates = [
-            record
-            for record in manifest["manifests"]
-            if isinstance(record, dict)
-            and isinstance(record.get("platform"), dict)
-            and record["platform"].get("os") == "linux"
-            and record["platform"].get("architecture") == "amd64"
-            and not record["platform"].get("variant")
-        ]
+    document_type = _document_media_type(
+        manifest, "top-level document", INDEX_MEDIA_TYPES | MANIFEST_MEDIA_TYPES
+    )
+    if document_type in INDEX_MEDIA_TYPES:
+        records = manifest.get("manifests")
+        if not isinstance(records, list) or not records:
+            raise RuntimeError("OCI index contains no manifests")
+        candidates: list[tuple[str, int, str]] = []
+        for index, record in enumerate(records):
+            descriptor = _descriptor(
+                record, f"index manifest {index}", MANIFEST_MEDIA_TYPES
+            )
+            platform = record.get("platform") if isinstance(record, dict) else None
+            if (
+                isinstance(platform, dict)
+                and platform.get("os") == "linux"
+                and platform.get("architecture") == "amd64"
+                and not platform.get("variant")
+            ):
+                candidates.append(descriptor)
         if len(candidates) != 1:
             raise RuntimeError("OCI index does not select exactly one linux/amd64 image")
-        child_digest, child_size = _descriptor(candidates[0], "platform manifest")
+        child_digest, child_size, child_media_type = candidates[0]
         manifest_raw = client.metadata(
             f"manifests/{quote(child_digest, safe=':')}",
             accept=MANIFEST_ACCEPT,
             digest=child_digest,
         )
-        if child_size is not None and len(manifest_raw) != child_size:
+        if len(manifest_raw) != child_size:
             raise RuntimeError("OCI platform manifest size mismatch")
         manifest = _json_object(manifest_raw, "platform manifest")
-    config_digest, config_size = _descriptor(manifest.get("config"), "config")
+        if (
+            _document_media_type(manifest, "platform manifest", MANIFEST_MEDIA_TYPES)
+            != child_media_type
+        ):
+            raise RuntimeError("OCI platform manifest media type mismatch")
+    elif "manifests" in manifest:
+        raise RuntimeError("OCI manifest graph shape is invalid")
+    config_digest, config_size, _config_media_type = _descriptor(
+        manifest.get("config"), "config", CONFIG_MEDIA_TYPES
+    )
     config_path = temp_dir / "config.json"
     client.blob(config_digest, config_path, expected_size=config_size)
     config = _json_object(config_path.read_bytes(), "config")
+    if config.get("os") != "linux" or config.get("architecture") != "amd64":
+        raise RuntimeError("OCI image config is not linux/amd64")
+    if config.get("variant") not in {None, ""}:
+        raise RuntimeError("OCI image config has an unsupported platform variant")
     layer_records = manifest.get("layers")
     if not isinstance(layer_records, list) or not layer_records:
         raise RuntimeError("OCI manifest contains no layers")
     layers: list[Path] = []
+    layer_media_types: list[str] = []
     for index, record in enumerate(layer_records):
-        layer_digest, layer_size = _descriptor(record, f"layer {index}")
+        layer_digest, layer_size, layer_media_type = _descriptor(
+            record, f"layer {index}", LAYER_MEDIA_TYPES
+        )
         layer_path = temp_dir / f"layer-{index:03d}.tar"
         client.blob(layer_digest, layer_path, expected_size=layer_size)
         layers.append(layer_path)
+        layer_media_types.append(layer_media_type)
+    rootfs_record = config.get("rootfs")
+    diff_ids = rootfs_record.get("diff_ids") if isinstance(rootfs_record, dict) else None
+    if (
+        not isinstance(rootfs_record, dict)
+        or rootfs_record.get("type") != "layers"
+        or not isinstance(diff_ids, list)
+        or len(diff_ids) != len(layers)
+        or any(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", str(value)) is None
+            for value in diff_ids
+        )
+    ):
+        raise RuntimeError("OCI image config rootfs graph is invalid")
+    actual_diff_ids = [
+        _uncompressed_layer_digest(path, media_type)
+        for path, media_type in zip(layers, layer_media_types, strict=True)
+    ]
+    if actual_diff_ids != diff_ids:
+        raise RuntimeError("OCI image config layer diff IDs do not match")
     rootfs = temp_dir / "rootfs.tar"
     _write_flattened_rootfs(layers, rootfs, temp_dir)
     return [rootfs, *layers], config
@@ -603,6 +731,18 @@ def _read_image_stdin() -> str:
     return image
 
 
+def _is_public_image_reference(value: str) -> bool:
+    return (
+        re.fullmatch(
+            rf"(?:docker:)?{re.escape(PUBLIC_IMAGE_REPOSITORY)}"
+            r"@sha256:[0-9a-f]{64}",
+            value,
+            re.I,
+        )
+        is not None
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
@@ -617,6 +757,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
+    if args.image and not _is_public_image_reference(args.image):
+        parser.error(
+            "positional IMAGE is limited to the public RoboTwin repository; "
+            "pass private immutable references with --image-stdin"
+        )
 
     selected_image = args.image
     try:
