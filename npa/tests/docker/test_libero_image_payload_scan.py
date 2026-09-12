@@ -30,13 +30,20 @@ def _load_module():
     return module
 
 
-def _layer(path: Path, members: dict[str, bytes]) -> Path:
+def _layer(
+    path: Path, members: dict[str, bytes], *, neutral_link: bool = False
+) -> Path:
     with tarfile.open(path, "w") as archive:
         for name, content in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(content)
             info.mode = 0o644
             archive.addfile(info, io.BytesIO(content))
+        if neutral_link:
+            link = tarfile.TarInfo("opt/byof")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/workspace/.cache/npa/libero/current/source"
+            archive.addfile(link)
     return path
 
 
@@ -106,6 +113,15 @@ def _base_provenance(module) -> tuple[bytes, dict[str, object]]:
 
 
 def _scan(module, layers, config, metadata, *, base_provenance=None):
+    def contains_neutral_link(layer: Path) -> bool:
+        with tarfile.open(layer, "r:") as archive:
+            return "opt/byof" in archive.getnames()
+
+    if not any(contains_neutral_link(layer) for layer in layers):
+        layers = [
+            *layers,
+            _layer(layers[-1].parent / "neutral-link.tar", {}, neutral_link=True),
+        ]
     provenance_bytes, provenance = _base_provenance(module)
     if base_provenance is not None:
         provenance = base_provenance
@@ -156,6 +172,27 @@ def test_scanner_accepts_neutral_bootstrap_symlink_and_system_metadata(
     assert _scan(module, [layer], _config(module), _metadata(module)) == []
 
 
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        (
+            "USR/LOCAL/LIB/PYTHON3.10/SITE-PACKAGES/DISTUTILS-PRECEDENCE.PTH",
+            "model_weight_checkpoint_or_dataset",
+        ),
+        ("Etc/Security/Namespace.Init", "libero_task_or_render_asset"),
+    ],
+)
+def test_scanner_refuses_case_variant_of_exact_system_metadata_exception(
+    tmp_path, path, kind
+) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "case-drift.tar", {path: b"not exact metadata\n"})
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == kind and item.path == path for item in findings)
+
+
 def test_scanner_allows_only_exact_audited_secret_literal_bytes(tmp_path) -> None:
     module = _load_module()
     path = "usr/lib/x86_64-linux-gnu/libneutral.so.1"
@@ -195,6 +232,9 @@ def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
         ("usr/lib/python3/site-packages/torch/__init__.py", b"", "torch_distribution"),
         ("workspace/demo.hdf5", b"data", "model_weight_checkpoint_or_dataset"),
         ("tmp/policy.pth", b"weights", "model_weight_checkpoint_or_dataset"),
+        ("tmp/policy.h5", b"weights", "model_weight_checkpoint_or_dataset"),
+        ("tmp/policy.onnx", b"weights", "model_weight_checkpoint_or_dataset"),
+        ("tmp/model-policy.pt", b"weights", "model_weight_checkpoint_or_dataset"),
         ("etc/unrelated-task.init", b"state", "libero_task_or_render_asset"),
         ("root/.aws/credentials", b"neutral", "credential_or_private_configuration"),
         (
@@ -247,6 +287,15 @@ def test_scanner_refuses_non_symlink_neutral_source_path(tmp_path) -> None:
     layer = _layer(tmp_path / "layer.tar", {"opt/byof": b"hidden source"})
 
     findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "neutral_bootstrap_link" for item in findings)
+
+
+def test_scanner_requires_neutral_bootstrap_symlink(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "missing-link.tar", {"opt/neutral": b"neutral\n"})
+
+    findings, _inventory = module._layer_graph_findings([layer])
 
     assert any(item.kind == "neutral_bootstrap_link" for item in findings)
 
@@ -345,7 +394,7 @@ def test_scanner_refuses_unsupported_archive_member(tmp_path) -> None:
 
 def test_scanner_validates_whiteouts_and_flattened_rootfs(tmp_path) -> None:
     module = _load_module()
-    first = _layer(tmp_path / "first.tar", {"opt/neutral": b"x"})
+    first = _layer(tmp_path / "first.tar", {"opt/neutral": b"x"}, neutral_link=True)
     second = _layer(tmp_path / "second.tar", {"opt/.wh.neutral": b""})
     exported = _layer(tmp_path / "rootfs.tar", {"usr/bin/sh": b"shell"})
 
@@ -358,7 +407,7 @@ def test_scanner_validates_whiteouts_and_flattened_rootfs(tmp_path) -> None:
 
 def test_scanner_accounts_export_root_and_runtime_injected_files(tmp_path) -> None:
     module = _load_module()
-    layer = _layer(tmp_path / "layer.tar", {"usr/bin/sh": b"shell"})
+    layer = _layer(tmp_path / "layer.tar", {"usr/bin/sh": b"shell"}, neutral_link=True)
     exported = tmp_path / "rootfs.tar"
     with tarfile.open(exported, "w") as archive:
         root = tarfile.TarInfo(".")
@@ -375,10 +424,23 @@ def test_scanner_accounts_export_root_and_runtime_injected_files(tmp_path) -> No
         mtab.type = tarfile.SYMTYPE
         mtab.linkname = "/proc/mounts"
         archive.addfile(mtab)
+        byof = tarfile.TarInfo("opt/byof")
+        byof.type = tarfile.SYMTYPE
+        byof.linkname = "/workspace/.cache/npa/libero/current/source"
+        archive.addfile(byof)
 
     findings, _inventory = module._layer_graph_findings([layer], exported)
 
     assert findings == []
+
+
+def test_scanner_refuses_non_directory_archive_root(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "root-file.tar", {".": b"not a directory"})
+
+    findings, _inventory = module._layer_graph_findings([layer])
+
+    assert any(item.kind == "unsafe_archive_member" for item in findings)
 
 
 def test_scanner_refuses_deleted_layer_bytes_outside_accepted_private_inventory(
@@ -442,6 +504,7 @@ def test_scanner_emits_complete_canonical_image_inventory(tmp_path) -> None:
     layer = _layer(
         tmp_path / "layer.tar",
         {"opt/neutral": b"reviewed\n", "srv/other": b"other\n"},
+        neutral_link=True,
     )
     _findings, accepted = module._layer_graph_findings([layer])
     provenance_bytes, provenance = _base_provenance(module)
@@ -473,13 +536,14 @@ def test_scanner_emits_complete_canonical_image_inventory(tmp_path) -> None:
     )
     assert inventory["layers"][0]["size_bytes"] == len(layer.read_bytes())
     assert [item["path"] for item in inventory["rootfs_entries"]] == [
+        "opt/byof",
         "opt/neutral",
         "srv/other",
     ]
     assert evidence == {
         "image_inventory_sha256": accepted.sha256,
         "image_inventory_layer_count": 1,
-        "image_inventory_rootfs_entry_count": 2,
+        "image_inventory_rootfs_entry_count": 3,
         "observed_config_digest": "sha256:" + "2" * 64,
     }
 
@@ -512,6 +576,25 @@ def test_scanner_refuses_outer_member_not_bound_by_docker_manifest(tmp_path) -> 
     findings = module._docker_save_outer_findings(archive)
 
     assert any(item.kind == "unaccounted_outer_archive_member" for item in findings)
+
+
+def test_scanner_refuses_duplicate_outer_archive_member(tmp_path) -> None:
+    module = _load_module()
+    archive = tmp_path / "duplicate-image.tar"
+    manifest = b'[{"Config":"config.json","Layers":[]}]'
+    with tarfile.open(archive, "w") as output:
+        for name, content in (
+            ("manifest.json", manifest),
+            ("manifest.json", manifest),
+            ("config.json", b"{}"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            output.addfile(member, io.BytesIO(content))
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(item.kind == "duplicate_outer_archive_member" for item in findings)
 
 
 def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
@@ -593,6 +676,46 @@ def test_scanner_refuses_oci_descriptor_byte_drift(tmp_path) -> None:
     assert any(item.kind == "oci_descriptor_identity_mismatch" for item in findings)
 
 
+@pytest.mark.parametrize("mutation", ["missing", "non-regular"])
+def test_scanner_refuses_missing_or_nonregular_oci_descriptor_target(
+    tmp_path, mutation
+) -> None:
+    module = _load_module()
+    content = b'{"schemaVersion":2,"config":{},"layers":[]}'
+    descriptor = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+    }
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    member_name = "blobs/sha256/" + str(descriptor["digest"])[7:]
+    archive_path = tmp_path / f"{mutation}.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        for name, payload in (
+            ("manifest.json", b'[{"Config":"","Layers":[]}]'),
+            ("index.json", index),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        if mutation == "non-regular":
+            member = tarfile.TarInfo(member_name)
+            member.type = tarfile.DIRTYPE
+            archive.addfile(member)
+
+    findings = module._docker_save_outer_findings(archive_path)
+
+    expected = (
+        "missing_oci_descriptor_member"
+        if mutation == "missing"
+        else "invalid_oci_descriptor_member"
+    )
+    assert any(item.kind == expected for item in findings)
+
+
 def test_scanner_refuses_non_manifest_oci_index_root(tmp_path) -> None:
     module = _load_module()
     hidden = b"opaque hidden bytes"
@@ -615,7 +738,65 @@ def test_scanner_refuses_non_manifest_oci_index_root(tmp_path) -> None:
         },
     )
 
-    with pytest.raises(RuntimeError, match="non-manifest root descriptor"):
+    with pytest.raises(RuntimeError, match="unsupported media type"):
+        module._docker_save_outer_findings(archive)
+
+
+@pytest.mark.parametrize("role", ["config", "layer", "subject"])
+def test_scanner_refuses_unsupported_oci_leaf_or_subject_media_type(
+    tmp_path, role
+) -> None:
+    module = _load_module()
+
+    def descriptor(content: bytes, media_type: str) -> dict[str, object]:
+        return {
+            "mediaType": media_type,
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    config = b"{}"
+    layer = b"neutral layer"
+    subject = b'{"schemaVersion":2,"config":{},"layers":[]}'
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer_type = "application/vnd.oci.image.layer.v1.tar"
+    subject_type = "application/vnd.oci.image.manifest.v1+json"
+    if role == "config":
+        config_type = "application/octet-stream"
+    elif role == "layer":
+        layer_type = "application/octet-stream"
+    else:
+        subject_type = "application/octet-stream"
+    config_descriptor = descriptor(config, config_type)
+    layer_descriptor = descriptor(layer, layer_type)
+    subject_descriptor = descriptor(subject, subject_type)
+    image_document = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": config_descriptor,
+        "layers": [layer_descriptor],
+    }
+    if role == "subject":
+        image_document["subject"] = subject_descriptor
+    image_manifest = json.dumps(image_document, separators=(",", ":")).encode()
+    manifest_descriptor = descriptor(
+        image_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    members = {
+        "manifest.json": b'[{"Config":"","Layers":[]}]',
+        "index.json": index,
+        "blobs/sha256/" + str(config_descriptor["digest"])[7:]: config,
+        "blobs/sha256/" + str(layer_descriptor["digest"])[7:]: layer,
+        "blobs/sha256/" + str(subject_descriptor["digest"])[7:]: subject,
+        "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]: image_manifest,
+    }
+    archive = _layer(tmp_path / f"wrong-{role}.tar", members)
+
+    with pytest.raises(RuntimeError, match=f"OCI {role} descriptor"):
         module._docker_save_outer_findings(archive)
 
 
