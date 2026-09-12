@@ -75,7 +75,7 @@ npa workbench isaac-arena evaluate \
   --input-path ./test_demo_gr1_open_microwave.hdf5 \
   --embodiment gr1_pink \
   --record-video \
-  --run-id <run-id>
+  --run-id "<run-id>"
 ```
 
 Inputs and outputs may be local or operator-owned S3 paths. The simulator
@@ -174,8 +174,8 @@ export NPA_WORKFLOW_GPU_ACCELERATOR='B200:1'
 npa workbench workflow submit \
   workflows/testing/isaac-arena-evaluation-b200.yaml \
   --runtime --durable-s3 --max-wait-seconds 0 \
-  --project <project-alias> --infra k8s/<context> \
-  --var bucket=<operator-owned-bucket>
+  --project "<project-alias>" --infra "k8s/<context>" \
+  --var "bucket=<operator-owned-bucket>"
 ```
 
 ## Accepted workload evidence
