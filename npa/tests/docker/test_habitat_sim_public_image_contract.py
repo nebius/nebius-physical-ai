@@ -30,6 +30,7 @@ def _run_bootstrap(
     config_sha256: str,
     bundle_bytes: int,
     bundle_sha256: str,
+    path_prefix: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
@@ -39,6 +40,8 @@ def _run_bootstrap(
         "CA_BUNDLE_BYTES": str(bundle_bytes),
         "CA_BUNDLE_SHA256": bundle_sha256,
     }
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env['PATH']}"
     return subprocess.run(
         [
             "bash",
@@ -147,11 +150,14 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     assert DOCKERFILE.count("source=/openssl.deb") == 1
     assert DOCKERFILE.count("source=/libssl3.deb") == 1
     assert DOCKERFILE.index("dpkg-deb -x /tmp/libssl3.deb") < DOCKERFILE.index(
-        "openssl x509"
+        "/usr/bin/openssl x509"
     )
     assert DOCKERFILE.index("dpkg-deb -x /tmp/openssl.deb") < DOCKERFILE.index(
-        "openssl x509"
+        "/usr/bin/openssl x509"
     )
+    assert DOCKERFILE.count("openssl x509") == DOCKERFILE.count(
+        "/usr/bin/openssl x509"
+    ) == 1
     assert "COPY --from=npa-ca-bootstrap" not in DOCKERFILE
     assert not re.search(r"URIs:\s+http://", DOCKERFILE)
 
@@ -169,6 +175,11 @@ def test_ca_bootstrap_creates_exact_nonempty_config_and_bundle(
         (cert_dir / name).write_bytes(payload)
     config = b"mozilla/Alpha.crt\nmozilla/Zed.crt\n"
     bundle = certificates["Alpha.crt"] + certificates["Zed.crt"]
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    hostile_openssl = hostile_bin / "openssl"
+    hostile_openssl.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    hostile_openssl.chmod(0o755)
 
     result = _run_bootstrap(
         tmp_path,
@@ -177,6 +188,7 @@ def test_ca_bootstrap_creates_exact_nonempty_config_and_bundle(
         config_sha256=hashlib.sha256(config).hexdigest(),
         bundle_bytes=len(bundle),
         bundle_sha256=hashlib.sha256(bundle).hexdigest(),
+        path_prefix=hostile_bin,
     )
 
     assert result.returncode == 0, result.stderr

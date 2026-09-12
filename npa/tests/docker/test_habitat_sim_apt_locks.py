@@ -95,6 +95,7 @@ def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
     assert "${APT_SNAPSHOT}/pool/main/c/ca-certificates/" in dockerfile
     assert dockerfile.count('stat -c %s "${ca_config}"') == 1
     assert dockerfile.count("stat -c %s /etc/ca-certificates.conf") == 2
+    assert dockerfile.count("/usr/bin/openssl x509") == 1
     assert dockerfile.count("openssl x509") == 1
 
 
