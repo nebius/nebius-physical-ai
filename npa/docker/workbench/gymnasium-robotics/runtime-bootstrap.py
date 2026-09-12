@@ -505,12 +505,22 @@ def _validate_wheel(path: Path, *, max_unpacked_bytes: int) -> None:
         _refuse(f"wheel is malformed: {path.name}: {error}")
 
 
+def _remove_venv_compatibility_link(runtime: Path) -> None:
+    lib64 = runtime / "lib64"
+    if not lib64.is_symlink():
+        return
+    if os.readlink(lib64) != "lib":
+        _refuse("virtual environment contains an unexpected compatibility link")
+    lib64.unlink()
+
+
 def _install_runtime(stage: Path, requirements: Path) -> None:
     runtime = stage / "runtime"
     wheelhouse = stage / "wheelhouse"
     source = stage / "source"
     try:
         venv.EnvBuilder(with_pip=True, clear=False, symlinks=False).create(runtime)
+        _remove_venv_compatibility_link(runtime)
         python = runtime / "bin/python"
         subprocess.run(
             [
