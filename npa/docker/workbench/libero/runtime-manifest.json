@@ -1273,12 +1273,12 @@
     },
     {
       "name": "wandb",
-      "version": "0.13.1",
-      "filename": "wandb-0.13.1-py2.py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/be/e6/c90c188bb1755123e6bd864af2b599b82180845ff785c9e2534cb6c9c5c4/wandb-0.13.1-py2.py3-none-any.whl",
-      "sha256": "a616993129678399def983a43ee24af8ed28bdef25fdb8a89692c6f3c9059519",
-      "license_expression": null,
-      "metadata_source": "https://pypi.org/pypi/wandb/0.13.1/json"
+      "version": "0.17.9",
+      "filename": "wandb-0.17.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/10/65/940e2f0cdaaf818ea14d47fcc5e9f05a7e98f9052295e1bf525e393b3743/wandb-0.17.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "c1cbb833987e8fd9754e94cbb18bb0564b01bc9c743b67d499700192de0bd154",
+      "license_expression": "MIT License  Copyright (c) 2021 Weights and Biases, Inc.  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+      "metadata_source": "https://pypi.org/pypi/wandb/0.17.9/json"
     },
     {
       "name": "werkzeug",
