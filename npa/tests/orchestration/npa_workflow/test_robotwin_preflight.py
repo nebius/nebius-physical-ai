@@ -144,8 +144,16 @@ def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> Non
     [
         ("solution_name", "RoBoTwIn"),
         ("repo_url", "https://github.com/robotwin-platform/robotwin"),
+        (
+            "repo_url",
+            "https://github.com:443/RoboTwin-Platform/RoboTwin.git/",
+        ),
+        ("repo_url", "https://github.com./RoboTwin-Platform/RoboTwin.git"),
+        ("repo_url", "git@github.com:RoboTwin-Platform/RoboTwin.git"),
         ("base_image", "tool://robotwin"),
+        ("base_image", "registry.invalid/private/npa-robotwin:mutable"),
         ("image", "registry.invalid/npa-robotwin@sha256:" + "a" * 64),
+        ("image", "registry.invalid/private/npa-robotwin:mutable"),
         ("smoke_command", "/opt/npa/robotwin/robotwin-runtime run"),
         (
             "capability_name",

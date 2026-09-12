@@ -156,8 +156,21 @@ def _run_authorized_robotwin(module, argv: list[str]) -> int:
     )
 
 
-def test_robotwin_direct_script_refuses_before_private_context_or_side_effect(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("repo_url", "image"),
+    [
+        ("https://github.com:443/RoboTwin-Platform/RoboTwin.git/", ""),
+        (
+            "https://github.com/example/not-robotwin.git",
+            "registry.invalid/private/npa-robotwin:mutable",
+        ),
+    ],
+)
+def test_robotwin_equivalent_or_mutable_direct_script_refuses_before_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    repo_url: str,
+    image: str,
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -178,6 +191,13 @@ def test_robotwin_direct_script_refuses_before_private_context_or_side_effect(
 
     args = _robotwin_args(module)
     args[args.index("--solution-name") + 1] = "relabeled"
+    args[args.index("--repo-url") + 1] = repo_url
+    args[args.index("--base-image") + 1] = "registry.invalid/example/base:latest"
+    args[args.index("--smoke-command") + 1] = "true"
+    args[args.index("--capability-name") + 1] = "other-capability"
+    args[args.index("--yaml") + 1] = "other-profile.yaml"
+    if image:
+        args.extend(("--image", image))
     assert module.main(args) == 1
     assert "normal npa workbench workflow submit CPU launcher" in capsys.readouterr().out
 
