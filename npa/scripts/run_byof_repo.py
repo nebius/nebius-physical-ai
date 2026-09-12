@@ -57,6 +57,7 @@ ROBOMIMIC_SMOKE_COMMAND_SHA256 = (
     "edc22a2c6efe3fa66b505f7ec3868245277089e0506c43bca503b988b9a15b05"
 )
 ROBOMIMIC_RUN_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+IMMUTABLE_IMAGE_DIGEST_RE = re.compile(r".+@(sha256:[0-9a-f]{64})", re.I)
 ROBOMIMIC_PROFILE = (
     SCRIPT_DIR.parent
     / "src"
@@ -117,15 +118,27 @@ def _normalize_optional(value: str) -> str:
     return cleaned
 
 
+def _immutable_image_digest(value: str) -> str:
+    match = IMMUTABLE_IMAGE_DIGEST_RE.fullmatch(
+        str(value or "").strip().removeprefix("docker:")
+    )
+    return match.group(1).lower() if match else ""
+
+
 def _is_robomimic_request(args: argparse.Namespace) -> bool:
     """Recognize the exact registered robomimic candidate despite renamed labels."""
 
     repo = args.repo_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].lower()
     image_refs = (args.base_image, args.image)
     manager_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip().lower()
+    manager_digest = _immutable_image_digest(manager_image)
     image_signaled = any(
         value.strip().lower() == ROBOMIMIC_BASE_IMAGE
         or value.strip().lower() == manager_image
+        or bool(
+            manager_digest
+            and _immutable_image_digest(value) == manager_digest
+        )
         or value.strip()
         .lower()
         .removeprefix("docker:")
