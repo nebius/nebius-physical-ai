@@ -8,7 +8,7 @@ from npa.deploy.publish_public import PublishItem, verify_validated_publication
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_phase_a_candidate_is_eligible_but_not_registered_or_publishable() -> None:
+def test_neutral_candidate_is_eligible_but_not_registered_or_publishable() -> None:
     tool = "gymnasium-robotics"
     assert images.is_publicly_redistributable(tool)
     assert tool in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
@@ -22,7 +22,7 @@ def test_publication_guard_names_every_withheld_evidence_boundary() -> None:
     item = PublishItem(
         tool="gymnasium-robotics",
         source_ref="ghcr.io/example/npa-gymnasium-robotics:dev-" + "a" * 40,
-        target_ref="ghcr.io/example/npa-gymnasium-robotics:phase-a-unbuilt",
+        target_ref="ghcr.io/example/npa-gymnasium-robotics:neutral-unbuilt",
     )
     ok, reason = verify_validated_publication(item)
     assert not ok

@@ -1,5 +1,5 @@
-# Phase A version baseline. requirements.lock must bind every selected archive
-# before an authorized build transaction may proceed.
+# Runtime-cache version baseline. None of these distributions are candidate
+# image inputs. A complete hashed wheel graph is required before runtime fetch.
 absl-py==2.5.0
 boto3==1.43.91
 botocore==1.43.91

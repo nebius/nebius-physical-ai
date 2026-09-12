@@ -2,8 +2,9 @@
 """Inspect every config/history/layer/rootfs byte of a Docker-save archive.
 
 The scanner is product-specific defense in depth. It cannot authorize release:
-Phase A has no accepted manifest or native-byte policy, and incomplete locks are
-always fatal.
+The neutral candidate has no accepted manifest or native-byte policy. It must
+contain no upstream solution, Shadow, MuJoCo/Python workload, vendor runtime,
+cache, credential, dataset, checkpoint, or output byte.
 """
 
 from __future__ import annotations
@@ -30,18 +31,29 @@ REQUIRED = {
     "opt/npa/gymnasium-robotics/corresponding-source.lock.json",
     "opt/npa/gymnasium-robotics/asset-lock.json",
     "opt/npa/gymnasium-robotics/requirements.lock",
+    "opt/npa/gymnasium-robotics/runtime-bootstrap.py",
     "opt/npa/gymnasium-robotics/capability_smoke.py",
+    "opt/npa/gymnasium-robotics/verify_image.py",
+    "usr/local/bin/npa-gymnasium-entrypoint",
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md",
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md",
-    "usr/share/source/npa-gymnasium-robotics/final-rootfs-manifest.json",
 }
 FORBIDDEN_PATH = re.compile(
     r"(^|/)(\.git|\.cache|pip-cache|apt/lists|apt/archives|\.aws|\.docker|\.ssh)(/|$)|"
     r"(^|/)(workspace/byof-runs|root/\.cache)(/|$)|"
+    r"(^|/)(opt/venv|wheelhouse|runtime-cache)(/|$)|"
+    r"(^|/)usr/share/source/npa-gymnasium-robotics(/|$)|"
+    r"(^|/)gymnasium_robotics(/|$)|"
+    r"(^|/)[^/]*(?:shadow[_-]?hand|mujoco)[^/]*(/|$)|"
     r"(^|/)(usr/local/cuda|opt/nvidia)(/|$)|"
     r"(^|/)[^/]*(?:nvidia|isaac|omniverse|ngc)[^/]*(/|$)|"
     r"(^|/)(libcuda[^/]*|libnvcuvid[^/]*|libnvoptix[^/]*)$|"
-    r"\.(pt|pth|ckpt|safetensors|onnx|engine)$",
+    r"\.(whl|pt|pth|ckpt|safetensors|onnx|engine)$",
+    re.IGNORECASE,
+)
+UPSTREAM_TREE_PATH = re.compile(
+    r"(^|/)Gymnasium-Robotics-[0-9a-f]{7,40}(/|$)|"
+    r"(^|/)gymnasium_robotics(/|$)",
     re.IGNORECASE,
 )
 # This candidate has no NVIDIA runtime or driver payload. Rejecting any whole
@@ -54,6 +66,31 @@ SECRET_TEXT = re.compile(
 )
 VENDOR_TEXT = re.compile(
     rb"(?i:(?:nvcr\.io|isaacsim|omniverse[/\\]kit|accept_eula\s*[=:]\s*(?:1|yes|true)))"
+)
+KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
+    {
+        "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
+        "7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0",
+        "c1004adf05daea7b57ee57643f8e94945393a2e12b34b18a244be3c1776776b2",
+        "9b6f70c49c8bb043ce3e52d181a0797c514a3b85f44f0cf59600d9f906df9f64",
+        "fbc404e52def67e38222a395fcc39c051eacc503dbf8e22a22a5bcce36992524",
+        "95a9153e6bba4c555ad7cdcea746520eab38e0d57415fa9b3bfaf987dd0418f1",
+        "248bc2cb73920c88903786842aaa5476262d550bd01c2c716dd5f2ee642f3318",
+        "a2d35742067f71e4888954d1aa55d043dbc6ec0c63f4cc715f339cb45fd13734",
+        "0eeb932dcc102dd1fc6bef55fe83f6a74d97aebd32c34d6ee7020c19647306c5",
+        "d11a521ae498e947491ba947df8f999136fdf1401d1ba86d594eec20da656ad1",
+        "83fd93c9e4c1bf240aa6def2e5fdf5b1adcf4e341c146b05313aeaa8c54fd36a",
+        "98e26cf013cd8d7f6ed890d3402ba0aceb11ec5c78779e388390ca2cddc7daf2",
+        "80aae0002a6684428278cf214a31040f7cd7aeb3e2e648bd4b68baa375c2d2ad",
+        "01aca61837d9db13c52dd170245cacb6f1cedc8238d66fe7239602c80c7a0130",
+        "874ae2ac813c6c9d873d04f872cb13de3cabd427cb24a8924619d0a1719d6da7",
+        "a8a9c1659aa4391291531b46997ba5eeda1b36e597070ae8a3cd824159937aae",
+        "b6901da4d4b93059c02b8803650ad484b3f31aebce46badfa411897d521a4877",
+        "12593bcba03bbf278cd7d7db3ca79ba753ada3cb58ee93e725603e9b5e29fd0c",
+        "47d0f252ae456541993746ff76d7022135b1bf54263f8f83b19d61f6f94871c9",
+        "d39ffb85a87d00c346764191e38ecac3135f2d6f690f64a8ee5da4783ef18e76",
+        "3649cb94a9a5f74751d15c0f38291dd666b7eecc286977888b64b6c3c626c9d3",
+    }
 )
 MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
@@ -107,15 +144,21 @@ EXPECTED_BASE = {
     # not the registry's compressed layer digest.
     "uncompressed_layer_digest": None,
 }
-# A complete lock is trusted only after its exact bytes are independently
-# reviewed and pinned here. Phase A deliberately has no such approved bytes,
-# so changing a lock's status locally can never turn the scanner green.
-EXPECTED_COMPLETE_LOCK_SHA256: dict[str, str | None] = {
+# Neutral files are trusted only after their exact bytes are independently
+# reviewed and pinned here. Repository implementation leaves the built-image
+# trust roots unset, so a local status edit cannot turn the scanner green.
+EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": None,
     "apt-runtime.lock.json": None,
     "corresponding-source.lock.json": None,
     "requirements.lock": None,
+    "runtime-bootstrap.py": None,
+    "capability_smoke.py": None,
+    "verify_image.py": None,
 }
+# Retained solely for the unreachable legacy direct-bake validator below. The
+# active scan path calls _neutral_candidate and never accepts these sentinels.
+EXPECTED_COMPLETE_LOCK_SHA256 = EXPECTED_NEUTRAL_FILE_SHA256
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
         "archive_sha256": "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
@@ -207,6 +250,8 @@ def _raw_member(archive: tarfile.TarFile, name: str) -> bytes:
 
 
 def _scan_policy_bytes(label: str, content: bytes) -> None:
+    if hashlib.sha256(content).hexdigest() in KNOWN_FORBIDDEN_CONTENT_SHA256:
+        raise ValueError(f"forbidden upstream/runtime byte: {label}")
     if SECRET_TEXT.search(content):
         raise ValueError(f"forbidden secret signature: {label}")
     if VENDOR_TEXT.search(content):
@@ -432,7 +477,7 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                 for member in infos:
                     safe = _safe(member.filename)
                     count += 1
-                    if FORBIDDEN_PATH.search(safe):
+                    if FORBIDDEN_PATH.search(safe) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
@@ -488,7 +533,7 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                 for member in archive:
                     safe = _safe(member.name)
                     count += 1
-                    if FORBIDDEN_PATH.search(safe):
+                    if FORBIDDEN_PATH.search(safe) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
@@ -660,7 +705,7 @@ def _layers(
                     )
                     deleted_targets.add(target)
                     continue
-                if FORBIDDEN_PATH.search(path):
+                if FORBIDDEN_PATH.search(path) or UPSTREAM_TREE_PATH.search(path):
                     raise ValueError(f"forbidden image path: {path}")
                 current_order.append(path)
                 if item.isfile():
@@ -1024,6 +1069,114 @@ def _complete_locks(
     _locked_assets(rootfs)
 
 
+def _neutral_candidate(
+    rootfs: dict[str, bytes],
+    layer_diff_ids: list[str],
+) -> None:
+    """Bind a future neutral image without accepting runtime payload bytes."""
+
+    for name, expected in EXPECTED_NEUTRAL_FILE_SHA256.items():
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(f"reviewed neutral file digest is not configured: {name}")
+        path = f"opt/npa/gymnasium-robotics/{name}"
+        if hashlib.sha256(rootfs[path]).hexdigest() != expected:
+            raise ValueError(f"reviewed neutral image file changed: {name}")
+    if (
+        hashlib.sha256(rootfs["opt/npa/gymnasium-robotics/asset-lock.json"]).hexdigest()
+        != EXPECTED_ASSET_LOCK
+    ):
+        raise ValueError("approved asset provenance metadata changed")
+    if _missing(EXPECTED_BASE) or (
+        not layer_diff_ids
+        or layer_diff_ids[0] != EXPECTED_BASE["uncompressed_layer_digest"]
+    ):
+        raise ValueError("saved image does not begin with the reviewed Ubuntu base")
+
+    source = json.loads(rootfs["opt/npa/gymnasium-robotics/source-lock.json"])
+    if (
+        source.get("schema") != "npa.gymnasium-robotics.runtime-fetch-lock.v2"
+        or source.get("status") != "complete"
+        or source.get("source_commit") != EXPECTED_SOURCE
+        or source.get("mujoco_version") != "3.12.0"
+    ):
+        raise ValueError("complete runtime-fetch lock identity changed")
+    components = source.get("components", {})
+    if set(components) != set(EXPECTED_SOURCE_FIELDS):
+        raise ValueError("runtime source component inventory changed")
+    for name, expected_fields in EXPECTED_SOURCE_FIELDS.items():
+        if any(
+            components[name].get(key) != value for key, value in expected_fields.items()
+        ):
+            raise ValueError(f"runtime source identity changed: {name}")
+    if source.get("delivery") != {
+        "source": "operator-owned-runtime-cache",
+        "baked_runtime": "neutral-bootstrap-only",
+        "weights": "none",
+        "data_assets": "runtime-cache-only",
+        "runtime_cache": "operator-owned-and-external",
+        "outputs": "operator-owned-run-artifacts",
+    }:
+        raise ValueError("six-boundary runtime delivery classification changed")
+    artifacts = source.get("artifacts")
+    if (
+        not isinstance(artifacts, list)
+        or len(artifacts) != 27
+        or source.get("expected_python_distribution_count") != 26
+        or source.get("resolved_python_artifact_count") != 26
+    ):
+        raise ValueError("runtime artifact closure is incomplete")
+    if sum(item.get("role") == "solution-source" for item in artifacts) != 1:
+        raise ValueError("runtime source archive closure changed")
+    if sum(item.get("role") == "python-wheel" for item in artifacts) != 26:
+        raise ValueError("runtime wheel closure changed")
+    if not any(
+        item.get("name") == "gymnasium-robotics-source"
+        and item.get("sha256")
+        == EXPECTED_SOURCE_FIELDS["farama_gymnasium_robotics"]["archive_sha256"]
+        for item in artifacts
+    ):
+        raise ValueError("exact runtime Gymnasium-Robotics source is absent")
+    if not any(
+        item.get("name") == "mujoco-3.12.0-cp312-linux-x86_64"
+        and item.get("sha256") == EXPECTED_SOURCE_FIELDS["mujoco"]["wheel_sha256"]
+        for item in artifacts
+    ):
+        raise ValueError("exact runtime MuJoCo wheel is absent")
+
+    requirements = rootfs["opt/npa/gymnasium-robotics/requirements.lock"]
+    if _locked_python_distributions(requirements) != EXPECTED_PYTHON_DISTRIBUTIONS:
+        raise ValueError("runtime Python distribution closure changed")
+    if (
+        source.get("requirements_lock_sha256")
+        != hashlib.sha256(requirements).hexdigest()
+    ):
+        raise ValueError("runtime lock does not bind requirements bytes")
+
+    apt = json.loads(rootfs["opt/npa/gymnasium-robotics/apt-runtime.lock.json"])
+    if (
+        apt.get("schema") != "npa.gymnasium-robotics.neutral-bootstrap-apt-lock.v2"
+        or apt.get("status") != "complete"
+        or apt.get("base") != EXPECTED_BASE
+        or not apt.get("resolved_binary_packages")
+        or not apt.get("resolved_source_packages")
+    ):
+        raise ValueError("neutral bootstrap APT/source closure is incomplete")
+    corresponding = json.loads(
+        rootfs["opt/npa/gymnasium-robotics/corresponding-source.lock.json"]
+    )
+    if (
+        corresponding.get("schema")
+        != "npa.gymnasium-robotics.baked-corresponding-source-lock.v2"
+        or corresponding.get("status") != "complete"
+        or corresponding.get("scope") != "candidate-image-layers-only"
+        or len(corresponding.get("deliveries") or []) != 1
+        or corresponding["deliveries"][0].get("binary_component")
+        != "ubuntu-neutral-bootstrap-closure"
+        or not corresponding["deliveries"][0].get("artifacts")
+    ):
+        raise ValueError("neutral image corresponding-source closure is incomplete")
+
+
 def scan(path: Path) -> dict[str, Any]:
     with path.open("rb") as stream:
         archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -1105,7 +1258,7 @@ def scan(path: Path) -> dict[str, Any]:
     missing = sorted(REQUIRED - rootfs.keys())
     if missing:
         raise ValueError(f"required image files absent: {missing}")
-    _complete_locks(rootfs, entries, layer_diff_ids)
+    _neutral_candidate(rootfs, layer_diff_ids)
     return {
         "schema": "npa.gymnasium-robotics.payload-scan.v1",
         "status": "passed",
@@ -1122,6 +1275,9 @@ def scan(path: Path) -> dict[str, Any]:
         "final_entry_count": len(entries),
         "final_regular_file_count": len(rootfs),
         "unresolved_findings": 0,
+        "upstream_runtime_payload_count": 0,
+        "shadow_asset_count": 0,
+        "runtime_cache_entry_count": 0,
         "accepted_manifest_present": False,
         "release_authorized": False,
     }

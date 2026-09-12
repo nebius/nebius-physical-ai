@@ -1,32 +1,76 @@
 #!/usr/bin/env bash
-# Phase A refusal gate. It uses only POSIX-userland tools present in the exact
-# Ubuntu base and performs no network operation or package installation.
+# Neutral entrypoint and pre-network image-build gate.
 set -euo pipefail
 
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+IMAGE_ROOT="${NPA_GYMNASIUM_IMAGE_ROOT:-/opt/npa/gymnasium-robotics}"
+if [ -f "$SCRIPT_ROOT/source-lock.json" ]; then
+  DEFAULT_LOCK_ROOT="$SCRIPT_ROOT"
+else
+  DEFAULT_LOCK_ROOT="$IMAGE_ROOT"
+fi
+LOCK_ROOT="${NPA_GYMNASIUM_LOCK_ROOT:-$DEFAULT_LOCK_ROOT}"
+CACHE_ROOT="${NPA_GYMNASIUM_RUNTIME_CACHE:-/workspace/.cache/npa/gymnasium-robotics}"
 
-verify_phase_a_refusal() {
+# Filled only by a manager-authorized legal-closure transaction. Keeping the
+# array empty ensures a status-only lock edit cannot unlock apt network access.
+BOOTSTRAP_APT_PACKAGES=()
+
+verify_bootstrap_locks() {
   incomplete=()
-  for name in source-lock.json apt-runtime.lock.json corresponding-source.lock.json; do
-    if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"complete"' "$ROOT/$name"; then
+  for name in apt-runtime.lock.json corresponding-source.lock.json; do
+    if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"complete"' "$LOCK_ROOT/$name"; then
       incomplete+=("$name")
     fi
   done
-  if ! grep -Fq '# status: complete' "$ROOT/requirements.lock"; then
-    incomplete+=("requirements.lock")
+  if [ "${#BOOTSTRAP_APT_PACKAGES[@]}" -eq 0 ]; then
+    incomplete+=("trusted-bootstrap-package-vector")
   fi
   if [ "${#incomplete[@]}" -gt 0 ]; then
-    printf 'Phase A packaging refusal: incomplete evidence locks: %s\n' \
+    printf 'Neutral bootstrap packaging refusal before network access: %s\n' \
       "${incomplete[*]}" >&2
     return 65
   fi
-  echo "Phase A packaging refusal: complete locks require a new manager-authorized build implementation" >&2
-  return 65
+}
+
+install_bootstrap() {
+  verify_bootstrap_locks
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    "${BOOTSTRAP_APT_PACKAGES[@]}"
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+}
+
+prepare_runtime() {
+  exec python3 -I -B "$IMAGE_ROOT/runtime-bootstrap.py" \
+    --manifest "$IMAGE_ROOT/source-lock.json" \
+    --requirements "$IMAGE_ROOT/requirements.lock" \
+    --cache-root "$CACHE_ROOT" \
+    prepare "$@"
+}
+
+run_smoke() {
+  exec python3 -I -B "$IMAGE_ROOT/runtime-bootstrap.py" \
+    --manifest "$IMAGE_ROOT/source-lock.json" \
+    --requirements "$IMAGE_ROOT/requirements.lock" \
+    --cache-root "$CACHE_ROOT" \
+    exec -- "$IMAGE_ROOT/capability_smoke.py" "$@"
 }
 
 case "${1:-}" in
-  verify-locks|install)
-    verify_phase_a_refusal
+  verify-bootstrap-locks)
+    verify_bootstrap_locks
+    ;;
+  install-bootstrap)
+    install_bootstrap
+    ;;
+  prepare-runtime)
+    shift
+    prepare_runtime "$@"
+    ;;
+  run-smoke)
+    shift
+    run_smoke "$@"
     ;;
   "")
     exec /bin/sh

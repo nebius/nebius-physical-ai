@@ -136,7 +136,7 @@ jobs:
           for tool in build_tools:
               if tool in PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
                   raise SystemExit(
-                      f"{tool}: Phase A pre-registration candidate has no build authority"
+                      f"{tool}: pre-registration candidate has no build authority"
                   )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)

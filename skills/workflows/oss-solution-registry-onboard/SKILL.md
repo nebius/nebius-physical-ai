@@ -237,13 +237,16 @@ strictly reserved RTX PRO 6000 Blackwell must exercise all of:
 The smoke must write exactly `gymnasium-robotics-smoke.json`, prove real
 MuJoCo steps, contacts or touch response, state/orientation change, distinct
 RGB frame hashes, NVIDIA EGL, and equality between the immutable image digest
-and the pod-observed digest. Phase A uses a fixed in-image smoke with an empty
-workflow build command, but remains unbuilt in pre-registration publication
-quarantine until corresponding-source/package locks are complete. Historical
-private evidence never qualifies redesigned or public bytes. This is not a
-first-class tool. It uses no model, external dataset, gated asset, or terms
-acceptance. RL sweeps, expert scores, other environment families, and
-physical-robot transfer remain deferred. Never route it to B200.
+and the pod-observed digest. The public candidate is a neutral bootstrap with
+an empty workflow build command: upstream source, Shadow assets, MuJoCo/Python
+workload, and populated caches are fetched only into an operator-owned runtime
+cache after complete hash locks. Fetch changes delivery only, not use,
+derivative, output, or service rights. The image remains unbuilt and in
+pre-registration publication quarantine. Historical private evidence never
+qualifies redesigned or public bytes. This is not a first-class tool. It uses
+no model, external dataset, gated asset, or terms acceptance. RL sweeps, expert
+scores, other environment families, and physical-robot transfer remain
+deferred. Never route it to B200.
 
 ### RoboCasa (`byof-robocasa.yaml`)
 

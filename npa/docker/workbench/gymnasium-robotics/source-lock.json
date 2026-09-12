@@ -1,7 +1,52 @@
 {
-  "schema": "npa.gymnasium-robotics.source-lock.v1",
-  "status": "phase-a-incomplete",
-  "reason": "Shadow preferred-form and transformation-source closure has not yet been captured in an authorized evidence transaction.",
+  "schema": "npa.gymnasium-robotics.runtime-fetch-lock.v2",
+  "status": "incomplete",
+  "reason": "The complete Python 3.12 wheel graph and runtime-use/derivative disposition remain evidence-dependent; runtime fetch refuses before network access.",
+  "decision_sha256": "758a29a6fae55075dc4ba879907e81f949b7a4e23fa726b790fd4361241697a3",
+  "source_commit": "4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
+  "mujoco_version": "3.12.0",
+  "requirements_lock_sha256": null,
+  "rights_boundary": "Runtime fetch changes delivery only; it does not grant or resolve use, derivative-work, output, or hosted-service rights.",
+  "delivery": {
+    "source": "operator-owned-runtime-cache",
+    "baked_runtime": "neutral-bootstrap-only",
+    "weights": "none",
+    "data_assets": "runtime-cache-only",
+    "runtime_cache": "operator-owned-and-external",
+    "outputs": "operator-owned-run-artifacts"
+  },
+  "artifacts": [
+    {
+      "name": "gymnasium-robotics-source",
+      "role": "solution-source",
+      "url": "https://github.com/Farama-Foundation/Gymnasium-Robotics/archive/4d1ebecbc6436806cfbc0e42ebc36f594d05844e.tar.gz",
+      "final_url": "https://codeload.github.com/Farama-Foundation/Gymnasium-Robotics/tar.gz/4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
+      "sha256": "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
+      "size_bytes": 281920861,
+      "filename": "gymnasium-robotics-4d1ebecbc6436806cfbc0e42ebc36f594d05844e.tar.gz",
+      "archive": "tar.gz",
+      "strip_prefix": "Gymnasium-Robotics-4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
+      "max_unpacked_bytes": 1073741824,
+      "license": "MIT-with-embedded-asset-notices",
+      "delivery_status": "runtime-only"
+    },
+    {
+      "name": "mujoco-3.12.0-cp312-linux-x86_64",
+      "role": "python-wheel",
+      "url": "https://files.pythonhosted.org/packages/b7/2e/389e8aaa3ce75e21f97ac9e7c48235b6b7acbfb1f370fd3ffb334f77b905/mujoco-3.12.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "final_url": "https://files.pythonhosted.org/packages/b7/2e/389e8aaa3ce75e21f97ac9e7c48235b6b7acbfb1f370fd3ffb334f77b905/mujoco-3.12.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "sha256": "7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0",
+      "size_bytes": 19816226,
+      "filename": "mujoco-3.12.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "archive": "wheel",
+      "strip_prefix": null,
+      "max_unpacked_bytes": 536870912,
+      "license": "Apache-2.0",
+      "delivery_status": "runtime-only"
+    }
+  ],
+  "expected_python_distribution_count": 26,
+  "resolved_python_artifact_count": 1,
   "components": {
     "farama_gymnasium_robotics": {
       "archive_sha256": "ad8771ed6e9dd772b1101a25310ea46dd0f6f0044fbd6ea9af01af7b7c52c2c7",
@@ -21,13 +66,14 @@
       "wheel_sha256": "7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0"
     },
     "shadow_sr_common": {
-      "archive_sha256": null,
+      "archive_sha256": "9156431f65db221260c7e0bc31da8c7c14b493a45c20eaa1fe57802b1cf95448",
       "commit": "59d6bdf35bd9cf53185a20eb63413fdfe57fe77c",
       "license": "GPL-2.0-only",
       "license_sha256": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505",
-      "preferred_form_sha256": null,
+      "preferred_form_complete": false,
       "repository": "https://github.com/shadow-robot/sr_common",
-      "transformation_manifest_sha256": null
+      "transformation_mapping_complete": false,
+      "use_and_derivative_status": "unresolved-runtime-only"
     }
   }
 }

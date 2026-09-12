@@ -82,6 +82,9 @@ def test_smoke_requires_physics_touch_orientation_and_real_egl() -> None:
         '"synthetic_only_fixture": False',
         '"physics_substeps": substeps',
         '"pod_observed_image_digest": observed',
+        'os.environ.get("NPA_GYMNASIUM_RUNTIME_ROOT", "")',
+        'receipt.get("source_commit") != EXPECTED_SOURCE',
+        '"cache_receipt": runtime_receipt',
     ):
         assert token in source
 
