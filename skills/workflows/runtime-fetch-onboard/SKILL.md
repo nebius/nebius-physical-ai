@@ -73,9 +73,13 @@ discarding unrelated capabilities that can be packaged and proven safely.
    need no secret reference. Follow the documented product policy for
    non-secret acceptance controls: for example, the Isaac default and explicit
    opt-out may appear in profiles or YAML where the canonical Isaac policy
-   requires it. Never put credentials, secret acceptance material, signed
-   URLs, restricted bytes, or populated caches in Docker arguments, layers,
-   image config, YAML, source metadata, logs, output manifests, or PR text.
+   requires it. For every shape, never put credentials, secret acceptance
+   material, or signed URLs in Docker arguments, layers, image config, YAML,
+   source metadata, logs, output manifests, or PR text. For either
+   runtime-fetch shape, also keep restricted payload bytes and populated caches
+   out of those surfaces. A build-your-own private image may contain its
+   declared restricted inputs in layers, but never the credentials used to
+   obtain them; record only non-secret identities and terms as provenance.
 6. Prefer upstream-verifiable entitlement such as a gated-repository token or
    vendor license key. A token normally proves access only; treat it as terms
    acceptance only when the provider's gate demonstrably records acceptance of
@@ -181,8 +185,8 @@ downstream consumer exists.
   runtime cache, or cache-reuse test unless runtime fetch is also declared.
 - NPA workflow YAML with runtime secret references only when the artifact's
   exact access or product-acceptance policy requires them, declared
-  input/output artifacts, compatible GPU resources, and no embedded restricted
-  bytes. Build-only credentials never appear in the workflow.
+  input/output artifacts, compatible GPU resources, and no restricted payload
+  bytes embedded in YAML. Build-only credentials never appear in the workflow.
 - Operator guide listing official terms/access steps, cache behavior, cleanup,
   accepted capabilities, and accurately deferred claims.
 
@@ -191,8 +195,10 @@ downstream consumer exists.
 Stop and escalate when official sources conflict, operator-specific facts decide
 eligibility, the provider exposes no lawful runtime delivery path, service use
 is restricted, output terms prohibit the intended next stage, or a byte-level
-scan cannot prove the image clean. Continue every independent packaging,
-documentation, planning, and test task that does not depend on that decision.
+scan cannot prove the runtime-fetch image free of restricted payloads or the
+build-your-own image fully inventoried and free of build secrets. Continue
+every independent packaging, documentation, planning, and test task that does
+not depend on that decision.
 
 ## Verify
 

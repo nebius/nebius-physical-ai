@@ -74,6 +74,9 @@ def test_skill_keeps_restricted_bytes_and_secrets_out_of_images() -> None:
         "genuinely anonymous artifacts need no secret reference",
         "do not invent a generic `accept_terms=yes` variable",
         "do not add an npa-side eula or terms-acceptance boolean",
+        "for every shape, never put credentials",
+        "for either runtime-fetch shape, also keep restricted payload bytes",
+        "build-your-own private image may contain its declared restricted inputs",
         "operator-owned, access-restricted cache",
         "default to node-local ephemeral caching",
         "mount a completed durable cache read-only",
@@ -172,6 +175,7 @@ def test_proof_and_worksheet_requirements_are_packaging_shape_specific() -> None
         "resulting-byte inventory",
         "build-secret absence",
         "private-registry containment",
+        "do not claim their absence",
     ):
         assert phrase in build_proof, phrase
         assert phrase not in runtime_proof, phrase
