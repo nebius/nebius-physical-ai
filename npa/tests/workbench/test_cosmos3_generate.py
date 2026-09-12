@@ -26,10 +26,13 @@ from npa.workbench.cosmos.generate import (
     resolve_hf_token,
     run_cosmos3_generate,
 )
+from npa.workbench.cosmos.guarded_inference import (
+    GUARDRAIL_RECEIPT_ENV,
+    GUARDRAIL_STATE_SCHEMA,
+)
 
 SPEC_YAML = (
-    Path(__file__).resolve().parents[3]
-    / "workflows/testing/cosmos3-generate.yaml"
+    Path(__file__).resolve().parents[3] / "workflows/testing/cosmos3-generate.yaml"
 )
 
 
@@ -47,6 +50,30 @@ def _fake_runtime(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     venv_python.chmod(0o755)
     env = {"COSMOS3_REPO": str(repo), "HF_TOKEN": "hf-secret"}
     return repo, env
+
+
+def _write_effective_guardrail_receipt(run_kwargs: dict) -> None:
+    state = {
+        "schema": GUARDRAIL_STATE_SCHEMA,
+        "requested": True,
+        "discovered": {
+            "prompt_input": ["Blocklist", "Qwen3Guard"],
+            "generated_media": ["VideoContentSafetyFilter"],
+        },
+        "evaluated": {
+            "prompt_input": ["Blocklist", "Qwen3Guard"],
+            "generated_media": ["VideoContentSafetyFilter"],
+        },
+        "postprocessors": {
+            "discovered": ["RetinaFaceFilter"],
+            "evaluated": ["RetinaFaceFilter"],
+        },
+        "effective": True,
+        "status": "passed",
+        "failure": "",
+    }
+    path = Path(run_kwargs["env"][GUARDRAIL_RECEIPT_ENV])
+    path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def test_generate_modes_cover_the_documented_surface() -> None:
@@ -107,9 +134,11 @@ def test_plan_keeps_guardrails_on_by_default(tmp_path: Path) -> None:
     plan = generate_plan(prompt="a robot arm", output_dir=tmp_path)
 
     assert plan["guardrails"] is True
+    assert plan["guardrail_state"]["status"] == "pending"
     assert "--no-guardrails" not in plan["argv"]
     assert plan["checkpoint"] == DEFAULT_CHECKPOINT
-    assert plan["argv"][1:3] == ["-m", "cosmos_framework.scripts.inference"]
+    assert plan["argv"][1:3] == ["-m", "npa.workbench.cosmos.guarded_inference"]
+    assert plan["inference_module"] == "cosmos_framework.scripts.inference"
     assert "--parallelism-preset" in plan["argv"]
 
 
@@ -117,6 +146,8 @@ def test_plan_disables_guardrails_only_on_explicit_opt_out(tmp_path: Path) -> No
     plan = generate_plan(prompt="a robot arm", output_dir=tmp_path, no_guardrails=True)
 
     assert plan["guardrails"] is False
+    assert plan["guardrail_state"]["status"] == "explicit_opt_out"
+    assert plan["guardrail_state"]["effective"] is False
     assert "--no-guardrails" in plan["argv"]
 
 
@@ -201,6 +232,9 @@ def test_run_generate_without_guardrails_needs_no_token_for_staged_weights(
     assert result["status"] == "executed"
     assert result["hf_auth"] == "skipped"
     assert result["guardrails"] is False
+    assert result["guardrail_state"]["requested"] is False
+    assert result["guardrail_state"]["status"] == "explicit_opt_out"
+    assert result["guardrail_state"]["effective"] is False
 
 
 def test_staged_checkpoint_tilde_is_expanded(tmp_path: Path) -> None:
@@ -392,6 +426,8 @@ def _generate_with_probe(
         env["HF_HUB_DISABLE_XET"] = "1"
 
     def fake_runner(argv, **kwargs):
+        if not no_guardrails:
+            _write_effective_guardrail_receipt(kwargs)
         sample = output_dir / "npa-generate"
         sample.mkdir(parents=True)
         (sample / "vision.jpg").write_bytes(b"y" * 2048)
@@ -468,6 +504,7 @@ def test_run_generate_reports_the_produced_image(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
         calls.append(list(argv))
         sample = output_dir / "sample"
         (sample / "inputs").mkdir(parents=True)
@@ -494,6 +531,9 @@ def test_run_generate_reports_the_produced_image(tmp_path: Path) -> None:
     assert Path(result["output_path"]).name == "vision.jpg"
     assert result["output_bytes"] == 2048
     assert result["guardrails"] is True
+    assert result["guardrail_state"]["requested"] is True
+    assert result["guardrail_state"]["effective"] is True
+    assert result["guardrail_state"]["status"] == "passed"
     assert result["weights_baked"] is False
     assert result["hf_auth"] == "configured"
     assert result["sample_outputs"] == {"status": "ok"}
@@ -503,11 +543,69 @@ def test_run_generate_reports_the_produced_image(tmp_path: Path) -> None:
     assert calls[0][0] == str(repo / ".venv" / "bin" / "python")
 
 
+def test_requested_guardrails_fail_closed_without_native_receipt(
+    tmp_path: Path,
+) -> None:
+    _, env = _fake_runtime(tmp_path)
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        (sample / "vision.jpg").write_bytes(b"generated" * 512)
+        return subprocess.CompletedProcess(argv, 0)
+
+    with pytest.raises(Cosmos3GenerateError, match="could not be proven"):
+        run_cosmos3_generate(
+            prompt="a robot arm",
+            output_dir=output_dir,
+            environ=env,
+            runner=fake_runner,
+        )
+
+
+def test_requested_guardrails_reject_discovered_but_unevaluated_model(
+    tmp_path: Path,
+) -> None:
+    _, env = _fake_runtime(tmp_path)
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        receipt = {
+            "schema": GUARDRAIL_STATE_SCHEMA,
+            "requested": True,
+            "discovered": {
+                "prompt_input": ["Qwen3Guard"],
+                "generated_media": ["VideoContentSafetyFilter"],
+            },
+            "evaluated": {"prompt_input": ["Qwen3Guard"], "generated_media": []},
+            "effective": False,
+            "status": "ineffective",
+            "failure": "generated_media:incomplete_evaluation",
+        }
+        Path(kwargs["env"][GUARDRAIL_RECEIPT_ENV]).write_text(
+            json.dumps(receipt), encoding="utf-8"
+        )
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        (sample / "vision.jpg").write_bytes(b"generated" * 512)
+        return subprocess.CompletedProcess(argv, 0)
+
+    with pytest.raises(Cosmos3GenerateError, match="were not effective"):
+        run_cosmos3_generate(
+            prompt="a robot arm",
+            output_dir=output_dir,
+            environ=env,
+            runner=fake_runner,
+        )
+
+
 def test_run_generate_reports_video_for_a_video_mode(tmp_path: Path) -> None:
     _, env = _fake_runtime(tmp_path)
     output_dir = tmp_path / "out"
 
     def fake_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
         sample = output_dir / "npa-generate"
         sample.mkdir(parents=True)
         (sample / "vision.mp4").write_bytes(b"v" * 8192)
@@ -554,12 +652,16 @@ def test_run_generate_requires_the_hf_token_before_launching(tmp_path: Path) -> 
 def test_run_generate_surfaces_inference_failure(tmp_path: Path) -> None:
     _, env = _fake_runtime(tmp_path)
 
+    def failed_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
+        return subprocess.CompletedProcess(argv, 2)
+
     with pytest.raises(Cosmos3GenerateError, match="exit 2"):
         run_cosmos3_generate(
             prompt="a robot arm",
             output_dir=tmp_path / "out",
             environ=env,
-            runner=lambda argv, **k: subprocess.CompletedProcess(argv, 2),
+            runner=failed_runner,
         )
 
 
@@ -568,6 +670,7 @@ def test_run_generate_fails_when_no_artifact_is_produced(tmp_path: Path) -> None
     output_dir = tmp_path / "out"
 
     def empty_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
         (output_dir / "npa-generate").mkdir(parents=True)
         return subprocess.CompletedProcess(argv, 0)
 
@@ -599,6 +702,7 @@ def test_video_mode_prefers_the_clip_over_a_larger_poster_frame(tmp_path: Path) 
     output_dir = tmp_path / "out"
 
     def fake_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
         sample = output_dir / "npa-generate"
         sample.mkdir(parents=True)
         # The still is deliberately larger than the clip.
@@ -625,6 +729,7 @@ def test_video_mode_fails_when_only_an_image_was_produced(tmp_path: Path) -> Non
     output_dir = tmp_path / "out"
 
     def fake_runner(argv, **kwargs):
+        _write_effective_guardrail_receipt(kwargs)
         sample = output_dir / "npa-generate"
         sample.mkdir(parents=True)
         (sample / "vision.jpg").write_bytes(b"y" * 2048)

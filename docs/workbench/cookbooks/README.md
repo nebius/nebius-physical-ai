@@ -1,44 +1,34 @@
-# Cookbooks
+# Workbench cookbooks
 
-Technical recipes for reproducing benchmark, demo, and customer evaluation
-workflows with Nebius Physical AI Workbench.
+[Workbench docs](../README.md) · [Workload guides](../guides/README.md) · [Workflow catalog](../../../workflows/README.md)
 
-> Looking for the SkyPilot YAML behind a cookbook? The
-> [workflow catalog](../../../workflows/README.md) maps
-> every workflow YAML to its command and guide.
+Recipes for specific workloads, benchmarks, and integrations. Start with
+[Workbench setup](../getting-started.md); each recipe states its own inputs and
+validation scope. Dated measurements apply to the versions and hardware recorded.
 
-## Available Cookbooks
+## Policy training and simulation
 
-- [GR00T N1.7 Training](groot-1-7-training.md): validate, plan, and submit
-  reproducible single- or multi-GPU fine-tuning, then recover the run ID and
-  inspect the checkpoint provenance manifest.
-- [BDD100K SkyPilot Pipeline](bdd100k-pipeline.md): provision the object store,
-  Kubernetes cluster, GPU node groups, and in-cluster LanceDB/detection-training
-  services, then run the BDD100K ingest, UDF backfill, CLIP embedding,
-  materialized-view, training, and evaluation pipeline.
-- [PushT sim-to-real guide](../guides/pusht-sim-to-real.md): train and evaluate
-  a policy for the PushT task. For the canonical 14-stage workflow, see the
-  [Sim2Real guide](../guides/sim2real-workflow.md).
-- [VLM-Eval Loop Runbook](vlm-eval-loop-runbook.md): serve a VLM with vLLM,
-  score rollout directories with `vlm-eval`, and write a task-success report.
-- [Token Factory + Nebius compute combos](tokenfactory-compute-combos.md): two
-  workflows that pair real Nebius GPU compute with hosted Token Factory
-  inference — a serverless GPU train run triaged by a text model, and a
-  Kubernetes GPU rollout judged by a hosted VLM.
-- [LeRobot GPU Benchmarks](lerobot-gpu-benchmarks.md): reproduce the May 2026
-  LeRobot GPU benchmark research across L40S, H200, B300, and RTX PRO 6000.
-- [LeRobot GPU Benchmarks Runbook](lerobot-gpu-benchmarks-runbook.md): exact
-  terminal steps for serverless Jobs, seconds/step measurements, artifact
-  checks, validation, and cleanup.
-- [Isaac Lab BYOF](byof-isaac-lab/README.md): layer a custom Isaac Lab image
-  over the digest-pinned Workbench base and run it through the SkyPilot image
-  override surface.
-- [SONIC Locomotion Fine-Tuning](sonic-locomotion-finetuning.md): retarget
-  motion data, run SONIC fine-tuning, and evaluate with MJLab through SkyPilot
-  YAML.
-- [SONIC G1 Fine-Tune to MuJoCo MVP](sonic-mvp-g1-mujoco.md): first milestone
-  G1 warm-start fine-tune from the released SONIC checkpoint and headless
-  MuJoCo checkpoint evaluation.
-- [SONIC Export and Eval Runbook](sonic-eval-runbook.md): export a trained
-  SONIC checkpoint to ONNX, run reference locomotion eval, and swap in a
-  config-driven external eval container.
+| Recipe | Purpose |
+| --- | --- |
+| [GR00T N1.7](groot-1-7-training.md) | Fine-tune, recover the run ID, and inspect checkpoint provenance |
+| [Isaac Lab BYOF](byof-isaac-lab/README.md) | Run a custom Isaac Lab fork in a container |
+| [SONIC training](sonic-train-runbook.md) | Prepare a single training stage and its runtime |
+| [SONIC locomotion](sonic-locomotion-finetuning.md) | Prepare retarget → train → MJLab resource and artifact contracts |
+| [SONIC export and eval](sonic-eval-runbook.md) | Export ONNX and inspect evaluation results |
+| [G1 MuJoCo image status](sonic-mvp-g1-mujoco.md) | Active evaluation capability and retired combined-image limitations |
+| [SONIC whole-body control](sonic-whole-body-control.md) | Training, export, serving, and data contracts |
+| [LeRobot benchmarks](lerobot-gpu-benchmarks.md) · [runbook](lerobot-gpu-benchmarks-runbook.md) | Reproduce recorded training measurements |
+| [SONIC B300 evidence](sonic-b300-routing-evidence.md) | Scope of the recorded datacenter-GPU checks |
+
+## Data and evaluation
+
+| Recipe | Purpose |
+| --- | --- |
+| [BDD100K pipeline](bdd100k-pipeline.md) | Ingest, curate, train, and evaluate detectors |
+| [LanceDB deployment](lancedb-deploy-runbook.md) | Deploy the service and load data |
+| [LanceDB vector search](lancedb-vector-search.md) | Build and query embeddings |
+| [VLM evaluation loop](vlm-eval-loop-runbook.md) | Score rollouts and inspect task-success reports |
+| [Token Factory with compute](tokenfactory-compute-combos.md) | Pair GPU jobs with hosted inference |
+| [Physical reasoning challenge](physical-reasoning-challenge.md) | Recorded reasoning recipe; use current Token Factory model guidance |
+| [Serverless coverage](serverless-tools-coverage.md) | Tool-specific modes and recorded checks |
+| [CLI / SDK / YAML parity](workbench-parity-tools.md) | Compare supported access paths |

@@ -1,5 +1,7 @@
 # OSS Physical AI Solution Candidates
 
+[Workbench docs](README.md)
+
 This catalog tracks open-source Physical AI projects that are being onboarded as
 Workbench registry candidates through BYOF, including entries subsequently
 promoted to native tools or public images as noted below. Promotion requires the pushed registry image
@@ -253,12 +255,14 @@ package/image tags:
 | Version | Status | Notes |
 | --- | --- | --- |
 | `0.5.1` | default | Accepted CUDA 13 timestamped image pin in `lerobot_version_manifest.json`; plain `0.5.1` is historical |
-| `0.6.0` | additional package support | Requires a validated operator-built image for container execution; no accepted public tag/digest; lean extras + `env_eval_freq` |
+| `0.6.0` | validated additional package support | Accepted immutable `0.6.0-d6-extras-20260912` image and digest; lean diffusion + SmolVLA extras; real DiffusionPolicy construction and Blackwell validation passed on B200; `env_eval_freq` |
 
 Select the package with `--lerobot-version`; serverless training accepts a
 custom container through `train --image`, while VM deployment installs the
-package. The 2026-09-05 anonymous audit returned `404 MANIFEST_UNKNOWN` for
-the official `npa-lerobot:0.6.0` tag; it is outside the public release plan.
+package. The failed 2026-09-05 anonymous lookup was resolved by the 2026-09-12
+exact-digest publication. The immutable resolver tag and compatibility
+`0.6.0` alias now resolve to the same accepted bytes; the optional version
+remains separate from the default public release row.
 Manifest:
 `npa/src/npa/deploy/lerobot_version_manifest.json`. Upstream:
 https://huggingface.co/blog/lerobot-release-v060

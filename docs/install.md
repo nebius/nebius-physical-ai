@@ -1,4 +1,6 @@
-# Installing npa on every platform
+# Install npa
+
+[Docs](README.md)
 
 `npa` targets **macOS**, **Linux**, and **Windows via WSL2**, and works with
 **Python 3.10+**. It is not published to PyPI, so you always install it editable
@@ -77,24 +79,20 @@ source .venv/bin/activate
 uv pip install --python .venv/bin/python -e npa
 ```
 
-The base install is fully capable: a plain `pip install -e npa` already
-includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
-Rerun viewer, and the local eval/agent server). There is no separate
-`npa[full]` step. Only these extras are opt-in:
+The base install includes dataframe/reporting tools, LanceDB, Rerun, and the
+local eval/agent server. Cloud engines run in their containers. Install extras
+only for local engines, tracing, or development:
 
 ```bash
 pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
 pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
 pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
-pip install -e "npa[agent-eval]"  # compatibility alias; eval validators are built in
 pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 ```
 
-The GPU/simulation wheels above are only needed when you run those engines
-**locally**; cloud jobs execute them inside the Nebius images they launch. The
-`full`, `data`, `lancedb`, `viz`, and `server` extras still resolve (as no-ops
-now folded into the base install) so older `npa[full]` commands keep working.
+The `full`, `data`, `lancedb`, `viz`, `server`, and `agent-eval` extras are
+compatibility aliases already covered by the base install.
 
 From the clone root, activate the venv in every new shell
 (`source .venv/bin/activate`), or call `.venv/bin/npa` directly without
@@ -192,3 +190,8 @@ These work but are not covered by the copy-paste path:
   yet): pin to the latest Python that has wheels, or build from source.
 - **Air-gapped machines:** pre-mirror the repo and a wheelhouse; `pip install -e`
   still needs the transitive dependencies available offline.
+
+## Next step
+
+[Configure your project](configuration.md), choose a [workload](workbench/guides/README.md),
+and prepare its [runtime](workbench/getting-started.md).

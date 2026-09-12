@@ -1,5 +1,7 @@
 # LeIsaac browser teleoperation
 
+[Workbench docs](README.md)
+
 For the measured split control/video transport, fallback behavior, latency
 instrumentation, and security model, see
 [LeIsaac low-latency browser transport](guides/leisaac-transport-latency.md).

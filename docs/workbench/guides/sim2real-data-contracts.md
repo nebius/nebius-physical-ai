@@ -1,5 +1,7 @@
 # Sim-to-Real — Data types & artifact contracts
 
+[Guides](README.md)
+
 **Canonical reference** for formats, schemas, and S3 layout in the 14-stage sim-to-real
 loop. Other guides link here instead of duplicating tables.
 

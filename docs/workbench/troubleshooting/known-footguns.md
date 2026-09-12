@@ -1,21 +1,60 @@
 # Known Operational Footguns
 
-These are known operational failure modes surfaced during W10 Isaac Lab BYOF
-validation. They are documented here so partners can request the right operator
-action before discovering each issue through a failed run.
+[Workbench docs](../README.md) · [Run lifecycle](../../run-lifecycle.md) · [Teardown](../../teardown.md)
 
-## L40S Capacity Is On-Demand-Zero
+Start with the failed run's exact ID and project:
+
+```bash
+npa workbench workflow status "<run-id>" --project "<alias>"
+npa workbench workflow logs "<run-id>" --project "<alias>"
+npa workbench workflow artifacts "<run-id>" --project "<alias>" --json
+```
+
+| Symptom | Check |
+| --- | --- |
+| Pending GPU task | [Per-node GPU count](#requesting-name2-on-a-fleet-of-1-gpu-nodes), [GPU names](#kubernetes-gpu-names-do-not-match-workflow-specs), and [CPU sizing](#default-l40s-preset-has-insufficient-cpu) |
+| Image pull failure | [Registry pull permissions](#registry-pull-returns-403-even-though-the-tag-exists) |
+| Submit stalls at the controller | [SkyPilot runtime](#submit-hangs-with-no-output-skypilot-controller-pod_config-loop) |
+| S3 works but Terraform fails | [Exact state-prefix permissions](#writable-s3-but-terraform-state-returns-403) |
+| Kubernetes reports anonymous `403` | [Kubeconfig authentication](#sky-check-reports-http-403-anonymous) |
+| Teardown stops partway | [Cancel verification](#controller-teardown-refuses-right-after-workflow-cancel) and [cleanup recovery](#teardown-is-seven-ordered-steps-with-no-single-entry-point) |
+| Gated model download fails | [Cosmos access preflight](../cosmos3-access-preflight.md) |
+| Provisioning preview reports `blocked` | [Quota and preview status](#provisioning-preview-exits-zero-but-reports-blocked) |
+
+The cases below include earlier validation incidents. Capacity and permissions
+must be checked on your selected project and cluster.
+
+## Provisioning preview exits zero but reports blocked
+
+`npa provision-if-absent --dry-run --output-format json` can exit zero while
+its JSON reports `status: blocked` and `preflight.decision: blocked`. Exit zero
+means the preview completed; inspect the decision and reasons before provisioning:
+
+```bash
+npa provision-if-absent --project "<alias>" --dry-run --output-format json \
+  | jq '{status, decision: .preflight.decision, reasons: .preflight.reasons}'
+```
+
+Reserved GPU capacity does not supply missing block-storage or CPU quota.
+Check the selected project's requested disks and node shapes against the reported
+quota. Resolve the named shortage or choose a workload that fits; an `unknown`
+decision also needs investigation. Keep the actual provisioning command's
+resource selections consistent with the preview.
+
+<a id="l40s-capacity-is-on-demand-zero"></a>
+
+## An L40S job waits for capacity
 
 Symptom: SkyPilot keeps backing off while trying to schedule an L40S job.
 
 Root cause: the workbench cluster may have no provisioned L40S capacity, and
 on-demand L40S availability can be zero for the target region.
 
-Current workaround: ask your Nebius support or operations contact to provision
-an L40S node group before the run. If your workflow can use another RT-core GPU
-and your region has it available, use RTX Pro 6000 in US Central.
-
-Category for follow-up: capacity.
+Check the selected project's quota, available capacity, and actual node pools.
+Prepare a compatible node group through [Workbench setup](../getting-started.md).
+If capacity is unavailable, consult your platform operator or Nebius support.
+An RTX PRO 6000 is an alternative only when the workload, image, region, and
+available node shape support it.
 
 ## Default L40S Preset Has Insufficient CPU
 
@@ -27,8 +66,6 @@ SkyPilot workflow request, such as a 16-CPU request.
 
 Current workaround: ask for a larger L40S preset, or reduce the SkyPilot CPU
 request in the workflow YAML when that is acceptable for the workload.
-
-Category for follow-up: platform.
 
 ## Writable S3 But Terraform State Returns 403
 
@@ -46,8 +83,6 @@ state, output, rollback, and destroy. It fails before resource creation when the
 contract is missing or forbidden. Do not broaden IAM merely to compensate for a
 dropped subprocess environment.
 
-Category for follow-up: platform.
-
 ## Private Registry Credentials Expire
 
 Symptom: the task pod fails to pull the Workbench image with a registry
@@ -60,8 +95,6 @@ Mitigation: public GHCR releases require no credentials. For a private image,
 rotate the exact-host credential through the operator's secret-management
 process and update the explicitly referenced standard Docker config secret.
 NPA does not mint tokens or refresh Kubernetes registry secrets.
-
-Category for follow-up: security.
 
 ## Registry Pull Returns 403 Even Though The Tag Exists
 
@@ -81,13 +114,11 @@ pull with the selected exact-host credentials and refuses to submit when a
 private image comes back `403`. Run it standalone with:
 
 ```bash
-npa workbench workflow preflight-images <spec.yaml>
+npa workbench workflow preflight-images "<spec.yaml>"
 ```
 
-The fix is to grant the run's identity pull access to that repository. Pass
-`--no-preflight-images` to skip the gate.
-
-Category for follow-up: security.
+Grant the run's identity pull access to that exact repository, then rerun image
+preflight. Skipping the check does not repair a pull failure.
 
 ## Submit Hangs With No Output (SkyPilot Controller pod_config Loop)
 
@@ -106,23 +137,19 @@ repairs an already-bootstrapped venv in place; `npa skypilot status` reports the
 installed client and fails when it is out of range. Submit also streams SkyPilot's
 output live and names this failure when it appears, instead of buffering silently.
 
-Category for follow-up: platform.
-
 ## Requesting `NAME:2` On A Fleet Of 1-GPU Nodes
 
 Symptom: a job fails `FAILED_PRECHECKS`, or never schedules, on a cluster that
 clearly has enough GPUs in total.
 
-Root cause: SkyPilot places all GPUs of one task on a **single node**. A cluster
-of 2 nodes × 1 GPU can never satisfy `NAME:2`, and adding nodes does not help.
-Multi-GPU fan-out documentation assumes N GPUs on one pod, which is a different
-cluster shape than "N single-GPU node presets".
+Root cause: `accelerators: NAME:2` requests two GPUs **per node**. Two nodes with
+one GPU each cannot satisfy that request. Use a node with two GPUs, or a supported
+multi-node workload that explicitly requests one GPU per node. Extra nodes do
+not automatically turn a single-node application into distributed execution.
 
 Mitigation: `npa workbench workflow gpus --cluster <name>` prints each
 accelerator's *requestable quantity per node*. Submit rejects a request above that
 maximum with a one-line fix rather than letting it fail later.
-
-Category for follow-up: platform.
 
 ## Kubernetes GPU Names Do Not Match Workflow Specs
 
@@ -162,8 +189,6 @@ matching local metadata. An ambient current context, first/stale profile, or
 auth/RBAC/connectivity uncertainty is never treated as proof. Planned/staged runs that never launched report
 `already_absent` and remain repeat-safe without calling SkyPilot.
 
-Category for follow-up: platform.
-
 ## A Managed Job Sits In PENDING Forever
 
 Symptom: a managed job stays `PENDING` for hours and never becomes `FAILED`,
@@ -179,8 +204,6 @@ job (via SkyPilot's own `skypilot-cluster-name` label) and reports the container
 waiting reason — `ImagePullBackOff`, `Unschedulable`, `CreateContainerConfigError`
 — with a remedy. `npa cleanup` also lists non-terminal managed jobs, since one of
 them will block controller teardown.
-
-Category for follow-up: platform.
 
 ## Cluster Teardown Goes Quiet For Several Minutes
 
@@ -216,8 +239,6 @@ detail confirms `NotFound` means the instance is already absent; NPA reports tha
 race as idempotent progress. The same event with PermissionDenied or any other
 real deletion failure remains visible verbatim.
 
-Category for follow-up: platform.
-
 ## No-Cluster Teardown Downloads Terraform Providers Into The Checkout
 
 Symptom: `npa cluster down --force` runs authentication and `terraform init` even
@@ -249,17 +270,19 @@ git diff -- deploy/cluster/.terraform.lock.hcl
 Do not delete the lock file or use an unverified provider package merely to make
 teardown proceed.
 
-Category for follow-up: platform.
+<a id="teardown-is-seven-ordered-steps-with-no-single-entry-point"></a>
 
-## Teardown Is Seven Ordered Steps With No Single Entry Point
+## Teardown leaves resources or local state behind
 
 Symptom: an environment looks torn down but still has a hung managed job, a local
 SkyPilot venv, empty `~/.npa/agents` / `~/.npa/clusters` directories, or an IAM
 service account nothing removed.
 
-Root cause: teardown spans cancel → agent destroy → cluster down → bucket delete →
-owned storage-IAM delete → forget project → remove local state, and nothing checks
-the order or reports what is left.
+Teardown spans cloud resources and local state. Use
+`npa destroy --project <alias> --all` to preview the ordered project plan; it
+executes only with `--yes`. If a phase fails, retain its recovery receipt and
+follow [the teardown guide](../../teardown.md). Local cleanup alone cannot stop
+cloud resources.
 
 Mitigation: `npa cleanup` reports residual local state (with sizes), empty per-alias
 state directories, and any managed job still non-terminal — the step most often
@@ -314,17 +337,15 @@ operator-actionable partial cleanup and exit 2. Use the project ID if the alias
 was already forgotten:
 
 ```bash
-npa storage service-account delete --project-id <project-id> --dry-run
-npa storage service-account delete --project-id <project-id> --yes
-npa cleanup --full --yes --project <alias>
+npa storage service-account delete --project-id "<project-id>" --dry-run
+npa storage service-account delete --project-id "<project-id>" --yes
+npa cleanup --full --yes --project "<alias>"
 ```
 
 For alias-free journaling, also pass `--id <exact-service-account-id>` and, when
 required by scope verification, `--tenant-id`/`--profile` or a receipt. Exact
 NotFound is verified absence; auth, RBAC, network, and parse failures remain
 unresolved. NPA never recreates a project stanza merely to record the result.
-
-Category for follow-up: platform.
 
 ## Raw Access-Key List JSON Can Disclose The Secret
 
@@ -345,7 +366,7 @@ For a human-readable inventory, use the CLI's supported output field selection
 and do not enable debug output:
 
 ```bash
-nebius iam v2 access-key list --parent-id <project-id> --all \
+nebius iam v2 access-key list --parent-id "<project-id>" --all \
   --format 'jsonpath={range .items[*]}{.metadata.id}{"\t"}{.metadata.name}{"\t"}{.status.state}{"\n"}{end}'
 ```
 
@@ -376,8 +397,6 @@ network and explains that only the network owner may remove the parent network;
 unrelated permission, dependency, and non-default security-group failures remain
 ordinary failures. See Nebius'
 [security-group deletion rules](https://docs.nebius.com/vpc/security-groups/manage#deleting-security-groups).
-
-Category for follow-up: platform.
 
 ## Literal AWS Endpoint In SkyPilot YAML
 
@@ -445,7 +464,7 @@ parse string as hex hash value`, with a valid token and an accepted license.
 Root cause: huggingface/xet-core#895 breaks the Xet transfer client on exactly
 `huggingface_hub==1.23.0` plus `hf-xet==1.5.1`. Newer releases fix it.
 
-The current `npa-cosmos3:1.2.2-cu130-r6` image bakes the compatible
+The current `npa-cosmos3:1.2.2-cu130-r7` image bakes the compatible
 `huggingface_hub==0.36.2` / `hf-xet==1.3.2` pair and its build rejects the
 known-bad pair. In other runtimes, set `HF_HUB_DISABLE_XET=1` and retry or
 upgrade the pair. `npa workbench cosmos3 generate` warns on stderr only for the
@@ -454,3 +473,27 @@ warns). The warning stays silent when the workaround is active. See
 `docs/workbench/cosmos3-access-preflight.md`.
 
 Category for follow-up: dependencies.
+
+## Cosmos3 Guardrails Requested But Not Effective
+
+Symptom: generation reports `guardrail execution could not be proven` or
+`guardrails were requested but were not effective`, and no generated artifact
+is published.
+
+Root cause: the pinned upstream media preset contains no safety models and
+would otherwise return safe; upstream Qwen3Guard also converts an internal
+model exception into a safe tuple, while the video safety filter can skip a
+failed sampled-frame classifier call. NPA instruments the real upstream model
+calls, restores the shipped media filter only for the empty preset, and rejects
+all of those ineffective states. It also copies the pinned Blocklist tokenizer
+subtree from Hugging Face's link-based snapshot into an integrity-checked
+regular-file cache because hardened NLTK intentionally refuses snapshot links.
+
+Current behavior: read the machine-readable `guardrail_state` receipt for the
+requested, discovered, evaluated, per-model evaluation detail, effective,
+status, and sanitized failure category. Do not retry by disabling guardrails.
+Repair model access/runtime health and rerun. `--no-guardrails` is the only
+supported opt-out and is explicitly recorded as an ineffective opt-out, never
+as a guarded pass.
+
+Category for follow-up: safety/runtime integrity.

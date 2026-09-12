@@ -1,5 +1,7 @@
 # Sim2Real live findings: evaluation and RTX remediation (2026-09-02)
 
+[Workbench docs](README.md)
+
 This document began as an evaluation of five findings reported after the Living
 Lab run against `origin/main` at `e5ddb7d25ef2af5485bb43409579657497220a77`.
 The follow-up on the same branch now implements the repository and provisioning

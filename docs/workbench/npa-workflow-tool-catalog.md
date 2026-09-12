@@ -1,5 +1,7 @@
 # NPA workflow tool catalog (v0.0.1)
 
+[Workbench docs](README.md)
+
 Workbench tools referenced by `toolRef` in NPA workflow specs. Each tool is
 invoked as a container command; artifacts pass via S3 URIs in `config`.
 

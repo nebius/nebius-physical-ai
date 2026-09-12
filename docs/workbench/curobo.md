@@ -1,5 +1,7 @@
 # cuRobo V2 motion planning
 
+[Workbench docs](README.md)
+
 The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
@@ -16,7 +18,7 @@ S3 destination. The default evaluates both kinematic and 3 kg dynamics
 configurations. B200 and RTX PRO 6000 require separate GPU qualification.
 
 ```bash
-npa workbench workflow submit workflows/testing/curobo-benchmark.yaml --var bucket=<your-bucket>
+npa workbench workflow submit workflows/testing/curobo-benchmark.yaml --var bucket="<your-bucket>"
 ```
 
 All input problems remain in the success denominator, including invalid queries

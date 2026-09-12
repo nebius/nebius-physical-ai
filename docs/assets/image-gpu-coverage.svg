@@ -44,7 +44,7 @@
 <rect x="424" y="154" width="154" height="26" rx="3" fill="#c3e6cd"/>
 <text x="501" y="171" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
 </g>
-<g><title>npa-cosmos3 on RTX PRO 6000 sm_120: verified accepted records (r6)</title>
+<g><title>npa-cosmos3 on RTX PRO 6000 sm_120: verified accepted records (r7, effective guardrails attested)</title>
 <rect x="582" y="154" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="659" y="171" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
@@ -237,7 +237,7 @@
 <rect x="582" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="659" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
-<g><title>npa-lerobot on B200 sm_100: verified</title>
+<g><title>npa-lerobot on B200 sm_100: verified, optional 0.6.0</title>
 <rect x="740" y="406" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="817" y="423" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>

@@ -43,6 +43,10 @@ on:
         description: "Runner label for public development image builds"
         required: false
         default: "ubuntu-latest"
+      lerobot_version:
+        description: "Optional supported LeRobot package version for a lerobot development build"
+        required: false
+        default: ""
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -90,6 +94,7 @@ jobs:
           DEVELOPMENT_SHA: ${{ inputs.development_sha || github.sha }}
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
+          LEROBOT_VERSION: ${{ inputs.lerobot_version }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -115,8 +120,16 @@ jobs:
 
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
+          build_tools = tools("BUILD_TOOLS")
+          lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
+          if lerobot_version:
+              manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
+              if "lerobot" not in build_tools:
+                  raise SystemExit("lerobot_version requires a lerobot development build")
+              if lerobot_version not in manifest["supported_versions"]:
+                  raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
-          for tool in tools("BUILD_TOOLS"):
+          for tool in build_tools:
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":
@@ -130,6 +143,7 @@ jobs:
                   "contract_key": key,
                   "dockerfile": str(dockerfile),
                   "image": image,
+                  "lerobot_version": lerobot_version if tool == "lerobot" else "",
               })
 
           cleanup = []
@@ -187,6 +201,7 @@ jobs:
       TOOL: ${{ matrix.tool }}
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
+      LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
@@ -359,6 +374,13 @@ jobs:
         run: |
           set -euo pipefail
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
+          if [[ -n "${LEROBOT_VERSION:-}" ]]; then
+            [[ "$TOOL" == lerobot && "$LEROBOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "Invalid scoped LeRobot version" >&2
+              exit 1
+            }
+            build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
+          fi
           if [[ "$TOOL" == curobo ]]; then
             curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }

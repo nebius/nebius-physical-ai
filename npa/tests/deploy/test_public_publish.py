@@ -305,6 +305,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         {"openpi", "curobo", "ncore"}
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "cosmos3",
         "cosmos3-ray-serve",
         "cosmos3-serving",
         "detection-training",
@@ -425,6 +426,7 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "rerun-viewer",
             "ltx2",
             "wan2-2",
+            "cosmos3",
             "cosmos3-serving",
             "cosmos3-ray-serve",
             "sonic-mujoco",
@@ -432,9 +434,10 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "isaac-arena",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source. The seven
-    # other accepted sources, including the detector, remain distinct from it.
-    assert len(set(accepted_shas.values())) == 8
+    # The five Sim2Real roles deliberately share one coherent source. The eight
+    # other accepted sources, including Arena, Cosmos3, and the detector, remain
+    # distinct from it.
+    assert len(set(accepted_shas.values())) == 9
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -455,6 +458,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
     for tool in (
         "ltx2",
         "wan2-2",
+        "cosmos3",
         "cosmos3-serving",
         "cosmos3-ray-serve",
         "sonic-mujoco",

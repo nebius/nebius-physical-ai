@@ -1,5 +1,7 @@
 # SkyPilot Isolated Venv Setup
 
+[Docs](../README.md)
+
 SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.
@@ -42,7 +44,7 @@ export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-npa skypilot verify --cluster <npa-cluster-context>
+npa skypilot verify --cluster "<npa-cluster-context>"
 ```
 
 Passing the NPA cluster context is important on workstations that already use
@@ -59,10 +61,10 @@ built-in smoke task:
 
 ```bash
 npa provision-if-absent \
-  --project <project-alias> \
-  --cluster-name <npa-cluster-context> \
-  --context <npa-cluster-context> \
-  --kubeconfig <kubeconfig> \
+  --project "<project-alias>" \
+  --cluster-name "<npa-cluster-context>" \
+  --context "<npa-cluster-context>" \
+  --kubeconfig "<kubeconfig>" \
   --skip-s3 \
   --sky-smoke \
   --sky-bin "$NPA_SKYPILOT_BIN"

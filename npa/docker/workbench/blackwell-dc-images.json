@@ -155,7 +155,7 @@
       "torch": "2.9.0+cu130 (Python 3.12 Dockerfile.b300 image)",
       "source_compiled_extensions": [],
       "smoke": "official ACT PushT run: 50 training steps, checkpoint, and one evaluation episode",
-      "notes": "The Dockerfile.b300 image uses a dedicated Python 3.12 LeRobot venv and the widened npa-base validator venv. The exact final tag passed the official ACT PushT functional smoke (50 training steps, checkpoint, and one evaluation episode) on physical B200, B300, H100, and RTX PRO 6000.",
+      "notes": "The Dockerfile.b300 image uses a dedicated Python 3.12 LeRobot venv and the widened npa-base validator venv. The exact default tag passed the official ACT PushT functional smoke (50 training steps, checkpoint, and one evaluation episode) on physical B200, B300, H100, and RTX PRO 6000. The optional 0.6.0 image was rebuilt with diffusion and smolvla extras and passed the checked-in Blackwell validator plus real DiffusionPolicy construction on physical B200 on 2026-09-12.",
       "measured_torch": "2.9.0+cu130",
       "measured_arch_list": [
         "sm_75",
@@ -168,6 +168,15 @@
       ],
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
+      "validated_variants": {
+        "0.6.0": {
+          "tag": "0.6.0-d6-extras-20260912",
+          "digest": "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643",
+          "gpu": "NVIDIA B200",
+          "capability": "10.0",
+          "result": "LEROBOT_D6_B200_VALIDATION_PASSED; 6/6 checks; DiffusionPolicy on CUDA"
+        }
+      },
       "published_registries": [
         "public-release"
       ]
@@ -686,26 +695,56 @@
       "dockerfile": "cosmos3/Dockerfile",
       "verdict": "ready",
       "validation": "validated",
-      "torch": "cu130 inference venv (uv group cu130) on nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04",
+      "torch": "2.13.0+cu130 inference venv on nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04",
       "source_compiled_extensions": [],
       "smoke": "real Cosmos 3 generate pass (weights fetched at run time, never baked)",
-      "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-01. The exact public GHCR tag 1.2.2-cu130-r6 (sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d) ran a real Cosmos3 text2image generation: 50 UniPC diffusion steps on Cosmos3-Nano, guardrails passed, output vision.jpg (180,732 bytes, 960x960), weights fetched at runtime (never baked). sm_120 SASS confirmed in the cu130 wheel. Exit 0.",
+      "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-12. The exact public GHCR tag 1.2.2-cu130-r7 (sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010) ran a real 50-step Cosmos3-Nano text2image generation. Blocklist, Qwen3Guard, and VideoContentSafetyFilter were all discovered and evaluated; the sampled-media classifier completed 1/1 inputs and RetinaFace postprocessing ran. The effective guardrail receipt passed before the nonblank 183,829-byte 960x960 vision.jpg was accepted (SHA-256 d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd). Weights were fetched at runtime and never baked; sm_120 SASS was confirmed. Exit 0.",
+      "published_tag": "1.2.2-cu130-r7",
+      "published_digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
+      "measured_torch": "2.13.0+cu130",
       "measured_arch_list": [
         "sm_75",
         "sm_80",
         "sm_86",
         "sm_90",
         "sm_100",
-        "sm_120",
-        "compute_120"
+        "sm_120"
       ],
       "validated_gpu": {
         "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
         "capability": "12.0",
         "platform": "gpu-rtx6000",
-        "result": "COSMOS3_RTX_PRO_6000_VALIDATION_PASSED",
-        "tag": "1.2.2-cu130-r6",
-        "digest": "sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d"
+        "result": "COSMOS3_GUARDRAILS_RTX_PRO_6000_VALIDATION_PASSED",
+        "tag": "1.2.2-cu130-r7",
+        "digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
+        "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
+        "guardrail_state": {
+          "requested": true,
+          "discovered": {
+            "prompt_input": ["Blocklist", "Qwen3Guard"],
+            "generated_media": ["VideoContentSafetyFilter"]
+          },
+          "evaluated": {
+            "prompt_input": ["Blocklist", "Qwen3Guard"],
+            "generated_media": ["VideoContentSafetyFilter"]
+          },
+          "media_attempted_inputs": 1,
+          "media_successful_inputs": 1,
+          "effective": true,
+          "status": "passed"
+        },
+        "artifact": {
+          "bytes": 183829,
+          "width": 960,
+          "height": 960,
+          "sha256": "d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd"
+        }
       }
     },
     {
@@ -852,6 +891,22 @@
       "validated_digest": "sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f",
       "validated_registry_scope": "public-development"
     },
+    "npa-cosmos3": {
+      "built": true,
+      "payload_scan": "passed all built-image filesystem, layer, history, secret, vulnerability, licensing, SBOM, provenance, and anonymous-pull publication gates",
+      "hardware_run": "The exact promoted image completed real 50-step Cosmos3-Nano text-to-image inference on a physical RTX PRO 6000 on 2026-09-12. It discovered and evaluated Blocklist and Qwen3Guard before generation, evaluated VideoContentSafetyFilter on 1/1 generated-media inputs, ran RetinaFace postprocessing, required an effective guardrail receipt, and produced a nonblank 960x960 JPEG.",
+      "validated_gpus": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "COSMOS3_GUARDRAILS_RTX_PRO_6000_VALIDATION_PASSED"
+        }
+      },
+      "validated_tag": "1.2.2-cu130-r7",
+      "validated_digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
+      "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
+      "validated_registry_scope": "public"
+    },
     "npa-alpamayo2-super": {
       "built": true,
       "payload_scan": "passed all 26 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
@@ -993,7 +1048,7 @@
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"
     },
     "npa-lerobot": {
-      "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX recorded the known non-TMA exception. The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
+      "hardware_run": "The exact default tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX recorded the known non-TMA exception. The optional 0.6.0 exact digest separately passed the checked-in B200 validator and a real 272,708-parameter DiffusionPolicy CUDA construction on 2026-09-12 (6/6 environment checks). The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -1017,7 +1072,16 @@
         }
       },
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-      "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"
+      "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
+      "validated_variants": {
+        "0.6.0": {
+          "tag": "0.6.0-d6-extras-20260912",
+          "digest": "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643",
+          "gpu": "NVIDIA B200",
+          "capability": "10.0",
+          "result": "LEROBOT_D6_B200_VALIDATION_PASSED; 6/6 checks; DiffusionPolicy on CUDA"
+        }
+      }
     },
     "npa-cosmos3-reason": {
       "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run completed baked arch/capability validators, downloaded four gated nvidia/Cosmos-Reason2-8B checkpoint shards, and completed a real two-frame VLM judgment. B200/B300/H100 also ran the flash-attn-4 forward against SDPA; RTX recorded only the known non-TMA exception. B200 emitted score 0.0/success true; B300, H100, and RTX emitted score 0.0/success false. All are functional execution passes, not semantic-quality claims. The superseded pre-rebuild image lacked the functional smoke module and was not counted.",
