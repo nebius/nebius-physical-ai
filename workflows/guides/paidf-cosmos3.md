@@ -541,18 +541,44 @@ The dataset card declares the MIT license; retain its README with the sample.
 This example selects episode `1`, camera `observation.images.top`: an eight-second
 simulation episode occupying seconds 8–16 in shared `file-000.mp4`.
 
+Complete S1–S8 and R1, then run R2 to reserve a **new** `RUN_ID` before this
+download. The example uses a new local directory and a dataset prefix unique
+to that run, so it does not depend on an earlier upload or workflow output.
+
 ```bash
 DATASET_REVISION=6a43d500f101255823a9d2b9dc244eeb01a2cd31
-LEROBOT_DIR="$HOME/Downloads/paidf-lerobot-example/$DATASET_REVISION"
+LEROBOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-lerobot.XXXXXX")"
 DATASET_BASE="https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human/resolve/$DATASET_REVISION"
 for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
   videos/observation.images.top/chunk-000/file-000.mp4; do
   mkdir -p "$(dirname "$LEROBOT_DIR/$file")"
   curl --fail --location "$DATASET_BASE/$file" --output "$LEROBOT_DIR/$file" || exit 1
 done
-LEROBOT_URI="s3://$BUCKET/datasets/aloha-sim-transfer-cube-$DATASET_REVISION"
+python3.12 - "$LEROBOT_DIR" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected = {
+    "README.md": "f02f2ae38c9b2bbfa181e2df133fb4500dac87a90d75346d7cbce7d5affccd9e",
+    "meta/info.json": "3fbcb7c176bed7cb429bc739d9d7451d1611551e7cb714e19b61a6453feedd85",
+    "meta/episodes/chunk-000/file-000.parquet": "2a96dd73c97d073a43348b2160d4b68521b219e8e243f4928b916d9ec4b812c7",
+    "videos/observation.images.top/chunk-000/file-000.mp4": "e16528b7da7dd433a60cb0e17c59689fc834be43fc0f0b24586377c833fcd0de",
+}
+for name, digest in expected.items():
+    with (root / name).open("rb") as source:
+        actual = hashlib.file_digest(source, "sha256").hexdigest()
+    if actual != digest:
+        raise SystemExit(f"Checksum mismatch: {name}; stop before uploading")
+print("Verified all four pinned dataset files")
+PY
+LEROBOT_URI="s3://$BUCKET/datasets/paidf-cosmos3/$RUN_ID/aloha-sim-transfer-cube"
 aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius
 ```
+
+Stop if a download, checksum check, or upload fails. Keep the dataset prefix
+unchanged until the run finishes; the submitter and worker both read it.
 
 For your own dataset, set `LEROBOT_DIR` and `LEROBOT_URI` to your local directory
 and destination, then use the same `aws s3 sync` command. An existing S3 dataset
@@ -560,8 +586,8 @@ needs no upload. This workflow needs `meta/info.json`, v3 episode metadata under
 `meta/episodes/`, and the referenced video files; action/state Parquet tables are
 not consumed for video augmentation.
 
-Complete R1 and R2 for a fresh run, then use this full submission command in
-place of R3. Keep the default seeds and exploratory thresholds for the example.
+Use this full submission command in place of R3 with the same `RUN_ID` reserved
+above. Keep the default seeds and exploratory thresholds for the example.
 Change the explicit camera and episode when using your own dataset.
 
 ```bash
@@ -588,6 +614,10 @@ Follow R4 and **Inspect the outputs** below to verify all stages. The run's
 and the selected camera. `input/original_source.mp4` is the selected episode,
 not the whole shared MP4; `input/source.mp4` is its normalized reference.
 Generated videos must match that reference's decoded frame count and timestamps.
+For this example, expect 400 original frames at 50 fps and 192 prepared/generated
+frames at 24 fps, all spanning eight seconds. The default 93-frame generation
+window means each variant needs multiple windows. Do not use `--resume-run`,
+reuse a run ID, or copy earlier outputs when testing a fresh run.
 
 Outputs are augmented MP4s, captions, quality reports, curated clips, and Rerun
 recordings. This workflow does not rebuild a trainable LeRobot dataset or copy

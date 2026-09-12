@@ -14,7 +14,8 @@ Its [local MP4 instructions](guides/paidf-cosmos3.md#r3b-run-the-full-pipeline-f
 include a fresh public download, portable checksum and decode checks, and the
 full runtime command with a new run ID.
 Its [LeRobot instructions](guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera)
-include a pinned public v3 example, S3 staging, explicit episode/camera selection,
+include a pinned public v3 example, checksum verification, a fresh upload prefix,
+explicit episode/camera selection,
 and the full submission command. One run augments one selected video; it does
 not produce a reconstructed LeRobot action/state dataset.
 
