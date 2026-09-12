@@ -34,5 +34,5 @@ PY
 # Unreachable in Phase A. A later approved transaction must replace the locks
 # and unresolved Dockerfile base before this standard additive build may run.
 docker buildx build --platform linux/amd64 --load \
-  --build-arg "SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" \
+  --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" \
   --file "${SCRIPT_DIR}/Dockerfile" "$NPA_ROOT"

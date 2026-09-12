@@ -96,6 +96,38 @@ def test_renamed_nested_archive_is_traversed(tmp_path: Path) -> None:
     assert "robotwin_extracted_asset" in _kinds(scanner.scan(rootfs, {}))
 
 
+def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> None:
+    rootfs = _tar(
+        tmp_path / "rootfs.tar",
+        {
+            "opaque/source/script/collect_data.py": b"official source",
+            "opaque/metadata/.git/config": b"repository metadata",
+            "renamed/credential.bin": b"AKIAABCDEFGHIJKLMNOP",
+            "renamed/evidence.bin": (
+                b'{"solution":"robotwin",'
+                b'"ownership_provenance":"manager-issued",'
+                b'"project":"private-project-canary",'
+                b'"output_root":"s3://private-bucket-canary/output"}'
+            ),
+        },
+    )
+
+    findings = scanner.scan(rootfs, {})
+    kinds = _kinds(findings)
+    assert {
+        "robotwin_source",
+        "source_control_metadata",
+        "credential_content",
+    } <= kinds
+    credential_paths = {
+        finding.path for finding in findings if finding.kind == "credential_content"
+    }
+    assert credential_paths == {
+        "renamed/credential.bin",
+        "renamed/evidence.bin",
+    }
+
+
 def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
     rootfs = _tar(
         tmp_path / "rootfs.tar",

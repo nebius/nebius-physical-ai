@@ -47,6 +47,15 @@ def test_dockerfile_is_nonroot_zero_payload_and_accidentally_unbuildable() -> No
         assert forbidden not in text
 
 
+def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:
+    build = (IMAGE_ROOT / "build.sh").read_text(encoding="utf-8")
+    dockerfile = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert 'ARG NPA_SOURCE_SHA' in dockerfile
+    assert '--build-arg "NPA_SOURCE_SHA=$SOURCE_SHA"' in build
+    assert '--build-arg "SOURCE_SHA=$SOURCE_SHA"' not in build
+
+
 def test_phase_a_locks_are_explicitly_incomplete_and_fetch_nothing() -> None:
     lock = json.loads((IMAGE_ROOT / "runtime-lock.json").read_text())
     assert lock["status"] == "incomplete"

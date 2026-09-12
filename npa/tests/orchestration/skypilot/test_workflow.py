@@ -1753,6 +1753,58 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
     assert exc_info.value.__context__ is None
 
 
+def test_robotwin_gpu_catalog_error_discards_private_exception_graph(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalogError,
+    )
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    private = authorization.kubernetes_context
+
+    def fail_gpu_catalog(*_args, **_kwargs):
+        try:
+            raise ValueError(f"nested {private}")
+        except ValueError as cause:
+            raise KubernetesGpuCatalogError(f"catalog {private}") from cause
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", fail_gpu_catalog)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "GPU catalog refusal reached a controller or launch subprocess"
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc_info:
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            isolated_config_dir=tmp_path / "sky-state",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{private}",
+            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+    assert private not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
 def test_confidential_bridge_cannot_select_a_generic_workflow(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

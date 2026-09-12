@@ -26,6 +26,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     decode_transport,
     encode_runtime_authorization,
     encode_transport,
+    is_robotwin_request,
     load_runtime_authorization,
     materialize_transport,
     prepare_inner_submit,
@@ -136,6 +137,25 @@ def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> Non
         recognize_contract(
             replace(spec, config={**spec.config, "extra": "unreviewed"})
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("solution_name", "RoBoTwIn"),
+        ("repo_url", "https://github.com/robotwin-platform/robotwin"),
+        ("base_image", "tool://robotwin"),
+        ("image", "registry.invalid/npa-robotwin@sha256:" + "a" * 64),
+        ("smoke_command", "/opt/npa/robotwin/robotwin-runtime run"),
+        (
+            "capability_name",
+            "beat_block_hammer_successful_seed_replay_collection",
+        ),
+        ("yaml_path", "/private/byof-solution-smoke-robotwin-rtxpro-gpu.yaml"),
+    ],
+)
+def test_robotwin_request_cannot_be_relabelled(field: str, value: str) -> None:
+    assert is_robotwin_request(**{field: value})
 
 
 def test_owner_context_read_is_byte_exact_bounded_owner_only_and_no_follow(

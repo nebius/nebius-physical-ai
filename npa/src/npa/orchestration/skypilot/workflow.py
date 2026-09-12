@@ -1119,7 +1119,6 @@ def submit_workflow(
     yaml_path = Path(yaml_path)
     robotwin_authorization = None
     robotwin_documents: list[dict[str, Any]] | None = None
-    robotwin_bridge_error = ""
     if robotwin_submit_context is not None:
         from npa.orchestration.npa_workflow.robotwin_preflight import (
             validate_confidential_submit_bridge,
@@ -1137,7 +1136,9 @@ def submit_workflow(
                 execution_target=execution_target,
                 execution_report=execution_preflight_report,
             )
-        except (OSError, ValueError, yaml.YAMLError) as exc:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
             redactions = tuple(
                 dict.fromkeys(
                     (
@@ -1147,9 +1148,7 @@ def submit_workflow(
                     )
                 )
             )
-            robotwin_bridge_error = _redact_private_text(exc, redactions)
-    if robotwin_bridge_error:
-        raise SkyPilotSubmitError(robotwin_bridge_error)
+            _raise_sanitized_submit_error(_redact_private_text(exc, redactions))
     submission_dir: Path | None = None
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
@@ -1304,8 +1303,16 @@ def submit_workflow(
                     sky_bin=sky_executable,
                     cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
                 )
-        except (ExecutionPreflightError, ValueError) as exc:
-            raise SkyPilotSubmitError(str(exc)) from exc
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            if robotwin_authorization is not None:
+                _raise_sanitized_submit_error(
+                    _redact_private_text(str(exc), private_redactions)
+                )
+            if isinstance(exc, (ExecutionPreflightError, ValueError)):
+                raise SkyPilotSubmitError(str(exc)) from exc
+            raise
         env.update(injected)
         if _target is not None:
             env["NPA_SKYPILOT_PROJECT"] = _target.project
@@ -1602,6 +1609,13 @@ def submit_workflow(
             message = _redact_private_text(message, private_redactions)
             _raise_sanitized_submit_error(message)
         raise SkyPilotSubmitError(message) from exc
+    except Exception as exc:
+        _cleanup_owned_submission_dir(owned_submission_dir)
+        if robotwin_authorization is not None:
+            _raise_sanitized_submit_error(
+                _redact_private_text(str(exc), private_redactions)
+            )
+        raise
 
 
 def workflow_status(

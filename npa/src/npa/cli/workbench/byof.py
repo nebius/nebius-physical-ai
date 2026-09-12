@@ -84,8 +84,8 @@ def _load_runner():
 @contextmanager
 def _robotwin_runtime_materialization(
     runner: Any, argv: list[str]
-) -> Iterator[None]:
-    """Materialize a validated worker transport without changing direct BYOF."""
+) -> Iterator[Any | None]:
+    """Materialize a validated worker transport for the internal workflow bridge."""
 
     from npa.orchestration.npa_workflow.robotwin_preflight import (
         CONTEXT_ENV_NAMES,
@@ -93,14 +93,27 @@ def _robotwin_runtime_materialization(
         MATERIALIZED_SKYPILOT_CONFIG_ENV,
         PUBLIC_CONTEXT_ENV,
         TRANSPORT_CONTEXT_ENV,
+        is_robotwin_request,
+        load_runtime_authorization,
         materialize_transport,
         validate_invocation,
     )
 
     parsed = runner._parse_args(argv)
     transport = os.environ.get(TRANSPORT_CONTEXT_ENV, "")
-    if parsed.solution_name.strip().lower() != "robotwin" or not transport:
-        yield
+    if not is_robotwin_request(
+        solution_name=parsed.solution_name,
+        repo_url=parsed.repo_url,
+        base_image=parsed.base_image,
+        image=parsed.image,
+        smoke_command=parsed.smoke_command,
+        capability_name=parsed.capability_name,
+        yaml_path=parsed.yaml,
+    ):
+        yield None
+        return
+    if not transport:
+        yield None
         return
     validate_invocation(parsed)
     if os.environ.get(PUBLIC_CONTEXT_ENV, "").strip():
@@ -117,7 +130,7 @@ def _robotwin_runtime_materialization(
             os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
                 materialized.skypilot_config_path
             )
-            yield
+            yield load_runtime_authorization()
         finally:
             for name, value in previous.items():
                 if value is None:
@@ -388,9 +401,32 @@ def run_cmd(
             typer.echo(" ".join(["npa", "workbench", "byof", "run", *argv]))
         return
 
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+        is_robotwin_request,
+    )
+
+    if is_robotwin_request(
+        solution_name=solution_name,
+        repo_url=repo_url,
+        base_image=base_image,
+        image=image,
+        smoke_command=smoke_command,
+        capability_name=capability_name,
+        yaml_path=yaml_path,
+    ):
+        if not os.environ.get(TRANSPORT_CONTEXT_ENV, ""):
+            raise typer.BadParameter(
+                "RoboTwin runs only through normal npa workbench workflow submit"
+            )
+
     runner = _load_runner()
-    with _robotwin_runtime_materialization(runner, argv):
-        code = int(runner.main(argv))
+    with _robotwin_runtime_materialization(runner, argv) as authorization:
+        code = int(
+            runner._run_authorized_robotwin(argv, authorization=authorization)
+            if authorization is not None
+            else runner.main(argv)
+        )
     raise SystemExit(code)
 
 

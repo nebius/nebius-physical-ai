@@ -373,16 +373,16 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         assert value not in result.output
     assert summary_uri not in result.output
     assert "<redacted>" in json.loads(result.stdout)["stdout"]
-    owner_receipt = next(
-        item["workflow"]
-        for item in receipts
-        if "authorization" in item.get("workflow", {})
-    )
-    assert owner_receipt["authorization"]["summary_uri"] == summary_uri
+    serialized_receipts = json.dumps(receipts, sort_keys=True)
+    assert "authorization" not in serialized_receipts
+    assert summary_uri not in serialized_receipts
+    assert private["run_id"] not in serialized_receipts
+    assert private["output_root"] not in serialized_receipts
+    assert "s3://example-bucket/oss-solutions/robotwin" in serialized_receipts
     stage.assert_not_called()
 
 
-def test_robotwin_authorized_output_replaces_the_public_declared_destination(
+def test_robotwin_authorized_output_stays_runtime_only_not_in_submission_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -423,24 +423,22 @@ def test_robotwin_authorized_output_replaces_the_public_declared_destination(
         ),
     )
     receipt = workflow_cli._npa_submission_receipt(
-        prepared,
-        "robotwin-public-launcher",
-        authorized_output_uri=actual,
-        authorization_sha256="a" * 64,
+        prepared, "robotwin-public-launcher"
     )
 
     assert target.output_uris == (actual,)
     assert captured["output_uris"] == [actual]
-    assert receipt["authorization"] == {
-        "context_sha256": "a" * 64,
-        "summary_uri": actual,
-    }
+    assert "authorization" not in receipt
     receipt_outputs = [
         output["uri"]
         for step in receipt["steps"]
         for output in step.get("outputs", [])
     ]
-    assert receipt_outputs == [actual]
+    assert receipt_outputs == [
+        "s3://example-bucket/oss-solutions/robotwin/"
+        "robotwin-public-launcher/npa_byof_summary.json"
+    ]
+    assert actual not in json.dumps(receipt, sort_keys=True)
     assert actual not in json.dumps(
         build_plan(spec, run_id="robotwin-public-launcher").to_dict()
     )

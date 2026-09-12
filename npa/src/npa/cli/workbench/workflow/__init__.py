@@ -2481,16 +2481,6 @@ def submit_cmd(
                         "workflow": _npa_submission_receipt(
                             prepared_npa,
                             resolved_run_id,
-                            authorized_output_uri=(
-                                robotwin_submit_context.authorization.summary_uri
-                                if robotwin_submit_context is not None
-                                else ""
-                            ),
-                            authorization_sha256=(
-                                robotwin_submit_context.context_sha256
-                                if robotwin_submit_context is not None
-                                else ""
-                            ),
                         )
                     },
                     locked=True,
@@ -2645,34 +2635,14 @@ def _persist_npa_run_manifest(
 def _npa_submission_receipt(
     prepared,
     run_id: str,
-    *,
-    authorized_output_uri: str = "",
-    authorization_sha256: str = "",
 ) -> dict[str, object]:
     """Record the non-secret run contract before the managed launch side effect."""
 
-    receipt = _workflow_submission_receipt(
+    return _workflow_submission_receipt(
         prepared.spec,
         prepared.plan.steps,
         run_id,
     )
-    if not authorized_output_uri:
-        return receipt
-    bound = 0
-    for step in receipt["steps"]:
-        for output in step.get("outputs") or []:
-            if str(output.get("uri") or "").endswith("/npa_byof_summary.json"):
-                output["uri"] = authorized_output_uri
-                bound += 1
-    if bound != 1:
-        raise RuntimeError("RoboTwin owner receipt output binding is not unique")
-    receipt["run_prefix_uri"] = authorized_output_uri.rpartition("/")[0]
-    receipt["manifest_uri"] = ""
-    receipt["authorization"] = {
-        "context_sha256": authorization_sha256,
-        "summary_uri": authorized_output_uri,
-    }
-    return receipt
 
 
 def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
