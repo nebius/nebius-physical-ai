@@ -560,6 +560,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     ):
         assert str(private_value) not in seen_runner_cmd
     output = capsys.readouterr().out
+    private_image = str(payload["bootstrap_image"])
     for field in (
         "project",
         "nebius_profile",
@@ -572,6 +573,12 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         "run_id",
     ):
         assert str(payload[field]) not in output
+    for derived_image_coordinate in (
+        module._repository_without_tag(private_image),
+        module._registry_path(private_image),
+        module._registry_server(private_image),
+    ):
+        assert derived_image_coordinate not in output
 
 
 def test_robotwin_image_scanner_receives_private_digest_only_on_stdin(

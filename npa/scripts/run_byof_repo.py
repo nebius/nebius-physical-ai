@@ -434,6 +434,23 @@ def _registry_path(image_ref: str) -> str:
     return without_digest[:last_slash]
 
 
+def _private_image_redactions(image_ref: str) -> tuple[str, ...]:
+    """Return every private coordinate derivable from an authorized image."""
+
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in (
+                image_ref,
+                _repository_without_tag(image_ref),
+                _registry_path(image_ref),
+                _registry_server(image_ref),
+            )
+            if value
+        )
+    )
+
+
 def _dockerfile_text() -> str:
     return (
         "# syntax=docker/dockerfile:1.7\n"
@@ -887,7 +904,14 @@ def _run_authorized_robotwin(
     """
 
     args = _parse_args(argv)
-    redactions = authorization.redactions
+    redactions = tuple(
+        dict.fromkeys(
+            (
+                *authorization.redactions,
+                *_private_image_redactions(authorization.bootstrap_image),
+            )
+        )
+    )
     try:
         require_runtime_lock_complete(authorization)
         _validate_robotwin_invocation(args)
