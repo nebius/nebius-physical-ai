@@ -695,7 +695,7 @@ def test_runner_termination_escalates_to_sigkill(
     assert process.waits == 2
 
 
-def test_success_cleanup_escalates_to_active_sky_down(
+def test_success_cleanup_requires_active_sky_down(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     attempts: list[bool] = []
@@ -703,8 +703,6 @@ def test_success_cleanup_escalates_to_active_sky_down(
     def fake_cleanup(*args: object, issue_down: bool, **kwargs: object) -> None:
         del args, kwargs
         attempts.append(issue_down)
-        if not issue_down:
-            raise AssertionError("passive cleanup timed out")
 
     monkeypatch.setattr(live, "_cleanup_gymnasium_run", fake_cleanup)
     live._cleanup_gymnasium_run_after_success(
@@ -714,7 +712,38 @@ def test_success_cleanup_escalates_to_active_sky_down(
         config_path="/operator/sky.yaml",
         namespace_baseline={},
     )
-    assert attempts == [False, True]
+    assert attempts == [True]
+
+
+def test_cluster_absence_rejects_unknown_status_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
+    monkeypatch.setattr(
+        live.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps({"unexpected": []}), ""
+        ),
+    )
+    with pytest.raises(AssertionError, match="unexpected SkyPilot cluster status"):
+        live._gymnasium_sky_cluster_absent(
+            {}, run_id=RUN_ID, config_path="/operator/sky.yaml"
+        )
+
+
+def test_live_harness_owns_cleanup_and_covers_late_validation_failures() -> None:
+    command_source = inspect.getsource(live._gymnasium_live_command)
+    assert 'cmd.append("--no-cleanup")' in command_source
+    source = inspect.getsource(
+        live.test_live_gymnasium_robotics_exact_digest_capability
+    )
+    final_validation = source.index(
+        'assert expected_digest in remote_summary["pod_observed_image_id"]'
+    )
+    failure_handler = source.index("except BaseException as primary_error:")
+    failed_prefix_cleanup = source.index("_cleanup_gymnasium_failed_output(")
+    assert final_validation < failure_handler < failed_prefix_cleanup
 
 
 def test_success_cleanup_precedes_runner_log_decoding() -> None:
