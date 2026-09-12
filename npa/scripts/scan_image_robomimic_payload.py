@@ -64,9 +64,12 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "checkpoint_or_weight",
         re.compile(
-            r"(?:\.(?:safetensors|ckpt|pth|pt|bin|onnx|msgpack|npz|npy|"
+            r"(?:\.(?:safetensors|ckpt|pth|pt|bin|onnx|msgpack|"
             r"gguf|engine|plan|tflite|mlmodel)$|"
-            r"(?:^|/)(?:weights?|checkpoints?)(?:/|$))",
+            r"(?:^|/)(?:weights?|checkpoints?)(?:/|$)|"
+            r"(?:^|/)(?:models?|policies?)/[^!]*\.(?:npy|npz)$|"
+            r"(?:^|/)[^/]*(?:weight|checkpoint|policy|model)[^/]*\."
+            r"(?:npy|npz)$)",
             re.I,
         ),
     ),
@@ -128,8 +131,8 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "invented_acceptance_proxy",
         re.compile(
-            r"\b(?:ENV|ARG)\s+[^\n]*\b(?:ACCEPT_EULA|CUDA_ACCEPT|CUDNN_ACCEPT|"
-            r"NPA_ROBOMIMIC_ACCEPT)[A-Z0-9_]*\s*=\s*\S+",
+            r"\b(?:ACCEPT_EULA|CUDA_ACCEPT|CUDNN_ACCEPT|NPA_ROBOMIMIC_ACCEPT)"
+            r"[A-Z0-9_]*\s*=\s*[^\s\",\]]+",
             re.I,
         ),
     ),
