@@ -190,7 +190,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
 
 
 def _install_fake_materializers(
-    monkeypatch, module, fixture: dict[str, object]
+    monkeypatch, module, fixture: dict[str, object], *, python_exit: int = 0
 ) -> None:
     def fetch_source(root: Path, source: dict[str, object]) -> None:
         source_root = root / "source"
@@ -213,7 +213,8 @@ def _install_fake_materializers(
         python = root / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
         python.write_text(
-            '#!/bin/sh\nset -eu\ntest -f "$LIBERO_CONFIG_PATH/config.yaml"\n',
+            '#!/bin/sh\nset -eu\ntest -f "$LIBERO_CONFIG_PATH/config.yaml"\n'
+            f"exit {python_exit}\n",
             encoding="utf-8",
         )
         python.chmod(0o755)
@@ -379,11 +380,12 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     )
 
 
-def test_smoke_runs_against_sealed_cache_without_writing_into_it(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("python_exit", [0, 23])
+def test_smoke_propagates_status_and_never_writes_into_sealed_cache(
+    monkeypatch, tmp_path, python_exit
 ) -> None:
     module, args, fixture = _fixture(tmp_path)
-    _install_fake_materializers(monkeypatch, module, fixture)
+    _install_fake_materializers(monkeypatch, module, fixture, python_exit=python_exit)
     module.ensure(args)
     final = Path(args.cache_root) / fixture["manifest_sha"]
     output = Path(args.output_dir)
@@ -402,7 +404,7 @@ def test_smoke_runs_against_sealed_cache_without_writing_into_it(
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == python_exit, completed.stderr
     assert module._inventory_entries(final) == before
     assert not (final / "libero-config").exists()
     assert not (output / ".libero-config").exists()
