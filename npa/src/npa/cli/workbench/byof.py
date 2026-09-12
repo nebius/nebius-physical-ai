@@ -10,7 +10,7 @@ import tempfile
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, NoReturn
 
 import typer
 from rich.console import Console
@@ -81,6 +81,17 @@ def _load_runner():
     return module
 
 
+def _raise_robotwin_worker_refusal() -> NoReturn:
+    """Raise a fixed refusal without retaining confidential parser failures."""
+
+    try:
+        raise typer.BadParameter("RoboTwin worker authorization refused") from None
+    except typer.BadParameter as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
+
+
 @contextmanager
 def _robotwin_runtime_materialization(
     runner: Any, argv: list[str]
@@ -120,7 +131,12 @@ def _robotwin_runtime_materialization(
         raise ValueError("RoboTwin worker received conflicting context channels")
     previous = {name: os.environ.get(name) for name in CONTEXT_ENV_NAMES}
     with tempfile.TemporaryDirectory(prefix="npa-robotwin-runtime-") as raw_dir:
-        materialized = materialize_transport(transport, Path(raw_dir))
+        try:
+            materialized = materialize_transport(transport, Path(raw_dir))
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            _raise_robotwin_worker_refusal()
         try:
             os.environ.pop(TRANSPORT_CONTEXT_ENV, None)
             os.environ[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
@@ -130,7 +146,13 @@ def _robotwin_runtime_materialization(
             os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
                 materialized.skypilot_config_path
             )
-            yield load_runtime_authorization()
+            try:
+                authorization = load_runtime_authorization()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                _raise_robotwin_worker_refusal()
+            yield authorization
         finally:
             for name, value in previous.items():
                 if value is None:
