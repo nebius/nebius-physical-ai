@@ -163,6 +163,17 @@ def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() ->
         isinstance(value, str) and len(value) == 64
         for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
     )
+    assert SCAN.EXPECTED_SYSTEM_WHEEL_FILES == VERIFIER.EXPECTED_SYSTEM_WHEEL_FILES
+    apt = json.loads(
+        (
+            ROOT / "npa/docker/workbench/gymnasium-robotics/apt-runtime.lock.json"
+        ).read_text()
+    )
+    locked = {
+        item["package"]: item for item in apt["resolved_binary_packages"]
+    }
+    for record in SCAN.EXPECTED_SYSTEM_WHEEL_FILES.values():
+        assert locked[record["package"]]["sha256"] == record["package_sha256"]
 
 
 @pytest.mark.parametrize("mutation", ["entrypoint", "notice", "extra", "partial"])
@@ -237,6 +248,35 @@ def test_forbidden_payload_or_state_path_refuses(
     _docker_save(image, {**_required(), path: b"payload"})
     with pytest.raises(ValueError, match="forbidden image path"):
         SCAN.scan(image)
+
+
+def test_only_exact_locked_system_bootstrap_wheel_path_and_bytes_are_allowed(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "usr/share/python-wheels/pip-24.0-py3-none-any.whl"
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, mode="w") as archive:
+        archive.writestr("pip/__init__.py", b"exact reviewed bootstrap")
+    content = stream.getvalue()
+    record = {**SCAN.EXPECTED_SYSTEM_WHEEL_FILES[path]}
+    record["sha256"] = hashlib.sha256(content).hexdigest()
+    monkeypatch.setattr(SCAN, "EXPECTED_SYSTEM_WHEEL_FILES", {path: record})
+
+    accepted = tmp_path / "accepted-system-wheel.tar"
+    _docker_save(accepted, {**_required(), path: content})
+    assert SCAN.scan(accepted)["status"] == "passed"
+
+    mismatched = tmp_path / "mismatched-system-wheel.tar"
+    _docker_save(mismatched, {**_required(), path: content + b"-changed"})
+    with pytest.raises(ValueError, match="reviewed system bootstrap wheel changed"):
+        SCAN.scan(mismatched)
+
+    renamed = tmp_path / "renamed-system-wheel.tar"
+    _docker_save(renamed, {**_required(), "opt/innocent.bin": content})
+    with pytest.raises(ValueError, match="system bootstrap wheel at unauthorized"):
+        SCAN.scan(renamed)
 
 
 def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(
@@ -386,7 +426,16 @@ def _complete_neutral_rootfs() -> tuple[dict[str, bytes], list[str]]:
             **SCAN.EXPECTED_BASE,
             "uncompressed_layer_digest": "sha256:" + "b" * 64,
         },
-        "resolved_binary_packages": [{"name": "python3.12", "version": "exact"}],
+        "resolved_binary_packages": [
+            {"package": "python3", "sha256": "f" * 64},
+            *(
+                {
+                    "package": record["package"],
+                    "sha256": record["package_sha256"],
+                }
+                for record in SCAN.EXPECTED_SYSTEM_WHEEL_FILES.values()
+            ),
+        ],
         "resolved_source_packages": [{"name": "python3.12", "version": "exact"}],
     }
     corresponding = {
@@ -414,6 +463,12 @@ def _complete_neutral_rootfs() -> tuple[dict[str, bytes], list[str]]:
             "opt/npa/gymnasium-robotics/asset-lock.json": (
                 ROOT / "npa/docker/workbench/gymnasium-robotics/asset-lock.json"
             ).read_bytes(),
+        }
+    )
+    rootfs.update(
+        {
+            path: f"fixture:{path}".encode()
+            for path in SCAN.EXPECTED_SYSTEM_WHEEL_FILES
         }
     )
     diff_ids = ["sha256:" + "b" * 64]
@@ -466,6 +521,17 @@ def test_neutral_semantic_gate_can_accept_only_a_complete_reviewed_fixture(
                 rootfs[f"opt/npa/gymnasium-robotics/{name}"]
             ).hexdigest()
             for name in SCAN.EXPECTED_NEUTRAL_FILE_SHA256
+        },
+    )
+    monkeypatch.setattr(
+        SCAN,
+        "EXPECTED_SYSTEM_WHEEL_FILES",
+        {
+            path: {
+                **record,
+                "sha256": hashlib.sha256(rootfs[path]).hexdigest(),
+            }
+            for path, record in SCAN.EXPECTED_SYSTEM_WHEEL_FILES.items()
         },
     )
     SCAN._neutral_candidate(rootfs, diff_ids)

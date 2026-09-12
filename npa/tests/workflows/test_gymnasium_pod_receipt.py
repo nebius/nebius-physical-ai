@@ -715,6 +715,67 @@ def test_success_cleanup_requires_active_sky_down(
     assert attempts == [True]
 
 
+@pytest.mark.parametrize(
+    "first_failure",
+    [
+        AssertionError("first sky down failed"),
+        AssertionError("first sky down timed out"),
+        AssertionError("first status proof failed"),
+        AssertionError("first baseline proof failed"),
+    ],
+)
+def test_cleanup_retries_with_a_distinct_attempt_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    first_failure: AssertionError,
+) -> None:
+    attempts: list[int] = []
+
+    def fake_cleanup(
+        *args: object, cleanup_attempt: int, **kwargs: object
+    ) -> None:
+        del args, kwargs
+        attempts.append(cleanup_attempt)
+        if cleanup_attempt == 1:
+            raise first_failure
+
+    monkeypatch.setattr(live, "_cleanup_gymnasium_run", fake_cleanup)
+    live._cleanup_gymnasium_run_after_success(
+        {},
+        namespace=NAMESPACE,
+        run_id=RUN_ID,
+        config_path="/operator/sky.yaml",
+        namespace_baseline={},
+    )
+    assert attempts == [1, 2]
+
+
+def test_sky_down_attempts_write_distinct_exclusive_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = {"NPA_BYOF_GYMNASIUM_ROBOTICS_EVIDENCE_DIR": str(evidence)}
+    monkeypatch.setattr(live, "resolve_skypilot_bin", lambda: "/usr/bin/sky")
+    monkeypatch.setattr(
+        live.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "out", "err"),
+    )
+    for attempt in (1, 2):
+        live._issue_gymnasium_sky_down(
+            env,
+            run_id=RUN_ID,
+            config_path="/operator/sky.yaml",
+            attempt=attempt,
+        )
+    assert sorted(path.name for path in evidence.iterdir()) == [
+        f"{RUN_ID}-sky-down-1-stderr.log",
+        f"{RUN_ID}-sky-down-1-stdout.log",
+        f"{RUN_ID}-sky-down-2-stderr.log",
+        f"{RUN_ID}-sky-down-2-stdout.log",
+    ]
+
+
 def test_cluster_absence_rejects_unknown_status_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -744,6 +805,7 @@ def test_live_harness_owns_cleanup_and_covers_late_validation_failures() -> None
     failure_handler = source.index("except BaseException as primary_error:")
     failed_prefix_cleanup = source.index("_cleanup_gymnasium_failed_output(")
     assert final_validation < failure_handler < failed_prefix_cleanup
+    assert "if proc is not None and not cleanup_started:" in source
 
 
 def test_success_cleanup_precedes_runner_log_decoding() -> None:

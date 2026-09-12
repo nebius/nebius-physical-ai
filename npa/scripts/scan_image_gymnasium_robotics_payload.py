@@ -92,6 +92,22 @@ KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
         "3649cb94a9a5f74751d15c0f38291dd666b7eecc286977888b64b6c3c626c9d3",
     }
 )
+# These are bootstrap implementation bytes installed by the two exact Ubuntu
+# packages named below, not runtime-acquired workload wheels.  They are allowed
+# only at these paths and only with these extracted-file hashes; their .deb
+# hashes remain independently bound by apt-runtime.lock.json.
+EXPECTED_SYSTEM_WHEEL_FILES = {
+    "usr/share/python-wheels/pip-24.0-py3-none-any.whl": {
+        "sha256": "e995a37590643450898cfa5bd5113831a547506cd545c335a409339d0c1e87ab",
+        "package": "python3-pip-whl",
+        "package_sha256": "4b7c50db8f261b208c1d9cde8db148c1f682cc516957b986ada5088cfcee1359",
+    },
+    "usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl": {
+        "sha256": "fcfc63a09d24f6195a4c89e8e55323331857ff3711f9f0f574152e76b6f7d8ba",
+        "package": "python3-setuptools-whl",
+        "package_sha256": "edfa94cc1f6a33af99cfaf6ebfe35dbcd9c4bdd8555b90c0d8e78479faf5c8f0",
+    },
+}
 MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 COMPRESSION_SIGNATURES = {
@@ -145,7 +161,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
     "runtime-bootstrap.py": "1f127f8b67dbee7049c3ceda98d2a7894168ad974aba1278cf084fc687f3477b",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
-    "verify_image.py": "8af096ea804f92286d0ac0d25fd0eb490aa054109a93e66c1105317f84e1585e",
+    "verify_image.py": "c393a65cb7239fd685ae2bc7f6395f118e64de750c3cdd0a88246fa880eb3331",
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -214,9 +230,24 @@ def _raw_member(archive: tarfile.TarFile, name: str) -> bytes:
     return stream.read()
 
 
-def _scan_policy_bytes(label: str, content: bytes) -> None:
-    if hashlib.sha256(content).hexdigest() in KNOWN_FORBIDDEN_CONTENT_SHA256:
+def _scan_policy_bytes(
+    label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
+) -> None:
+    digest = hashlib.sha256(content).hexdigest()
+    if digest in KNOWN_FORBIDDEN_CONTENT_SHA256:
         raise ValueError(f"forbidden upstream/runtime byte: {label}")
+    system_wheel_paths = {
+        record["sha256"]: path for path, record in EXPECTED_SYSTEM_WHEEL_FILES.items()
+    }
+    reviewed_path = system_wheel_paths.get(digest)
+    if reviewed_path is not None and allowed_system_wheel_path != reviewed_path:
+        raise ValueError(f"system bootstrap wheel at unauthorized path: {label}")
+    if allowed_system_wheel_path is not None:
+        expected = EXPECTED_SYSTEM_WHEEL_FILES[allowed_system_wheel_path]["sha256"]
+        if digest != expected:
+            raise ValueError(
+                f"reviewed system bootstrap wheel changed: {allowed_system_wheel_path}"
+            )
     if SECRET_TEXT.search(content):
         raise ValueError(f"forbidden secret signature: {label}")
     if VENDOR_TEXT.search(content):
@@ -388,12 +419,22 @@ def _decompress(path: str, content: bytes, kind: str) -> bytes:
     return expanded
 
 
-def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int:
+def _nested_archive_members(
+    path: str,
+    content: bytes,
+    *,
+    depth: int = 0,
+    allowed_system_wheel_path: str | None = None,
+) -> int:
     """Inspect retained archives by validated bytes, never only by filename."""
 
     if depth > 8:
         raise ValueError(f"nested archive depth exceeds scan bound: {path}")
-    _scan_policy_bytes(f"nested archive bytes: {path}", content)
+    _scan_policy_bytes(
+        f"nested archive bytes: {path}",
+        content,
+        allowed_system_wheel_path=allowed_system_wheel_path,
+    )
     lowered = path.lower()
     declared_zip = lowered.endswith((".whl", ".zip"))
     declared_tar = lowered.endswith((".tar", *COMPRESSED_TAR_SUFFIXES))
@@ -435,6 +476,7 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
         )
     if is_zip:
         infos = _validated_zip_infos(path, content)
+        reviewed_system_wheel = allowed_system_wheel_path is not None
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 count = 0
@@ -442,7 +484,9 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                 for member in infos:
                     safe = _safe(member.filename)
                     count += 1
-                    if FORBIDDEN_PATH.search(safe) or UPSTREAM_TREE_PATH.search(safe):
+                    if (
+                        FORBIDDEN_PATH.search(safe) and not reviewed_system_wheel
+                    ) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
@@ -464,9 +508,10 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                             "utf-8", errors="surrogateescape"
                         )
                         resolved = _resolved_link_target(safe, target, relative=True)
-                        if FORBIDDEN_PATH.search(
-                            target.lstrip("/")
-                        ) or FORBIDDEN_PATH.search(resolved):
+                        if not reviewed_system_wheel and (
+                            FORBIDDEN_PATH.search(target.lstrip("/"))
+                            or FORBIDDEN_PATH.search(resolved)
+                        ):
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
@@ -478,6 +523,18 @@ def _nested_archive_members(path: str, content: bytes, *, depth: int = 0) -> int
                         raise ValueError(
                             f"unsupported nested archive member type: {path}:{safe}"
                         )
+                    if reviewed_system_wheel:
+                        if (
+                            hashlib.sha256(nested_content).hexdigest()
+                            in KNOWN_FORBIDDEN_CONTENT_SHA256
+                        ):
+                            raise ValueError(
+                                f"forbidden upstream/runtime byte: {path}:{safe}"
+                            )
+                        # The exact outer wheel digest binds every member.  Do
+                        # not apply generic credential-source regexes to pip's
+                        # own authentication implementation.
+                        continue
                     _scan_policy_bytes(
                         f"nested archive member: {path}:{safe}", nested_content
                     )
@@ -670,7 +727,10 @@ def _layers(
                     )
                     deleted_targets.add(target)
                     continue
-                if FORBIDDEN_PATH.search(path) or UPSTREAM_TREE_PATH.search(path):
+                allowed_system_wheel = path in EXPECTED_SYSTEM_WHEEL_FILES
+                if (
+                    FORBIDDEN_PATH.search(path) and not allowed_system_wheel
+                ) or UPSTREAM_TREE_PATH.search(path):
                     raise ValueError(f"forbidden image path: {path}")
                 current_order.append(path)
                 if item.isfile():
@@ -678,8 +738,20 @@ def _layers(
                     if payload is None:
                         raise ValueError(f"unreadable layer file: {path}")
                     content = payload.read()
-                    _scan_policy_bytes(path, content)
-                    nested += _nested_archive_members(path, content)
+                    _scan_policy_bytes(
+                        path,
+                        content,
+                        allowed_system_wheel_path=(
+                            path if allowed_system_wheel else None
+                        ),
+                    )
+                    nested += _nested_archive_members(
+                        path,
+                        content,
+                        allowed_system_wheel_path=(
+                            path if allowed_system_wheel else None
+                        ),
+                    )
                     _remove_path(current_rootfs, current_entries, path)
                     current_rootfs[path] = content
                     current_entries[path] = {
@@ -828,6 +900,10 @@ def _neutral_candidate(
         path = f"opt/npa/gymnasium-robotics/{name}"
         if hashlib.sha256(rootfs[path]).hexdigest() != expected:
             raise ValueError(f"reviewed neutral image file changed: {name}")
+    for path, record in EXPECTED_SYSTEM_WHEEL_FILES.items():
+        content = rootfs.get(path)
+        if content is None or hashlib.sha256(content).hexdigest() != record["sha256"]:
+            raise ValueError(f"reviewed system bootstrap wheel changed: {path}")
     if (
         hashlib.sha256(rootfs["opt/npa/gymnasium-robotics/asset-lock.json"]).hexdigest()
         != EXPECTED_ASSET_LOCK
@@ -908,6 +984,13 @@ def _neutral_candidate(
         or not apt.get("resolved_source_packages")
     ):
         raise ValueError("neutral bootstrap APT/source closure is incomplete")
+    binaries = {
+        item.get("package"): item for item in apt["resolved_binary_packages"]
+    }
+    for record in EXPECTED_SYSTEM_WHEEL_FILES.values():
+        package = binaries.get(record["package"])
+        if not package or package.get("sha256") != record["package_sha256"]:
+            raise ValueError("system bootstrap wheel package closure changed")
     corresponding = json.loads(
         rootfs["opt/npa/gymnasium-robotics/corresponding-source.lock.json"]
     )

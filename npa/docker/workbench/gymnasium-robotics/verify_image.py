@@ -49,6 +49,18 @@ KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
         "3649cb94a9a5f74751d15c0f38291dd666b7eecc286977888b64b6c3c626c9d3",
     }
 )
+EXPECTED_SYSTEM_WHEEL_FILES = {
+    "usr/share/python-wheels/pip-24.0-py3-none-any.whl": {
+        "sha256": "e995a37590643450898cfa5bd5113831a547506cd545c335a409339d0c1e87ab",
+        "package": "python3-pip-whl",
+        "package_sha256": "4b7c50db8f261b208c1d9cde8db148c1f682cc516957b986ada5088cfcee1359",
+    },
+    "usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl": {
+        "sha256": "fcfc63a09d24f6195a4c89e8e55323331857ff3711f9f0f574152e76b6f7d8ba",
+        "package": "python3-setuptools-whl",
+        "package_sha256": "edfa94cc1f6a33af99cfaf6ebfe35dbcd9c4bdd8555b90c0d8e78479faf5c8f0",
+    },
+}
 FORBIDDEN_ROOTS = (
     Path("/opt/venv"),
     Path("/usr/local/cuda"),
@@ -96,11 +108,18 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         candidate = at(forbidden)
         if candidate.exists() and (not candidate.is_dir() or any(candidate.iterdir())):
             raise ValueError(f"forbidden baked payload or state: {forbidden}")
+    for relative, record in EXPECTED_SYSTEM_WHEEL_FILES.items():
+        wheel = root / relative
+        if not wheel.is_file() or _sha256(wheel) != record["sha256"]:
+            raise ValueError(f"reviewed system bootstrap wheel changed: /{relative}")
+    system_wheel_hashes = {
+        record["sha256"]: path for path, record in EXPECTED_SYSTEM_WHEEL_FILES.items()
+    }
     for path in root.rglob("*"):
         if path.is_symlink() or not path.is_file():
             continue
         relative = str(path.relative_to(root))
-        if FORBIDDEN_NAME.search(relative):
+        if FORBIDDEN_NAME.search(relative) and relative not in EXPECTED_SYSTEM_WHEEL_FILES:
             raise ValueError(f"forbidden upstream/runtime path: /{relative}")
         try:
             digest = _sha256(path)
@@ -108,6 +127,9 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
             raise ValueError(f"unreadable final image byte: /{relative}") from error
         if digest in KNOWN_FORBIDDEN_CONTENT_SHA256:
             raise ValueError(f"forbidden upstream/runtime byte: /{relative}")
+        reviewed_path = system_wheel_hashes.get(digest)
+        if reviewed_path is not None and relative != reviewed_path:
+            raise ValueError(f"system bootstrap wheel at unauthorized path: /{relative}")
     if root == Path("/") and os.geteuid() == 0:
         raise ValueError("image verifier must run as the non-root runtime user")
     return {
