@@ -4952,6 +4952,8 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "public_ipv4_pool_id=vpcpool-test",
         ],
     )
 
@@ -4960,6 +4962,7 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     assert captured["project_id"] == "project-dev"
     assert captured["tenant_id"] == "tenant-a"
     assert captured["region"] == "us-central1"
+    assert captured["tf_var"][-1] == "public_ipv4_pool_id=vpcpool-test"
 
     # Interactive: pressing Enter accepts the default_project (prod).
     captured.clear()
