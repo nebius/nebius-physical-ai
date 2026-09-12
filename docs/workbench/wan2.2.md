@@ -1,5 +1,7 @@
 # Wan 2.2 TI2V-5B Workbench support
 
+[Workbench docs](README.md)
+
 NPA packages the official Alibaba Wan 2.2 source as a BYOF solution and runs
 real TI2V-5B generation on Nebius GPUs. The single-GPU workflow targets one RTX
 PRO 6000 Blackwell; the distributed workflow runs one shared generation across

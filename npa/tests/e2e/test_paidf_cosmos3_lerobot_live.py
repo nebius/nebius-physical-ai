@@ -1,11 +1,14 @@
 """Verify the guide's completed public LeRobot v3 run from durable artifacts.
 
 Run the guide's R3a command first, then set NPA_INTEGRATION_E2E=1,
-NPA_E2E_PAIDF_LEROBOT_RUN_URI and NPA_E2E_PROJECT. This test reads the completed
+NPA_E2E_PAIDF_LEROBOT_RUN_URI and NPA_E2E_PROJECT. For a fresh-run audit, also
+set NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER to the UTC timestamp before dataset upload.
+This test reads the completed
 run; it does not submit jobs or change their inputs. The pinned example is
 episode 1, camera observation.images.top, from the simulated ALOHA dataset.
 """
 
+from datetime import datetime
 import json
 import os
 from urllib.parse import urlparse
@@ -40,6 +43,8 @@ def test_completed_public_lerobot_v3_pipeline() -> None:
     runtime = read("npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
     assert all(wave["status"] == "succeeded" for wave in runtime["waves"])
+    if os.environ.get("NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"):
+        _assert_fresh_run(client, parsed.netloc, run_id, runtime["waves"])
     provenance = read("input/provenance.json")
     assert provenance["source_kind"] == "lerobot_dataset"
     assert provenance["episode"] == 1
@@ -63,3 +68,23 @@ def _assert_example_timeline(read) -> None:
         transfer = read(f"cosmos_augmented/{variant['clip']}/transfer.json")
         assert transfer["native_chunks"] > 1
         assert transfer["source_frames"] == 192
+
+
+def _assert_fresh_run(client, bucket, run_id, waves) -> None:
+    fresh_after = datetime.fromisoformat(os.environ["NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"])
+    assert fresh_after.tzinfo is not None, "Freshness timestamp must include UTC offset"
+    assert all(wave["replayed"] is False for wave in waves)
+    assert all(wave["adopted"] is False for wave in waves)
+    prefixes = (
+        f"paidf-cosmos3/{run_id}/",
+        f"physical-ai-data-factory/{run_id}/",
+        f"datasets/paidf-cosmos3/{run_id}/aloha-sim-transfer-cube/",
+    )
+    paginator = client.get_paginator("list_objects_v2")
+    for prefix in prefixes:
+        count = 0
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                assert item["LastModified"] >= fresh_after, "Object predates this run"
+                count += 1
+        assert count > 0, f"Missing fresh artifacts at {prefix}"

@@ -1,5 +1,7 @@
 # NCore non-Debian component coverage
 
+[Workbench docs](README.md)
+
 NCore's supplemental component gate is required **in addition to** the selected
 Debian SPDX scan and ordinary Trivy vulnerability, secret and license scans.
 It is specific to the selected NCore scratch image. It neither fabricates an

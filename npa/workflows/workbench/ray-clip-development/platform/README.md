@@ -1,9 +1,11 @@
-# Set up the SkyPilot API once
+# Set up a private SkyPilot API for Ray development
 
-This page is for the operator who owns a Nebius GPU Kubernetes context. It
+[CLIP example](../README.md) · [Ray Train](../../ray-train-synthetic/README.md) · [Ray Tune](../../ray-tune-synthetic/README.md)
+
+This page is for the operator who owns a Nebius Kubernetes context. It
 creates one private SkyPilot API and one namespace for a trusted development
-team. Developers can then follow the [CLIP guide](../../../../../docs/testing/fast-source-iteration.md)
-using Ray Jobs. They do not set up an API for every source edit or GPU Job.
+team. Developers reuse it for CLIP, Ray Train, or Ray Tune through native Ray Jobs.
+Prepare GPU nodes only for the GPU examples; Ray Tune needs CPU capacity.
 
 The service is the upstream SkyPilot API, managed by Docker Compose. Its named
 volume retains cluster identities and SSH keys across API restarts. Keep that
@@ -14,13 +16,14 @@ volume until every development cluster it owns has been removed.
 - A Linux operator host with Docker Engine and the
   [Docker Compose plugin](https://docs.docker.com/compose/install/linux/).
   `docker compose version` must work. The tested plugin is **5.5.0**.
-- `kubectl` configured for the authorized Nebius GPU cluster, and an installed,
+- `kubectl` configured for the authorized Nebius cluster, and an installed,
   authenticated `nebius` CLI. `kubectl get nodes` must succeed before continuing.
   The kubeconfig must use `nebius` or `/usr/local/bin/nebius` for its exec-auth
   command; its selected profile must exist in the operator's Nebius CLI config.
 - This repository with NPA installed in `npa/.venv`. From the repository root:
 
   ```bash
+  export NPA_REPO="$PWD"
   npa/.venv/bin/npa skypilot bootstrap
   export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
   export SKYPILOT_DISABLE_USAGE_COLLECTION=1
@@ -29,6 +32,25 @@ volume until every development cluster it owns has been removed.
 The API image is pinned by digest in [compose.yaml](compose.yaml) and reports
 SkyPilot **0.12.2**. It runs on the operator host without a GPU. No image build,
 object-storage account or managed-jobs controller is part of this setup.
+
+## Choose the application to verify
+
+Set `SKY_EXAMPLE` to the absolute example directory. Keep this variable through
+setup; it selects the final dry-run and resolves the example's relative mounts.
+
+```bash
+export SKY_EXAMPLE="$NPA_REPO/npa/workflows/workbench/ray-clip-development"
+```
+
+| Example directory under `npa/workflows/workbench/` | Capacity needed for its eventual launch |
+| --- | --- |
+| `ray-clip-development` | One RTX PRO 6000; two for distributed checks |
+| `ray-train-synthetic` | Two B200 hosts, one GPU rank per host |
+| `ray-tune-synthetic` | One CPU pod, 6 CPUs and 12 GiB memory |
+
+For Train or Tune, change only the last directory in `SKY_EXAMPLE` above.
+This setup verifies access and rendering; it does not provision the underlying
+Kubernetes cluster or guarantee capacity for the subsequent workload.
 
 ## Give this platform a namespace and private configuration
 
@@ -79,7 +101,7 @@ namespace while it owns development clusters.
 ## Start and prove the API
 
 ```bash
-cd npa/workflows/workbench/ray-clip-development/platform
+cd "$NPA_REPO/npa/workflows/workbench/ray-clip-development/platform"
 docker compose --env-file "$PLATFORM_DIR/platform.env" up -d --wait
 docker compose --env-file "$PLATFORM_DIR/platform.env" exec -T api \
   kubectl auth can-i create pods
@@ -92,7 +114,7 @@ export KUBE_CONTEXT="$(kubectl config current-context)"
   --config "kubernetes.allowed_contexts=[\"$KUBE_CONTEXT\"]" -o json
 "$NPA_SKYPILOT_BIN" gpus list --infra "k8s/$KUBE_CONTEXT" \
   --config "kubernetes.allowed_contexts=[\"$KUBE_CONTEXT\"]"
-cd ..
+cd "$SKY_EXAMPLE"
 "$NPA_SKYPILOT_BIN" launch --dryrun --yes -c "$PLATFORM_NAME-check" \
   --infra "k8s/$KUBE_CONTEXT" \
   --config "kubernetes.allowed_contexts=[\"$KUBE_CONTEXT\"]" cluster.yaml
@@ -100,12 +122,13 @@ cd ..
 
 Require both permission probes to say `yes`, the check's JSON to contain
 `"Kubernetes": ["compute"]`, and the dry-run to finish successfully with the
-intended context. The accelerator name in `cluster.yaml` must appear in the GPU
+intended context. For GPU examples, the accelerator name in `cluster.yaml` must appear in the GPU
 listing; use SkyPilot's displayed spelling without changing shared node labels.
 SkyPilot can return exit zero when its credential check enables
 no infrastructure. An HTTP health response alone also does not prove that the
 API's execution queue works. This dry-run allocates no GPU; the first real launch
-in the CLIP guide proves the remaining bootstrap and CUDA boundary.
+in the chosen application guide proves runtime startup and, for GPU examples,
+CUDA execution. An empty GPU listing is expected on a CPU-only Tune platform.
 
 The service binds only the operator host's loopback port. It has no Docker socket,
 host network or privileged mode. Root inside the container has only
@@ -120,9 +143,10 @@ this HTTP port on a public interface. Ray's separate Jobs endpoint is reached
 through the authenticated tunnel in the CLIP guide.
 
 Give developers these values: the API endpoint, the fixed namespace's kubeconfig
-and context, and the pinned `NPA_SKYPILOT_BIN` path. Then return to the
-[first GPU run](../../../../../docs/testing/fast-source-iteration.md). Keep the
-API running across source edits and across the medium and distributed examples.
+and context, and the pinned `NPA_SKYPILOT_BIN` path. Then return to the selected
+[CLIP](../../../../../docs/testing/fast-source-iteration.md),
+[Train](../../ray-train-synthetic/README.md), or [Tune](../../ray-tune-synthetic/README.md)
+procedure. Keep the API running across source edits and development clusters.
 
 ## Finish the platform
 

@@ -211,7 +211,7 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
         'LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"' in lerobot_branch
     )
     assert (
-        'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"'
+        'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${lerobot_version}"'
         in lerobot_branch
     )
     assert 'if [ "${lerobot_version}" = "0.6.0" ]' in lerobot_branch

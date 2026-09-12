@@ -1,143 +1,76 @@
-# Workbench Guides
+# Choose a Workbench workload
 
-Choose a robot, generation, reconstruction, or data workflow to run on Nebius.
-Complete the [npa quickstart](../../quickstart.md) first, then follow the chosen
-guide's input, access, and GPU requirements through to its output artifacts.
+[Workbench docs](../README.md) · [Cookbooks](../cookbooks/README.md) · [Workflow catalog](../../../workflows/README.md)
 
-## Choose a workflow
-
-| I want to… | Guide |
-| --- | --- |
-| Train or evaluate a robot policy | Pick a [robot guide](#robot-and-reconstruction-guides) below |
-| Generate images with Cosmos 3 | [Cosmos 3 generation](../cosmos3-generate.md) |
-| Augment a source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) |
-| Set up and run PAIDF with Cosmos 3 | [PAIDF Cosmos 3 setup and run guide](../../../workflows/guides/paidf-cosmos3.md) |
-| Build a labeled and curated dataset with Cosmos Transfer | [Physical AI Data Factory](physical-ai-data-factory-deploy.md) |
-| Run the compositional simulation-to-policy loop | [Sim2Real workflow](sim2real-workflow.md) |
-
-For an existing YAML spec, browse the
-[workflow catalog](../../../workflows/README.md).
-For hosted captioning, generation, and reasoning stages, see
-[Token Factory](../token-factory.md).
+Choose the result you want, then follow that guide from inputs to inspected
+artifacts. Complete the [quickstart](../../quickstart.md) and
+[GPU runtime setup](../getting-started.md) before a cloud run. A local preview
+checks the declaration; each guide states what its live validation actually proves.
 
 ## Robot and reconstruction guides
 
-Pick a guide for the robot or scene you want to work with. Check its runtime and
-validation scope before running; the recorded backend checks below distinguish
-local checks, smoke runs, and live outcomes.
-
-| Guide | Robot | Sim / engine | Public dataset | GPU |
-| --- | --- | --- | --- | --- |
-| [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | H200 for headless training; see rendering caveat |
-| [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | H100 |
-| [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | yes |
-| [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
-| [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | RT-core: L40S / RTX PRO 6000 |
-| [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | RT-core: RTX PRO 6000 / L40S |
-| [Build a parameterized living-lab digital twin](living-lab-nurec-fanout.md) (default 16-GPU) | n/a (multi-zone scene capture) | NVIDIA NuRec / NRE (16-way default fan-out, parameterizable) | `nvidia/PhysicalAI-NuRec-PPISP` | 16 x RTX PRO 6000 default (8 x 2) |
-
-## How these guides work
-
-Every guide follows the same shape so you always know where you are:
-
-- **The hook** — what you'll build and why it's fun.
-- **Ingredients** — robot, sim, dataset, and what you need installed.
-- **Fast path** — the shortest command that produces a result.
-- **Go bigger** — scale the fast path into a larger GPU run.
-- **Look at it** — visualize the result (Rerun, FiftyOne, reports).
-- **Dig deeper** — links to the full cookbook and the skill behind it.
-
-## Before you start
-
-Install `npa` once (Python 3.10+). The virtual environment can live anywhere:
-
-```bash
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-
-npa --version
-```
-
-The guides assume you have completed
-[../../quickstart.md](../../quickstart.md) and
-[../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
-`npa configure`). Each guide calls out exactly when credentials are required.
-
-## Recorded backend checks
-
-These entries record earlier checks against local and live backends. Each result
-applies to the stated runtime and scope; the table does not establish that every
-guide has completed end to end. Consult the selected tool's current guide and
-skill for implementation changes since these checks.
-
-| Path | Backend | Result |
+| Goal | Guide and required input | Compute and result scope |
 | --- | --- | --- |
-| `vlm-eval benchmark/run` (stub) | local, offline | works (`accuracy: 1.0`) |
-| `lerobot train --runtime serverless --smoke` | Nebius AI Job (H200) | works — produced a real ACT checkpoint (`model.safetensors`) in S3 |
-| `genesis train-teacher --runtime serverless` | Nebius AI Job (H100) | works, but is a **smoke** (import check + placeholder checkpoint); real Genesis training is local/VM |
-| `sim_to_real.local_smoke` | local, no cluster | runs the spine; reports `blocked` unless `lerobot` is installed locally |
-| `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-a`) | **capacity-blocked** — `NotEnoughResources` / VM schedule timeout |
-| `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-d`) | job schedules and completes; minimal run produced no artifact yet (small step budget / `W9-isaac-lab-e2e-fix`) |
-| `lerobot` / `fiftyone` deploy `--preemptible --dry-run` | Nebius Terraform VM path | CLI + dry-run OK; full apply needs IAM bootstrap on your project |
-| Preemptible VM flags and resume | — | [preemptible-vms.md](../preemptible-vms.md) |
+| Train a Franka pick-and-place teacher | [Franka / Genesis](franka-pick-and-place-genesis.md); generated simulation tasks | H200 headless training was exercised; recorded held-out success was 0%. Read the rendering caveat. |
+| Inspect the PushT SDK structure | [PushT smoke](pusht-sim-to-real.md); `lerobot/pusht` reference | Local structural smoke; follow the linked training path for learned weights. |
+| Train a Reachy 2 policy | [Reachy 2 / LeRobot](reachy2-lerobot-policy.md); a dataset with matching observation/action schemas | GPU policy training; validate compatibility before substituting a dataset. |
+| Train or evaluate Unitree G1 locomotion | [G1 / SONIC](g1-humanoid-walk-sonic.md); compatible motion/checkpoint inputs | RTX PRO 6000 training; B200 MuJoCo evaluation is a separate capability. |
+| Train an ANYmal quadruped | [Quadruped / Isaac Lab](quadruped-isaac-lab.md); built-in simulator task | L40S or RTX PRO 6000; Isaac requires RT cores. |
+| Reconstruct a scene capture | [NuRec / NRE](neural-reconstruction.md); compatible NCore capture | RTX PRO 6000 or L40S; inspect USDZ, renders, and Rerun outputs. |
+| Reconstruct several living-lab zones | [Living-lab fan-out](living-lab-nurec-fanout.md); capture inputs per zone | Advanced parameterized workflow; default is 16 RTX PRO 6000 GPUs. |
 
-Isaac Lab needs RT cores, and serverless RT-core capacity varies by SKU: the
-default `gpu-l40s-a` pool failed to schedule, while `gpu-l40s-d` had capacity and
-ran to completion. `gpu-rtx6000` is **not** a serverless platform (use the
-managed-Kubernetes path). For real Isaac Lab training prefer an RT-core VM /
-managed-K8s + BYOF; for a serverless capacity retry use `--gpu-type gpu-l40s-d`.
+For the candidate COLMAP ingestion path, see [NCore conversion](nurec-colmap-reconstruct.md);
+it remains unvalidated end to end. For browser teleoperation measurements, see
+[LeIsaac transport latency](leisaac-transport-latency.md).
 
-SONIC G1 (MuJoCo) is documented from its cookbook and not yet re-run here.
+## Generation and dataset production
+
+| Goal | Start with |
+| --- | --- |
+| Generate images with Cosmos 3 | [Generation guide](../cosmos3-generate.md) and [access preflight](../cosmos3-access-preflight.md) |
+| Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
+| Produce a labeled dataset with Cosmos Transfer | [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
+| Understand Data Factory stages and artifacts | [Component and S3 mapping](physical-ai-data-factory.md) |
+| Audit native DIG, IAA, and EVG image evidence | [Restricted image evidence](paidf-image-evidence.md) |
+| Reuse a verified dataset campaign | [Campaign reuse](paidf-campaign-reuse.md) |
+| Caption or reason about existing artifacts | [Token Factory](../token-factory.md) |
+
+<a id="physical-ai-data-factory-video-data-augmentation"></a>
+
+Data Factory composes annotation, Cosmos augmentation, evaluation, curation, and
+Rerun visualization on Nebius + SkyPilot. Its native workflow family includes
+VDA, DIG, IAA, and EVG translations plus the NPA-specific Cosmos 3 alternative.
+Select the actual workflow's inputs and model access requirements; generation
+and input-conditioned augmentation have different contracts.
+
+## Sim-to-real: the full 14-stage loop
+
+This path needs robot assets, compatible source data, prepared compute, immutable
+images, and storage. Start with the operator runbook, then use the contract pages
+when adapting it:
+
+| Task | Guide |
+| --- | --- |
+| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md) |
+| Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
+| Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
+| Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |
+| Recover after interruption | [Durable runtime behavior](sim2real-durable-controller.md) |
+| Present a prepared result | [Demonstration script](sim2real-demo-script-10min.md) |
 
 <a id="bring-your-own-everything"></a>
 
 ## Use your own data, policy, or robot
 
-Check the selected tool's contract before substituting inputs:
+Match the selected tool's dataset format, observation/action schema, runtime,
+and output contract. A new robot may also need simulator assets and action
+mappings. Use [BYOF](../cookbooks/byof-isaac-lab/README.md) for an Isaac image or
+training-entrypoint customization, and the [cookbooks](../cookbooks/README.md)
+for other tool-specific recipes.
 
-- Datasets must match the required format and observation/action schemas.
-  LeRobotDataset is supported by the LeRobot paths; other guides use video,
-  motion, scene, or tool-specific inputs.
-- A custom policy image must implement the selected tool's input, output,
-  and runtime contract.
-- A different robot may need assets, simulator support, observation and action
-  mappings, and training configuration. Available commands vary by tool.
+<a id="recorded-backend-checks"></a>
 
-See the [cookbooks](../cookbooks/README.md) for detailed recipes.
-
-## Physical AI Data Factory (video data augmentation)
-
-Turn a handful of frames into a labeled, curated, multiplied dataset: annotate →
-Cosmos Transfer augment → evaluate/validate → re-label → FiftyOne curate → Rerun
-visualize. Runs on Nebius + SkyPilot (no OSMO); pure composition of workbench
-tools.
-
-| Doc | Use when |
-| --- | --- |
-| [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) | **Copy-paste runbook** — from zero to a running blueprint (includes a one-block Quick start that stages input frames and submits) |
-| [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
-| [paidf-image-evidence.md](paidf-image-evidence.md) | Audit the exact seven-image restricted inventory and its digest/run-bound Rerun evidence |
-| [paidf-campaign-reuse.md](paidf-campaign-reuse.md) | Reuse one immutable source, generation, and evaluation campaign across provider workshops |
-
-> **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
-> seeds captionable frames (no dataset needed) and submits an input-conditioned
-> Cosmos run in a single block. The GPU runner turns those same frames into a
-> temporary clip; no upstream example media is packaged or required.
-
-## Sim-to-real (14-stage production loop)
-
-These guides are separate from the easy PushT walkthrough above. They document the
-full VLM→RL loop, data contracts, and cluster operations:
-
-| Doc | Use when |
-| --- | --- |
-| [sim2real-workflow.md](sim2real-workflow.md) | Run the loop (quickstart, CLI) |
-| [sim2real-data-contracts.md](sim2real-data-contracts.md) | **Canonical** formats, schemas, S3 layout |
-| [sim2real-customer-assets.md](sim2real-customer-assets.md) | Customer uploads, scorecard |
-| [sim2real-architecture.md](sim2real-architecture.md) | Standard-runtime graph, loops, parallel waves, resume |
-| [sim2real-demo-script-10min.md](sim2real-demo-script-10min.md) | Presentation walkthrough |
+Earlier local, serverless, and capacity checks are retained in the
+[historical backend record](../../archive/workbench-backend-checks.md).
+For a new run, use the [current image/GPU matrix](../image-gpu-compatibility-matrix.md)
+and inspect that run's actual artifacts.

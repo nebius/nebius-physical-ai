@@ -140,6 +140,19 @@ def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> No
     assert '!= "/usr/bin/ffmpeg"' in installer
 
 
+def test_lerobot_uses_system_ffmpeg_without_bundled_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "lerobot" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "      ffmpeg \\\n" in dockerfile
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+    assert "-delete" in dockerfile
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
+    assert "= /usr/bin/ffmpeg" in dockerfile
+
+
 def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
     paths = (
         REPO_ROOT / "npa" / "docker" / "workbench" / "base" / "cuda13-b300" / "Dockerfile",

@@ -1,5 +1,7 @@
 # Canonical Sim2Real RobotSpec input
 
+[Guides](README.md)
+
 The canonical 14-stage workflow accepts one optional `config.robot_spec_uri`.
 Leave it empty for the unchanged stock Franka path. Set it to an exact `s3://`
 object containing `npa.sim2real.robot_spec.v1` to run a custom articulated robot.

@@ -114,9 +114,11 @@ def test_cosmos3_generate_dry_run_plans_with_guardrails_on(tmp_path) -> None:
     assert payload["status"] == "planned"
     assert payload["mode"] == "text2image"
     assert payload["guardrails"] is True
+    assert payload["guardrail_state"]["status"] == "pending"
     assert payload["weights_baked"] is False
     assert "--no-guardrails" not in payload["argv"]
-    assert "cosmos_framework.scripts.inference" in payload["argv"]
+    assert "npa.workbench.cosmos.guarded_inference" in payload["argv"]
+    assert payload["inference_module"] == "cosmos_framework.scripts.inference"
 
 
 def test_cosmos3_generate_dry_run_opts_out_of_guardrails_explicitly(tmp_path) -> None:

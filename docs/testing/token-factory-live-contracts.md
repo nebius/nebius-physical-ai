@@ -12,7 +12,10 @@ authorized test key as the environment secret `NEBIUS_TOKEN_FACTORY_KEY`.
 Neither `pull_request` nor `pull_request_target` can trigger this workflow, and
 the job independently checks its repository and branch. Preserve existing
 environment approvals and branch protections; a blocked job is not successful
-verification. The checkout does not persist GitHub credentials.
+verification. The job uses `environment.deployment: false` to retain access to
+environment secrets and branch policies without adding API test runs to GitHub's
+deployment history. Results and sanitized receipts remain in GitHub Actions.
+The checkout does not persist GitHub credentials.
 
 The live test runtime installs `npa[dev,adapter]`, `uvicorn`, and `websockets`.
 The rendered-agent HTTP test starts the production websocket protocol; installing
@@ -25,7 +28,7 @@ Optional environment configuration:
 | Secret `NEBIUS_TOKEN_FACTORY_BASE_URL` | Authorized endpoint override; empty uses the public endpoint |
 | Variable `NPA_TF_RECHECK_SCOPE` | Scope label, retained only as a hash in the published receipt |
 | Variable `NPA_TF_RECHECK_REQUIRED_MODELS` | Comma-separated additional models that must pass actual inference |
-| Variable `NPA_TF_RECHECK_JSON_BASELINE` | Reviewed structured-output expectation: `malformed_json` (initial), `schema_invalid`, or `healthy` |
+| Variable `NPA_TF_RECHECK_JSON_BASELINE` | Reviewed structured-output expectation: `healthy` (default), `malformed_json`, or `schema_invalid` |
 
 The migration's configured text, reasoning and vision defaults always remain
 required. Catalog membership alone cannot pass: actual requests must return
@@ -45,12 +48,21 @@ rendered agent HTTP backend. The HTTP suite is independent of deployed browser
 UI proof and does not claim a deployed UI.
 
 MiniMax `json_object` and `json_schema` are checked against the original response
-bytes with strict JSON parsing and exact synthetic schema/value checks. A
-healthy response changes the recorded behavior and fails an initial
-`malformed_json` baseline, making a vendor fix observable. Review the provider
-change and the workaround before explicitly updating that baseline. Prompted
-JSON must remain healthy on every run. The checks never remove malformed
-prefixes, repair scores, or automatically rewrite an expectation.
+bytes with strict JSON parsing and exact synthetic schema/value checks. The
+reviewed baseline is `healthy`: the protected runs from
+[September 9](https://github.com/nebius/nebius-physical-ai/actions/runs/34320080596)
+through [September 12, 2026](https://github.com/nebius/nebius-physical-ai/actions/runs/34678513677)
+observed healthy responses for both modes on the configured account and endpoint.
+Those runs failed only because healthy responses differed from the initial
+`malformed_json` expectation; the other 12 tests passed each day. Remove or update any existing
+`NPA_TF_RECHECK_JSON_BASELINE=malformed_json` override when adopting this reviewed
+baseline.
+
+Malformed JSON, invalid schemas, and any other mismatch with the configured
+expectation still fail. Historical expectations remain available as explicit
+overrides for other verified scopes. Prompted JSON must remain healthy on every
+run. The checks never remove malformed prefixes, repair scores, or automatically
+rewrite an expectation.
 
 The entrypoint is reproducible in protected operator automation as well:
 

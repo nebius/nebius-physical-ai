@@ -115,13 +115,24 @@ def run_contract(
     client: TokenFactoryClient,
     *,
     additional_models: tuple[str, ...] = (),
-    expected_json_behavior: str = "malformed_json",
+    expected_json_behavior: str = "healthy",
 ) -> dict[str, Any]:
     """Exercise all migration defaults and any explicitly configured models.
 
-    A healthy constrained response is recorded as a baseline change when the
-    configured expectation is malformed_json. Operators review the workaround
-    and update the explicit baseline; no automatic acceptance masks drift.
+    Structured output must match the reviewed baseline, which defaults to
+    healthy JSON. Historical expectations remain explicit overrides; any
+    mismatch fails without repairing output or automatically accepting drift.
+
+    Args:
+        client: Authorized Token Factory client used for live requests.
+        additional_models: Extra model identifiers to verify alongside defaults.
+        expected_json_behavior: Reviewed classification for constrained JSON.
+
+    Returns:
+        Sanitized probe observations and an aggregate pass/fail result.
+
+    Raises:
+        ValueError: If the structured-output baseline is unsupported.
     """
     if expected_json_behavior not in {"malformed_json", "schema_invalid", "healthy"}:
         raise ValueError("Invalid structured-output baseline")

@@ -1,5 +1,7 @@
 # Releasing `npa`
 
+[Docs](README.md)
+
 `npa` is distributed as a source checkout plus tagged releases with built
 artifacts. Every release is a git tag `vX.Y.Z` that matches the `version`
 field in `npa/pyproject.toml`; the `Release` workflow

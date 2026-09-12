@@ -1,5 +1,7 @@
 # Workbench Getting Started
 
+[Workbench docs](README.md)
+
 Complete the [platform quickstart](../quickstart.md) through credential setup,
 then use this page to prepare a GPU workflow on Nebius Kubernetes. Run commands
 from the repository root with your environment activated. Keep project settings
@@ -16,7 +18,7 @@ CLI/SDK calls do not require the Kubernetes setup below.
 | [Compositional Sim2Real](guides/sim2real-workflow.md) | The canonical 14-stage spec requests RTX PRO 6000 GPUs, CPU capacity, and an Isaac runtime cache. Follow its full runbook. |
 | [Isaac Lab BYOF](cookbooks/byof-isaac-lab/README.md) | A custom container and RT-core GPU capacity, such as L40S or RTX PRO 6000, as specified by the cookbook. |
 
-H100/H200 do not provide the RT cores needed for Isaac rendering. Read the
+H100/H200 and B200/B300 do not provide the RT cores needed for Isaac rendering. Read the
 chosen workflow's resource profiles before provisioning: model memory, CPU,
 driver, and GPU requirements differ between tools.
 
@@ -90,6 +92,10 @@ npa provision-if-absent --project "$project_alias" \
   --cluster-name "$cluster_name" --dry-run --output-format json
 ```
 
+Inspect `status` and `preflight.decision` in the JSON. A dry run can exit zero
+while reporting `blocked`; resolve its `preflight.reasons` before applying.
+Reserved GPU availability does not provide boot-disk quota.
+
 When its GPU/CPU topology matches the workload, run the same command without
 `--dry-run`. See [Kubernetes setup](kubernetes.md) for operational details.
 
@@ -142,7 +148,8 @@ npa workbench workflow preflight-images "$workflow_spec" \
   --var "bucket=$bucket_name" --json
 ```
 
-Gate: every selected image passes. Supported NPA images pull anonymously from
+Gate: every selected image passes. This check may create and delete a temporary
+probe pod in the selected cluster. Supported NPA images pull anonymously from
 `ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` and saved registry settings
 do not repoint those defaults. Use a complete image reference or explicit
 workflow `--registry` only for intentional custom images, with exact-host

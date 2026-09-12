@@ -1,5 +1,7 @@
 # The self-hosted `npa` agent
 
+[Docs](README.md)
+
 `npa agent` deploys a **browser workbench VM** into one of your Nebius projects:
 an HTTPS UI behind basic-auth login, grounded chat with a Nebius Token Factory
 default (`nvidia/Nemotron-3_5-Lightning` for text and `MiniMaxAI/MiniMax-M3`
@@ -36,7 +38,7 @@ to type, because setup reuses the projects `configure` already saved:
 ```bash
 npa agent preflight   # includes a cleaned writable-S3 probe before any VM work
 npa agent setup       # pick a configured project → deploys the VM
-npa agent status --project <alias> --name agent
+npa agent status --project "<alias>" --name agent
 ```
 
 `npa agent setup` prompts when you have more than one configured project and
@@ -45,8 +47,8 @@ deploys into the one you pick.
 For scripted deploys, `npa agent fresh-setup` takes the identity explicitly:
 
 ```bash
-npa agent fresh-setup --project <alias> \
-  --project-id <project-id> --tenant-id <tenant-id> --region <region>
+npa agent fresh-setup --project "<alias>" \
+  --project-id "<project-id>" --tenant-id "<tenant-id>" --region "<region>"
 ```
 
 By default, the preflight also reserves quota for the canonical follow-on GPU
@@ -56,8 +58,8 @@ managed cluster has already been prepared, pass `--agent-only` to check and
 provision only the VM's capacity:
 
 ```bash
-npa agent fresh-setup --project <alias> \
-  --project-id <project-id> --tenant-id <tenant-id> --region <region> \
+npa agent fresh-setup --project "<alias>" \
+  --project-id "<project-id>" --tenant-id "<tenant-id>" --region "<region>" \
   --agent-only
 ```
 
@@ -165,7 +167,7 @@ Load it in the shell that will operate the agent, then ask `status` for the
 verified customer URL:
 
 ```bash
-PROJECT_ALIAS=<alias>
+PROJECT_ALIAS="<alias>"
 AGENT_NAME=agent
 AUTH_FILE="$HOME/.npa/agents/$PROJECT_ALIAS/$AGENT_NAME/auth.env"
 
@@ -209,7 +211,7 @@ heartbeats continue throughout, and the command prints an exact remote
 diagnostic to run from another shell:
 
 ```bash
-ssh -i <ssh-key-path> <user>@<public-ip> \
+ssh -i "<ssh-key-path>" "<user>@<public-ip>" \
   sudo journalctl -u cloud-final -u npa-agent-backend -n 100
 ```
 

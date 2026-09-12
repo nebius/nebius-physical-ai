@@ -1,5 +1,7 @@
 # LeRobot version support audit and proposal — 2026-08-13
 
+[Workbench docs](README.md)
+
 Upstream LeRobot is at **0.6.1** (released 2026-08-03). This workbench defaults
 to **0.5.1** (2026-04-07) and offers **0.6.0** (2026-07-06) as a selectable
 alternative. This audit answers whether the workbench should support 0.6.1, what
@@ -17,6 +19,26 @@ The conclusions were then **executed** against a real LeRobot 0.6.1 install on
 the dev VM and against the shipped `npa-lerobot:0.6.0` image on an H100. That
 step is what turned up D6, a defect no amount of static reading would have
 found — see [Executed validation](#executed-validation).
+
+## 0.6.0 image follow-up — 2026-09-12
+
+D3 and D6 are now closed for the selectable 0.6.0 image. The current Dockerfile
+was rebuilt with the `diffusion` and `smolvla` extras through the trusted public
+publisher. The exact bytes passed source/history, payload, vulnerability,
+secret, license, SBOM, provenance, pushed-byte, visibility, and anonymous-pull
+gates. The resolver now selects the additive immutable
+`0.6.0-d6-extras-20260912` tag and the exact digest in
+`lerobot_version_manifest.json`; the bare `0.6.0` tag is a compatibility alias,
+not the resolver's source of truth.
+
+On a physical NVIDIA B200, the exact digest then passed
+`npa/scripts/validate_blackwell_image.sh --current-container --target b200
+--gpu --python /opt/lerobot/venv/bin/python --json`: torch 2.11.0+cu130 carried
+`sm_100` SASS, CUDA reported capability 10.0, and SASS coverage was true. The
+same job constructed a 272,708-parameter `DiffusionPolicy` and moved it onto
+the GPU; all six environment checks passed. This connects D3's immutable image
+evidence directly to D6's previously missing runtime dependency. It does not
+change this audit's separate recommendation or remaining gates for 0.6.1.
 
 ## Recommendation
 
@@ -152,7 +174,7 @@ and is already inconsistent with the VM installer, which pins neither
 (`install_lerobot.sh` installs unpinned `torch torchvision` from the cu124
 index).
 
-**D3 — 0.6.0 has no hardware-validated image.** The 0.5.1 manifest entry carries
+**D3 — 0.6.0 had no hardware-validated image (resolved 2026-09-12).** The 0.5.1 manifest entry carries
 an `image_tag` and an `image_digest`; the 0.6.0 entry carries neither, so
 `resolve_lerobot_image_tag("0.6.0")` falls through to the bare `0.6.0` semver
 tag built from the CUDA 12 Dockerfile. Selecting `--lerobot-version 0.6.0`
@@ -168,8 +190,8 @@ parity". But `npa-groot` clones NVIDIA's Isaac-GR00T directly and already ships
 **N1.7** — it does not consume LeRobot's `groot` extra at all. Only the sim2real
 parity half of that justification survives.
 
-**D6 — `npa-lerobot:0.6.0` cannot run Diffusion Policy.** *(found by running the
-image; fixed in this PR)* 0.6.0 moved `diffusers` and `transformers` out of the
+**D6 — the prior `npa-lerobot:0.6.0` image could not run Diffusion Policy
+(resolved 2026-09-12).** 0.6.0 moved `diffusers` and `transformers` out of the
 base install and behind extras, and enforces them with `require_package()`
 **inside each policy's `__init__`**. Our extras string was never updated, so
 `lerobot[training,evaluation,pusht,libero]` installs no `diffusers`, the module

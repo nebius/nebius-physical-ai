@@ -1,5 +1,7 @@
 # Token Factory default migration verification
 
+[Workbench docs](README.md)
+
 Verified on 2026-09-04/05 UTC against the public Token Factory API with one
 configured account and synthetic inputs. The deprecation claim is true, with
 an observed exception for Llama 3.3.
@@ -121,7 +123,7 @@ npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_token_factory_e2e.py \
   npa/tests/e2e/test_hosted_rollout_e2e.py \
   npa/tests/e2e/test_agent_token_factory_e2e.py -q \
-  --basetemp=<private-artifact-directory>
+  --basetemp="<private-artifact-directory>"
 ```
 
 Authentication preflight and `models` are useful prerequisites, not proof of

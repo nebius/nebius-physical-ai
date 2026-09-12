@@ -1,67 +1,104 @@
-# Tune a synthetic objective with native Ray Tune
+# Native Ray Tune: search, checkpoint, and recover
 
-This guarded reference runs a real three-trial Ray Tune search on public,
-generated numeric inputs. It demonstrates the supported boundary without adding
-an NPA Tune wrapper: SkyPilot owns one reusable CPU host and its Ray service
-task; native Ray Jobs owns source delivery, submission, logs, status, and stop;
-the application owns its Tune recipe and exported result contract.
+[Ray guide](../../../../docs/workbench/ray.md) · [Reference examples](../README.md)
 
-This example is outside the `npa.workflow` catalog. Use `npa.workflow` for a
-production graph that composes several Workbench capabilities. This reference
-adds no CLI group, service, container, controller, or GPU claim.
+Run a three-trial CPU search on generated numeric inputs. Ray Tune selects the
+best step size and retries one deliberately interrupted trial from its checkpoint.
+The result is a set of JSON reports that an independent inspector verifies.
+Start locally; the optional cloud path runs the same source through Ray Jobs.
 
-## What it proves
+| You provide | You get |
+| --- | --- |
+| Python environment with Ray 2.58.0; no model or dataset | Three completed trials, best step size `0.2`, and zero best loss |
+| Fresh storage and export directories | Native Tune checkpoints plus checksum-verified result reports |
+| Optional cloud platform | A reusable CPU service with native Jobs submit, logs, status, and stop |
 
-The search evaluates step sizes `0.1`, `0.2`, and `0.3` against a deterministic
-target of `0.2`. Every trial reports three iterations and a native Tune
-checkpoint. The optional failure probe raises once after the `0.3` trial's first
-checkpoint; `FailureConfig(max_failures=1)` reschedules that trial, which resumes
-at iteration two. The final result must select `0.2` with zero loss.
-
-`search.py` writes a fresh owner-only export containing:
-
-- `result.json`: completion, Ray version, experiment path, and selected optimum;
-- `trials.json`: every search value, final loss, completion, checkpoint, and
-  observed retry state;
-- `runtime.json`: Python and Ray versions;
-- `SHA256SUMS`: complete-byte hashes for the three JSON artifacts.
-
-`inspect_results.py` checks the complete file set, every digest, all trials,
-checkpoint availability, and the known optimum. The export is independent
-review evidence; Tune's experiment directory remains the recovery source.
+This is a native Ray application example. Use the
+[`npa.workflow` catalog](../../../../workflows/README.md) for pipelines that
+compose several Workbench capabilities.
 
 ## Run locally first
 
-Use the repository interpreter after installing the application dependency:
+From the repository root, use the
+[contributor environment](../../../../npa/README.md#developing-and-testing-npa)
+and install the application's additional dependency:
 
 ```bash
-cd <npa-checkout>
-export TUNE_EXAMPLE=npa/workflows/workbench/ray-tune-synthetic
-npa/.venv/bin/pip install 'ray[default,tune]==2.58.0'
+export NPA_REPO="$PWD"
+export TUNE_EXAMPLE="$NPA_REPO/npa/workflows/workbench/ray-tune-synthetic"
+export RAY_BIN="$NPA_REPO/npa/.venv/bin/ray"
+npa/.venv/bin/python -m pip install 'ray[default,tune]==2.58.0'
+
+unset RAY_ADDRESS RAY_API_SERVER_ADDRESS
+export TUNE_RESULTS="$(mktemp -d "${TMPDIR:-/tmp}/npa-tune.XXXXXX")"
 npa/.venv/bin/python "$TUNE_EXAMPLE/search.py" \
   --local \
-  --storage-path "$PWD/local-storage" \
+  --storage-path "$TUNE_RESULTS/local-storage" \
   --run-name local-search \
-  --output-dir "$PWD/local-result" \
+  --output-dir "$TUNE_RESULTS/local-result" \
   --fail-step-size 0.3
-npa/.venv/bin/python "$TUNE_EXAMPLE/inspect_results.py" "$PWD/local-result"
+npa/.venv/bin/python "$TUNE_EXAMPLE/inspect_results.py" "$TUNE_RESULTS/local-result"
 ```
 
-Use fresh paths. Existing output directories are refused so a retry cannot
-overwrite earlier evidence. This CPU run proves Tune scheduling, checkpointed
-trial retry, result selection, and artifact validation; it proves no GPU or
-multi-node behavior.
+Expected inspector output:
+
+```json
+{"artifacts_verified": 3, "resumed_trials": 1, "trials_verified": 3}
+```
+
+The `0.3` trial deliberately fails after its first checkpoint, then resumes at
+iteration two. An error from that injected failure is expected; the final search
+and inspection must still succeed. This exact local path was verified on macOS
+with Ray 2.58.0. It establishes CPU search and checkpoint recovery.
+
+Use fresh paths for another run: existing export directories are refused.
+Copy results somewhere durable before deleting temporary files. The application
+shuts down its locally started Ray runtime when it finishes.
+
+## What to inspect
+
+| File | Contents |
+| --- | --- |
+| `result.json` | Completion, selected optimum, and experiment path |
+| `trials.json` | Every trial's loss, iterations, checkpoint, and retry state |
+| `runtime.json` | Python/Ray versions and exact source hash |
+| `SHA256SUMS` | Hashes of the three JSON files |
+
+`inspect_results.py` checks the complete file set, source and artifact hashes,
+trial completion, checkpoint evidence, and the known optimum. The export is a
+reviewable summary. Tune's experiment directory holds the state needed for
+restoration; preserve both when recovery matters.
+
+## Optional: prepare the cloud platform
+
+Complete the [private SkyPilot platform setup](../ray-clip-development/platform/README.md)
+first. It supplies the pinned SkyPilot 0.12.2 executable, authenticated access,
+and an explicitly selected Kubernetes context. The example requests one CPU
+pod with 6 CPUs and 12 GiB memory; leave room for platform/system pods.
+
+Keep the local variables above, then select the exact context supplied by setup:
+
+```bash
+export TUNE_CLUSTER='<unique-development-cluster-name>'
+export KUBE_CONTEXT='<verified-kubernetes-context>'
+export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
+npa workbench health preflight --checks nebius --json
+```
+
+For S3 checkpoints, also verify the selected bucket's ownership and
+write/read/delete access to your run prefix. Export `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_DEFAULT_REGION` privately.
+Append name-only `--env` forwards for those four variables to the launch below.
+Keep credential values out of YAML and Jobs runtime-environment files.
+The default example below stores experiment state on the service host.
 
 ## Start the reusable Ray service
 
-Use the private SkyPilot platform setup documented beside the native Ray CLIP
-reference. Bootstrap SkyPilot 0.12.2 through NPA and invoke only the returned
-`NPA_SKYPILOT_BIN`; do not use an ambient `sky` executable. Select the exact
-Kubernetes context and a unique cluster name:
+Launch **from the example directory** so `cluster.yaml` and its relative
+`./cluster` file mount resolve correctly:
 
 ```bash
-export TUNE_CLUSTER=tune-synthetic
-export KUBE_CONTEXT="$(kubectl config current-context)"
+cd "$TUNE_EXAMPLE"
 "$NPA_SKYPILOT_BIN" launch --yes --detach-run -c "$TUNE_CLUSTER" \
   --infra "k8s/$KUBE_CONTEXT" \
   --config "kubernetes.allowed_contexts=[\"$KUBE_CONTEXT\"]" \
@@ -69,122 +106,102 @@ export KUBE_CONTEXT="$(kubectl config current-context)"
 "$NPA_SKYPILOT_BIN" queue "$TUNE_CLUSTER"
 ```
 
-The digest-pinned upstream Ray image and the separately prepared environment
-both use Ray 2.58.0. Preparation fails if its private runtime already exists;
-retain that attempt and use a fresh host rather than adopting unknown bytes.
-The dashboard binds to loopback. Reach it through an authenticated SSH tunnel,
-keep GCS and Jobs private, and allow only trusted application code on the
-service.
+Record the exact service-task ID. Preparation creates a fresh private
+`~/.npa-ray-tune` on the **remote host** using the pinned Ray image and Ray 2.58.0
+application environment. If preparation finds an existing runtime, preserve
+that attempt and use fresh hosting pods.
+
+Connect through the SkyPilot-generated SSH alias. Read the remote runtime path
+instead of expanding your local `$HOME` into a remote command:
 
 ```bash
+export TUNE_RUNTIME="$(ssh "$TUNE_CLUSTER" 'printf "%s/.npa-ray-tune\n" "$HOME"')"
 export TUNE_SOCKET="$HOME/.ssh/${TUNE_CLUSTER}-jobs.sock"
 ssh -M -S "$TUNE_SOCKET" -fNT -o ExitOnForwardFailure=yes \
   -L 18265:127.0.0.1:8265 "$TUNE_CLUSTER"
 unset RAY_ADDRESS RAY_API_SERVER_ADDRESS
 export RAY_API=http://127.0.0.1:18265
-ray job list --address "$RAY_API"
+"$RAY_BIN" job list --address "$RAY_API"
 ```
 
-Wait for the native Jobs endpoint before submitting. Application Ray uses
-ports separate from SkyPilot's management Ray; never use `ray stop` or ambient
-Ray discovery.
+Wait until Jobs responds. The dashboard and GCS remain private; application
+ports are separate from SkyPilot's management Ray. Submit only trusted code and
+use the explicit Jobs address throughout.
 
 ## Submit and inspect through Ray Jobs
 
-From this example directory, choose one exact submission ID and fresh host
-paths. For a durable experiment, use a run-scoped S3 `--storage-path` whose
-bucket ownership and exact prefix were verified privately before launch. Pass
-the matching S3 credential variables to the SkyPilot launch environment; never
-put values in source or Jobs runtime-environment JSON.
-
-For S3, add these name-only forwards to the earlier `launch` command after the
-exact bucket and prefix pass ownership and write/read/delete checks:
-
-```bash
---env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
---env AWS_ENDPOINT_URL_S3 --env AWS_DEFAULT_REGION
-```
+Still in `$TUNE_EXAMPLE`, choose a fresh submission ID and output paths:
 
 ```bash
 export TUNE_JOB=tune-reference
-export TUNE_RUNTIME="$HOME/.npa-ray-tune"
-ray job submit --address "$RAY_API" --submission-id "$TUNE_JOB" \
+"$RAY_BIN" job submit --address "$RAY_API" --submission-id "$TUNE_JOB" \
   --working-dir . -- \
   "$TUNE_RUNTIME/env/bin/python" search.py \
   --storage-path "$TUNE_RUNTIME/experiments" \
   --run-name reference \
   --output-dir "$TUNE_RUNTIME/exports/$TUNE_JOB" \
   --fail-step-size 0.3
-ray job status --address "$RAY_API" "$TUNE_JOB"
-ray job logs --address "$RAY_API" "$TUNE_JOB"
+"$RAY_BIN" job status --address "$RAY_API" "$TUNE_JOB"
+"$RAY_BIN" job logs --address "$RAY_API" "$TUNE_JOB"
 ```
 
-Require `SUCCEEDED`; a submission banner is not completion evidence. Preserve
-both the export and, for local storage, the Tune experiment directory before
-teardown:
+Require `SUCCEEDED`, then download the export and local experiment state:
 
 ```bash
-mkdir -p "$RESULTS"
-rsync -az "$TUNE_CLUSTER:$TUNE_RUNTIME/exports/$TUNE_JOB/" "$RESULTS/export/"
-rsync -az "$TUNE_CLUSTER:$TUNE_RUNTIME/experiments/reference/" "$RESULTS/experiment/"
-# After returning to the repository root:
-npa/.venv/bin/python "$TUNE_EXAMPLE/inspect_results.py" "$RESULTS/export"
-(cd "$RESULTS/export" && sha256sum -c SHA256SUMS)
+mkdir -p "$TUNE_RESULTS/cloud"
+rsync -az "$TUNE_CLUSTER:$TUNE_RUNTIME/exports/$TUNE_JOB/" "$TUNE_RESULTS/cloud/export/"
+rsync -az "$TUNE_CLUSTER:$TUNE_RUNTIME/experiments/reference/" "$TUNE_RESULTS/cloud/experiment/"
+"$NPA_REPO/npa/.venv/bin/python" "$TUNE_EXAMPLE/inspect_results.py" "$TUNE_RESULTS/cloud/export"
 ```
 
-An S3 experiment path makes Tune's checkpoints and experiment state survive
-host teardown, but the checksum-bound summary still must be copied to durable
-storage. A local experiment path is not durable after `sky down`.
+Expect the same three-artifact, three-trial, one-resumed-trial receipt. For
+S3-backed experiments, use the verified run-scoped S3 URI as `--storage-path`
+instead; preserve the export separately. Host-local checkpoints disappear when
+the hosting pod is deleted.
 
 ## Failure and recovery boundaries
 
-The injected trial failure is recovered automatically from its last checkpoint.
-That validates one application exception, not node loss, head loss, or exactly-once
-external side effects. A second failure exceeds the declared budget and the
-application refuses to export a successful result.
+The injected exception exercises native Tune checkpointed retry with
+`FailureConfig(max_failures=1)`. It does not simulate node or head loss. A second
+failure exceeds the recipe's retry allowance and cannot produce a successful
+export.
 
-If the Jobs driver, head, or service is interrupted after Tune has persisted
-experiment state, rerun the exact recipe with `--restore`, the same
-`--storage-path` and `--run-name`, and a fresh output directory. The application
+After a driver interruption, keep the same source, `--storage-path`, and
+`--run-name`, add `--restore`, and select a fresh output directory. The example
 uses `Tuner.can_restore` and `Tuner.restore(..., resume_errored=True)`. Restore
-does not accept a changed search space and cannot fix deterministic application
-bugs. Treat Tune experiment state as trusted executable state; never restore a
-path writable by an untrusted party.
+cannot repair an incompatible search space or deterministic application bug.
+Only restore experiment state written by trusted code.
 
-Stopping the Ray Job is separate from Tune restoration:
+To stop an active job:
 
 ```bash
-ray job stop --address "$RAY_API" "$TUNE_JOB"
-ray job status --address "$RAY_API" "$TUNE_JOB"
+"$RAY_BIN" job stop --address "$RAY_API" "$TUNE_JOB"
+"$RAY_BIN" job status --address "$RAY_API" "$TUNE_JOB"
 ```
 
-Poll the exact ID to `STOPPED`; a stop request is not terminal evidence. An
-interrupted export is not a completed result. Preserve any partial evidence and
-use a fresh output directory after restoration.
+Wait for `STOPPED`. Preserve partial evidence; an interrupted export is not a
+completed result.
 
 ## Cleanup
 
-Cancel exact Ray Jobs before their hosting service. Then cancel only the
-recorded SkyPilot service task and remove only the named development cluster:
+After all owned Ray Jobs are terminal and needed outputs are saved, cancel the
+recorded SkyPilot service task and remove its development cluster:
 
 ```bash
-"$NPA_SKYPILOT_BIN" cancel "$TUNE_CLUSTER" <service-task-id> --yes
+"$NPA_SKYPILOT_BIN" cancel "$TUNE_CLUSTER" '<service-task-id>' --yes
 "$NPA_SKYPILOT_BIN" down "$TUNE_CLUSTER" --yes
 ssh -S "$TUNE_SOCKET" -O exit "$TUNE_CLUSTER"
 ```
 
-Verify the owned pod and tunnel are absent. Retain shared Kubernetes and the
-SkyPilot API unless their separate owner explicitly authorized teardown.
+Verify the owned pod and tunnel are gone. Keep shared Kubernetes and the
+SkyPilot API running; a separately owned platform has its own cleanup procedure.
+Do not use `ray stop`, which can affect other Ray processes on the host.
 
 ## Agent guidance and compatibility
 
-When operating this reference, keep the native ownership split visible. Start
-with the local CPU run; before cloud work, run `npa workbench health preflight
---checks nebius --json` and verify the exact target context. If S3 is selected,
-verify bucket ownership plus write/read/delete access to the exact run prefix.
-Track the submission ID, service-task ID, cluster name, tunnel socket, storage
-path, and result destination privately. Never infer GPU, multi-node, or workload
-quality evidence from this numeric CPU search.
+Keep the cluster name, service-task ID, Jobs ID, tunnel, storage prefix, and
+result destination in private run notes. A successful CPU search establishes
+no GPU or multi-node behavior.
 
 The implementation follows the Ray 2.58 primary sources for
 [`Tuner`](https://github.com/ray-project/ray/blob/ray-2.58.0/python/ray/tune/tuner.py),

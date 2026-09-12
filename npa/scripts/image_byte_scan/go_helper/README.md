@@ -1,12 +1,22 @@
 # Whole-file Gitleaks helper
 
+[Image scanning](../../../../docs/workbench/ncore-oci-publication.md) · [Repository](../../../../README.md)
+
 This analysis tool is built outside container contexts. It calls the pinned
 Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including binary
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
-An explicit Linux amd64 bootstrap runs native regression tests before writing a
-terminal dependency receipt:
+## Prepare the helper
+
+Run on **Linux amd64**, from an NPA checkout with its development environment
+installed. The bootstrap downloads its pinned Go toolchain and modules; a local
+Go installation is not required. macOS and ARM hosts are not supported by this
+native preparation path.
+
+Choose a private analysis directory outside the checkout. Replace the three
+absolute paths below before running. The bootstrap runs native regression tests
+before writing a terminal dependency receipt:
 
 ```bash
 npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
@@ -26,6 +36,8 @@ canaries. Hermetic bootstrap tests are collected by normal repository CI and can
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/docker/test_image_byte_go_build.py -q
 ```
+
+## What successful preparation produces
 
 The bootstrap pins [Go 1.27.1](https://go.dev/dl/) Linux amd64 to SHA-256
 `63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445`.
@@ -54,8 +66,13 @@ big-endian byte length followed by exactly that many bytes, repeatedly. It emits
 one JSON result per record, retaining every finding but returning only rule and
 line information, record ordinal, byte count and SHA-256. Clean EOF between
 records produces a final summary. A truncated header or payload is an error.
-Exit 0 means no findings, 1 means findings after processing all complete records,
-and 2 means a protocol, configuration or IO failure. Failures never establish a
+The scanner process uses these exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | All records processed; no findings. |
+| `1` | All complete records processed; findings retained. |
+| `2` | Protocol, configuration, or I/O failure. | Failures never establish a
 clean scan. The caller separately records exact coverage and handles resource
 exhaustion as failure.
 
