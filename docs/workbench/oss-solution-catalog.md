@@ -134,9 +134,16 @@ pending until that normal-submit path produces genuine private live evidence.
 
 The planned public image contains none of these bytes; a future authorized
 runtime would compile pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
-limits use to noncommercial research/evaluation, so use and service claims stay
-human-gated even though a zero-vendor-payload bootstrap may be eligible for
-public redistribution after exact-byte review. The candidate remains unbuilt,
+limits use to noncommercial research/evaluation. The operator's exact
+`noncommercial` statement for this bounded run is compatible with that field of
+use for containerization and technical workload validation/evaluation; it
+expires with the run and does not authorize hosted service or broader outputs.
+Those service/output questions stay human-gated even though a
+zero-vendor-payload bootstrap may be eligible for public redistribution after
+exact-byte review. Public artifacts require exact-revision payload probes;
+gated artifacts additionally require the customer's own runtime-only credential
+and an exact provider/artifact/revision/terms access result before provisioning.
+No generic consent flag is used. The candidate remains unbuilt,
 publication-quarantined, and absent from the public image table. The Hugging Face
 asset repository card says MIT, while the
 aggregate object archive includes mixed documented source families; future

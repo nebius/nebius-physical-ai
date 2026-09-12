@@ -1,7 +1,17 @@
 {
   "schema_version": "npa.robotwin.runtime-lock.v1",
   "status": "incomplete",
-  "reason": "No CUDA, cuDNN, CuRobo, simulator, Python-runtime, or aggregate asset/output rights decision has been approved.",
+  "reason": "CUDA/cuDNN delivery and use, the CuRobo service/output boundary beyond the recorded noncommercial evaluation scope, the simulator/Python closure, and aggregate RoboTwin asset/output treatment remain incomplete.",
+  "packaging_shape": "whole-source-sdk-runtime-fetch",
+  "operator_scope": {
+    "statement": "noncommercial",
+    "intended_activity": "containerization-and-technical-workload-validation-and-evaluation",
+    "record": "owner-only-bounded-manager-run-record",
+    "lifetime": "expires-with-bounded-manager-run",
+    "global_or_permanent": false,
+    "curobo_compatibility": "noncommercial-research-or-evaluation-only",
+    "service_and_output_use": "human-decision-required"
+  },
   "target": {
     "os": "linux",
     "architecture": "amd64",
@@ -56,8 +66,35 @@
   ],
   "weights": [],
   "runtime_artifacts": [],
+  "access": {
+    "status": "not-probed",
+    "timing": "before-provisioning",
+    "evidence_key": [
+      "provider",
+      "customer-credential-fingerprint",
+      "artifact",
+      "immutable-revision-or-digest",
+      "terms-revision"
+    ],
+    "anonymous_artifacts": "exact-revision-payload-byte-probe",
+    "gated_artifacts": "customer-credential-exact-revision-payload-byte-probe",
+    "credential_owner": "customer",
+    "credential_phase": "runtime-only-secret-value",
+    "credential_persistence": false,
+    "token_is_terms_acceptance": false
+  },
   "cache": {
     "status": "disabled-until-lock-complete",
+    "tier": "node-local-ephemeral",
+    "owner_access": "single-customer-single-workload",
+    "identity_key": [
+      "provider",
+      "artifact",
+      "immutable-revision-or-digest",
+      "format"
+    ],
+    "durable_reuse": "disabled-until-rights-and-isolation-approved",
+    "contains_credentials": false,
     "receipt_written_last": true,
     "population": "unique-owner-only-staging-then-atomic-rename"
   },

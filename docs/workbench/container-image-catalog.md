@@ -71,7 +71,9 @@ base, apt closure, and runtime lock incomplete and refuses builds/runs. RoboTwin
 CuRobo, CUDA/cuDNN, simulator packages, assets, caches, credentials, and outputs
 remain outside the image. No exact image, byte scan, SBOM, provenance,
 anonymous-pull result, or RTX result exists. The independent runtime-use and
-output-rights decisions and the exact-digest RTX PRO 6000 gate are documented in
+output-rights decisions, bounded run-scoped `noncommercial` statement,
+customer-owned runtime credential/exact payload-probe contract, isolated
+ephemeral-cache default, and exact-digest RTX PRO 6000 gate are documented in
 [`byof-robotwin.md`](byof-robotwin.md).
 
 ## Pending NCore conversion image

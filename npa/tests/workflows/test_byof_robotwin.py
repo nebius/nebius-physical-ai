@@ -144,6 +144,30 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert curobo["use_restriction"] == "noncommercial-research-or-evaluation"
     assert {item["revision"] for item in lock["assets"]} == {ASSET_REVISION}
     assert all(item["sha256"] and item["size_bytes"] > 0 for item in lock["assets"])
+    assert lock["packaging_shape"] == "whole-source-sdk-runtime-fetch"
+    assert lock["operator_scope"] == {
+        "statement": "noncommercial",
+        "intended_activity": (
+            "containerization-and-technical-workload-validation-and-evaluation"
+        ),
+        "record": "owner-only-bounded-manager-run-record",
+        "lifetime": "expires-with-bounded-manager-run",
+        "global_or_permanent": False,
+        "curobo_compatibility": "noncommercial-research-or-evaluation-only",
+        "service_and_output_use": "human-decision-required",
+    }
+    assert lock["access"]["status"] == "not-probed"
+    assert lock["access"]["timing"] == "before-provisioning"
+    assert lock["access"]["credential_owner"] == "customer"
+    assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
+    assert lock["access"]["credential_persistence"] is False
+    assert lock["access"]["token_is_terms_acceptance"] is False
+    assert lock["cache"]["tier"] == "node-local-ephemeral"
+    assert lock["cache"]["owner_access"] == "single-customer-single-workload"
+    assert lock["cache"]["durable_reuse"] == (
+        "disabled-until-rights-and-isolation-approved"
+    )
+    assert lock["cache"]["contains_credentials"] is False
 
 
 def test_robotwin_profile_requests_one_rtx_and_runs_authorized_bootstrap() -> None:
@@ -269,7 +293,7 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "c42c4037392f51ad6c2473eb3f07843738a4c5147328ace1686ddb9cf553b4ef",
+                "runtime_lock_sha256": "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",

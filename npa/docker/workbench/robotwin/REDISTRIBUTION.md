@@ -10,8 +10,13 @@ provenance, vulnerability, secret, complete-byte, and RoboTwin-specific scans.
 Redistributability of a future bootstrap is separate from permission to run the
 runtime-fetched components.
 
-Runtime use remains refused until the manager records genuine decisions for the
-CUDA and cuDNN terms, CuRobo v0.7.8's noncommercial research/evaluation field of
-use and service boundary, and the aggregate RoboTwin asset/output rights. A
-credential, private registry, runtime fetch, or writable destination is not
-permission.
+The operator's exact `noncommercial` statement is recorded once for this
+bounded manager run and is compatible only with CuRobo v0.7.8 noncommercial
+research/evaluation. It expires with the run and does not authorize hosted
+service or broader derivative/output use. Runtime use remains refused until a
+genuine manager receipt binds that scope plus CUDA and cuDNN delivery/use,
+CuRobo's remaining service/output boundary, aggregate RoboTwin asset/output
+treatment, and exact provider access evidence. Customer credentials, when an
+artifact is gated, are runtime-only secret values and must pass the exact
+provider/artifact/revision/terms payload probe. A credential, private registry,
+runtime fetch, or writable destination is not permission.

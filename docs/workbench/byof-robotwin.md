@@ -21,19 +21,46 @@ with deferred prerequisites in its
 
 | Boundary | Phase A treatment |
 | --- | --- |
-| Source | `RoboTwin-Platform/RoboTwin@96c1feab536306b50c26af200044fcdf126e8904` and `NVlabs/curobo@d64c4b005459db10c5dd867d8b30a87d5bda9bdb` (v0.7.8) are identities only. Neither source nor git metadata is baked or fetched. |
+| Source | `RoboTwin-Platform/RoboTwin@96c1feab536306b50c26af200044fcdf126e8904` and `NVlabs/curobo@d64c4b005459db10c5dd867d8b30a87d5bda9bdb` (v0.7.8) are identities only. Neither source nor git metadata is baked or currently fetched; a future authorized runtime must fetch the exact revisions directly from their official providers and verify payload bytes before provisioning. |
 | Baked runtime | The candidate may eventually contain a digest-pinned Ubuntu 22.04 bootstrap and an exact snapshot/version-locked OS closure. Phase A leaves these locks incomplete and refuses every build. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and Python application packages are absent. |
 | Weights | Empty. This data-collection gate uses no model or checkpoint. |
-| Data/assets | `TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad` is recorded only as an identity. No archive or extracted asset is fetched or baked. |
-| Runtime cache | Empty and disabled while the runtime lock is incomplete. A future cache inherits all source/runtime restrictions and must use owner-only staging, verification, and receipt-last atomic rename. |
+| Data/assets | `TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad` is recorded only as an identity. No archive or extracted asset is currently fetched or baked. A future authorized runtime must probe and fetch the two exact revision-bound archives from the official provider and verify their recorded sizes and SHA-256 values. |
+| Runtime cache | Empty and disabled while the runtime lock is incomplete. The planned default is single-customer, single-workload node-local ephemeral storage keyed by provider, artifact, immutable revision/digest, and format. Population uses owner-only staging, verification, and receipt-last atomic rename. Durable reuse remains disabled until its rights and tenant isolation are approved. |
 | Outputs | No Phase A outputs exist. A future run may write only the destination derived from the manager-authorized root and run ID; source staging is a separate control-plane input, never a second output destination. |
 
-CuRobo v0.7.8's noncommercial research/evaluation field-of-use restriction is
-binding on runtime use and service claims even though its source redistribution
-terms include notice obligations. CUDA and cuDNN acceptance and delivery,
-CuRobo purpose/service use, and aggregate RoboTwin asset/output rights each
-require a genuine manager/human decision. Runtime fetch, a credential, a
-private registry, successful scanning, or writable storage is not permission.
+The operator has recorded the exact statement `noncommercial` once for this
+bounded manager run; its separate intended activity is containerization plus
+technical workload validation and evaluation. That record expires with this
+run and is neither global nor permanent. It is compatible with CuRobo v0.7.8's
+noncommercial research/evaluation field-of-use limit, but it does not authorize
+a hosted service, broaden derivative/output rights, or silently upgrade CuRobo.
+CUDA and cuDNN delivery/use, CuRobo's service/output boundary, and aggregate
+RoboTwin asset/output treatment remain genuine manager/human decisions.
+Runtime fetch, a credential, a private registry, successful scanning, or
+writable storage is not permission.
+
+## Runtime-fetch delivery contract
+
+The selected shape is whole-source/SDK runtime fetch. The public bootstrap is
+credential-free. Public upstream artifacts use an exact-revision payload-byte
+probe and need no token. If an exact selected artifact is gated, the customer
+supplies and controls the provider credential and the client must complete an
+exact payload probe bound to provider, customer credential fingerprint,
+artifact, immutable revision or digest, and terms revision before provisioning.
+Token presence alone is not evidence and NPA adds no generic acceptance flag.
+Any required token crosses only the existing runtime secret-value channel; it
+must never enter argv, YAML, plans, logs, Git, image layers, cache metadata,
+outputs, or PR text. A provider/artifact/revision/terms change requires a new
+probe. Phase A accepts no upstream credential and performs no probe or fetch.
+
+The runtime lock is the immutable delivery manifest. Its source, asset, runtime,
+cache, and output records remain incomplete, so the guarded path refuses before
+network or provisioning. The eventual implementation must download into a
+unique owner-only temporary path, verify the exact expected file set, sizes,
+hashes, source identity, and notices, and publish an atomic ready marker only
+after verification. A restart may reuse only the same verified identity within
+the same customer's entitlement; otherwise it fails closed. Fetched bytes and
+populated caches never become image or output payloads.
 
 ## Fail-closed submit and runtime
 
@@ -41,10 +68,11 @@ The exact RoboTwin normal-submit contract reads one owner-owned 0600 context
 file with a byte bound and `O_NOFOLLOW` before config discovery, image work,
 storage, networking, scheduling, or GPU activity. Its closed schema binds the
 workflow hash, source/CuRobo/asset revisions, runtime-lock hash, one immutable
-bootstrap image digest, one STRICT RTX reservation, four independent decisions,
-and one output root/run ID. Phase A deliberately rejects even a well-formed
-context: no manager-approved receipt format, verifier key, or immutable evidence
-binding exists, so the four booleans cannot self-certify those decisions.
+bootstrap image digest, one STRICT RTX reservation, the run-scoped
+noncommercial binding plus the remaining independent decisions, and one output
+root/run ID. Phase A deliberately rejects even a well-formed context: no
+manager-approved receipt format, verifier key, or immutable evidence binding
+exists, so its decision fields cannot self-certify authority or access.
 
 Only validated bytes cross the existing secret-value transport. The CPU worker
 materializes temporary context/config files below a 0700 directory as exclusive
