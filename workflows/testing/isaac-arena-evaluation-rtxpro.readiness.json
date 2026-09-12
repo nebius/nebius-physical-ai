@@ -1,0 +1,15 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0e8f733595af77f0ffeb223d7cc044fabc2ef74716d5e9ee67359004615984be",
+  "planning": {
+    "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real replay adapter with the GR1 open-microwave environment, gr1_pink embodiment, tomato-soup-can task object, hash-bound operator HDF5 input, exact 250-step task horizon, and required motion-validated viewport video.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py", "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]}
+  },
+  "prerequisites": {
+    "output_storage": {"status": "unverified", "reason": "The new replay run must complete the writable-storage preflight and publish independently readable artifacts before this candidate is ready.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "worker_input": {"status": "unverified", "reason": "The workflow now requires an operator-owned copy of the hash-pinned Apache-2.0 upstream replay fixture; worker readability remains a live preflight gate.", "evidence": ["npa/docker/workbench/isaac-arena/smoke_functional.sh", "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights must be repeated for the rebuilt candidate; no model credential is required.", "evidence": ["docs/workbench/isaac-arena.md"]},
+    "source_image": {"status": "unverified", "reason": "Runtime and smoke contents changed, so the rebuilt exact digest must pass all publication scans and attestations before acceptance.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/isaac-arena/smoke_functional.sh"]},
+    "target_runtime": {"status": "unverified", "reason": "A real RTX PRO 6000 replay evaluation with nonzero behavior and decoded temporal viewport motion is required for this candidate.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]}
+  }
+}

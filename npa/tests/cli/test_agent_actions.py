@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from npa.cli import agent_actions as A
+from npa.cli.agent_payloads import tool_catalog_payload
 
 
 def _completion(obj: dict) -> dict:
@@ -39,6 +40,18 @@ def test_allowlist_contains_readonly_and_gated_tools():
     # sim2real_submit is the GPU-spending gated tool; status tools are not.
     assert A.requires_confirmation("sim2real_submit")
     assert not A.requires_confirmation("sim_viz_status")
+
+
+def test_agent_tool_catalog_embeds_isaac_arena_capability_surface():
+    catalog = tool_catalog_payload()
+    for tool_ref in (
+        "workbench.isaac_arena.evaluate",
+        "workbench.isaac_arena.evaluate_video",
+    ):
+        arena = catalog[tool_ref]["capabilities"]
+        assert arena["schema"] == "npa.workbench.isaac_arena.capabilities.v1"
+        assert len(arena["environments"]) == 18
+        assert arena["outputs"]["rerun_rrd"] is False
 
 
 def test_readonly_tool_runs_and_produces_final_answer():
@@ -966,6 +979,12 @@ def test_oversized_non_record_observation_still_falls_back_to_preview():
 def test_small_observation_is_passed_through_unchanged():
     observation = {"backend": "jsonl", "count": 1, "records": [{"run_id": "r"}]}
     assert A._observe(observation) is observation
+
+
+def test_tool_catalog_has_a_separate_finite_observation_budget():
+    assert A._observation_limit("tools_catalog") == A.TOOL_CATALOG_OBSERVATION_LIMIT
+    assert A._observation_limit("health") == A.DEFAULT_OBSERVATION_LIMIT
+    assert A.TOOL_CATALOG_OBSERVATION_LIMIT > A.DEFAULT_OBSERVATION_LIMIT
 
 
 def test_planner_prompt_carries_the_grounding_rule():

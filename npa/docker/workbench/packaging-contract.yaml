@@ -495,6 +495,26 @@ images:
       fetches after EULA preflight.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  isaac-arena:
+    dockerfile: isaac-arena/Dockerfile
+    isaac_runtime_fetch: true
+    tier: job
+    notes: >-
+      Inherits the exact accepted payload-clean npa-isaac-lab digest and adds
+      Isaac Lab-Arena 0.3.0 Apache-2.0 source from its checksum-verified release
+      commit plus the hash-locked Apache-2.0 Lightwheel SDK client and the
+      open-source Pinocchio, Pink, ONNX Runtime, and solver dependency closure
+      that Arena imports during registry discovery.
+      Upstream tests, sample checkpoints, demonstration data, and documentation
+      media are removed. Isaac Sim/Lab, Lightwheel registry assets, operator
+      replay data, RSL-RL checkpoints, generated evaluation artifacts,
+      credentials, and populated caches remain runtime-only. NPA provides no
+      Lightwheel asset credential or redistribution grant. The inherited
+      non-root SkyPilot bootstrap contract is
+      retained. Built-image byte/layer scanning and real B200 plus RTX PRO 6000
+      evaluation are required before release promotion.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   leisaac:
     dockerfile: leisaac/Dockerfile
     isaac_runtime_fetch: true

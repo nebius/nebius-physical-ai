@@ -25,6 +25,7 @@ def test_sm120_image_manifest_has_required_images() -> None:
         ("npa-lerobot-vlm-rl", "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
         ("npa-cosmos3-reason", "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
         ("npa-sonic", "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-isaac-arena", "0.3.0-isaaclab3-20260912"),
     }
 
     assert set(images) == expected

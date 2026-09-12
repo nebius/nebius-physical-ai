@@ -127,6 +127,36 @@ def _strict_mapping(contents: bytes) -> dict | None:
         return None
 
 
+def _npa_config_identity(contents: bytes, environment: Mapping[str, str]) -> str:
+    """Bind selected execution config without mutable UI/workbench inventory."""
+
+    project_alias = environment.get("NPA_SKYPILOT_PROJECT", "").strip()
+    if not project_alias:
+        return hashlib.sha256(contents).hexdigest()
+    document = _strict_mapping(contents)
+    projects = (document or {}).get("projects")
+    if not isinstance(projects, dict) or project_alias not in projects:
+        raise IsolatedApiError("selected SkyPilot project is absent from NPA configuration")
+    project = projects[project_alias]
+    if not isinstance(project, dict):
+        raise IsolatedApiError("selected SkyPilot project configuration must be a mapping")
+    identity = {
+        "project_alias": project_alias,
+        "project": {
+            key: value
+            for key, value in project.items()
+            if key not in {"agents", "workbenches", "controller_owner"}
+        },
+        "legacy_runtime": {
+            key: document[key]
+            for key in ("storage", "container_registry", "src_s3_uri")
+            if key in document
+        },
+    }
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _nebius_exec_environment(environment, spec):
     if not isinstance(spec, dict):
         return None
@@ -374,16 +404,22 @@ def _selected_kube_identity_paths(kube_paths, config):
     return paths, execs
 
 
-def _hash_identity_paths(paths, protected, designated_caches, durable, cache):
+def _hash_identity_paths(
+    paths, protected, designated_caches, durable, cache, environment
+):
     result = {}
     cache_binding = durable.pop(cache, None)
     # Explicit bearer/NPA/AWS/key aliases never become derived token caches.
     protected.extend(path for path in paths if path not in designated_caches)
     protected.extend(durable)
     cache_allowed = cache_binding and all(path.resolve() != cache.resolve() for path in protected)
+    npa_config = Path(environment.get("NPA_CONFIG_DIR") or Path(environment.get("HOME") or "") / ".npa") / "config.yaml"
     for path in paths:
         contents = path.read_bytes() if path.is_file() else None
-        value = hashlib.sha256(contents).hexdigest() if contents is not None else "absent"
+        if contents is not None and path == npa_config:
+            value = _npa_config_identity(contents, environment)
+        else:
+            value = hashlib.sha256(contents).hexdigest() if contents is not None else "absent"
         if cache_allowed and path in designated_caches and path.resolve() == cache.resolve() and _derived_service_account_cache(contents):
             value = cache_binding
         result[str(path.absolute())] = value
@@ -405,7 +441,9 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     try:
         durable = _nebius_service_account_identity(environment, home, execs)
         cache = _nebius_config_dir(environment, home) / "credentials.yaml"
-        return _hash_identity_paths(paths, protected, designated_caches, durable, cache)
+        return _hash_identity_paths(
+            paths, protected, designated_caches, durable, cache, environment
+        )
     except OSError:
         raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
 

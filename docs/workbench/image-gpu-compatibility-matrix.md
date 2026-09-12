@@ -27,7 +27,7 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 32 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 33 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-12. Nineteen resolve directly to an image manifest and 14 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
 
 One column below carries no recorded capability run: public-image L40S cells are supported, blocked, not routed, unverified, or CPU-only rather than verified or historical evidence. L40S is the one architecture besides RTX PRO 6000 that can render. The recorded capability runs are on H100, H200, RTX PRO 6000, B200, and B300.
 
@@ -103,6 +103,7 @@ likewise predates its current coherent release.
 | `npa-loop-eval` | supported | **verified** [58] | **verified** [18] | **verified** [56] | **verified** [57] |
 | `npa-lerobot-vlm-rl` | supported | **verified** [55] | **verified** [17] | **verified** [53] | **verified** [54] |
 | `npa-isaac-lab` | supported | supported (headless) | **verified** [current release evidence](container-image-catalog.md#2026-09-04-coherent-sim2real-publication) | blocked | blocked |
+| `npa-isaac-arena` | unverified | unverified | **verified** [69] | **verified** [70] (state-only) | unverified |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-sonic-mujoco` | unverified | unverified (headless) | **verified** [accepted records](#accepted-release-evidence) | **verified** [accepted records](#accepted-release-evidence) | unverified |
@@ -218,6 +219,9 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 67 | 2026-09-06 | `npa-cosmos3-nano-video:dev-826b1730f64c1fae2fb6a4280c312f280b6648ad` (operator-private index `sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97`) | NVIDIA B200 (`sm_100`) | sixteen one-GPU BF16 TP=1 diffusion replicas; one complete 30-second 480p clip followed by eight concurrent complete clips | PASS; nine 720-frame videos, 36 fully decoded MP4s, eight distinct replicas and eight overlapping diffusion requests; [measured latency, memory and seam review](../../npa/deploy/cosmos3-nano-video/README.md#measured-b200-acceptance) |
 | 68 | 2026-09-12 | optional `npa-lerobot:0.6.0-d6-extras-20260912` (`sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643`) | NVIDIA B200 (`sm_100`) | exact accepted bytes through the checked-in Blackwell validator, then real construction and CUDA placement of a 272,708-parameter LeRobot 0.6.0 `DiffusionPolicy` | PASS; torch 2.11.0+cu130, native `sm_100` SASS/capability coverage, system FFmpeg, and 6/6 environment checks |
 | 69 | 2026-09-12 | `npa-cosmos3:1.2.2-cu130-r7` (`sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact accepted bytes through the checked-in Blackwell validator, then real 50-step Cosmos3-Nano text-to-image generation with Blocklist, Qwen3Guard, VideoContentSafetyFilter, and RetinaFace postprocessing | PASS; all requested prompt/media models discovered and evaluated, media classifier 1/1, effective guardrail receipt, nonblank 960×960 JPEG (183,829 bytes), SHA-256 `d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd` |
+| 70 | 2026-09-12 | `npa-isaac-arena:dev-22783a16abcd424df540b71e94600d705b317f9b` (`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`) | NVIDIA B200 (`sm_100`) | exact public digest ran the real upstream `policy_runner.py` for one zero-action `cube_goal_pose` episode; independently read and hash-checked JSONL, three linked HTML report pages, the simulator log, result manifest, and durable runtime provenance | PASS; capability `(10, 0)`, 1,050 scored steps, success rate 0.0 retained as policy data, five task artifacts / 86,082 bytes, and no video claim |
+| 71 | 2026-09-12 | same exact Isaac Arena digest | NVIDIA RTX PRO 6000 (`sm_120`) | independent real upstream evaluation with viewport recording; independently read and hash-checked the same report set and decoded the stored MP4 | PASS; capability `(12, 0)`, 1,050 scored steps, six task artifacts / 1,119,004 bytes; H.264, 1280×720, 70.067 seconds |
+| 72 | 2026-09-12 | same exact Isaac Arena digest | NVIDIA B200 (`sm_100`) | exact supported four-state workflow ran real upstream zero-action `cube_goal_pose` evaluations sequentially for seeds 42–45; every declared task artifact was independently read and hash-checked | PASS; four episodes × 1,050 scored steps, capability `(10, 0)` throughout, 20 non-video task artifacts / 344,330 bytes, zero run-owned worker pods after repeat-safe cancellation |
 
 ## Measured failures and negative controls
 
@@ -236,7 +240,7 @@ The original READY-set images were also tested before rebuild. The historical `n
 ## Accepted release evidence
 
 These are existing workload records reconciled with the released digests on
-2026-09-05, not workloads executed by the registry audit. They supersede the
+2026-09-12, not workloads executed by the registry audit. They supersede the
 older pending or historical cells only for the stated image and hardware.
 Other dated measurements above remain tied to the tags they actually ran.
 
@@ -251,6 +255,7 @@ Other dated measurements above remain tied to the tags they actually ran.
 | `npa-sonic-mujoco:0.2.0-runtime`, same accepted digest above | one RTX PRO 6000 | 2026-08-31 real G1 MuJoCo physics rollout with a minimal checkpoint and finite metrics; this verifies the evaluation path, not a trained policy’s performance | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-cosmos3-serving:0.2.0-oss`, `sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180` | eight B200s | guarded service boot, readiness, real video inference and H.264 decode | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-cosmos3-super-benchmark` (operator-private) | eight B200s | full four-cell benchmark, 96/96 technically valid MP4s; this wrapper remains restricted and excluded from public release | `npa/docker/workbench/blackwell-dc-images.json` |
+| `npa-isaac-arena:0.3.0-isaaclab3-20260912`, `sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f` | one B200 and one RTX PRO 6000, independently | historical zero-action one-episode qualification plus a four-seed B200 state suite; the RTX H.264 was decodable at 1280×720 for 70.067 seconds, but no decoded-motion or nonzero-behavior gate was recorded, so it is not meaningful visual evidence | `npa/docker/workbench/blackwell-dc-images.json` |
 
 LTX and Cosmos3 serving carry no GPU runtime in their public bootstrap layers;
 these results cover their operator-fetched runtime on the listed hardware.

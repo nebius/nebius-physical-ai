@@ -1,6 +1,6 @@
 {
   "format": "npa_sm120_image_manifest_v1",
-  "as_of": "2026-08-03T05:05:26Z",
+  "as_of": "2026-09-12T06:42:41Z",
   "registry": "${NPA_REGISTRY}",
   "target": {
     "gpu": "RTX PRO 6000 Blackwell",
@@ -58,6 +58,13 @@
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
       "purpose": "SONIC host-mounted-driver Kubernetes runtime for RTX PRO 6000."
+    },
+    {
+      "name": "npa-isaac-arena",
+      "tag": "0.3.0-isaaclab3-20260912",
+      "source_tag": "dev-22783a16abcd424df540b71e94600d705b317f9b",
+      "digest": "sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f",
+      "purpose": "Pinned Isaac Lab-Arena 0.3.0 policy evaluation; real sm_120 evaluation includes the required viewport MP4."
     }
   ]
 }

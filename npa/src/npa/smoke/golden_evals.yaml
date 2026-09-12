@@ -331,6 +331,35 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  isaac-arena:
+    image: npa-isaac-arena
+    dockerfile: npa/docker/workbench/isaac-arena/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Isaac Lab-Arena completed-episode policy evaluation with raw episode
+        journals, an upstream HTML report, optional viewport video, and an NPA
+        artifact/hash manifest.
+    safety:
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+      network: first run fetches hash-pinned Isaac from pypi.nvidia.com; S3 input/output
+      external_fetch: ["pypi.nvidia.com (operator EULA)", github-isaaclab, s3]
+      notes: >-
+        Bakes only the pinned Apache-2.0 Arena source. Isaac Sim/Lab and
+        operator policy inputs remain runtime-only. Captured upstream logs are
+        produced without cloud/model credentials in the subprocess environment.
+        The golden smoke downloads the pinned upstream Apache-2.0 GR1
+        open-microwave replay fixture, verifies its Git LFS SHA-256, and requires
+        both nonzero behavior and decoded viewport motion.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: ready
+
   leisaac:
     image: npa-leisaac
     dockerfile: npa/docker/workbench/leisaac/Dockerfile

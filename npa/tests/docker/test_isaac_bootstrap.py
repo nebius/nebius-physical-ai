@@ -487,6 +487,43 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
     assert before != stamp()
 
 
+def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
+    """The cache interpreter must see packages exposed by image-side .pth hooks."""
+
+    image_site = tmp_path / "image-site"
+    nested_site = image_site / "nested-site"
+    cache_site = tmp_path / "cache-site"
+    nested_module = nested_site / "image_nested_dependency.py"
+    nested_site.mkdir(parents=True)
+    cache_site.mkdir()
+    nested_module.write_text("VALUE = 'visible'\n", encoding="utf-8")
+    (image_site / "nested-dependency.pth").write_text(
+        "nested-site\n", encoding="utf-8"
+    )
+    (cache_site / "_npa_image_hooks.pth").write_text(
+        f"import site; site.addsitedir({str(image_site)!r})\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import site; "
+                f"site.addsitedir({str(cache_site)!r}); "
+                "import image_nested_dependency as dependency; "
+                "print(dependency.VALUE)"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "visible"
+
+
 # --------------------------------------------------------------------------------------
 # Concurrency: up to 8 pods per GPU node race one cache volume
 # --------------------------------------------------------------------------------------

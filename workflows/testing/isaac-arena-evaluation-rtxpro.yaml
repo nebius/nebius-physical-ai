@@ -1,0 +1,56 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: isaac-arena-evaluation-rtxpro
+  description: >-
+    Replay a genuine nonzero GR1 open-microwave trajectory with the real
+    Isaac Lab-Arena policy runner on RTX PRO 6000. Require a viewport MP4 that
+    passes decoded temporal-motion checks and bind it to the exact run and
+    input hash. Retain episode JSONL, the upstream HTML report, logs, hashes,
+    task metrics, and behavior evidence.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/isaac-arena/rtxpro"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: "s3://{{config.bucket}}/operator-inputs/isaac-arena/gr1-open-microwave.hdf5"
+  environment: gr1_open_microwave
+  policy_type: replay
+  # The upstream task horizon is 5 s at 50 Hz. The 80 recorded commands remain
+  # byte-bound evidence; NPA holds the last genuine command through step 250.
+  replay_target_steps: "250"
+  # GR1 GPU-physics initialization is not stable on the pinned upstream's
+  # sm_120 path. Keep real RTX viewport rendering but run its one-environment
+  # physics/policy loop on CPU; result.json records both facts.
+  execution_device: cpu
+  num_episodes: "1"
+  num_envs: "1"
+  seed: "42"
+  embodiment: gr1_pink
+  object: tomato_soup_can
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Arena's viewport recorder requires rasterization/RT hardware. B200 is not
+    # an interchangeable fallback for this workload.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 64Gi
+
+initial: evaluate
+
+states:
+  evaluate:
+    description: Replay nonzero behavior and retain a motion-validated viewport MP4.
+    toolRef: workbench.isaac_arena.evaluate_video
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    terminal: true

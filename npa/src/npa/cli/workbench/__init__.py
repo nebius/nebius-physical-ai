@@ -63,6 +63,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
+    from npa.cli.workbench.isaac_arena import app as isaac_arena_app
     from npa.cli.workbench.lancedb import app as lancedb_app
     from npa.cli.workbench.leisaac import app as leisaac_app
     from npa.cli.workbench.lerobot import app as lerobot_app
@@ -103,6 +104,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
+    full.add_typer(isaac_arena_app, name="isaac-arena")
     full.add_typer(leisaac_app, name="leisaac")
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
@@ -183,6 +185,8 @@ if _LIGHT_IMPORT:
         app = light
     elif _LIGHT_TOOL == "rerun-viewer":
         app = _rerun_viewer_light_app()
+    elif _LIGHT_TOOL == "isaac-arena":
+        from npa.cli.workbench.isaac_arena import app
     else:
         from npa.cli.workbench.cosmos2 import app
 else:

@@ -1,0 +1,15 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "63c0c1fc6b2edb7e5613bdfb1eece2b49ef523e58dcd5bbc18980bd559d77298",
+  "planning": {
+    "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "task_fidelity": {"status": "verified", "reason": "The four planned states resolve to the real upstream zero-action adapter with distinct seeds and output prefixes, the cube-goal-pose environment, and Franka IK embodiment. It is explicitly state-only regression evidence, not the meaningful visual claim.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py", "workflows/testing/isaac-arena-evaluation-b200.yaml"]}
+  },
+  "prerequisites": {
+    "output_storage": {"status": "unverified", "reason": "The new state regression must complete the writable-storage preflight and publish independently readable artifacts before this candidate is ready.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "worker_input": {"status": "verified", "reason": "The zero-action state regression requires no policy, model, or dataset input.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights must be repeated for the rebuilt candidate; no model credential is required.", "evidence": ["docs/workbench/isaac-arena.md"]},
+    "source_image": {"status": "unverified", "reason": "Runtime and smoke contents changed, so the rebuilt exact digest must pass all publication scans and attestations before acceptance.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/isaac-arena/smoke_functional.sh"]},
+    "target_runtime": {"status": "unverified", "reason": "The common path must complete the established four-seed B200 state regression with scored episodes and no rendering claim.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]}
+  }
+}

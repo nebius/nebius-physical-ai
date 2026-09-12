@@ -1,0 +1,99 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: isaac-arena-evaluation-b200
+  description: >-
+    Run the established cube-goal-pose state regression for four seeds with the
+    real upstream policy runner on B200. Every state records its own JSONL,
+    upstream HTML report, logs, hashes, and task metrics. This state-only path
+    makes no camera or viewport claim on a GPU with no RT cores.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/isaac-arena/b200"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-42/"
+  input_uri: ""
+  environment: cube_goal_pose
+  policy_type: zero_action
+  replay_target_steps: "0"
+  execution_device: "cuda:0"
+  num_episodes: "1"
+  num_envs: "1"
+  seed: "42"
+  embodiment: franka_ik
+  object: dex_cube
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 64Gi
+
+initial: evaluate-seed-42
+
+states:
+  evaluate-seed-42:
+    description: Score seed 42 through the state-only regression without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "42"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-42/"
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-43
+
+  evaluate-seed-43:
+    description: Score seed 43 through the state-only regression without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "43"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/evaluation.log"
+        schema: text/plain
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-44
+
+  evaluate-seed-44:
+    description: Score seed 44 through the state-only regression without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "44"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/evaluation.log"
+        schema: text/plain
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-45
+
+  evaluate-seed-45:
+    description: Score seed 45 through the state-only regression without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "45"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/evaluation.log"
+        schema: text/plain
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    terminal: true

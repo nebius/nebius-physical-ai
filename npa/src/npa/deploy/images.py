@@ -43,6 +43,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "isaac-arena": "npa-isaac-arena",
     "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
@@ -95,6 +96,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "fiftyone",
         "groot",
         "isaac-lab",
+        "isaac-arena",
         "rerun-viewer",
         "sim2real-control",
         "envgen",
@@ -146,7 +148,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -172,6 +176,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "isaac-arena": {
+        "development_sha": "22783a16abcd424df540b71e94600d705b317f9b",
+        "oci_digest": "sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f",
+    },
     "cosmos3": {
         "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
         "oci_digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
@@ -222,6 +230,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
+    "isaac-arena": "0.3.0-isaaclab3-20260912",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-sim2real-coherent-20260904",

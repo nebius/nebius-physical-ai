@@ -207,15 +207,30 @@ install_isaac() {
     || die "$EX_SOFTWARE" "failed to create the cache virtualenv at $tmp/venv"
 
   # Layer the IMAGE's site-packages (torch, numpy, gear_sonic, the OSS isaaclab deps)
-  # into the cache venv with a .pth. `venv --system-site-packages` cannot do this: a
+  # into the cache venv with .pth files. `venv --system-site-packages` cannot do this: a
   # venv created from a venv resolves to the BASE interpreter's site-packages, not the
   # image venv's, so torch would be invisible and pip would try to download 3 GB of it.
   # .pth dirs are appended to sys.path, so the cache venv still shadows the image for
-  # anything it installs itself.
+  # anything it installs itself. Merely naming the image site-packages directory is not
+  # enough: Python does not recursively process .pth files in a directory introduced by
+  # another .pth file. Some image-baked packages (notably cmeel's Pinocchio wheels) use
+  # such a hook to expose their nested package tree. The executable hook deliberately
+  # calls site.addsitedir() so those trusted, image-baked hooks are processed too.
   local base_site cache_site
   base_site="$("$base_python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   cache_site="$("$tmp/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf '%s\n' "$base_site" > "$cache_site/_npa_image_site.pth"
+  NPA_IMAGE_SITE="$base_site" NPA_CACHE_SITE="$cache_site" "$base_python" - <<'PY'
+import os
+from pathlib import Path
+
+image_site = os.environ["NPA_IMAGE_SITE"]
+cache_site = Path(os.environ["NPA_CACHE_SITE"])
+(cache_site / "_npa_image_hooks.pth").write_text(
+    f"import site; site.addsitedir({image_site!r})\n",
+    encoding="utf-8",
+)
+PY
 
   "$tmp/venv/bin/python" - <<'PY' >&2 || die "$EX_SOFTWARE" "the cache venv cannot see the image's torch; the .pth layering is broken"
 import torch
