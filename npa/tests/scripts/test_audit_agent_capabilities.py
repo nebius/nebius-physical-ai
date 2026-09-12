@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,15 @@ def _load():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_live_audit_declares_its_selected_websocket_runtime() -> None:
+    project = tomllib.loads((REPO_ROOT / "npa/pyproject.toml").read_text())
+    optional_dev = project["project"]["optional-dependencies"]["dev"]
+    grouped_dev = project["dependency-groups"]["dev"]
+
+    for dependencies in (optional_dev, grouped_dev):
+        assert any(item.startswith("websockets>=") for item in dependencies)
 
 
 @pytest.fixture
