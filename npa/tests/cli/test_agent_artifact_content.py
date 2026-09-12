@@ -443,7 +443,8 @@ def test_ui_makes_operational_offline_learning_primary() -> None:
 def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
     source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
 
-    assert '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])' in source
+    assert '@app.get("/artifacts/content", operation_id="artifacts_content_get")' in source
+    assert '@app.head("/artifacts/content", operation_id="artifacts_content_head")' in source
     assert "authorize_artifact_inventory_key(" in source
     assert '"X-Content-Type-Options": "nosniff"' in source
     assert '"Content-Range"' in source
