@@ -148,10 +148,12 @@ case coverage, pinned revisions, sample identity, projected trajectory shape,
 and consistency of the measured errors. It requires a prior real GPU run;
 it does not submit another workload.
 
-The [RTX validation report](alpamayo2-ray-validation.md) records the measured
-20-case experiment, test results, cache intervention, and remaining platform
-coverage. The templates' B200 default and standard SkyPilot submission still
-need their own live qualification.
+The [initial RTX validation report](alpamayo2-ray-validation.md) records the
+20-case workflow experiment. The [extended Ray study](alpamayo2-ray-extended-validation.md)
+records 340 cases on two physical GPU hosts over multiple hours, measured
+utilization, paired results, recordings and the full Linux test result. The
+templates' B200 default and standard SkyPilot submission still need their own
+live qualification.
 
 ## Serve inference
 

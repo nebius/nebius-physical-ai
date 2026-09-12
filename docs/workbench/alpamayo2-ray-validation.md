@@ -1,5 +1,10 @@
 # Alpamayo Ray workflow validation
 
+This is the initial 20-case report. The subsequent
+[340-case, multi-hour Ray study](alpamayo2-ray-extended-validation.md) adds
+shared-cluster execution, measured GPU utilization, recordings and a passing
+full Linux test target.
+
 The scenario sweep and baseline/refinement templates completed 20 real
 Alpamayo 2 Super inferences on two separate RTX PRO 6000 GPUs. Each workflow
 used one Ray GPU actor; CPU Ray tasks reduced the measured errors. The
