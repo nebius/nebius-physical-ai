@@ -1,5 +1,7 @@
 # Cookbook: scenario-gen and dataset-of-record live smokes
 
+[Cookbooks](README.md)
+
 Two CPU-only smoke workflows that exercise the `scenario_gen` and `dataset`
 workbench tools end-to-end against real S3, with no GPU and no LanceDB/FiftyOne
 dependency. Use them to validate the tools on a configured environment before
@@ -36,7 +38,7 @@ Artifacts pass over S3.
 default backend synthesizes deterministic adversarial scenarios.
 
 ```bash
-BUCKET=<your-bucket>
+BUCKET="<your-bucket>"
 RUN_ID="scenario-gen-smoke-$(date +%Y%m%d%H%M%S)"
 SPEC=/tmp/${RUN_ID}.yaml
 sed "s/example-bucket/${BUCKET}/g" \
@@ -63,7 +65,7 @@ writes a decision to S3 that the interpreter branches on (`config.quality_gate`
 >= 0.5 promotes). Requires a small raw fixture on S3.
 
 ```bash
-BUCKET=<your-bucket>
+BUCKET="<your-bucket>"
 RUN_ID="dataset-smoke-$(date +%Y%m%d%H%M%S)"
 
 cat > /tmp/records.json <<'JSON'
@@ -160,7 +162,7 @@ timeline, severity bar chart, severity-vs-diversity scatter, perturbation
 heatmap). View it with npa:
 
 ```bash
-npa rerun host s3://<bucket>/scenario-gen-smoke/<run-id>/adversarial/scenarios.rrd
+npa rerun host "s3://<bucket>/scenario-gen-smoke/<run-id>/adversarial/scenarios.rrd"
 # -> prints an app.rerun.io URL; or open the .rrd in the Rerun viewer
 ```
 
@@ -176,7 +178,7 @@ which gives every run its own **git worktree + venv + tmux session**:
 
 ```bash
 # create an isolated workspace for a branch
-npa/scripts/dev_vm_isolated_session.sh start cursor/<branch>-02d7 gpu-run-1
+npa/scripts/dev_vm_isolated_session.sh start "cursor/<branch>-02d7" gpu-run-1
 # run npa inside it (never touches the shared checkout)
 npa/scripts/dev_vm_isolated_session.sh exec gpu-run-1 \
   'npa workbench workflow submit <spec>.yaml --run-id gpu-run-1 --deploy-if-absent ...'

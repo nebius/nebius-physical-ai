@@ -1,5 +1,7 @@
 # Cosmos 3 access preflight: accounts, tokens, and gated-repo diagnostics
 
+[Workbench docs](README.md)
+
 Clearing gated Hugging Face access is the most common reason a Cosmos 3
 generation run fails before it produces anything. This page is the full
 checklist: create the account, scope the token, accept the right license for

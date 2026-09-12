@@ -1,5 +1,7 @@
 # Isaac Lab 3 workbench
 
+[Workbench docs](README.md)
+
 NPA pins the newest released point in the Isaac Lab 3 beta line:
 `v3.0.0-beta2.patch1` (`isaaclab==3.0.0b2.post1`) at commit
 `ffff603eafc6b74264a5261cc0183d6a65390d78`, paired with Isaac Sim
@@ -26,8 +28,8 @@ path. Managed deployments default to the reproducible container:
 ```bash
 npa workbench isaac-lab deploy \
   --runtime container \
-  --gpu-type <discovered-rtx-platform> \
-  --gpu-preset <matching-preset>
+  --gpu-type "<discovered-rtx-platform>" \
+  --gpu-preset "<matching-preset>"
 ```
 
 Native `--runtime vm` installation is intentionally unsupported for generation
@@ -43,9 +45,9 @@ barrier:
 ```bash
 npa workbench workflow submit \
   workflows/testing/isaac-lab-rl-sweep.yaml \
-  --run-id <unique-run-id> \
+  --run-id "<unique-run-id>" \
   --runtime \
-  --var bucket=<configured-bucket> \
+  --var bucket="<configured-bucket>" \
   --image ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:3.0.0b2.post1 \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -57,7 +59,7 @@ export. RGB capture is enabled by default for that post-training rollout:
 ```bash
 npa workbench isaac-lab train \
   --task Isaac-Cartpole-v0 \
-  --output-dir <output-directory> \
+  --output-dir "<output-directory>" \
   --export-trajectories
 ```
 

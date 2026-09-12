@@ -1,5 +1,7 @@
 # Image ↔ Nebius GPU compatibility matrix
 
+[Workbench docs](README.md)
+
 Every Workbench container image against every Nebius GPU platform, and — separately — which of those cells has actually been run on real hardware.
 
 **Last measured:** see the dated runs and exact-digest records below.
