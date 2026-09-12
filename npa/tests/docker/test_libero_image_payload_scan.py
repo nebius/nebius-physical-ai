@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import sys
 import tarfile
 
@@ -133,6 +134,46 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
     assert _scan(module, [first, second], _config(module), _metadata(module)) == []
 
 
+def test_scanner_accepts_neutral_bootstrap_symlink_and_system_metadata(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    layer = tmp_path / "neutral.tar"
+    with tarfile.open(layer, "w") as archive:
+        for name in (
+            "etc/security/namespace.init",
+            "usr/local/lib/python3.10/site-packages/distutils-precedence.pth",
+        ):
+            content = b"neutral system metadata\n"
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+        link = tarfile.TarInfo("opt/byof")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/workspace/.cache/npa/libero/current/source"
+        archive.addfile(link)
+
+    assert _scan(module, [layer], _config(module), _metadata(module)) == []
+
+
+def test_scanner_allows_only_exact_audited_secret_literal_bytes(tmp_path) -> None:
+    module = _load_module()
+    path = "usr/lib/x86_64-linux-gnu/libneutral.so.1"
+    content = b"binary credential-shaped literal"
+    module.SECRET_CONTENT = (re.compile(rb"credential-shaped"),)
+    module.AUDITED_SECRET_LITERAL_FILE_SHA256 = {
+        path: hashlib.sha256(content).hexdigest()
+    }
+    accepted = _layer(tmp_path / "accepted.tar", {path: content})
+    drifted = _layer(tmp_path / "drifted.tar", {path: content + b" changed"})
+
+    assert _scan(module, [accepted], _config(module), _metadata(module)) == []
+    findings = _scan(module, [drifted], _config(module), _metadata(module))
+
+    assert any(item.kind == "audited_literal_byte_drift" for item in findings)
+    assert any(item.kind == "credential_content" for item in findings)
+
+
 def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
     tmp_path,
 ) -> None:
@@ -153,6 +194,8 @@ def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
     [
         ("usr/lib/python3/site-packages/torch/__init__.py", b"", "torch_distribution"),
         ("workspace/demo.hdf5", b"data", "model_weight_checkpoint_or_dataset"),
+        ("tmp/policy.pth", b"weights", "model_weight_checkpoint_or_dataset"),
+        ("etc/unrelated-task.init", b"state", "libero_task_or_render_asset"),
         ("root/.aws/credentials", b"neutral", "credential_or_private_configuration"),
         (
             "etc/ssh/ssh_host_ed25519_key",
@@ -197,6 +240,15 @@ def test_scanner_refuses_forbidden_bytes_hidden_in_nested_archive(tmp_path) -> N
     findings = _scan(module, [layer], _config(module), _metadata(module))
 
     assert any(item.kind == "torch_distribution" for item in findings)
+
+
+def test_scanner_refuses_non_symlink_neutral_source_path(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/byof": b"hidden source"})
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "neutral_bootstrap_link" for item in findings)
 
 
 @pytest.mark.parametrize(
@@ -302,6 +354,31 @@ def test_scanner_validates_whiteouts_and_flattened_rootfs(tmp_path) -> None:
 
     assert valid == []
     assert any(item.kind == "flattened_rootfs_mismatch" for item in mismatch)
+
+
+def test_scanner_accounts_export_root_and_runtime_injected_files(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"usr/bin/sh": b"shell"})
+    exported = tmp_path / "rootfs.tar"
+    with tarfile.open(exported, "w") as archive:
+        root = tarfile.TarInfo(".")
+        root.type = tarfile.DIRTYPE
+        archive.addfile(root)
+        content = b"shell"
+        shell = tarfile.TarInfo("usr/bin/sh")
+        shell.size = len(content)
+        archive.addfile(shell, io.BytesIO(content))
+        console = tarfile.TarInfo("dev/console")
+        console.size = 0
+        archive.addfile(console, io.BytesIO())
+        mtab = tarfile.TarInfo("etc/mtab")
+        mtab.type = tarfile.SYMTYPE
+        mtab.linkname = "/proc/mounts"
+        archive.addfile(mtab)
+
+    findings, _inventory = module._layer_graph_findings([layer], exported)
+
+    assert findings == []
 
 
 def test_scanner_refuses_deleted_layer_bytes_outside_accepted_private_inventory(
@@ -435,6 +512,111 @@ def test_scanner_refuses_outer_member_not_bound_by_docker_manifest(tmp_path) -> 
     findings = module._docker_save_outer_findings(archive)
 
     assert any(item.kind == "unaccounted_outer_archive_member" for item in findings)
+
+
+def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
+    module = _load_module()
+
+    def descriptor(content: bytes, media_type: str) -> dict[str, object]:
+        return {
+            "mediaType": media_type,
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    config = b"{}"
+    layer = b"neutral layer bytes"
+    config_descriptor = descriptor(config, "application/vnd.oci.image.config.v1+json")
+    layer_descriptor = descriptor(layer, "application/vnd.oci.image.layer.v1.tar+gzip")
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [layer_descriptor],
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = descriptor(
+        image_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    layer_path = "blobs/sha256/" + str(layer_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    docker_manifest = json.dumps(
+        [{"Config": config_path, "Layers": [layer_path]}],
+        separators=(",", ":"),
+    ).encode()
+    archive = _layer(
+        tmp_path / "image.tar",
+        {
+            "manifest.json": docker_manifest,
+            "index.json": index,
+            "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+            config_path: config,
+            layer_path: layer,
+            manifest_path: image_manifest,
+        },
+    )
+
+    assert module._docker_save_outer_findings(archive) == []
+
+
+def test_scanner_refuses_oci_descriptor_byte_drift(tmp_path) -> None:
+    module = _load_module()
+    expected = b'{"schemaVersion":2,"config":{},"layers":[]}'
+    descriptor = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
+        "size": len(expected),
+    }
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    member = "blobs/sha256/" + str(descriptor["digest"])[7:]
+    archive = _layer(
+        tmp_path / "image.tar",
+        {
+            "manifest.json": b'[{"Config":"","Layers":[]}]',
+            "index.json": index,
+            member: b"drifted!",
+        },
+    )
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(item.kind == "oci_descriptor_identity_mismatch" for item in findings)
+
+
+def test_scanner_refuses_non_manifest_oci_index_root(tmp_path) -> None:
+    module = _load_module()
+    hidden = b"opaque hidden bytes"
+    descriptor = {
+        "mediaType": "application/octet-stream",
+        "digest": "sha256:" + hashlib.sha256(hidden).hexdigest(),
+        "size": len(hidden),
+    }
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    member = "blobs/sha256/" + str(descriptor["digest"])[7:]
+    archive = _layer(
+        tmp_path / "image.tar",
+        {
+            "manifest.json": b'[{"Config":"","Layers":[]}]',
+            "index.json": index,
+            member: hidden,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="non-manifest root descriptor"):
+        module._docker_save_outer_findings(archive)
 
 
 @pytest.mark.parametrize(
