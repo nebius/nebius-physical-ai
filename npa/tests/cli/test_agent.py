@@ -2287,7 +2287,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
+    assert '@app.get("/artifacts/download", operation_id="artifacts_download_get")' in source
+    assert '@app.head("/artifacts/download", operation_id="artifacts_download_head")' in source
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source

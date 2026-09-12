@@ -429,7 +429,8 @@ def _artifact_content_response(
     )
 
 
-@app.api_route("/artifacts/content", methods=["GET", "HEAD"])
+@app.get("/artifacts/content", operation_id="artifacts_content_get")
+@app.head("/artifacts/content", operation_id="artifacts_content_head")
 def artifacts_content(
     request: Request,
     run_id: str = "",
@@ -468,7 +469,8 @@ def artifacts_content(
         )
 
 
-@app.api_route("/artifacts/file/{filename}", methods=["GET", "HEAD"])
+@app.get("/artifacts/file/{filename}", operation_id="artifact_file_get")
+@app.head("/artifacts/file/{filename}", operation_id="artifact_file_head")
 def artifact_file(filename: str):
     safe_name = Path(str(filename)).name
     if safe_name != filename:
@@ -520,7 +522,8 @@ def artifact_file(filename: str):
     )
 
 
-@app.api_route("/artifacts/download", methods=["GET", "HEAD"])
+@app.get("/artifacts/download", operation_id="artifacts_download_get")
+@app.head("/artifacts/download", operation_id="artifacts_download_head")
 def artifacts_download(
     request: Request,
     run_id: str = "",
