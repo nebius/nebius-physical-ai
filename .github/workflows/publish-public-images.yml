@@ -750,8 +750,10 @@ jobs:
           anonymous_attempt=1
           while true; do
             anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
-            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
-              >/dev/null 2>"$anonymous_log"; then
+            if anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE" \
+              2>"$anonymous_log")" && \
+              DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+                >/dev/null 2>>"$anonymous_log"; then
               break
             fi
             cat "$anonymous_log" >&2
@@ -762,6 +764,7 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
+          test "$anonymous_digest" = "$DIGEST"
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"

@@ -44,12 +44,13 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory, including the pending NCore and LIBERO
+integrations, has **38 packaging entries** (36 redistribution-eligible and two
+restricted) and **39 mapped tools**: 32 public-release members, two restricted
+tools, and five quarantined tools (`curobo`, `libero`, `ncore`, `openpi`, and
+`robocasa`). These counts come from `packaging-contract.yaml` and
+`npa.deploy.images`; they do not constitute a new registry audit or acceptance
+of the quarantined images.
 
 LeRobot 0.6.0 remains selectable package support without an accepted public
 image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
