@@ -8,12 +8,10 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import urllib.parse
 
 import boto3
 import pytest
-
-from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
-
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/habitat-sim-smoke.yaml"
@@ -22,6 +20,15 @@ SCENE_SHA256 = "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56
 NAVMESH_SHA256 = "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
 DIGEST = re.compile(r".+@sha256:[0-9a-f]{64}$")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+PUBLIC_REGISTRY_HOSTS = {
+    "docker.io",
+    "ghcr.io",
+    "index.docker.io",
+    "public.ecr.aws",
+    "quay.io",
+    "registry-1.docker.io",
+    "registry.k8s.io",
+}
 
 
 def _private_json(path_value: object) -> tuple[dict[str, object], Path]:
@@ -36,13 +43,38 @@ def _private_json(path_value: object) -> tuple[dict[str, object], Path]:
 def _assert_private_image(receipt: dict[str, object]) -> None:
     registry = str(receipt["registry"]).rstrip("/")
     image = str(receipt["image"])
-    public = DEFAULT_PUBLIC_CONTAINER_REGISTRY.rstrip("/")
-    assert registry and registry != public
+    parsed = urllib.parse.urlsplit("//" + registry)
+    assert (
+        registry
+        and parsed.hostname
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+    host = parsed.hostname.lower()
+    assert host not in PUBLIC_REGISTRY_HOSTS
     assert image.startswith(registry + "/")
-    assert not image.startswith(public + "/")
+    evidence, path = _private_json(receipt["registry_evidence"]["path"])
+    assert SHA256.fullmatch(str(receipt["registry_evidence"]["sha256"]))
+    assert (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        == receipt["registry_evidence"]["sha256"]
+    )
+    assert evidence == {
+        **evidence,
+        "schema_version": "npa.registry.private-pull-refusal.v1",
+        "registry": registry,
+        "image": image,
+        "resolved_digest": image.rsplit("@", 1)[1],
+        "anonymous_pull_denied": True,
+        "anonymous_status": evidence["anonymous_status"],
+        "authenticated_pull_succeeded": True,
+    }
+    assert evidence["anonymous_status"] in {401, 403}
 
 
-def _assert_provider_binding(receipt: dict[str, object]) -> None:
+def _assert_provider_binding(receipt: dict[str, object]) -> dict[str, object]:
     reservation = receipt["reservation"]
     provider, path = _private_json(reservation["provider_receipt_path"])
     provider_hash = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -52,7 +84,13 @@ def _assert_provider_binding(receipt: dict[str, object]) -> None:
     target = receipt["target"]
     for key in ("accelerator", "gpu_count"):
         assert provider[key] == reservation[key] == target[key]
-    for key in ("capacity_block_group_id", "state", "verified_at"):
+    for key in (
+        "capacity_block_group_id",
+        "node_group_id",
+        "kubernetes_node",
+        "state",
+        "verified_at",
+    ):
         assert provider[key] == reservation[key]
     for key in ("kubernetes_context", "project", "project_id"):
         assert provider[key] == receipt[key]
@@ -65,6 +103,11 @@ def _assert_provider_binding(receipt: dict[str, object]) -> None:
     assert readback == reservation["provider_readback_sha256"]
     assert set(readback) == {"capacity", "cluster", "node-group"}
     assert all(SHA256.fullmatch(str(value)) for value in readback.values())
+    node = provider["kubernetes_node"]
+    assert set(node) == {"name", "provider_id"}
+    assert all(isinstance(node[key], str) and node[key] for key in node)
+    assert isinstance(provider["node_group_id"], str) and provider["node_group_id"]
+    return provider
 
 
 def _assert_pod_completion(pod: dict[str, object], image: str) -> str:
@@ -128,6 +171,36 @@ def _pod(receipt: dict[str, object]) -> dict[str, object]:
     return pod
 
 
+def _node(receipt: dict[str, object], name: str) -> dict[str, object]:
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--kubeconfig",
+            str(receipt["kubeconfig"]),
+            "--context",
+            str(receipt["kubernetes_context"]),
+            "get",
+            "node",
+            name,
+            "-o",
+            "json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _assert_pod_provider_node(
+    pod: dict[str, object], node: dict[str, object], provider: dict[str, object]
+) -> None:
+    expected = provider["kubernetes_node"]
+    assert pod["spec"]["nodeName"] == expected["name"]
+    assert node["metadata"]["name"] == expected["name"]
+    assert node["spec"]["providerID"] == expected["provider_id"]
+
+
 def _proof(receipt: dict[str, object]) -> tuple[dict[str, object], bytes]:
     storage = receipt["storage"]
     client = boto3.client("s3", endpoint_url=storage["endpoint"])
@@ -183,7 +256,10 @@ def test_exact_habitat_sim_image_rgb_depth_bullet_egl_traversal() -> None:
     """Require immutable pod, GPU, storage, and genuine capability evidence."""
 
     receipt = _private_receipt()
+    provider = _assert_provider_binding(receipt)
     pod = _pod(receipt)
+    node = _node(receipt, str(pod["spec"]["nodeName"]))
+    _assert_pod_provider_node(pod, node, provider)
     image_id = _assert_pod_completion(pod, str(receipt["image"]))
     proof, payload = _proof(receipt)
     assert payload and proof["pod_observed_image_digest"] in image_id

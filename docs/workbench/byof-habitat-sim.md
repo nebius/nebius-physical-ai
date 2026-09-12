@@ -86,8 +86,9 @@ an owned, same-architecture runtime target; and requires the OCI revision label
 to equal the reviewed full Git SHA. The verifier also binds the selected Ubuntu
 base diff ID and requires operator-reviewed SHA-256 values for the complete dpkg
 inventory and native closure. The dpkg inventory includes every installed
-binary version, architecture, source package/version, and resolved copyright
-path/hash. The native inventory includes every ELF hash, owner, architecture,
+binary version, architecture, source package/version, exact dpkg `.list`
+path/hash, and resolved copyright path/hash. A missing or duplicate package
+file list fails closed. The native inventory includes every ELF hash, owner, architecture,
 SONAME, and resolved `DT_NEEDED` edge. Its first fail-closed scan may expose
 those two public inventories for review, but cannot pass until both expected
 hashes are supplied explicitly. The independent complete-byte scanner, Trivy, SBOM,
@@ -135,8 +136,12 @@ The dedicated selector is intentionally inert unless all three owner-controlled
 gates are present: `NPA_INTEGRATION_E2E=1`,
 `NPA_HABITAT_SIM_IMAGE_LIVE=1`, and a mode-restricted
 `NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT`. The receipt binds the exact Git/workflow
-bytes, private image digest, pod UID, storage proof hash, and the hash of a
-separate owner-only provider readback proving the STRICT one-RTX reservation.
+bytes, private image digest, pod UID, storage proof hash, and the hashes of
+separate owner-only registry and provider readbacks. Registry evidence must show
+an anonymous 401/403 refusal and authenticated exact-digest pull; known public
+registry hosts and equivalent GHCR spellings are rejected. The STRICT provider
+receipt binds one node-group ID and the exact Kubernetes node name/provider ID;
+the selector reads that node back and requires the completed pod to name it.
 The selector also requires a succeeded pod, an exact observed digest, and a
 terminated zero exit. A live transaction and cleanup require separate manager
 authorization.
