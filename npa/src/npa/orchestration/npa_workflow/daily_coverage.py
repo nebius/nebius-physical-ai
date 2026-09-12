@@ -51,6 +51,9 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:   cosmos3-ray-serve   : one-step CPU submission client for a separately
 #:                         deployed persistent GPU service; its exact image has
 #:                         dedicated model-backed B200/RTX validation.
+#:   habitat-sim        : dedicated one-state renderer whose exact image has a
+#:                        genuine RTX PRO 6000 RGB/depth/Bullet/EGL capability
+#:                        gate; it is not a compositional workflow.
 #:   lerobot / genesis : component/tool images with no comprehensive workflow
 #:                       toolRef chain yet (covered by their own tool + serverless
 #:                       E2Es and by the daily registry-reachability check).
@@ -67,6 +70,7 @@ EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
         "alpamayo2-super",
         "cosmos3-ray-serve",
         "genesis",
+        "habitat-sim",
     }
 )
 

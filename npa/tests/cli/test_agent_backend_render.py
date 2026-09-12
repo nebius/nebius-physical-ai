@@ -4012,3 +4012,41 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
     assert calls[0]["observation"] == {"tool_refs": expected}
     catalog_observation = {"tool": "tools_catalog", "result": {"tool_refs": expected}}
     assert json.dumps(catalog_observation, sort_keys=True) in planner_inputs[1][-1]["content"]
+
+
+def test_rendered_catalog_action_keeps_a_hard_observation_limit(monkeypatch, tmp_path):
+    from npa.agent_backend import actions
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_bounded_action_catalog"
+    )
+    oversized = {
+        "tool_refs": [
+            f"workbench.hostile_catalog_entry_{index:04d}_" + "x" * 80
+            for index in range(100)
+        ]
+    }
+    plans = iter(
+        [
+            {"tool": "tools_catalog", "args": {}},
+            {"final": "The bounded catalog observation was retrieved."},
+        ]
+    )
+
+    def planner(_messages, *, tier):
+        return {"choices": [{"message": {"content": json.dumps(next(plans))}}]}
+
+    result = module.run_action_loop(
+        "Use tools_catalog to inspect the registered capabilities.",
+        tools={"tools_catalog": lambda _args: oversized},
+        model_call=planner,
+    )
+    call = next(step for step in result["steps"] if step["phase"] == "call")
+    observed = call["observation"]
+    assert observed["truncated"] is True
+    assert len(observed["preview"]) == actions.TOOLS_CATALOG_OBSERVATION_LIMIT
+    assert len(json.dumps(observed, sort_keys=True)) < len(json.dumps(oversized))

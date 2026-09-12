@@ -208,6 +208,8 @@ def _build_allowlist() -> dict[str, ToolSpec]:
 TOOL_ALLOWLIST: dict[str, ToolSpec] = _build_allowlist()
 
 DEFAULT_MAX_STEPS = 6
+DEFAULT_OBSERVATION_LIMIT = 4000
+TOOLS_CATALOG_OBSERVATION_LIMIT = 8192
 
 STOP_DONE = "done"
 STOP_MAX_STEPS = "max_steps"
@@ -644,7 +646,14 @@ def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[st
     return None
 
 
-def _observe(observation: Any, *, limit: int = 4000) -> Any:
+def _observation_limit_for(tool: str) -> int:
+    """Return the bounded planner-observation budget for one tool."""
+    if tool == "tools_catalog":
+        return TOOLS_CATALOG_OBSERVATION_LIMIT
+    return DEFAULT_OBSERVATION_LIMIT
+
+
+def _observe(observation: Any, *, limit: int = DEFAULT_OBSERVATION_LIMIT) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
     try:
         text = json.dumps(observation, sort_keys=True)
@@ -1224,9 +1233,7 @@ def run_action_loop(
         if terminal_empty:
             replan_reason = ""
         status = "error" if replan_reason == "tool_error" else "empty" if empty_result else "ok"
-        # The trusted local catalog is the complete routing inventory. A text
-        # prefix hides registered capabilities from the next planning step.
-        observed = observation if tool == "tools_catalog" else _observe(observation)
+        observed = _observe(observation, limit=_observation_limit_for(tool))
         steps.append(
             {
                 "step": step_index + 1,
