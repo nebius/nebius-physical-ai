@@ -14,6 +14,14 @@ licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.en).
 The original asset record is on
 [Sketchfab](https://sketchfab.com/3d-models/the-kings-hall-d18155613363445b9b68c0c67196d98d).
 
+The GPL-3.0+ `rsync` binary needed by SkyPilot is accompanied under
+`/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync` by its exact upstream tar,
+signature, Ubuntu packaging delta, and `.dsc`. The same signed immutable Ubuntu
+snapshot supplies those four source artifacts; `apt-runtime.lock` pins their
+source version, signed metadata index, sizes, and SHA-256 values, and the final
+OCI verifier requires each exact source byte. This is accompanying corresponding
+source, not a mutable third-party link or an invented written offer.
+
 Source, baked runtime, weights, runtime data, cache, and outputs are independent
 boundaries. This candidate has no weights. Its scene cache is run-owned and
 ephemeral. Saved RGB/depth observations and proof JSON are operator-owned derived

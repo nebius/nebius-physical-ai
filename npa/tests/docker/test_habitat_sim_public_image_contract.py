@@ -26,6 +26,7 @@ def _run_bootstrap(
     root: Path,
     *,
     certificate_count: int,
+    config_bytes: int,
     config_sha256: str,
     bundle_bytes: int,
     bundle_sha256: str,
@@ -33,6 +34,7 @@ def _run_bootstrap(
     env = {
         **os.environ,
         "CA_CERT_COUNT": str(certificate_count),
+        "CA_CONFIG_BYTES": str(config_bytes),
         "CA_CONFIG_SHA256": config_sha256,
         "CA_BUNDLE_BYTES": str(bundle_bytes),
         "CA_BUNDLE_SHA256": bundle_sha256,
@@ -50,6 +52,34 @@ def _run_bootstrap(
         capture_output=True,
         text=True,
     )
+
+
+def _create_ca(tmp_path: Path, name: str) -> bytes:
+    key = tmp_path / f"{name}.key"
+    certificate = tmp_path / f"{name}.crt"
+    result = subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-subj",
+            f"/CN={name}",
+            "-days",
+            "1",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return certificate.read_bytes()
 
 
 def test_candidate_is_public_eligible_but_unbuilt_and_unpublishable() -> None:
@@ -81,6 +111,7 @@ def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     assert "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in DOCKERFILE
     for expected in (
         "ARG CA_CERT_COUNT=121",
+        "ARG CA_CONFIG_BYTES=4930",
         "ARG CA_CONFIG_SHA256=bd46a6383240ac4c0904cd896d0be22c5862c130435c795c893ff56bd141c38d",
         "ARG CA_BUNDLE_BYTES=182140",
         "ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd",
@@ -115,8 +146,8 @@ def test_ca_bootstrap_creates_exact_nonempty_config_and_bundle(
     cert_dir = tmp_path / "usr/share/ca-certificates/mozilla"
     cert_dir.mkdir(parents=True)
     certificates = {
-        "Zed.crt": b"-----BEGIN CERTIFICATE-----\nZed\n-----END CERTIFICATE-----\n",
-        "Alpha.crt": b"-----BEGIN CERTIFICATE-----\nAlpha\n-----END CERTIFICATE-----\n",
+        "Zed.crt": _create_ca(tmp_path, "zed-fixture"),
+        "Alpha.crt": _create_ca(tmp_path, "alpha-fixture"),
     }
     for name, payload in certificates.items():
         (cert_dir / name).write_bytes(payload)
@@ -126,6 +157,7 @@ def test_ca_bootstrap_creates_exact_nonempty_config_and_bundle(
     result = _run_bootstrap(
         tmp_path,
         certificate_count=2,
+        config_bytes=len(config),
         config_sha256=hashlib.sha256(config).hexdigest(),
         bundle_bytes=len(bundle),
         bundle_sha256=hashlib.sha256(bundle).hexdigest(),
@@ -148,6 +180,7 @@ def test_ca_bootstrap_refuses_hash_or_incomplete_certificate_input(
     bad_hash = _run_bootstrap(
         tmp_path,
         certificate_count=1,
+        config_bytes=len(config),
         config_sha256="0" * 64,
         bundle_bytes=len(certificate),
         bundle_sha256=hashlib.sha256(certificate).hexdigest(),
@@ -157,16 +190,28 @@ def test_ca_bootstrap_refuses_hash_or_incomplete_certificate_input(
     bad_count = _run_bootstrap(
         tmp_path,
         certificate_count=2,
+        config_bytes=len(config),
         config_sha256=hashlib.sha256(config).hexdigest(),
         bundle_bytes=len(certificate),
         bundle_sha256=hashlib.sha256(certificate).hexdigest(),
     )
     assert bad_count.returncode != 0
 
+    bad_config_size = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config) + 1,
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate),
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+    assert bad_config_size.returncode != 0
+
     (cert_dir / "Fixture.crt").write_bytes(certificate.rstrip(b"\n"))
     missing_newline = _run_bootstrap(
         tmp_path,
         certificate_count=1,
+        config_bytes=len(config),
         config_sha256=hashlib.sha256(config).hexdigest(),
         bundle_bytes=len(certificate) - 1,
         bundle_sha256=hashlib.sha256(certificate.rstrip(b"\n")).hexdigest(),
@@ -174,13 +219,59 @@ def test_ca_bootstrap_refuses_hash_or_incomplete_certificate_input(
     assert missing_newline.returncode != 0
 
 
+def test_ca_bootstrap_refuses_malformed_certificate_and_bundle_drift(
+    tmp_path: Path,
+) -> None:
+    cert_dir = tmp_path / "usr/share/ca-certificates/mozilla"
+    cert_dir.mkdir(parents=True)
+    config = b"mozilla/Fixture.crt\n"
+    malformed = (
+        b"-----BEGIN CERTIFICATE-----\n"
+        b"not-a-valid-x509-certificate\n"
+        b"-----END CERTIFICATE-----\n"
+    )
+    (cert_dir / "Fixture.crt").write_bytes(malformed)
+    malformed_result = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config),
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(malformed),
+        bundle_sha256=hashlib.sha256(malformed).hexdigest(),
+    )
+    assert malformed_result.returncode != 0
+
+    certificate = _create_ca(tmp_path, "bundle-fixture")
+    (cert_dir / "Fixture.crt").write_bytes(certificate)
+    bad_bundle_size = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config),
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate) + 1,
+        bundle_sha256=hashlib.sha256(certificate).hexdigest(),
+    )
+    assert bad_bundle_size.returncode != 0
+    bad_bundle_hash = _run_bootstrap(
+        tmp_path,
+        certificate_count=1,
+        config_bytes=len(config),
+        config_sha256=hashlib.sha256(config).hexdigest(),
+        bundle_bytes=len(certificate),
+        bundle_sha256="0" * 64,
+    )
+    assert bad_bundle_hash.returncode != 0
+
+
 def test_https_and_repository_signature_failures_have_no_bypass() -> None:
     for stage in DOCKERFILE.split("FROM ${BASE_IMAGE} AS runtime"):
         if "apt-get update" not in stage:
             continue
-        assert stage.index("COPY --from=npa-ca-trust") < stage.index(
-            "URIs: https://snapshot.ubuntu.com/ubuntu/"
-        ) < stage.index("apt-get update")
+        assert (
+            stage.index("COPY --from=npa-ca-trust")
+            < stage.index("URIs: https://snapshot.ubuntu.com/ubuntu/")
+            < stage.index("apt-get update")
+        )
     for forbidden in (
         "Acquire::https::Verify-Peer=false",
         "Acquire::https::Verify-Host=false",
@@ -190,9 +281,10 @@ def test_https_and_repository_signature_failures_have_no_bypass() -> None:
         "apt-get update ||",
     ):
         assert forbidden not in DOCKERFILE
-    assert DOCKERFILE.count(
-        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
-    ) == 2
+    assert (
+        DOCKERFILE.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg")
+        == 2
+    )
 
 
 def test_generated_bundle_rejects_an_untrusted_tls_certificate(
@@ -201,42 +293,17 @@ def test_generated_bundle_rejects_an_untrusted_tls_certificate(
     cert_dir = tmp_path / "root/usr/share/ca-certificates/mozilla"
     cert_dir.mkdir(parents=True)
 
-    def create_ca(name: str) -> Path:
-        key = tmp_path / f"{name}.key"
-        certificate = tmp_path / f"{name}.crt"
-        result = subprocess.run(
-            [
-                "openssl",
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-subj",
-                f"/CN={name}",
-                "-days",
-                "1",
-                "-keyout",
-                str(key),
-                "-out",
-                str(certificate),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
-        return certificate
-
-    trusted = create_ca("trusted-fixture")
-    untrusted = create_ca("untrusted-fixture")
-    trusted_payload = trusted.read_bytes()
+    trusted = tmp_path / "trusted-fixture.crt"
+    untrusted = tmp_path / "untrusted-fixture.crt"
+    trusted_payload = _create_ca(tmp_path, "trusted-fixture")
+    _create_ca(tmp_path, "untrusted-fixture")
     (cert_dir / "Trusted.crt").write_bytes(trusted_payload)
     config = b"mozilla/Trusted.crt\n"
     root = tmp_path / "root"
     bootstrap = _run_bootstrap(
         root,
         certificate_count=1,
+        config_bytes=len(config),
         config_sha256=hashlib.sha256(config).hexdigest(),
         bundle_bytes=len(trusted_payload),
         bundle_sha256=hashlib.sha256(trusted_payload).hexdigest(),
