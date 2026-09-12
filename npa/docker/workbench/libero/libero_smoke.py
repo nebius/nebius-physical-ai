@@ -73,6 +73,9 @@ DATASET_URL = (
 )
 DATASET_SHA256 = "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
 DATASET_SIZE = 508779600
+RUNTIME_MANIFEST_SHA256 = (
+    "c8e621ddf7a2db6ed67f92f8f8c23e3fb3ccd1f48d0736248f56e063af435a1d"
+)
 BDDL_RELATIVE = f"libero/libero/bddl_files/{SUITE}/{TASK}.bddl"
 BDDL_SHA256 = "9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b"
 INIT_RELATIVE = f"libero/libero/init_files/{SUITE}/{TASK}.init"
@@ -189,6 +192,13 @@ def runtime_materialized_this_run(output_dir: Path, runtime_root: Path) -> bool:
         or receipt.get("solution") != "libero"
         or receipt.get("status") != "ready"
         or receipt.get("warm_reuse") is not False
+        or receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256
+        or receipt.get("decision_sha256")
+        != os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256")
+        or receipt.get("source_revision") != SOURCE_REF
+        or receipt.get("runtime_artifact_count") != 135
+        or receipt.get("demonstration_sha256") != DATASET_SHA256
+        or receipt.get("language_model_revision") != LANGUAGE_MODEL_REVISION
         or Path(str(receipt.get("cache_path") or "")).resolve()
         != runtime_root.resolve()
     ):
