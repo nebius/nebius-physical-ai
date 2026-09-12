@@ -88,6 +88,8 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/tests/docker/test_libero_image_payload_scan.py",
     "npa/tests/docker/test_libero_runtime_bootstrap.py",
     "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
+    "npa/tests/guardrails/test_byof_profiles.py",
+    "npa/tests/guardrails/test_e2e_gate_reachability.py",
     "npa/tests/unit/test_execution_preflight.py",
     "npa/tests/workflows/test_byof_container_verify.py",
     "npa/tests/workflows/test_byof_libero.py",

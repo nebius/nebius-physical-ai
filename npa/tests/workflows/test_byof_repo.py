@@ -74,6 +74,7 @@ def _libero_contract_args(
     decision_sha256 = hashlib.sha256(decision_path.read_bytes()).hexdigest()
     acceptance = {
         "acceptance_id": decision["acceptance_id"],
+        "development_sha": "a" * 40,
         "candidate_image": decision["candidate_image"],
         "canonical_build_metadata_sha256": "5" * 64,
         "publication_bundle_sha256": decision["publication_bundle_sha256"],
@@ -795,6 +796,14 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     libero_args, acceptance = _libero_contract_args(tmp_path)
     monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
     seen: dict[str, object] = {}
+
+    def validate_lineage(value, repository_root, *, development_sha):
+        seen["lineage"] = (value, repository_root, development_sha)
+        return {}
+
+    monkeypatch.setattr(
+        module, "libero_publication_lineage_values", validate_lineage
+    )
     monkeypatch.setattr(
         module,
         "resolve_container_registry",
@@ -837,6 +846,34 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     cmd = seen["cmd"]
     assert isinstance(cmd, list)
     assert cmd.count("--no-direct-launch") == 1
+    assert seen["lineage"] == (
+        acceptance,
+        module.SCRIPT_DIR.parents[1],
+        acceptance["development_sha"],
+    )
+
+
+def test_main_refuses_local_libero_enforcement_drift_before_registry(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    libero_args, acceptance = _libero_contract_args(tmp_path)
+    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("LIBERO publication enforcement differs from acceptance")
+
+    monkeypatch.setattr(module, "libero_publication_lineage_values", refuse)
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry must not resolve after drift"),
+    )
+
+    assert module.main(["--run-id", "libero-lineage-drift", *libero_args]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert "publication enforcement differs" in result["error"]
 
 
 @pytest.mark.parametrize(
