@@ -149,13 +149,19 @@ def test_structural_scan_covers_every_layer_and_rootfs_byte(
     assert result["release_authorized"] is False
 
 
-def test_production_trust_roots_remain_withheld() -> None:
-    assert all(value is None for value in SCAN.EXPECTED_NEUTRAL_FILE_SHA256.values())
-    assert SCAN.EXPECTED_BASE["uncompressed_layer_digest"] is None
+def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() -> None:
+    assert all(
+        isinstance(value, str) and len(value) == 64
+        for value in SCAN.EXPECTED_NEUTRAL_FILE_SHA256.values()
+    )
+    assert SCAN.EXPECTED_BASE["uncompressed_layer_digest"] == (
+        "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a"
+    )
     assert SCAN.EXPECTED_IMAGE_CONFIG_SHA256 is None
     assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS is None
     assert all(
-        value is None for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
+        isinstance(value, str) and len(value) == 64
+        for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
     )
 
 

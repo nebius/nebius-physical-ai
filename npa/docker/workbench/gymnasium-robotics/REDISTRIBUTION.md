@@ -14,15 +14,16 @@ credential-free HTTPS origins, validates the exact final URL, size, and SHA-256,
 rejects unsafe or malformed archives, installs offline into a private staging
 directory, seals and records every retained runtime path and file hash, and
 atomically publishes the completed read-only version into an external
-operator-owned cache. Every reuse verifies that exact tree. Missing access and
-incomplete locks are refusals; there
-is no terms-acceptance or consent variable.
+operator-owned cache. Every reuse verifies that exact tree. Missing access,
+malformed inputs, and incomplete or mismatched locks are refusals; there is no
+terms-acceptance or consent variable.
 
 The image-baked system Python and Ubuntu `python3-boto3` package are trusted
 bootstrap/bookkeeping dependencies, not part of the fetched workload runtime.
-Their complete binary, copyright, license, and corresponding-source graph must
-be closed before build. Receipt validation, summary creation, and artifact
-upload use only that image-baked interpreter. Runtime installation and the
+Their exact binary, copyright, license, and corresponding-source graph is bound
+to the signed immutable snapshot in the repository locks. Receipt validation,
+summary creation, and artifact upload use only that image-baked interpreter.
+Runtime installation and the
 Shadow Hand smoke run with AWS credential variables removed and execute the
 fetched interpreter only through its validated directory and file descriptors;
 the mutable `current` convenience link is never an execution input.
@@ -41,8 +42,10 @@ and `gymnasium-robotics-smoke.json` is an operator-run output, never an upstream
 redistribution grant. A credential or private registry would not change any of
 these classifications.
 
-Publication remains blocked on exact bootstrap package/corresponding-source
-closure, built-byte and layer scans, SBOM/provenance, an anonymous digest pull,
-and an exact-digest RTX PRO 6000 Blackwell hard-gate run using genuine pinned
-upstream Shadow Hand assets. Historical private-image evidence is not evidence
-for the redesigned executable or image bytes.
+The exact private-build bootstrap package and source mapping is now locked.
+Publication remains blocked on public corresponding-source delivery, accepted
+built-byte and layer scans, SBOM/provenance, an anonymous digest pull, and an
+exact-digest RTX PRO 6000 Blackwell hard-gate run using genuine pinned upstream
+Shadow Hand assets. A private build or run does not satisfy those public gates.
+Historical private-image evidence is not evidence for the redesigned
+executable or image bytes.

@@ -20,10 +20,12 @@ accompany runtime-fetched material.
 - MuJoCo 3.12.0 at release commit
   `13827e9ee56f097f57acf69ae52b078f9839682d`: Apache-2.0. Exact wheel,
   license, and third-party-notice hashes are recorded in `source-lock.json`.
-- Ubuntu Noble neutral-bootstrap packages: mixed free-software licenses. Exact
-  binary, copyright, corresponding-source, and build-material closure remains
-  incomplete and blocks the image build before package network access. The
-  requested neutral set includes Ubuntu's system `python3-boto3` only for
+- Ubuntu Noble neutral-bootstrap packages: mixed free-software licenses. The
+  exact signed `20260905T000000Z` snapshot maps all 142 installed binary
+  packages to 102 source packages, 318 source artifacts, and 142 installed
+  copyright files in `apt-runtime.lock.json`. Public corresponding-source
+  delivery and image acceptance remain separately withheld. The requested
+  neutral set includes Ubuntu's system `python3-boto3` only for
   trusted receipt, summary, and artifact bookkeeping; it is not a fetched
   workload wheel and carries no permission for runtime-fetched material.
 

@@ -10,7 +10,8 @@ COPY npa/docker/workbench/gymnasium-robotics/apt-runtime.lock.json ./apt-runtime
 COPY npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json ./corresponding-source.lock.json
 COPY npa/docker/workbench/gymnasium-robotics/build.sh ./build.sh
 RUN chmod 0755 ./build.sh && ./build.sh verify-bootstrap-locks
-RUN ./build.sh install-bootstrap
+RUN --mount=type=secret,id=npa_host_ca_bundle,required=true,target=/run/npa-host-ca-bundle.crt \
+    ./build.sh install-bootstrap
 
 ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \

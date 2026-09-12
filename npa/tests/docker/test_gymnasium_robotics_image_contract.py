@@ -51,28 +51,34 @@ def test_candidate_copies_only_neutral_code_metadata_and_notices() -> None:
         assert any(required in line for line in copied)
 
 
-def test_incomplete_repository_locks_are_explicit_and_machine_readable() -> None:
+def test_repository_locks_are_complete_exact_and_machine_readable() -> None:
     for name in (
         "source-lock.json",
         "apt-runtime.lock.json",
         "corresponding-source.lock.json",
     ):
         payload = json.loads((IMAGE / name).read_text(encoding="utf-8"))
-        assert payload["status"] == "incomplete"
+        assert payload["status"] == "complete"
         assert payload["reason"]
-    assert "# status: incomplete" in (IMAGE / "requirements.lock").read_text()
+    requirements = (IMAGE / "requirements.lock").read_text()
+    assert "# status: complete" in requirements
+    assert requirements.count("--hash=sha256:") == 19
 
 
-def test_image_build_refuses_before_package_network_access() -> None:
+def test_image_build_accepts_only_the_exact_complete_pre_network_locks() -> None:
     completed = subprocess.run(
         [str(IMAGE / "build.sh"), "verify-bootstrap-locks"],
         text=True,
         capture_output=True,
         check=False,
     )
-    assert completed.returncode == 65
-    assert "refusal before network access" in completed.stderr
-    assert "trusted-bootstrap-package-vector" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    script = (IMAGE / "build.sh").read_text(encoding="utf-8")
+    assert script.index("missing ephemeral TLS trust input") < script.index(
+        "apt-get update"
+    )
+    assert "EXPECTED_FINAL_PACKAGE_MANIFEST_SHA256" in script
+    assert "https://snapshot.ubuntu.com/ubuntu/20260905T000000Z" in script
 
 
 def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:

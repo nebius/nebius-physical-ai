@@ -32,9 +32,9 @@ Gymnasium-Robotics appears in the machine-readable manifest as an internal
 pre-registration record with `needs-image-update`. This records the future real
 MuJoCo/EGL gate without registering a supported image. The neutral candidate
 must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
-or populated cache; its Dockerfile refuses before package network access while
-the bootstrap package/corresponding-source locks are incomplete. No golden
-evaluation, image, or public availability is claimed.
+or populated cache; its Dockerfile refuses before package network access when
+the exact signed-snapshot bootstrap or corresponding-source locks differ. No
+golden evaluation, accepted image, or public availability is claimed.
 
 ## CLI
 

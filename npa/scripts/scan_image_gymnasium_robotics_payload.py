@@ -126,10 +126,9 @@ EXPECTED_BASE = {
     "image": "ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
     "config_digest": "sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c",
     "layer_digest": "sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58",
-    # Filled only by a separately authorized transaction over the exact base
-    # layer. Docker-save archives retain this uncompressed digest (diff ID),
-    # not the registry's compressed layer digest.
-    "uncompressed_layer_digest": None,
+    # Docker/OCI config binds the uncompressed base layer diff ID; the registry
+    # manifest independently binds the compressed layer digest above.
+    "uncompressed_layer_digest": "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a",
 }
 # These externally reviewed anchors close every candidate-added byte. The
 # config binds history/runtime metadata and the ordered diff IDs; the diff IDs
@@ -140,13 +139,13 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS: tuple[str, ...] | None = None
 # reviewed and pinned here. Repository implementation leaves the built-image
 # trust roots unset, so a local status edit cannot turn the scanner green.
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
-    "source-lock.json": None,
-    "apt-runtime.lock.json": None,
-    "corresponding-source.lock.json": None,
-    "requirements.lock": None,
-    "runtime-bootstrap.py": None,
-    "capability_smoke.py": None,
-    "verify_image.py": None,
+    "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
+    "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
+    "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
+    "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
+    "runtime-bootstrap.py": "1f127f8b67dbee7049c3ceda98d2a7894168ad974aba1278cf084fc687f3477b",
+    "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
+    "verify_image.py": "8af096ea804f92286d0ac0d25fd0eb490aa054109a93e66c1105317f84e1585e",
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
