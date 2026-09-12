@@ -547,6 +547,38 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         assert str(payload[field]) not in output
 
 
+def test_robotwin_image_scanner_receives_private_digest_only_on_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    image = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
+
+    def fake_run(cmd: list[str], **kwargs):
+        assert image not in cmd
+        assert "--image-stdin" in cmd
+        assert kwargs["stdin"] == image
+        report_path = Path(cmd[cmd.index("--output") + 1])
+        report_path.write_text(
+            json.dumps(
+                {
+                    "format": "npa_robotwin_image_byte_scan_v1",
+                    "image": image,
+                    "status": "pass",
+                    "archives_scanned": 2,
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    report = module._scan_robotwin_image(image, redactions=(image,))
+
+    assert report["status"] == "pass"
+    assert report["archives_scanned"] == 2
+
+
 def test_robotwin_authorized_child_environment_drops_hostile_runtime_controls(
     monkeypatch, tmp_path
 ) -> None:
