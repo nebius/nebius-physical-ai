@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -12,6 +13,9 @@ import yaml
 
 from npa.orchestration.skypilot import _bin, local_api
 from npa.orchestration.skypilot.workflow_state import tail_live_job_logs
+
+
+_COMPATIBLE_RUNTIME_EVIDENCE = "3.10 33.1.0"
 
 
 def _write_sky(executable: Path, body: str) -> Path:
@@ -24,12 +28,29 @@ def _write_sky(executable: Path, body: str) -> Path:
     )
     executable.chmod(0o700)
     interpreter = executable.with_name("python")
+    # The test runner need not match the isolated SkyPilot runtime it models.
     interpreter.write_text(
         f"#!{sys.executable}\nimport os, sys\n"
+        "if sys.argv[1:2] == ['-c']:\n"
+        f"    print({_COMPATIBLE_RUNTIME_EVIDENCE!r})\n"
+        "    raise SystemExit(0)\n"
         f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
     )
     interpreter.chmod(0o700)
     return executable
+
+
+def test_synthetic_sky_runtime_reports_compatible_evidence(tmp_path: Path) -> None:
+    executable = _write_sky(tmp_path / "sky", "")
+    result = subprocess.run(
+        [str(executable.with_name("python")), "-c", "ignored"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == _COMPATIBLE_RUNTIME_EVIDENCE
 
 
 @pytest.fixture
