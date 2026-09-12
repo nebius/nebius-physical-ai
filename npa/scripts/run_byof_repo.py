@@ -189,6 +189,10 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
     for label, (observed, expected) in command_hashes.items():
         if observed != expected:
             raise ValueError(f"LIBERO requires its exact {label} contract")
+    if args.skip_run:
+        raise ValueError(
+            "LIBERO cannot use --skip-run because live qualification is mandatory"
+        )
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -909,7 +913,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    _validate_libero_identity(args)
+    try:
+        _validate_libero_identity(args)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "solution_name": args.solution_name,
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
     private_source = args.repo_auth == "github"
     try:
         validate_repository_url(args.repo_url, private=private_source)

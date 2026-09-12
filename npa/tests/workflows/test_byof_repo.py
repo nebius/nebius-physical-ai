@@ -834,7 +834,7 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     ],
 )
 def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
-    monkeypatch, extra, message
+    monkeypatch, capsys, extra, message
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -843,8 +843,10 @@ def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
         lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
     )
 
-    with pytest.raises(ValueError, match=message):
-        module.main(["--skip-build", "--skip-run", *extra])
+    assert module.main(["--skip-build", "--skip-run", *extra]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert message in result["error"]
 
 
 @pytest.mark.parametrize(
@@ -867,7 +869,7 @@ def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
     ],
 )
 def test_main_binds_exact_libero_inputs_before_registry_or_build(
-    monkeypatch, flag, value, message
+    monkeypatch, capsys, flag, value, message
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -879,12 +881,14 @@ def test_main_binds_exact_libero_inputs_before_registry_or_build(
     index = arguments.index(flag)
     arguments[index + 1] = value
 
-    with pytest.raises(ValueError, match=message):
-        module.main(arguments)
+    assert module.main(arguments) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert message in result["error"]
 
 
 def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
-    monkeypatch, tmp_path
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -898,8 +902,36 @@ def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
     index = arguments.index("--yaml")
     arguments[index + 1] = str(profile)
 
-    with pytest.raises(ValueError, match="packaged B200 solution-smoke profile"):
-        module.main(arguments)
+    assert module.main(arguments) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert "packaged B200 solution-smoke profile" in result["error"]
+
+
+def test_main_refuses_libero_skip_run_before_registry_or_build(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+
+    assert module.main(
+        [
+            "--run-id",
+            "libero-skip-run-refusal",
+            "--skip-run",
+            *_libero_contract_args(),
+        ]
+    ) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert result["solution_name"] == "libero"
+    assert result["error"] == (
+        "LIBERO cannot use --skip-run because live qualification is mandatory"
+    )
 
 
 def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
