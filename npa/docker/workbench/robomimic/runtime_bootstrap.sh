@@ -35,19 +35,43 @@ case "${1:-}" in
     snapshot_parent="$(mktemp -d)"
     snapshot_root="${snapshot_parent}/runtime"
     process_group_running() {
-      local group state states
-      if ! states="$(ps -e -o pgid=,stat= 2>/dev/null)"; then
-        return 0
-      fi
-      while read -r group state; do
-        if [[ "${group}" == "$1" ]]; then
-          case "${state}" in
-            Z*|X*) ;;
-            *) return 0 ;;
+      local candidate group group_seen key state status_file value
+      # Avoid an external process-table command in the cleanup path: a stuck
+      # command would defeat both signal escalation and snapshot cleanup. The
+      # kernel-generated status files are read with Bash builtins. NSpgid's last
+      # value is the process-group id in this container's PID namespace.
+      kill -0 -- "-$1" 2>/dev/null || return 1
+      group_seen=0
+      for status_file in /proc/[0-9]*/status; do
+        [[ -r "${status_file}" ]] || continue
+        group=""
+        state=""
+        while IFS=$'\t' read -r key value; do
+          case "${key}" in
+            NSpgid:)
+              for candidate in ${value}; do
+                group="${candidate}"
+              done
+              ;;
+            State:) state="${value%% *}" ;;
           esac
+        done <"${status_file}" || continue
+        if [[ "${group}" == "$1" ]]; then
+          group_seen=1
+          [[ "${state}" == "Z" || "${state}" == "X" ]] || return 0
         fi
-      done <<<"${states}"
-      return 1
+      done
+      # If kill(0) observed the group but /proc raced with process exit, keep
+      # the snapshot until a later poll can prove either a member or absence.
+      ((group_seen == 1)) && return 1
+      return 0
+    }
+    monotonic_microseconds() {
+      local fraction ignored seconds
+      IFS='. ' read -r seconds fraction ignored </proc/uptime || return 1
+      [[ "${seconds}" =~ ^[0-9]+$ && "${fraction}" =~ ^[0-9]+$ ]] || return 1
+      fraction="${fraction}000000"
+      printf '%s\n' "$((10#${seconds} * 1000000 + 10#${fraction:0:6}))"
     }
     stop_child() {
       local signal_name="$1"
@@ -57,11 +81,12 @@ case "${1:-}" in
       trap '' HUP INT TERM
       child_pid=""
       kill -s "${signal_name}" -- "-${target_pid}" 2>/dev/null || true
-      grace_started="${EPOCHREALTIME/./}"
+      grace_started="$(monotonic_microseconds)" || grace_started=0
       while process_group_running "${target_pid}"; do
-        grace_now="${EPOCHREALTIME/./}"
-        # Bound the grace period by elapsed time, not by the cost of scanning a
-        # busy process table. Bash 5's microsecond clock avoids a helper process.
+        grace_now="$(monotonic_microseconds)" || grace_now=0
+        # /proc/uptime is monotonic. If it becomes unreadable, fail closed by
+        # ending the graceful wait and escalating instead of extending cleanup.
+        [[ "${grace_started}" == 0 || "${grace_now}" == 0 ]] && break
         ((10#${grace_now} - 10#${grace_started} >= 5000000)) && break
         sleep 0.1
       done

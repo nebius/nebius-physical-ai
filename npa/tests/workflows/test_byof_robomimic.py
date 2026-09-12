@@ -1560,6 +1560,50 @@ def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
     assert list((tmp_path / "inputs").iterdir()) == []
 
 
+def test_robomimic_dataset_retry_cleans_owned_stale_partial_before_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    partial = input_dir / "lift_ph_lowdim_v15.download"
+    partial.write_bytes(b"interrupted")
+    opened: list[bool] = []
+
+    def fail_after_cleanup(*_args: object, **_kwargs: object) -> object:
+        assert not partial.exists()
+        opened.append(True)
+        raise RuntimeError("network sentinel")
+
+    monkeypatch.setattr(module, "_open_allowed_https", fail_after_cleanup)
+
+    with pytest.raises(RuntimeError, match="network sentinel"):
+        module._download_dataset(input_dir)
+
+    assert opened == [True]
+    assert list(input_dir.iterdir()) == []
+
+
+def test_robomimic_dataset_retry_rejects_stale_partial_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"preserve")
+    partial = input_dir / "lift_ph_lowdim_v15.download"
+    partial.symlink_to(outside)
+
+    with pytest.raises(RuntimeError, match="unsafe stale dataset partial"):
+        module._download_dataset(input_dir)
+
+    assert partial.is_symlink()
+    assert outside.read_bytes() == b"preserve"
+
+
 def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
     task = documents[1]

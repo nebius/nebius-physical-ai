@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import ssl
+import stat
 import subprocess
 import sys
 import urllib.parse
@@ -253,9 +254,35 @@ def _hardware() -> dict[str, object]:
 def _download_dataset(
     input_dir: Path,
 ) -> tuple[Path, list[str], dict[str, int], float, float]:
-    input_dir.mkdir(parents=True, exist_ok=False)
     partial = input_dir / "lift_ph_lowdim_v15.download"
     dataset = input_dir / "lift_ph_lowdim_v15.hdf5"
+    try:
+        input_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        details = input_dir.lstat()
+        if (
+            not stat.S_ISDIR(details.st_mode)
+            or input_dir.is_symlink()
+            or details.st_uid != os.geteuid()
+            or stat.S_IMODE(details.st_mode) & 0o022
+        ):
+            raise RuntimeError("refusing an unsafe existing dataset input directory")
+        unexpected = [path for path in input_dir.iterdir() if path != partial]
+        if unexpected:
+            raise RuntimeError("refusing to reuse a nonempty dataset input directory")
+        try:
+            partial_details = partial.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if (
+                not stat.S_ISREG(partial_details.st_mode)
+                or partial.is_symlink()
+                or partial_details.st_uid != os.geteuid()
+                or partial_details.st_nlink != 1
+            ):
+                raise RuntimeError("refusing an unsafe stale dataset partial")
+            partial.unlink()
     url = (
         "https://huggingface.co/datasets/robomimic/robomimic_datasets/resolve/"
         f"{DATASET_REVISION}/{DATASET_PATH}?download=true"
