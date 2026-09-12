@@ -320,8 +320,9 @@ def test_libero_artifact_contract_is_fail_closed_and_scoped() -> None:
     assert '"status": "passed"' in smoke
     assert '"exit_status": 0' in smoke
     assert '"cache_uploaded": False' in smoke
-    assert '"render_assets_baked": False' in smoke
-    assert '"git_objects_baked": False' in smoke
+    assert '"render_assets_present_in_final_filesystem": False' in smoke
+    assert '"git_objects_present_in_final_filesystem": False' in smoke
+    assert '"independent_oci_layer_scan_required_before_live_use": True' in smoke
     for deferred in (
         "rendered_closed_loop_success_sweeps",
         "all_130_tasks",

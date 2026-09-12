@@ -688,11 +688,12 @@ def test_libero_b200_qualification_report() -> None:
         assert re.fullmatch(r"[0-9a-f]{64}", runtime[key])
 
     build = report["build"]
-    assert build["dataset_baked"] is False
-    assert build["weights_baked"] is False
-    assert build["render_assets_baked"] is False
+    assert build["dataset_delivery"] == "runtime_fetch_to_run_scoped_cache"
+    assert build["weights_delivery"] == "runtime_fetch_to_run_scoped_cache"
+    assert build["render_assets_present_in_final_filesystem"] is False
     assert build["render_assets_removed_path"] == "libero/libero/assets"
-    assert build["git_objects_baked"] is False
+    assert build["git_objects_present_in_final_filesystem"] is False
+    assert build["independent_oci_layer_scan_required_before_live_use"] is True
     assert build["source_metadata"]["source_prune_path"] == "libero/libero/assets"
     assert build["source_metadata"]["git_objects_removed"] is True
     assert build["base_image_digest"] == (
