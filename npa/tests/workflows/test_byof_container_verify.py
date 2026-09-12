@@ -1332,6 +1332,41 @@ def test_submit_waits_on_scheduler_id_not_human_run_name(
     }
 
 
+def test_libero_refuses_isaac_lab_precheck_failure_override(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    isolated.chmod(0o700)
+    args.isolated_config_dir = str(isolated)
+    args.solution_name = "libero"
+    monkeypatch.setenv("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
+    monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
+    monkeypatch.setattr(
+        module, "_libero_global_config_path", lambda _args: _args.config_path
+    )
+    monkeypatch.setattr(module, "_bind_libero_runtime_contract", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (
+            SimpleNamespace(status="FAILED_PRECHECKS"),
+            {"terminal": True},
+        ),
+    )
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["final"]["status"] == "FAILED_PRECHECKS"
+
+
 def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path, capsys) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
