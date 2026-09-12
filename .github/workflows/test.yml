@@ -44,9 +44,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PRs get one representative version for fast feedback. Main still
-        # covers the supported floor, common version, and latest release.
-        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.10","3.12","3.14"]') }}
+        # Run the full supported matrix before merge. A representative PR run
+        # previously let version-specific regressions reach main undetected.
+        python-version: ${{ fromJSON('["3.10","3.12","3.14"]') }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
