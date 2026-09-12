@@ -578,11 +578,17 @@ for name, digest in expected.items():
 print("Verified all four pinned dataset files")
 PY
 LEROBOT_URI="s3://$BUCKET/datasets/paidf-cosmos3/$RUN_ID/aloha-sim-transfer-cube"
+NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" || exit 1
+export NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER
+printf 'Save the freshness timestamp for %s: %s\n' "$RUN_ID" "$NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"
 aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius || exit 1
 ```
 
 Stop if a download, checksum check, or upload fails. Keep the dataset prefix
 unchanged until the run finishes; the submitter and worker both read it.
+Save the printed timestamp with this run ID. It is captured before upload in
+ISO-8601 UTC format with an explicit `+00:00` offset. Restore that same value
+if you audit from a new terminal; do not generate a replacement after the run.
 
 For your own dataset, set `LEROBOT_DIR` and `LEROBOT_URI` to your local directory
 and destination, then use the same `aws s3 sync` command. An existing S3 dataset
@@ -629,6 +635,36 @@ actions/states onto generated observations. It processes one episode/camera per
 run; use a fresh run ID for each further selection. Physical fidelity and
 training suitability still require review, and a complete quality rejection
 can stop a run.
+
+#### Audit the fresh public LeRobot example
+
+After all 15 stages succeed, run this optional audit from the repository root
+with the same `RUN_ID`, `BUCKET`, `PROJECT_ALIAS`, and saved pre-upload
+`NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER`. The test checks this pinned episode/camera,
+object timestamps, stage replay/adoption, and completed outputs. It reads the
+existing run and does not submit jobs. A reused dataset prefix cannot satisfy
+this example's freshness check.
+
+Install the test dependencies in the separate contributor environment once:
+
+```bash
+python3.12 -m venv npa/.venv
+npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]'
+```
+
+Then run the audit; require **one passed test**, not a skip:
+
+```bash
+(
+  set -e
+  : "${NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER:?Restore the saved pre-upload UTC timestamp for this run}"
+  export NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER
+  export NPA_INTEGRATION_E2E=1
+  export NPA_E2E_PROJECT="$PROJECT_ALIAS"
+  export NPA_E2E_PAIDF_LEROBOT_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/"
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_lerobot_live.py -q
+)
+```
 
 ### R3b. Run the full pipeline from a local MP4
 
@@ -1133,7 +1169,8 @@ flagged both as redundant for review, using `embedding-fallback` uniqueness
 and PCA visualization. These findings are available in the curation reports.
 
 The [completed-run LeRobot regression test](../../npa/tests/e2e/test_paidf_cosmos3_lerobot_live.py)
-passed with the optional freshness audit enabled. An independent audit fully
+passed with the [freshness audit](#audit-the-fresh-public-lerobot-example)
+enabled. An independent audit fully
 decoded all 12 MP4/control files and verified both Rerun recordings against
 this run's media hashes, frame timestamps, evaluator, gate, disposition, and
 input provenance. The final recording also matched both curation reports.
