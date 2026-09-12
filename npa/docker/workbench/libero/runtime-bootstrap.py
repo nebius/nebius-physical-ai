@@ -457,9 +457,14 @@ def _publish_current_cache_link(
         _require_cache_entry_identity(final, expected)
     except Exception:
         temporary_link.unlink(missing_ok=True)
-        if current.is_symlink() and os.readlink(current) == final.name:
-            current.unlink()
+        _remove_current_cache_link(cache_root, final)
         raise
+
+
+def _remove_current_cache_link(cache_root: Path, final: Path) -> None:
+    current = cache_root / "current"
+    if current.is_symlink() and os.readlink(current) == final.name:
+        current.unlink()
 
 
 def _validate_decision(
@@ -915,6 +920,37 @@ def _validate_complete(
     return record
 
 
+def _validate_and_publish_cache(
+    *,
+    cache_root: Path,
+    final: Path,
+    identity: tuple[int, int],
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+    decision_sha256: str,
+    requirements_sha256: str,
+    governing_terms_sha256: str,
+) -> dict[str, Any]:
+    published = False
+    try:
+        with _open_cache_entry(final, expected=identity) as stable_final:
+            record = _validate_complete(
+                stable_final,
+                manifest,
+                manifest_sha256,
+                decision_sha256,
+                requirements_sha256,
+                governing_terms_sha256,
+            )
+            _publish_current_cache_link(cache_root, final, identity)
+            published = True
+    except Exception:
+        if published:
+            _remove_current_cache_link(cache_root, final)
+        raise
+    return record
+
+
 def _complete_record_values(
     manifest: dict[str, Any],
     manifest_sha256: str,
@@ -978,28 +1014,16 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
         warm_reuse = locked_identity is not None
         if warm_reuse:
             assert locked_identity is not None
-            published = False
-            try:
-                with _open_cache_entry(final, expected=locked_identity) as stable_final:
-                    record = _validate_complete(
-                        stable_final,
-                        manifest,
-                        manifest_sha256,
-                        decision_sha256,
-                        requirements_sha256,
-                        governing_terms_sha256,
-                    )
-                    _publish_current_cache_link(cache_root, final, locked_identity)
-                    published = True
-            except Exception:
-                current = cache_root / "current"
-                if (
-                    published
-                    and current.is_symlink()
-                    and os.readlink(current) == final.name
-                ):
-                    current.unlink()
-                raise
+            record = _validate_and_publish_cache(
+                cache_root=cache_root,
+                final=final,
+                identity=locked_identity,
+                manifest=manifest,
+                manifest_sha256=manifest_sha256,
+                decision_sha256=decision_sha256,
+                requirements_sha256=requirements_sha256,
+                governing_terms_sha256=governing_terms_sha256,
+            )
         else:
             partial = Path(
                 tempfile.mkdtemp(prefix=f".{manifest_sha256}.partial-", dir=cache_root)
@@ -1025,16 +1049,16 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 locked_identity = _cache_entry_identity(final)
                 if locked_identity is None:
                     raise BootstrapRefusal("materialized runtime cache is unavailable")
-                with _open_cache_entry(final, expected=locked_identity) as stable_final:
-                    _validate_complete(
-                        stable_final,
-                        manifest,
-                        manifest_sha256,
-                        decision_sha256,
-                        requirements_sha256,
-                        governing_terms_sha256,
-                    )
-                    _publish_current_cache_link(cache_root, final, locked_identity)
+                record = _validate_and_publish_cache(
+                    cache_root=cache_root,
+                    final=final,
+                    identity=locked_identity,
+                    manifest=manifest,
+                    manifest_sha256=manifest_sha256,
+                    decision_sha256=decision_sha256,
+                    requirements_sha256=requirements_sha256,
+                    governing_terms_sha256=governing_terms_sha256,
+                )
             except Exception:
                 shutil.rmtree(partial, ignore_errors=True)
                 raise
