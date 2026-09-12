@@ -286,6 +286,8 @@ def _verify_openpgp_signature(proof_directory: Path) -> None:
         verified = subprocess.run(
             [
                 gpgv,
+                "--homedir",
+                str(key_home),
                 "--keyring",
                 str(keyring),
                 str(proof_directory / _INRELEASE.name),
