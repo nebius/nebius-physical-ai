@@ -708,10 +708,17 @@ if actual != expected:
     raise SystemExit("MP4 checksum mismatch; stop before submission")
 print("Verified fresh public MP4:", actual)
 PY
+NPA_E2E_PAIDF_MP4_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" || exit 1
+export NPA_E2E_PAIDF_MP4_FRESH_AFTER
+printf 'Save the freshness timestamp for the next run: %s\n' \
+  "$NPA_E2E_PAIDF_MP4_FRESH_AFTER"
 ```
 
 Stop if either download or verification fails. This sample is 3.38 seconds at
 50 fps, with 169 frames. Run the two media checks above against it as well.
+Save the printed pre-submission timestamp with the new run ID you reserve next.
+Restore that same value if you audit from another terminal; generating a later
+timestamp after submission makes the freshness check invalid.
 
 Run R2 now to reserve a **new** `RUN_ID`, select its separate SkyPilot directory,
 and validate the workflow and images. Use this full command in place of R3:
@@ -745,6 +752,31 @@ the reference and both generated variants should each contain 81 frames at
 24 fps (3.375 seconds); the original retains its 169 frames at 50 fps. Compare
 generated media against the **prepared reference**, and inspect the actual
 action and appearance before using accepted data for training.
+
+#### Audit the fresh local-MP4 run
+
+After all 15 stages succeed, run this optional read-only audit from the
+repository root with the same `RUN_ID`, `BUCKET`, `PROJECT_ALIAS`, and saved
+pre-submission `NPA_E2E_PAIDF_MP4_FRESH_AFTER`. The test verifies the pinned
+source hash, fresh object timestamps, lack of replay/adoption, prepared and
+generated timelines, curation, and both recording identities. It does not
+submit jobs. A reused run ID or timestamp recorded after submission cannot
+satisfy the freshness contract.
+
+Install the test dependencies in the separate contributor environment once,
+as shown in the R3a audit, then require **one passed test**, not a skip:
+
+```bash
+(
+  set -e
+  : "${NPA_E2E_PAIDF_MP4_FRESH_AFTER:?Restore the saved pre-submission UTC timestamp for this run}"
+  export NPA_E2E_PAIDF_MP4_FRESH_AFTER
+  export NPA_INTEGRATION_E2E=1
+  export NPA_E2E_PROJECT="$PROJECT_ALIAS"
+  export NPA_E2E_PAIDF_MP4_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/"
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_mp4_live.py -q
+)
+```
 
 ### R4. Monitor and recover
 
