@@ -573,7 +573,7 @@ def test_only_standard_venv_compatibility_link_is_removed(tmp_path: Path) -> Non
     BOOTSTRAP._remove_venv_compatibility_link(runtime)
     assert not link.exists()
 
-    link.symlink_to("/tmp")
+    link.symlink_to(tmp_path)
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="unexpected compatibility"):
         BOOTSTRAP._remove_venv_compatibility_link(runtime)
 
