@@ -1,6 +1,7 @@
 # LIBERO BYOF qualification
 
-This candidate proves a narrow but real LIBERO behavior-cloning path on Nebius:
+This candidate is designed to prove a narrow but real LIBERO behavior-cloning
+path on Nebius:
 one official `libero_spatial` task, a trajectory-disjoint train/held-out split,
 eight upstream `Sequential.observe` optimizer steps with `BCRNNPolicy`, an exact
 checkpoint save/reload, and held-out loss plus finite action predictions. It
