@@ -388,7 +388,7 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
             "Unschedulable",
             "0/3 nodes: insufficient nvidia.com/gpu",
             "scheduler",
-            "ACCELERATOR_MISMATCH",
+            "CAPACITY_OR_QUOTA",
         ),
         (
             "Unschedulable",
@@ -442,3 +442,26 @@ def test_kubernetes_diagnostic_failures_are_typed_and_sanitized(
     assert report.error_code == code
     assert "synthetic-secret" not in report.error
     assert report.observed_at
+
+
+@pytest.mark.parametrize("reason", ["Unschedulable", "FailedScheduling"])
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("0/4 nodes: 1 Insufficient cpu, 2 Insufficient nvidia.com/gpu, "
+         "2 node(s) did not match Pod's node affinity/selector", "CAPACITY_OR_QUOTA"),
+        ("Insufficient nvidia.com/gpu", "CAPACITY_OR_QUOTA"),
+        ("Insufficient cpu", "CAPACITY_OR_QUOTA"),
+        ("GPU capacity temporarily unavailable", "CAPACITY_OR_QUOTA"),
+        ("GPU quota exceeded", "CAPACITY_OR_QUOTA"),
+        ("no nodes match requested GPU accelerator", "ACCELERATOR_MISMATCH"),
+        ("GPU accelerator label did not match", "ACCELERATOR_MISMATCH"),
+        ("persistentvolumeclaim has volume node affinity conflict", "STORAGE_PENDING"),
+        ("no nodes are available", "CAPACITY_OR_QUOTA"),
+        ("node selector did not match", "UNSCHEDULABLE"),
+    ],
+)
+def test_scheduler_shortage_is_distinct_from_accelerator_mismatch(
+    reason: str, message: str, expected: str,
+) -> None:
+    assert classify_pending_reason(reason, message, source="scheduler") == expected

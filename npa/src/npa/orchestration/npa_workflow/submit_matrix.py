@@ -108,6 +108,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "on RTX PRO 6000; additionally requires a recorded viewport MP4."
         ),
     ),
+    SubmitLiveCase(
+        "alpamayo2-ray-sweep.yaml", "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="alpamayo2-super",
+        notes="Real Ray scenario/seed/diffusion sweep; requires current staged NPA source and gated PhysicalAI-AV access.",
+    ),
+    SubmitLiveCase(
+        "alpamayo2-ray-hardcases.yaml", "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="alpamayo2-super",
+        notes="Ray baseline followed by error-threshold selection and matched-seed refinement; requires current staged NPA source.",
+    ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
         "token-factory-caption.yaml",

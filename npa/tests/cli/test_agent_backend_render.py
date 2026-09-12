@@ -3985,6 +3985,7 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
         monkeypatch, tmp_path, module_name="npa_rendered_action_catalog_completion"
     )
     expected = sorted(tool_catalog_payload())
+    planner_inputs = []
     plans = iter(
         [
             {"tool": "tools_catalog", "args": {}},
@@ -3992,7 +3993,8 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
         ]
     )
 
-    def planner(_messages, *, tier):
+    def planner(messages, *, tier):
+        planner_inputs.append(messages)
         return {"choices": [{"message": {"content": json.dumps(next(plans))}}]}
 
     result = module.run_action_loop(
@@ -4008,3 +4010,5 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
     assert calls[0]["tool"] == "tools_catalog"
     assert calls[0]["status"] == "ok"
     assert calls[0]["observation"] == {"tool_refs": expected}
+    catalog_observation = {"tool": "tools_catalog", "result": {"tool_refs": expected}}
+    assert json.dumps(catalog_observation, sort_keys=True) in planner_inputs[1][-1]["content"]

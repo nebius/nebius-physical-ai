@@ -130,6 +130,14 @@ def test_image_repository_and_registry_are_split_for_registry_probes() -> None:
 
     assert config.image_registry == "nvcr.io"
     assert config.image_repository == "nvidia/nre/nre-ga"
+    assert config.image_manifest_reference == "26.04"
+
+    digest = NurecConfig.from_env(
+        environ={}, image="nvcr.io/nvidia/nre/nre-ga@sha256:abc123"
+    )
+    assert digest.image_registry == "nvcr.io"
+    assert digest.image_repository == "nvidia/nre/nre-ga"
+    assert digest.image_manifest_reference == "sha256:abc123"
 
 
 # ---------------------------------------------------------------------------------
@@ -530,6 +538,63 @@ def _patch_http(monkeypatch: pytest.MonkeyPatch, *, ngc: int = 200, hf: int = 20
         return _Response(hf)
 
     monkeypatch.setattr(httpx, "get", fake_get)
+
+
+@pytest.mark.parametrize(
+    ("image", "manifest_url"),
+    (
+        (
+            "nvcr.io/nvidia/nre/nre-ga:26.04",
+            "https://nvcr.io/v2/nvidia/nre/nre-ga/manifests/26.04",
+        ),
+        (
+            "nvcr.io/nvidia/nre/nre-ga@sha256:abc123",
+            "https://nvcr.io/v2/nvidia/nre/nre-ga/manifests/sha256:abc123",
+        ),
+    ),
+)
+def test_ngc_access_probes_the_exact_selected_manifest(
+    monkeypatch: pytest.MonkeyPatch, image: str, manifest_url: str
+) -> None:
+    import httpx
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_get(url, **kwargs):
+        calls.append((str(url), kwargs))
+        if "proxy_auth" in str(url):
+            return _Response(200, {"token": "registry-token"})
+        return _Response(200)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    assert mod.check_ngc_image_access("operator-key", image=image) == "reachable"
+    assert calls[0][0] == "https://nvcr.io/proxy_auth"
+    assert calls[0][1]["params"] == {"scope": "repository:nvidia/nre/nre-ga:pull"}
+    assert calls[1][0] == manifest_url
+    assert calls[1][1]["headers"]["Authorization"] == "Bearer registry-token"
+    assert (
+        "application/vnd.oci.image.manifest.v1+json" in calls[1][1]["headers"]["Accept"]
+    )
+
+
+@pytest.mark.parametrize("status", (401, 403, 404))
+def test_ngc_access_rejects_non_success_for_the_exact_manifest(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    import httpx
+
+    def fake_get(url, **_kwargs):
+        if "proxy_auth" in str(url):
+            return _Response(200, {"token": "registry-token"})
+        return _Response(status)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    outcome = mod.check_ngc_image_access(
+        "operator-key", image="nvcr.io/nvidia/nre/nre-ga:26.04"
+    )
+    assert outcome == f"manifest-{status}"
 
 
 def test_check_is_ok_when_credentials_container_and_gpu_all_resolve(

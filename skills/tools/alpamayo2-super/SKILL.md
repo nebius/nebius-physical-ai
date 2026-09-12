@@ -109,11 +109,29 @@ B200 result.
 
 ## Verify changes
 
+For Ray scenario/seed/diffusion experiments, use
+`workflows/testing/alpamayo2-ray-sweep.yaml` and
+`workflows/testing/alpamayo2-ray-hardcases.yaml`, derived from the inference
+template. Submit current changes with `--stage-src`: the accepted release image
+does not yet contain `npa workbench alpamayo2-super sweep`. The catalog installs
+Ray 2.58.0 in the NPA interpreter. GPU actors reuse downloaded snapshots while
+upstream subprocesses reload weights per case; do not claim resident-model reuse.
+CPU reductions report measured errors and seed variability. Refinement inherits
+baseline seeds, verifies source manifest and revision identity, and supports an
+empty selection without fabricating inference. Keep public handoffs on S3.
+See `docs/workbench/alpamayo2-super.md#ray-experiments` for controls and outputs.
+
+Inference now snapshots and validates its manifest before fetching the model,
+verifies sidecar sample/seed/projection identity, and fully decodes the PNG before
+publication. The upstream sidecar contains metadata and metrics, not full XYZ
+coordinates; do not describe it as a coordinate recording.
+
 ```bash
 npa/.venv/bin/python ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/tools/alpamayo2-super
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_alpamayo2_super.py \
+  npa/tests/workbench/test_alpamayo_ray_sweep.py \
   npa/tests/workbench/test_alpamayo2_super_service_security.py \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py -q

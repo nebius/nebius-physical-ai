@@ -532,7 +532,7 @@ def check_ngc_key(
         return CheckResult(
             name="ngc",
             status=PASS,
-            summary="NGC_API_KEY can pull the selected NuRec NRE repository.",
+            summary="NGC_API_KEY can pull the selected NuRec NRE image tag/digest.",
         )
     credential_rejected = outcome in {
         "auth-no-token",
@@ -541,6 +541,8 @@ def check_ngc_key(
     }
     entitlement_rejected = outcome in {
         "entitlement-required",
+        "manifest-401",
+        "manifest-403",
         "tags-401",
         "tags-403",
     }
@@ -548,7 +550,7 @@ def check_ngc_key(
     if credential_rejected:
         summary = f"NGC credential rejected during repository auth: {outcome}."
     elif entitlement_rejected:
-        summary = f"NGC repository entitlement denied: {outcome}."
+        summary = f"NGC exact image entitlement denied: {outcome}."
     else:
         summary = f"NGC repository pull preflight failed: {outcome}."
     return CheckResult(

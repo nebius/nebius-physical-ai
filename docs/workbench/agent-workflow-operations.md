@@ -83,6 +83,12 @@ npa workbench workflow logs <run-id> --project <project> --stage <stage> --cache
 npa workbench workflow artifacts <run-id> --project <project> --json
 ```
 
+Omit `--cached` to read live logs from the recorded managed job. Logs for a
+single-stage serial wave remain available if the driver stopped before its first
+task observation. A provider response that the requested task does not exist is
+reported as `VERIFICATION_UNAVAILABLE` with exit code 2; it is not verified stage
+output.
+
 Diagnose a failed run from the status result first, then request the named failed
 stage's bounded log tail and artifact inventory. Preserve the run ID for resume;
 do not guess backend job identities or inspect backend state.

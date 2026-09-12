@@ -321,6 +321,24 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.alpamayo2_super.sweep": ToolEntry(
+        name="workbench.alpamayo2_super.sweep",
+        description="Ray GPU actor sweep over Alpamayo scenarios, seeds, and diffusion settings, with optional matched hard-case refinement.",
+        access_capabilities=("alpamayo2-super",),
+        omit_flags_when_empty=("--input-path",),
+        config_defaults={"input_uri": "", "minimum_ade": "2.0", "workers": "1"},
+        argv_template=[
+            "npa", "workbench", "alpamayo2-super", "sweep",
+            "--output-path", "{{config.output_uri}}",
+            "--input-path", "{{config.input_uri}}",
+            "--sample-indices", "{{config.sample_indices}}",
+            "--seeds", "{{config.seeds}}",
+            "--diffusion-steps", "{{config.diffusion_steps}}",
+            "--workers", "{{config.workers}}",
+            "--minimum-ade", "{{config.minimum_ade}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(

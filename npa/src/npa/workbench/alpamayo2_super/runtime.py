@@ -8,7 +8,9 @@ weights, PhysicalAI-AV data, credentials, or populated Hugging Face cache.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -175,71 +177,122 @@ def _resolve_model_snapshot(request: Alpamayo2SuperRequest) -> str:
         raise Alpamayo2SuperError(
             f"failed to fetch pinned Alpamayo2-Super snapshot ({completed.returncode}):\n{tail}"
         )
-    resolved = (completed.stdout or "").splitlines()[-1].strip()
+    lines = (completed.stdout or "").splitlines()
+    resolved = lines[-1].strip() if lines else ""
     if not resolved or not Path(resolved).is_dir():
         raise Alpamayo2SuperError("Hugging Face did not return a local model snapshot")
     return resolved
 
 
+def _snapshot_manifest(request: Alpamayo2SuperRequest, local_dir: Path) -> tuple[str, dict]:
+    try:
+        contents = Path(request.manifest).expanduser().read_bytes()
+        document = json.loads(contents)
+        sample = document["samples"][request.sample_index]
+        if not isinstance(sample["clip_id"], str) or not sample["clip_id"].strip():
+            raise ValueError("clip_id must be a non-empty string")
+        timestamp = sample["t0_us"]
+        if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0:
+            raise ValueError("t0_us must be a non-negative integer")
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
+        raise Alpamayo2SuperError("invalid or unavailable validation manifest/sample") from exc
+    directory = local_dir / "inputs"
+    directory.mkdir()
+    snapshot = directory / "manifest.json"
+    snapshot.write_bytes(contents)
+    return str(snapshot), {
+        "clip_id": sample["clip_id"], "t0_us": timestamp,
+        "manifest_sha256": hashlib.sha256(contents).hexdigest(),
+    }
+
+
+def _validate_artifacts(local_dir: Path, request: Alpamayo2SuperRequest, sample: dict) -> dict:
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        metadata = json.loads((local_dir / "trajectory.json").read_text())
+        if not isinstance(metadata, dict):
+            raise ValueError("trajectory metadata must be an object")
+        for key, expected in {"clip_id": sample["clip_id"], "t0_us": sample["t0_us"], "seed": request.seed}.items():
+            if metadata.get(key) != expected:
+                raise ValueError(f"trajectory metadata does not match requested {key}")
+        if request.require_camera_projection and metadata.get("projection_available") is not True:
+            raise ValueError("required camera projection is missing")
+        for name in ("min_ade_m", "min_fde_m", "fde_at_min_ade_m"):
+            value = metadata.get(name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"invalid trajectory metric {name}")
+        with Image.open(local_dir / "trajectory.png") as picture:
+            if picture.format != "PNG":
+                raise ValueError("trajectory.png is not a PNG image")
+            picture.load()
+    except (OSError, ValueError, UnidentifiedImageError) as exc:
+        raise Alpamayo2SuperError(f"invalid required inference artifacts: {exc}") from exc
+    return {key: metadata.get(key) for key in ("min_ade_m", "min_fde_m", "fde_at_min_ade_m")}
+
+
+def _provenance(request: Alpamayo2SuperRequest, argv: list[str]) -> dict[str, Any]:
+    return {
+        "schema": ARTIFACT_SCHEMA,
+        "model": {"id": request.model_id, "revision": request.model_revision},
+        "dataset": {
+            "id": DEFAULT_DATASET_REPO, "revision": request.dataset_revision,
+            "operator_runtime_fetch": True,
+        },
+        "request": asdict(request),
+        "runtime": {
+            "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
+            "weights_baked": False, "dataset_baked": False,
+            "cache_tier": "node-local-ephemeral",
+        },
+        "argv": argv,
+    }
+
+
+def _execute(argv: list[str], request: Alpamayo2SuperRequest, runner: Callable) -> None:
+    completed = runner(
+        argv, cwd="/opt/alpamayo2", env=_runtime_env(request), text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+    )
+    if completed.returncode != 0:
+        tail = "\n".join((completed.stdout or "").splitlines()[-40:])
+        raise Alpamayo2SuperError(
+            f"upstream Alpamayo2-Super inference failed ({completed.returncode}):\n{tail}"
+        )
+
+
 def run_inference(
     request: Alpamayo2SuperRequest,
-    *,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    *, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     model_resolver: Callable[[Alpamayo2SuperRequest], str] = _resolve_model_snapshot,
 ) -> dict[str, Any]:
-    """Run upstream inference and publish its JSON/PNG plus NPA provenance."""
+    """Run upstream inference and publish verified artifacts and provenance.
 
+    Args:
+        request: Reproducible sample and output settings.
+        runner: Subprocess execution boundary.
+        model_resolver: Resolve the pinned model to a local snapshot.
+    Returns:
+        Inference provenance and published artifact locations.
+    Raises:
+        Alpamayo2SuperError: Invalid inputs, upstream failure, or invalid outputs.
+        OSError: Local artifact publication fails.
+    """
     _validate(request)
     with tempfile.TemporaryDirectory(prefix="npa-alpamayo2-super-") as scratch:
         local_dir = Path(scratch)
         execution_request = request
+        sample = {}
         if not request.dry_run:
-            execution_request = replace(request, model_id=model_resolver(request))
+            manifest, sample = _snapshot_manifest(request, local_dir)
+            execution_request = replace(request, manifest=manifest, model_id=model_resolver(request))
         argv = build_inference_argv(execution_request, local_output=local_dir)
-        base = {
-            "schema": ARTIFACT_SCHEMA,
-            "model": {"id": request.model_id, "revision": request.model_revision},
-            "dataset": {
-                "id": DEFAULT_DATASET_REPO,
-                "revision": request.dataset_revision,
-                "operator_runtime_fetch": True,
-            },
-            "request": asdict(request),
-            "runtime": {
-                "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
-                "weights_baked": False,
-                "dataset_baked": False,
-                "cache_tier": "node-local-ephemeral",
-            },
-            "argv": argv,
-        }
+        base = _provenance(request, argv)
         if request.dry_run:
             return {**base, "status": "dry_run", "artifacts": {}}
-        completed = runner(
-            argv,
-            cwd="/opt/alpamayo2",
-            env=_runtime_env(request),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-        if completed.returncode != 0:
-            tail = "\n".join((completed.stdout or "").splitlines()[-40:])
-            raise Alpamayo2SuperError(
-                f"upstream Alpamayo2-Super inference failed ({completed.returncode}):\n{tail}"
-            )
-        expected = (local_dir / "trajectory.json", local_dir / "trajectory.png")
-        missing = [
-            path.name
-            for path in expected
-            if not path.is_file() or path.stat().st_size == 0
-        ]
-        if missing:
-            raise Alpamayo2SuperError(
-                "upstream inference returned success without required artifacts: "
-                + ", ".join(missing)
-            )
+        _execute(argv, request, runner)
+        base["metrics"] = _validate_artifacts(local_dir, request, sample)
+        base["sample"] = sample
         result_path = local_dir / "result.json"
         result_path.write_text(
             json.dumps({**base, "status": "ok"}, indent=2, sort_keys=True) + "\n",

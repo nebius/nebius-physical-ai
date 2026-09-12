@@ -400,16 +400,42 @@ class NurecConfig:
     @property
     def image_repository(self) -> str:
         """``nvidia/nre/nre-ga`` for ``nvcr.io/nvidia/nre/nre-ga:26.04``."""
-        ref = str(self.image or "")
-        without_tag = ref.rsplit(":", 1)[0] if "/" in ref.rsplit(":", 1)[0] else ref
-        parts = without_tag.split("/", 1)
-        return parts[1] if len(parts) == 2 and "." in parts[0] else without_tag
+        _registry, repository, _reference = _split_registry_image(self.image)
+        return repository
 
     @property
     def image_registry(self) -> str:
-        ref = str(self.image or "")
-        head = ref.split("/", 1)[0]
-        return head if ("." in head or ":" in head) else ""
+        registry, _repository, _reference = _split_registry_image(self.image)
+        return registry
+
+    @property
+    def image_manifest_reference(self) -> str:
+        """Exact tag or digest selected by ``image`` (``latest`` if omitted)."""
+        _registry, _repository, reference = _split_registry_image(self.image)
+        return reference
+
+
+def _split_registry_image(image: str) -> tuple[str, str, str]:
+    """Return registry, repository, and exact tag/digest for an OCI reference."""
+
+    value = str(image or "").strip().removeprefix("docker:")
+    if not value:
+        return "", "", ""
+    head, separator, remainder = value.partition("/")
+    if separator and ("." in head or ":" in head or head == "localhost"):
+        registry = head
+    else:
+        registry = ""
+        remainder = value
+    if "@" in remainder:
+        repository, reference = remainder.split("@", 1)
+        if ":" in repository.rsplit("/", 1)[-1]:
+            repository = repository.rsplit(":", 1)[0]
+    elif ":" in remainder.rsplit("/", 1)[-1]:
+        repository, reference = remainder.rsplit(":", 1)
+    else:
+        repository, reference = remainder, "latest"
+    return registry, repository.strip("/"), reference
 
 
 def _split_csv(value: str) -> tuple[str, ...]:
@@ -1020,15 +1046,17 @@ def check_nurec_access(
 def _check_ngc_image(
     config: NurecConfig, env: Mapping[str, str], timeout: float
 ) -> str:
-    """Token-exchange + tag listing against the registry (no layer download)."""
+    """Token exchange plus an exact tag/digest manifest probe (no layer pull)."""
     import base64
+    from urllib.parse import quote
 
     import httpx
 
     key = env.get(config.ngc_api_key_env, "")
     registry = config.image_registry or DEFAULT_NRE_REGISTRY_HOST
     repository = config.image_repository
-    if not repository:
+    reference = config.image_manifest_reference
+    if not repository or not reference:
         return "unresolved"
     basic = base64.b64encode(f"$oauthtoken:{key}".encode()).decode()
     try:
@@ -1045,14 +1073,31 @@ def _check_ngc_image(
         token = str(auth.json().get("token") or "")
         if not token:
             return "auth-no-token"
-        tags = httpx.get(
-            f"https://{registry}/v2/{repository}/tags/list",
-            headers={"Authorization": f"Bearer {token}"},
+        manifest = httpx.get(
+            f"https://{registry}/v2/{repository}/manifests/"
+            f"{quote(reference, safe=':')}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": ", ".join(
+                    (
+                        "application/vnd.docker.distribution.manifest.v2+json",
+                        "application/vnd.docker.distribution.manifest.list.v2+json",
+                        "application/vnd.oci.image.manifest.v1+json",
+                        "application/vnd.oci.image.index.v1+json",
+                    )
+                ),
+            },
             timeout=timeout,
         )
     except Exception:  # noqa: BLE001 - any transport failure is "not reachable"
         return "unreachable"
-    return "reachable" if 200 <= tags.status_code < 300 else f"tags-{tags.status_code}"
+    if manifest.status_code == 402:
+        return "entitlement-required"
+    return (
+        "reachable"
+        if 200 <= manifest.status_code < 300
+        else f"manifest-{manifest.status_code}"
+    )
 
 
 def check_ngc_image_access(
@@ -1061,7 +1106,7 @@ def check_ngc_image_access(
     image: str = DEFAULT_NRE_IMAGE,
     timeout: float = 30.0,
 ) -> str:
-    """Probe token exchange and pull entitlement for one NGC image repository."""
+    """Probe token exchange and pull access for one exact NGC image tag/digest."""
 
     config = NurecConfig(image=image)
     return _check_ngc_image(config, {config.ngc_api_key_env: api_key}, timeout)

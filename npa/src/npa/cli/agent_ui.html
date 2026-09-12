@@ -39,7 +39,7 @@
       .hint, .muted, .brand-sub { color: var(--muted); }
       * { box-sizing: border-box; }
       html {
-        overflow-x: hidden;
+        overflow-x: clip;
         width: 100%;
         max-width: 100%;
         -webkit-text-size-adjust: 100%;
@@ -52,7 +52,7 @@
           radial-gradient(circle at 14% 0%, rgba(229, 255, 79, 0.20), transparent 28%),
           linear-gradient(180deg, #f8fcff 0%, var(--bg) 42%, #f6fbff 100%);
         color: var(--text);
-        overflow-x: hidden;
+        overflow-x: clip;
         width: 100%;
         max-width: 100%;
       }
@@ -133,6 +133,9 @@
         opacity: 0;
         pointer-events: none;
         z-index: 0;
+        /* Mounted viewers keep their viewport without extending the page scroll range. */
+        contain: size;
+        overflow: clip;
       }
       #panelRerun.is-inactive {
         /* Keep a real viewport-sized stage so the iframe can init WebGL off-tab. */
@@ -1938,12 +1941,12 @@
       }
       body.mobile-agent {
         padding-bottom: calc(56px + env(safe-area-inset-bottom));
-        overflow-x: hidden;
+        overflow-x: clip;
       }
       body.mobile-agent .chrome {
         max-width: 100%;
         width: 100%;
-        overflow-x: hidden;
+        overflow-x: clip;
       }
       body.mobile-agent .page {
         display: flex;
@@ -1952,12 +1955,12 @@
         padding: 10px 10px calc(68px + env(safe-area-inset-bottom));
         width: 100%;
         max-width: 100%;
-        overflow-x: hidden;
+        overflow-x: clip;
       }
       body.mobile-agent .panel {
         width: 100%;
         max-width: 100%;
-        overflow-x: hidden;
+        overflow-x: clip;
       }
       body.mobile-agent .chat-panel {
         display: flex;
@@ -2125,6 +2128,10 @@
       .chat-log, .artifact-list, .rerun-rail, .run-log, .stage-detail,
       .stage-detail-info pre, .workflow-panel textarea, .chat-input textarea {
         -webkit-overflow-scrolling: touch;
+      }
+      /* Only the floating drawer and text editors trap scroll at their edges.
+         In-page lists must hand wheel/touch scrolling back to the document. */
+      .chat-drawer-open .chat-log, .workflow-panel textarea, .chat-input textarea {
         overscroll-behavior: contain;
       }
       .chat-log::-webkit-scrollbar, .artifact-list::-webkit-scrollbar,

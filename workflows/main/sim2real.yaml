@@ -70,6 +70,9 @@ config:
   capture_width: "640"
   capture_height: "480"
   png_compress_level: "2"
+  # Exact Stage 8 model ID. The former public Cosmos3 endpoint retired August 31;
+  # select nvidia/Cosmos3-Super-Reasoner explicitly on an endpoint serving it.
+  # Forward a custom endpoint with --secret-env NEBIUS_TOKEN_FACTORY_BASE_URL.
   cosmos3_model: MiniMaxAI/MiniMax-M3
 
   # Required live inputs. The controller image is the purpose-built CPU-only
