@@ -1,5 +1,7 @@
 # OSS Physical AI Solution Candidates
 
+[Workbench docs](README.md)
+
 This catalog tracks open-source Physical AI projects that are being onboarded as
 Workbench registry candidates through BYOF, including entries subsequently
 promoted to native tools or public images as noted below. Promotion requires the pushed registry image

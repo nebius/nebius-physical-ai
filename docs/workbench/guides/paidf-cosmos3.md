@@ -1,5 +1,7 @@
 # PAIDF with Cosmos 3 video conditioning
 
+[Guides](README.md)
+
 For a complete manual setup and run, start with the
 [PAIDF Cosmos 3 setup and run guide](../../../workflows/guides/paidf-cosmos3.md). It covers
 project setup, new or existing Kubernetes clusters, credential-file formats,

@@ -1,81 +1,57 @@
-# NPA Workbench reference assets
+# Workbench reference assets
 
-This directory retains workflow configuration, conventions, operator notes, and
-finite legacy compatibility assets. The supported declarative workflow catalog
-lives at the repository root in `workflows/main/` and `workflows/testing/`.
-SkyPilot remains the workflow execution engine.
+[Workflow catalog](../../../workflows/README.md) · [Workbench docs](../../../docs/workbench/README.md)
 
-## ➡️ Start here: the workflow catalog
+This directory contains configuration assets, native Ray development examples,
+and Sim2Real operator notes. Start in the root [workflow catalog](../../../workflows/README.md)
+when you want to compose and run a pipeline with `npa workbench workflow`.
 
-**[Workflow catalog](../../../workflows/README.md)** is the catalog of every
-supported workflow spec (`apiVersion: npa.workflow/v0.0.1`). Author and submit
-these with:
+## Choose an example
 
-```bash
-npa workbench workflow validate-spec <spec.yaml>
-npa workbench workflow plan-spec <spec.yaml> --run-id demo
-npa workbench workflow submit <spec.yaml> --run-id demo
-```
+| Goal | Start here | Result |
+| --- | --- | --- |
+| Compose Workbench tools | [Declarative workflows](../../../workflows/README.md) | A planned state graph and run-scoped artifacts |
+| Run the 14-stage robot pipeline | [Sim2Real runbook](../../../docs/workbench/guides/sim2real-workflow.md) | Per-stage evidence, evaluation, and Rerun/MCAP outputs |
+| Edit a GPU application and resubmit Python | [Ray CLIP](ray-clip-development/README.md) | Image embeddings, retrieval results, and source-change evidence |
+| Train a small distributed model | [Ray Train](ray-train-synthetic/README.md) | Synthetic-regression checkpoints and rank metrics on two B200 hosts |
+| Try hyperparameter search and checkpoint recovery | [Ray Tune](ray-tune-synthetic/README.md) | Three CPU trials, the selected optimum, and verified JSON results |
 
-Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
-`skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
+## Preview a workflow locally
 
-## Layout
-
-- `configs/`: component and benchmark configuration assets.
-- `sim2real/`: operator notes and the finite legacy compatibility DAG. The only
-  supported Sim2Real submission spec is `workflows/main/sim2real.yaml`; it uses
-  the ordinary standard runtime and never routes to direct Kubernetes.
-- `schemas/`: conventions for parameters, artifacts, naming, and runtime
-  constraints.
-- `steps/` and `templates/`: legacy placeholders kept for compatibility with
-  older examples.
-
-### Raw SkyPilot YAML
-
-The retired raw SkyPilot workflow catalog is gone. The `npa.workflow` engine
-still renders specs to SkyPilot at submit time, and `npa workbench workflow
-submit` still accepts customer-owned raw SkyPilot YAML, but shipped raw YAMLs
-must live only in guarded, tool-specific homes such as burst examples, BYOF
-resource profiles, or the NuRec single-pod example.
-
-## Sim-To-Real
-
-Submit the staged VLM-to-RL loop:
+From the repository root, after [installing NPA](../../../docs/install.md):
 
 ```bash
-npa workbench workflow submit \
-  workflows/main/sim2real.yaml \
-  --run-id <run-id> \
-  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
-  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
+npa workbench workflow validate-spec workflows/testing/cosmos3-generate.yaml
+npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-id demo
 ```
 
-The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
-`npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
-compositional standard runtime. The single canonical YAML is
-[`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml); the deeper reference is
-[`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
+Expect a valid spec and one `generate` stage. These commands require no cloud
+resources. To execute, complete the selected workload's input, credential,
+image, and resource setup, then follow its submission and cleanup commands.
+The [workflow guide](../../../docs/workbench/npa-workflow-guide.md) explains
+`prepare-run`, `submit --runtime`, monitoring, and resume.
 
-## Submission Pattern
+## Directory map
 
-Use the thin Python wrappers under `npa/scripts/` when a workflow needs runtime
-substitution, S3 paths, secret-env injection, GPU validation, or cleanup:
+| Directory | Purpose |
+| --- | --- |
+| `configs/` | Component and benchmark configuration |
+| [`sim2real/`](sim2real/README.md) | Operator notes and finite legacy compatibility assets |
+| `schemas/` | Parameter, artifact, naming, and runtime conventions |
+| `steps/`, `templates/` | Legacy compatibility placeholders |
+| `ray-*/` | Standalone native Ray application examples and platform setup |
 
-```bash
-npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py --help
-npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py --help
-```
+## Raw SkyPilot YAML
 
-Invoke SkyPilot through `NPA_SKYPILOT_BIN`, normally resolved by:
+NPA renders declarative workflows to SkyPilot when submitting. The workflow
+command also accepts customer-owned raw SkyPilot tasks. Shipped raw tasks live
+in specific example directories: [burst](../../src/npa/burst/examples/README.md),
+[BYOF profiles](../../src/npa/workflows/byof/profiles/README.md), and
+[NuRec single-pod execution](../../src/npa/workbench/nurec/examples/README.md).
+The retired raw workflow catalog must not be restored.
 
-```bash
-npa skypilot bootstrap
-export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-```
-
-## Cleanup
-
-Wrappers that create live GPU resources must use explicit SkyPilot cleanup and
-must poll for absence when they own the user-facing lifecycle. Do not rely on a
-detached terminal or manual cleanup as the only teardown path.
+Use the [authoring skill](../../../skills/workflows/author-npa-workflow/SKILL.md)
+for specification edits and the
+[pipeline design skill](../../../skills/workflows/generate-npa-workflow/SKILL.md)
+for new compositions. Stop active jobs and preserve outputs before removing
+owned infrastructure; see [teardown](../../../docs/teardown.md).

@@ -1,5 +1,7 @@
 # Present the workbench demo on a **new** agent UI
 
+[Docs](../README.md)
+
 Use a dedicated agent deployment — **not** an existing shared `rtxpro/agent`
 instance.
 

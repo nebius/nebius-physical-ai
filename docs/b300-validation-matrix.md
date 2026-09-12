@@ -1,5 +1,7 @@
 # Historical B300 validation matrix
 
+[Docs](README.md)
+
 > **Historical record from May 2026.** The findings below describe the images
 > and workloads tested then. Use the current
 > [image and GPU compatibility matrix](workbench/image-gpu-compatibility-matrix.md)
@@ -73,20 +75,20 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 Pull and smoke the base image on a B300 host with NVIDIA driver 580 or newer:
 
 ```bash
-docker pull <your-registry>/<namespace>/npa-base:<cuda13-b300-tag>
+docker pull "<your-registry>/<namespace>/npa-base:<cuda13-b300-tag>"
 docker run --gpus all --rm \
-  <your-registry>/<namespace>/npa-base:<cuda13-b300-tag> \
+  "<your-registry>/<namespace>/npa-base:<cuda13-b300-tag>" \
   python -c "import torch; print(torch.cuda.get_device_capability(0)); import flash_attn; print(flash_attn.__version__)"
 ```
 
 Run the validated LeRobot workload:
 
 ```bash
-docker pull <your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>
+docker pull "<your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>"
 docker run --gpus all --rm \
   -e WANDB_MODE=disabled \
   -v /tmp/lerobot-b300:/output \
-  <your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag> \
+  "<your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>" \
   lerobot-train \
     --policy.type=act \
     --policy.push_to_hub=false \

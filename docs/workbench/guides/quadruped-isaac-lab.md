@@ -1,9 +1,10 @@
 # Train a Quadruped to Run in Isaac Lab
 
-**The hook:** drop a four-legged robot into NVIDIA **Isaac Lab**, run massively
-parallel reinforcement learning, and watch it learn to trot across flat and
-rough terrain. Isaac Lab ships dozens of ready-made tasks, so you get a real
-locomotion policy without writing an environment from scratch.
+[Guides](README.md)
+
+Train an ANYmal velocity policy with Isaac Lab on an RT-core GPU, then
+evaluate its checkpoint on held-out episodes. The evaluation report distinguishes
+successful execution from meeting the requested survival-rate threshold.
 
 ## Ingredients
 

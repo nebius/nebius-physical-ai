@@ -1,5 +1,7 @@
 # Sim2Real compositional architecture
 
+[Guides](README.md)
+
 The canonical operator surface is
 `workflows/main/sim2real.yaml`. It is an ordinary
 `npa.workflow/v0.0.1` graph executed through the standard planner, SkyPilot

@@ -1,5 +1,7 @@
 # LeRobot version support audit and proposal — 2026-08-13
 
+[Workbench docs](README.md)
+
 Upstream LeRobot is at **0.6.1** (released 2026-08-03). This workbench defaults
 to **0.5.1** (2026-04-07) and offers **0.6.0** (2026-07-06) as a selectable
 alternative. This audit answers whether the workbench should support 0.6.1, what

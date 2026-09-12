@@ -40,7 +40,8 @@ def test_reference_files_and_runtime_contract_exist() -> None:
     requirements = (EXAMPLE / "cluster/requirements.txt").read_text().splitlines()
     assert requirements == ["ray[default,tune]==2.58.0"]
     readme = (EXAMPLE / "README.md").read_text()
-    assert 'TUNE_RUNTIME="$HOME/.npa-ray-tune"' in readme
+    assert 'ssh "$TUNE_CLUSTER"' in readme
+    assert 'printf "%s/.npa-ray-tune\\n" "$HOME"' in readme
     assert "TUNE_RUNTIME=/root" not in readme
 
 

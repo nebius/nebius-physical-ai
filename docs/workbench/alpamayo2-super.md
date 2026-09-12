@@ -1,5 +1,7 @@
 # Alpamayo 2 Super
 
+[Workbench docs](README.md)
+
 NPA runs NVIDIA Alpamayo 2 Super through the upstream VLM-plus-diffusion-expert
 inference entrypoint. The redistributable `npa-alpamayo2-super` image contains the pinned
 Apache-2.0 source and CUDA runtime, but no model weights, dataset bytes,

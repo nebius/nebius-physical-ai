@@ -1,5 +1,7 @@
 # Cosmos3-Nano native Ray Serve
 
+[Workbench docs](README.md)
+
 `npa-cosmos3-ray-serve` is the persistent, batch-capable counterpart to the
 single-run `npa workbench cosmos3 generate` path. It loads Cosmos3-Nano once and
 uses NVIDIA cosmos-framework 1.2.2's native `OmniModelDeployment`, including its
@@ -84,9 +86,9 @@ Run the updated client from an editable installation of this checkout:
 
 ```bash
 npa/.venv/bin/python -m npa workbench cosmos3 ray-batch \
-  --input-path s3://<bucket>/<prefix>/batch.json \
-  --output-path s3://<bucket>/<prefix>/outputs/ \
-  --endpoint http://<service>:8000
+  --input-path "s3://<bucket>/<prefix>/batch.json" \
+  --output-path "s3://<bucket>/<prefix>/outputs/" \
+  --endpoint "http://<service>:8000"
 ```
 
 The submitted samples become concurrent deployment-handle calls; upstream Ray
@@ -143,7 +145,7 @@ with an operator-owned S3 output prefix. Configure the service's
 
 ```bash
 NPA_INTEGRATION_E2E=1 \
-NPA_COSMOS3_RAY_LIVE_OUTPUT_URI=s3://<bucket>/<prefix>/ \
+NPA_COSMOS3_RAY_LIVE_OUTPUT_URI="s3://<bucket>/<prefix>/" \
   npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_cosmos3_ray_batch_live_e2e.py -q
 ```

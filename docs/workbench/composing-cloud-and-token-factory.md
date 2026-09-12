@@ -1,5 +1,7 @@
 # Compose Nebius GPU workloads with Token Factory
 
+[Workbench docs](README.md)
+
 Run training or simulation on Nebius GPUs, write the results to S3, then use
 Token Factory to caption frames, propose a scene plan, or interpret a run's
 reports. The hosted stage runs on a CPU worker and calls the Token Factory API.

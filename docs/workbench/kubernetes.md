@@ -1,5 +1,7 @@
 # Workbench On Kubernetes
 
+[Workbench docs](README.md)
+
 This guide is the Kubernetes-specific path after
 [Workbench Getting Started](getting-started.md). Use it when a Workbench
 workflow or service should run on a Nebius Managed Kubernetes cluster through
@@ -24,9 +26,9 @@ Complete the platform quickstart first, then collect these values from your
 operator:
 
 ```bash
-export NEBIUS_PROJECT_ID=<your-project-id>
-export NEBIUS_TENANT_ID=<your-tenant-id>
-export NPA_S3_BUCKET=<your-bucket>
+export NEBIUS_PROJECT_ID="<your-project-id>"
+export NEBIUS_TENANT_ID="<your-tenant-id>"
+export NPA_S3_BUCKET="<your-bucket>"
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -58,7 +60,7 @@ Select the managed Kubernetes context provided by your operator:
 
 ```bash
 kubectl config get-contexts
-kubectl config use-context <your-nebius-mk8s-context>
+kubectl config use-context "<your-nebius-mk8s-context>"
 kubectl config current-context
 ```
 
@@ -92,7 +94,7 @@ Use the NPA-managed SkyPilot virtualenv. Do not rely on an unrelated `sky` from
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa skypilot status
-"${NPA_SKYPILOT_BIN}" check
+npa skypilot verify --cluster "<npa-cluster-name>" --output-format json
 ```
 
 The validated SkyPilot version is `0.12.2`. NPA defaults managed jobs to a
@@ -107,11 +109,15 @@ or workflow stages to call the same service endpoint:
 
 ```bash
 npa workbench detection-training deploy \
+  --project "<project-alias>" --cluster-name "<npa-cluster-name>" \
   --output-path "s3://${NPA_S3_BUCKET}/detection-training/" \
-  --storage-endpoint storage.eu-north1.nebius.cloud \
   --namespace workbench \
   --gpu-type h100
 ```
+
+Storage credentials and endpoint resolve from the selected project. Configure
+`DETECTION_TRAINING_TOKEN` in the private environment for the default token
+authentication.
 
 Inside Kubernetes, use the cluster-local service endpoint printed by the deploy
 command, for example:
@@ -146,7 +152,7 @@ Monitor from S3-backed workflow state:
 
 ```bash
 npa workbench workflow status "s3://${NPA_S3_BUCKET}/workflows/${RUN_ID}/" --watch
-npa workbench workflow logs "s3://${NPA_S3_BUCKET}/workflows/${RUN_ID}/" --stage <stage>
+npa workbench workflow logs "s3://${NPA_S3_BUCKET}/workflows/${RUN_ID}/" --stage "<stage>"
 npa workbench workflow artifacts "s3://${NPA_S3_BUCKET}/workflows/${RUN_ID}/"
 ```
 

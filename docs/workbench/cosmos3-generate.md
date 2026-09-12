@@ -1,5 +1,7 @@
 # Cosmos 3 generation on the workbench (`npa-cosmos3`)
 
+[Workbench docs](README.md)
+
 Cosmos 3 is NVIDIA's omni model: one checkpoint that both reasons and generates.
 This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
@@ -97,13 +99,13 @@ only from the exact source commit whose bytes passed the secure publishing gates
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
-bash npa/docker/workbench/cosmos3/build.sh --registry <your-registry>
+bash npa/docker/workbench/cosmos3/build.sh --registry "<your-registry>"
 
 # Push it so the workflow's NPA_COSMOS3_IMAGE can resolve.
-bash npa/docker/workbench/cosmos3/build.sh --registry <your-registry> --push
+bash npa/docker/workbench/cosmos3/build.sh --registry "<your-registry>" --push
 
 # Pin a different upstream commit (re-validates at build time).
-bash npa/docker/workbench/cosmos3/build.sh --ref <40-char-sha>
+bash npa/docker/workbench/cosmos3/build.sh --ref "<40-char-sha>"
 ```
 
 The build runs `verify_env.py`, which walks the inference graph for every mode
@@ -134,7 +136,7 @@ model). It breaks down as:
 npa workbench cosmos3 generate \
   --mode text2image \
   --prompt "a robot arm sorting colored blocks on a white workbench" \
-  --output-path s3://<bucket>/cosmos3/<run-id>/ \
+  --output-path "s3://<bucket>/cosmos3/<run-id>/" \
   --checkpoint Cosmos3-Nano \
   --seed 0
 ```
@@ -212,7 +214,7 @@ script renders the same embedded backend + UI the VM bootstrap ships:
 ```bash
 sudo mkdir -p /opt/npa-agent && sudo chown "$(id -u)":"$(id -g)" /opt/npa-agent
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_ENDPOINT_URL=...
-export NPA_AGENT_S3_BUCKET=<bucket-holding-the-run>
+export NPA_AGENT_S3_BUCKET="<bucket-holding-the-run>"
 npa/.venv/bin/python npa/scripts/run_agent_local.py     # http://127.0.0.1:8088/
 ```
 
