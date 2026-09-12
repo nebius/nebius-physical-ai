@@ -151,6 +151,12 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robomimic"})
+# Display-only sentinels for inventory commands. These are deliberately outside
+# SUPPORTED_TOOL_VERSIONS: resolution still refuses every neutral candidate
+# before consulting a tag, so an unbuilt label cannot become an image default.
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "robomimic": "0.1.0-neutral-unbuilt",
+}
 # Compatibility view used by publication callers and public imports. Derive it
 # from the canonical validation-state inventories; never maintain it
 # independently.
@@ -593,6 +599,8 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
 def supported_tool_version(tool: str) -> str:
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
     try:
         import tomllib
