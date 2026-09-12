@@ -2,7 +2,7 @@
 
 # Nebius Physical AI
 
-**Run robotics, simulation, and physical-AI workloads on Nebius.**
+**The control plane your coding agent uses to run physical-AI workloads on Nebius.**
 
 <img src="docs/assets/workbench-architecture.png" alt="Nebius Physical AI Workbench architecture" width="820" />
 
@@ -23,18 +23,55 @@
 </div>
 
 
-## What is `npa`?
+## What is Workbench?
 
-`npa` runs robotics and physical-AI workloads on Nebius: simulate a robot,
-train or evaluate a policy, generate video, and curate datasets. Workbench tools
-run in containers; multi-stage workflows exchange inputs and results through S3.
-Use the CLI, Python, or a coding agent with access to this checkout.
+Workbench is the agent-facing control plane for physical AI on Nebius. You
+describe the outcome; Codex, Claude Code, or another coding agent with terminal
+access to this checkout uses `npa` to configure the project, check access, plan
+resources, run containerized tools and workflows, and inspect the result with
+you. You can drive the same operations directly through the CLI, and supported
+tools also expose Python interfaces.
+
+### How Workbench runs a task
+
+```mermaid
+flowchart TB
+    you["You"] <--> agent["Your coding agent<br/>Codex · Claude Code · other"]
+    agent <-->|"requests and results"| npa["Workbench control plane<br/>npa: configure · preflight · plan · submit · inspect"]
+    spec["npa.workflow YAML"] --> npa
+
+    subgraph nebius["Nebius AI Cloud"]
+        direction LR
+        sky["SkyPilot orchestration"] --> tools["Containerized tools<br/>simulate · train · generate · evaluate"]
+        tools <--> s3["S3 artifacts<br/>inputs · checkpoints · media · reports"]
+        tf["Token Factory<br/>hosted inference · no cluster"]
+    end
+
+    npa <-->|"plan · submit · status"| sky
+    npa -->|"direct inference"| tf
+    s3 -->|"artifacts"| npa
+```
+
+`npa` gives the agent one bounded interface for readiness checks, infrastructure,
+workflow lifecycle, and artifacts. SkyPilot schedules the selected tools on
+Nebius; Token Factory handles supported hosted inference without a cluster; S3
+carries durable inputs and outputs between stages. You remain in the loop for
+choices and human-bound approvals such as accepting model terms.
 
 Start with a [workload guide](#pick-your-first-win). The guide tells you which
-data, model access, GPU, and output to expect. For agent-assisted setup, use the
-[first-run prompts](docs/workbench/agent-first-run.md).
+data, model access, GPU, and output to expect.
 
 ## Quickstart
+
+Using a coding agent? Open this checkout in your agent and paste one of the
+maintained prompts:
+
+- [Set up Workbench for a task](docs/workbench/agent-first-run.md#set-up-workbench).
+- [Run the Cosmos 3 generation workflow](docs/workbench/agent-first-run.md#run-cosmos-3-generation).
+
+The prompts keep credentials private, stop at human approval gates, validate
+the plan before provisioning, and stay with the run through artifact inspection.
+The manual path below exposes the same control-plane steps.
 
 ### 1. Install
 
