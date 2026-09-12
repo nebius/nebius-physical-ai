@@ -47,7 +47,7 @@ def build_plan(
         exact_requirements,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials()
     evidence = probe_requirements(
@@ -55,7 +55,7 @@ def build_plan(
         hf_token=credentials.hf_token,
         ngc_key=credentials.ngc_api_key,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
         force=force,
     )

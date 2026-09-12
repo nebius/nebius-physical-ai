@@ -18,6 +18,14 @@ Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
 
+This variant uses the same explicit upstream boundary as the Transfer workflow:
+[NVIDIA/physical-ai-data-factory](https://github.com/NVIDIA/physical-ai-data-factory)
+is the PAIDF ecosystem entry point, while
+[NVIDIA/paidf-orchestration](https://github.com/NVIDIA/paidf-orchestration) is a
+separate Airflow scaler for its published IAA/EVG DAGs. Neither OSMO nor Airflow
+runs here. The first workflow state writes their pinned attribution and the real
+NPA/SkyPilot component mapping to `reports/upstream.json`.
+
 The pipeline is:
 
 1. select one generic MP4 or one camera from one LeRobot v2/v3 episode;
@@ -91,6 +99,12 @@ The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
+`caption_model` defaults to `MiniMaxAI/MiniMax-M3` for the original
+and accepted-variant captions and for Cosmos Evaluator's visual questions.
+Token Factory availability is key-scoped and can change, so run
+`npa workbench token-factory models` before execution and override
+`caption_model` with another reachable vision model when needed.
+
 The canonical workflow enables `structural_control: edge`. `conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`
@@ -156,6 +170,11 @@ parallelism, and the same conditioning contract.
 evaluated video hash for each variant. Annotation verifies the current video
 bytes and extracts fresh frames; finalization rejects stale or missing coverage.
 
+The run also writes `reports/upstream.json` with schema
+`npa.paidf.upstream.v1`, and successful finalization carries that public-source
+contract into `reports/final.json` without embedding credentials, infrastructure
+identifiers, or model weights.
+
 `generate-variants` publishes this distributed stage contract to S3 only. Its
 `output_uri` must use `s3://`; local paths are rejected before generation so the
 workflow never implies that a local path shared across SkyPilot stages is
@@ -205,6 +224,19 @@ variant directories, `NPA_PAIDF_REPAIR_URI` set to a fresh S3 augment prefix,
 and `NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It requires
 saved raw-output hashes, uploads through the real publisher, and verifies exact
 bytes after S3 readback. This proves publication fidelity only.
+
+The B200 validation also ran against the pinned RoboPro physical capture. Its
+initial and refined Cosmos passes retained 27,090,575-byte and 25,931,172-byte
+raw model videos with upstream guardrails enabled and weights fetched at runtime.
+The then-current publisher evaluated source/model composites rather than those
+raw bytes: at a validation-only `0.40` threshold, the composites scored
+`0.154068` and `0.256552`; the second pass cleared hallucination and appearance
+checks but not temporal consistency or the required 4/4 attributes. The workflow
+therefore failed closed after the bounded refinement, retaining 98 artifacts and
+a 316,545-byte Rerun quality-evidence recording. This is historical pre-fix
+rejection-path evidence, not validation of the current full-video structural
+transfer path or an accepted-quality claim. It does not change the workflow's
+current exploratory thresholds or the stricter values operators may select.
 
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 

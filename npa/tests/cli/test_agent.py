@@ -2262,6 +2262,12 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     )[0]
     assert '"run_id": "franka-demo"' in franka_src
     assert '"artifact_render": "rerun"' in franka_src
+    selection_src = source.split('@app.post("/sim-assets/selection")')[1].split(
+        '@app.get("/sim-assets/selection")'
+    )[0]
+    assert selection_src.index("viz = _wire_franka_demo") < selection_src.index(
+        "_save_state(state)"
+    )
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[
         1
     ].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
@@ -2318,11 +2324,22 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source
     assert "data_role_label" in source
-    # Loading by run-relative key resolves a discovered object. An unscoped exact
-    # S3 URI receives the structured v2 migration error instead of guessing a run.
+    # Loading requires the inventory key and its complete server-issued source
+    # tuple. A raw S3 URI is provenance only and receives a stable migration error.
     assert "resolve_run_artifacts(" in source
-    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
-    assert '"code": "run_id_required_for_s3_uri"' in source
+    assert '"contract_version": "npa.agent.load-artifact.v3"' in source
+    assert '"code": "raw_artifact_uri_not_supported"' in source
+    for field in (
+        "run_id",
+        "run_ref",
+        "key",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
+    ):
+        assert f'"{field}"' in source
+    assert "s3_uri is provenance only" in source
     assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -2597,8 +2614,13 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     # Generic discovery feeds the discovered-runs set (server-search unions in).
     assert "discoveredArtifactRuns = [...runs];" in source
     assert '(cursor ? " · loading more…" : "")' in source
-    # The run selector is a UNION of known + discovered runs (does not clobber).
-    assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
+    # The run selector is a UNION of known + discovered runs (does not clobber),
+    # but a forced access refresh quarantines persisted source tuples until the
+    # same exact tuple is rediscovered in the current UI generation.
+    assert "artifactSourceHistoryQuarantined = true;" in source
+    assert "const currentSourceHistory = knownAvailableRuns.filter" in source
+    assert "hasExactRunSource(discovered) && sameRunSource(run, discovered)" in source
+    assert "mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns)" in source
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
@@ -6098,6 +6120,11 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     agent_module._write_agent_artifact_sources_env(
         FakeSSH(),
         artifact_sources=loaded,
+        bucket="bucket-exact",
+        endpoint="https://objects.example",
+        access_key="synthetic-artifact-access",
+        secret_key="synthetic-artifact-secret",
+        region="test-region",
     )
 
     env_line = next(
@@ -6107,6 +6134,12 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     )
     assert "project-exact" not in env_line
     assert "bucket-exact" not in env_line
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-exact" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_PREFIX=" not in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID=synthetic-artifact-access" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=synthetic-artifact-secret" in staged["content"]
+    assert "AWS_ACCESS_KEY_ID=" not in staged["content"]
+    assert "AWS_SECRET_ACCESS_KEY=" not in staged["content"]
     monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
     assert runtime._configured_agent_artifact_sources() == (source,)
     assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
@@ -6311,6 +6344,197 @@ def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> No
     assert agent_module._resolve_agent_artifact_sources(
         {"artifact_sources": [source]}
     ) == (source,)
+
+
+def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_writes(
+    monkeypatch, tmp_path
+) -> None:
+    import inspect
+
+    from npa.clients import nebius
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    ssh_key = tmp_path / "id_ed25519"
+    ssh_key.write_text("synthetic private key", encoding="utf-8")
+    record = {
+        "project_id": "project-deployment",
+        "tenant_id": "tenant-test",
+        "region": "test-region",
+        "public_ip": "agent.example.invalid",
+        "ssh_key_path": str(ssh_key),
+        "auth_secret_path": str(tmp_path / "auth.env"),
+        "service_account_id": "serviceaccount-stable",
+        "artifact_sources": [source],
+    }
+    refreshed = {
+        "service_account_id": "serviceaccount-stable",
+        "s3_bucket": "bucket-refreshed",
+        "s3_prefix": "deployment/runs",
+        "s3_endpoint": "https://storage.deployment.example",
+        "nebius_api_key": "synthetic-refreshed-access",
+        "nebius_secret_key": "synthetic-refreshed-secret",
+    }
+    refreshed_tuple = (
+        "bucket-refreshed",
+        "deployment/runs",
+        "https://storage.deployment.example",
+        "synthetic-refreshed-access",
+        "synthetic-refreshed-secret",
+        "serviceaccount-stable",
+    )
+    exact_tuple = (
+        "bucket-exact",
+        "preserved/runs",
+        "https://storage.exact.example",
+        "synthetic-exact-access",
+        "synthetic-exact-secret",
+        "serviceaccount-stable",
+    )
+    events: list[str] = []
+    staged: dict[str, object] = {}
+
+    monkeypatch.setattr(agent_module, "_agent_record", lambda *_args: record)
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_record_public_ip",
+        lambda _record: "agent.example.invalid",
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_load_auth_secret",
+        lambda _path: ("synthetic-user", "synthetic-password"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_deploy_llm_credentials",
+        lambda: ("synthetic-model-key", "synthetic-model"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_agent_storage_credentials",
+        lambda *_args: (
+            "bucket-before-refresh",
+            "old/runs",
+            "https://storage.old.example",
+            "synthetic-old-access",
+            "synthetic-old-secret",
+            "serviceaccount-stable",
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_deploy_storage_credentials",
+        lambda **_kwargs: refreshed,
+    )
+
+    def refresh_environment(*_args, **_kwargs):
+        events.append("refresh")
+        return refreshed
+
+    monkeypatch.setattr(nebius, "bootstrap_agent_environment", refresh_environment)
+
+    def resolve_exact(sources, *, deployment_project_id, current):
+        events.append("exact_source")
+        assert sources == (source,)
+        assert deployment_project_id == "project-deployment"
+        assert current == refreshed_tuple
+        return exact_tuple
+
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_configured_artifact_storage_credentials",
+        resolve_exact,
+    )
+
+    def converge(**kwargs):
+        events.append("stage")
+        staged.update(kwargs["bootstrap_kwargs"])
+        return SimpleNamespace(
+            evidence={
+                "state": "healthy",
+                "service_fingerprint": "service-fingerprint",
+                "credential_fingerprint": "credential-fingerprint",
+                "models_healthy": True,
+                "remote_phase": "remote_health_ready",
+            },
+            primary_error=None,
+        )
+
+    monkeypatch.setattr(agent_module, "converge_remote_agent_setup", converge)
+    monkeypatch.setattr(agent_module, "current_operation", lambda: None)
+    monkeypatch.setattr(
+        agent_module,
+        "persist_agent_terraform_credentials",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(agent_module, "write_config", lambda _payload: None)
+    monkeypatch.setattr(agent_module, "_store_agent_record", lambda *_args: None)
+    monkeypatch.setattr(
+        agent_module, "_persist_agent_service_account_id", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_foxglove_settings_or_fail",
+        lambda **_kwargs: {
+            "embed_src": "",
+            "viewer_backend": "self-hosted",
+            "org_slug": "",
+            "live_url": "",
+            "cloud_import_timeout_seconds": 120.0,
+        },
+    )
+
+    inspect.unwrap(agent_module.bootstrap_cmd)(
+        project="test-project",
+        name="test-agent",
+        ssh_user="ubuntu",
+        ssh_key=str(ssh_key),
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="",
+        llm_models=[],
+        refresh_credentials=True,
+        artifact_source_file="",
+        llm_config_file="",
+        foxglove_embed_src="",
+        foxglove_viewer_backend="",
+        foxglove_org_slug="",
+        foxglove_live_url="",
+        no_public_https=False,
+    )
+
+    assert events == ["refresh", "exact_source", "stage"]
+    assert tuple(
+        staged[key]
+        for key in (
+            "s3_bucket",
+            "s3_prefix",
+            "s3_endpoint",
+            "s3_access_key",
+            "s3_secret_key",
+            "service_account_id",
+        )
+    ) == refreshed_tuple
+    assert tuple(
+        staged[key]
+        for key in (
+            "artifact_s3_bucket",
+            "artifact_s3_endpoint",
+            "artifact_s3_access_key",
+            "artifact_s3_secret_key",
+        )
+    ) == (exact_tuple[0], *exact_tuple[2:5])
+    assert staged["artifact_sources"] == (source,)
 
 
 def test_bootstrap_recovery_preserves_owner_artifact_source_file(

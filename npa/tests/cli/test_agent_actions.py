@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from npa.cli import agent_actions as A
 
 
@@ -961,6 +963,23 @@ def test_oversized_non_record_observation_still_falls_back_to_preview():
     observed = A._observe({"blob": "z" * 9000}, limit=500)
     assert observed["truncated"] is True
     assert observed["preview"].startswith('{"blob"')
+
+
+def test_oversized_factual_tool_catalog_is_preserved_intact():
+    observation = {"tool_refs": [f"workbench.example.tool_{index:04d}" for index in range(300)]}
+    assert len(json.dumps(observation)) > 4000
+    assert A._observe(observation) is observation
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        {"tool_refs": ["workbench.example.tool"], "uncontrolled": "x" * 5000},
+        {"tool_refs": ["workbench.example.tool", {"uncontrolled": "x" * 5000}]},
+    ],
+)
+def test_tool_catalog_exception_rejects_uncontrolled_shapes(observation):
+    assert A._observe(observation, limit=100)["truncated"] is True
 
 
 def test_small_observation_is_passed_through_unchanged():

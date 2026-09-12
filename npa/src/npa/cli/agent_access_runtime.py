@@ -8,8 +8,10 @@ the deployment CLI/bootstrap template from becoming the access domain model.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import threading
@@ -48,7 +50,6 @@ if __name__ == "npa.cli.agent_access_runtime":
         s3_uri_in_configured_buckets,
     )
     from npa.workflows.artifacts import (
-        RunListPage,
         decode_run_ref,
         find_run_sources_across_buckets,
         list_artifacts,
@@ -58,7 +59,7 @@ if __name__ == "npa.cli.agent_access_runtime":
 
     NPA_PROJECT_ALIAS = ""
     _agent_command_env: Any = None
-    _agent_s3_client_optional: Any = None
+    _agent_artifact_s3_client_optional: Any = None
     _run_list_cache_clear: Any = None
     _safe_artifact_key: Any = None
 # NPA_EMBED_STANDALONE_END
@@ -70,15 +71,30 @@ if __name__ == "npa.cli.agent_access_runtime":
 _AGENT_NEBIUS_TIMEOUT_SECONDS = 15.0
 _AGENT_ACCESS_CACHE_TTL_SECONDS = 30.0
 _AGENT_EXACT_SOURCE_ACCESS_TTL_SECONDS = 30.0
+_AGENT_RUN_CURSOR_TTL_SECONDS = 300.0
+_AGENT_RUN_CURSOR_MAX_SNAPSHOTS = 64
 _MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
 _AGENT_ACCESS_CACHE: dict[str, Any] = {
     "report": None,
     "expires_at": 0.0,
     "refreshing": False,
+    # Waiters must distinguish a completed refresh from a failed one. Keeping
+    # an expired report is useful for ordinary stale-while-revalidate status
+    # reads, but an explicit refresh may never report that stale value as a
+    # newly refreshed authorization snapshot.
+    "last_refresh_succeeded": None,
+    # Artifact discovery takes a lease on the effective-access report. A
+    # successful refresh waits for those readers before publishing and clearing
+    # derived indexes, so a request that began with the old source set cannot
+    # repopulate a new-generation cache after the refresh.
+    "artifact_readers": 0,
 }
 _AGENT_EXACT_SOURCE_ACCESS_CACHE: dict[tuple[str, ...], float] = {}
+_AGENT_RUN_CURSOR_SNAPSHOTS: dict[str, dict[str, Any]] = {}
+_AGENT_RUN_CURSOR_GENERATION = 0
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
+_AGENT_RUN_CURSOR_LOCK = threading.Lock()
 _AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
     {
         "NEBIUS_IAM_TOKEN",
@@ -90,48 +106,270 @@ _AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
 )
 
 
-def _artifact_run_cursor(offset: int) -> str:
+def _artifact_run_cursor(snapshot_id: str, offset: int) -> str:
+    payload = json.dumps(
+        {"v": 1, "s": str(snapshot_id), "o": max(0, int(offset))},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _artifact_run_cursor_parts(cursor: str) -> tuple[str, int]:
+    value = str(cursor or "").strip()
+    if not value:
+        return "", 0
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        payload = json.loads(
+            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        )
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError("unsupported cursor")
+        snapshot_id = str(payload.get("s") or "").strip()
+        offset = int(payload.get("o"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid run-list cursor") from exc
+    if (
+        not snapshot_id
+        or len(snapshot_id) > 128
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for character in snapshot_id
+        )
+        or offset < 0
+    ):
+        raise HTTPException(status_code=400, detail="invalid run-list cursor")
+    return snapshot_id, offset
+
+
+def _artifact_run_snapshot_context(value: Any) -> str:
+    """Return a stable, non-reversible identity for one authorized list scope."""
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _clear_artifact_run_cursor_snapshots() -> None:
+    """Invalidate pagination whenever effective source authorization changes."""
+    global _AGENT_RUN_CURSOR_GENERATION
+    with _AGENT_RUN_CURSOR_LOCK:
+        _AGENT_RUN_CURSOR_GENERATION += 1
+        _AGENT_RUN_CURSOR_SNAPSHOTS.clear()
+
+
+def _expire_artifact_run_snapshots(now_mono: float) -> None:
+    expired = [
+        snapshot_id
+        for snapshot_id, snapshot in _AGENT_RUN_CURSOR_SNAPSHOTS.items()
+        if float(snapshot.get("expires_at") or 0.0) <= now_mono
+    ]
+    for snapshot_id in expired:
+        _AGENT_RUN_CURSOR_SNAPSHOTS.pop(snapshot_id, None)
+
+
+def _continued_artifact_run_snapshot(
+    cursor: str, context: str
+) -> tuple[str, int, dict[str, Any]]:
+    snapshot_id, offset = _artifact_run_cursor_parts(cursor)
+    snapshot = _AGENT_RUN_CURSOR_SNAPSHOTS.get(snapshot_id)
+    if (
+        not snapshot
+        or int(snapshot.get("generation", -1)) != _AGENT_RUN_CURSOR_GENERATION
+        or snapshot.get("context") != context
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="run-list cursor is stale for the current access scope; restart pagination",
+        )
+    return snapshot_id, offset, snapshot
+
+
+def _limit_artifact_run_snapshots() -> None:
+    while len(_AGENT_RUN_CURSOR_SNAPSHOTS) > _AGENT_RUN_CURSOR_MAX_SNAPSHOTS:
+        oldest = min(
+            _AGENT_RUN_CURSOR_SNAPSHOTS,
+            key=lambda snapshot_id: float(
+                _AGENT_RUN_CURSOR_SNAPSHOTS[snapshot_id].get("expires_at") or 0.0
+            ),
+        )
+        _AGENT_RUN_CURSOR_SNAPSHOTS.pop(oldest, None)
+
+
+def _new_artifact_run_snapshot(
+    items: list[Any] | tuple[Any, ...] | None,
+    metadata: dict[str, Any] | None,
+    context: str,
+    now_mono: float,
+) -> tuple[str, int, dict[str, Any]]:
+    if items is None:
+        raise ValueError("run-list snapshot items are required")
+    snapshot_id = secrets.token_urlsafe(18)
+    snapshot = {
+        "generation": _AGENT_RUN_CURSOR_GENERATION,
+        "context": context,
+        "items": tuple(items),
+        "metadata": dict(metadata or {}),
+        "expires_at": now_mono + _AGENT_RUN_CURSOR_TTL_SECONDS,
+    }
+    _AGENT_RUN_CURSOR_SNAPSHOTS[snapshot_id] = snapshot
+    _limit_artifact_run_snapshots()
+    return snapshot_id, 0, snapshot
+
+
+def _artifact_run_snapshot_values(
+    snapshot_id: str, offset: int, snapshot: dict[str, Any], page_size: int
+) -> tuple[list[Any], str, dict[str, Any]]:
+    frozen_items = list(snapshot.get("items") or ())
+    if offset > len(frozen_items):
+        raise HTTPException(status_code=400, detail="invalid run-list cursor")
+    end = min(offset + page_size, len(frozen_items))
+    next_cursor = ""
+    if end < len(frozen_items):
+        next_cursor = _artifact_run_cursor(snapshot_id, end)
     return (
-        base64.urlsafe_b64encode(str(max(0, int(offset))).encode("ascii"))
-        .decode("ascii")
-        .rstrip("=")
+        frozen_items[offset:end],
+        next_cursor,
+        dict(snapshot.get("metadata") or {}),
     )
 
 
-def _artifact_run_cursor_offset(cursor: str) -> int:
-    value = str(cursor or "").strip()
-    if not value:
-        return 0
-    try:
-        padded = value + ("=" * (-len(value) % 4))
-        offset = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="invalid run-list cursor") from exc
-    if offset < 0:
-        raise HTTPException(status_code=400, detail="invalid run-list cursor")
-    return offset
+def _artifact_run_snapshot_page(
+    *,
+    cursor: str,
+    context: str,
+    limit: int,
+    items: list[Any] | tuple[Any, ...] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[list[Any], str, dict[str, Any]]:
+    """Page through an immutable, bounded server-side discovery snapshot.
+
+    A cursor is deliberately tied to both the original query/source tuple and
+    the access generation. This prevents a refreshed or reordered source index
+    from silently skipping or duplicating runs halfway through traversal.
+    """
+    page_size = max(1, min(int(limit), 500))
+    normalized_context = str(context or "").strip()
+    if not normalized_context:
+        raise ValueError("run-list snapshot context is required")
+    now_mono = time.monotonic()
+    with _AGENT_RUN_CURSOR_LOCK:
+        _expire_artifact_run_snapshots(now_mono)
+        if cursor:
+            snapshot_id, offset, snapshot = _continued_artifact_run_snapshot(
+                cursor, normalized_context
+            )
+        else:
+            snapshot_id, offset, snapshot = _new_artifact_run_snapshot(
+                items, metadata, normalized_context, now_mono
+            )
+        return _artifact_run_snapshot_values(snapshot_id, offset, snapshot, page_size)
+
+
+def _artifact_report_capabilities_complete(payload: dict[str, Any]) -> bool:
+    capabilities = payload.get("capabilities") or {}
+    return not (
+        payload.get("status") != "available"
+        or (capabilities.get("project_discovery") or {}).get("status") != "available"
+        or (capabilities.get("artifact_discovery") or {}).get("status") != "available"
+    )
+
+
+def _artifact_project_for_scope(payload: dict[str, Any], project_id: str):
+    return next(
+        (
+            item
+            for item in payload.get("projects") or []
+            if isinstance(item, dict)
+            and str(item.get("id") or "").strip() == project_id
+        ),
+        None,
+    )
+
+
+def _artifact_project_capabilities_complete(project: dict[str, Any]) -> bool:
+    capabilities = project.get("capabilities") or {}
+    required = (
+        "storage_resource_discovery",
+        "artifact_discovery",
+        "artifact_read",
+    )
+    return all(
+        (capabilities.get(name) or {}).get("status") == "available" for name in required
+    )
+
+
+def _artifact_resource_capabilities_complete(resource: dict[str, Any]) -> bool:
+    capabilities = resource.get("capabilities") or {}
+    return (
+        (capabilities.get("artifact_discovery") or {}).get("status") == "available"
+        and (capabilities.get("artifact_read") or {}).get("status") == "available"
+    )
+
+
+def _artifact_project_inventory_complete(project: Any) -> bool:
+    if not isinstance(project, dict) or project.get("status") != "available":
+        return False
+    if not _artifact_project_capabilities_complete(project):
+        return False
+    resources = project.get("resources") or []
+    if not isinstance(resources, list):
+        return False
+    return all(
+        isinstance(resource, dict)
+        and _artifact_resource_capabilities_complete(resource)
+        for resource in resources
+    )
 
 
 def _artifact_search_scope_complete(report) -> bool:
     payload = report.to_dict() if hasattr(report, "to_dict") else report
     if not isinstance(payload, dict):
         return False
-    project_discovery = (payload.get("capabilities") or {}).get(
-        "project_discovery"
-    ) or {}
-    if project_discovery.get("status") != "available":
+    if not _artifact_report_capabilities_complete(payload):
+        return False
+    projects = payload.get("projects") or []
+    if not isinstance(projects, list):
+        return False
+    return all(_artifact_project_inventory_complete(project) for project in projects)
+
+
+def _artifact_resources_complete(project: dict[str, Any], bucket: str) -> bool:
+    resources = [
+        item
+        for item in project.get("resources") or []
+        if isinstance(item, dict)
+        and (not bucket or str(item.get("name") or "").strip() == bucket)
+    ]
+    if bucket and not resources:
         return False
     return all(
-        isinstance(project, dict)
-        and (
-            (
-                (project.get("capabilities") or {}).get("storage_resource_discovery")
-                or {}
-            ).get("status")
-            == "available"
-        )
-        for project in payload.get("projects") or []
+        (resource.get("capabilities") or {}).get("artifact_discovery", {}).get("status")
+        == "available"
+        and (resource.get("capabilities") or {}).get("artifact_read", {}).get("status")
+        == "available"
+        for resource in resources
     )
+
+
+def _artifact_selected_scope_complete(report, scope: dict[str, str]) -> bool:
+    """Say whether a caller-selected project/source was exhaustively verified."""
+    selected = dict(scope or {})
+    project_id = str(selected.get("project_id") or "").strip()
+    bucket = str(selected.get("bucket") or "").strip()
+    if not project_id:
+        return _artifact_search_scope_complete(report)
+    payload = report.to_dict() if hasattr(report, "to_dict") else report
+    if not isinstance(payload, dict):
+        return False
+    project = _artifact_project_for_scope(payload, project_id)
+    if not isinstance(project, dict):
+        return False
+    if not _artifact_project_capabilities_complete(project):
+        return False
+    return _artifact_resources_complete(project, bucket)
 
 
 def _agent_inventory_credential_context() -> tuple[dict[str, str], str, str, str]:
@@ -274,7 +512,7 @@ def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
 
 
 def _discover_agent_access_report() -> "AgentAccessReport":
-    s3, settings = _agent_s3_client_optional()
+    s3, settings = _agent_artifact_s3_client_optional()
     primary = str(settings.get("bucket") or "").strip()
     configured = [primary] if primary else []
     for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
@@ -331,13 +569,16 @@ def _configured_agent_artifact_source_matches(
     )
 
 
-def _find_configured_exact_run_sources(s3, run_id: str):
+def _find_configured_exact_run_sources(s3, run_id: str, *, sources=None):
     """Probe only durable exact sources for one validated run identifier."""
     normalized_run = validate_run_id(run_id)
     matches = []
     source_errors: list[dict[str, str]] = []
     complete = True
-    for source in _configured_agent_artifact_sources():
+    effective_sources = (
+        _configured_agent_artifact_sources() if sources is None else tuple(sources)
+    )
+    for source in effective_sources:
         bucket = source["bucket"]
         project = source["project_id"]
         found, errors, source_complete = find_run_sources_across_buckets(
@@ -367,35 +608,84 @@ def _find_configured_exact_run_sources(s3, run_id: str):
     return list(unique.values()), tuple(source_errors), complete
 
 
-def _configured_exact_run_page(s3, query: str, *, discovery_limit: int):
-    """Return the fail-closed durable-default page for an exact UI query."""
-    if len(str(query or "").strip()) < 20:
-        return None
-    try:
-        exact_run = validate_run_id(query)
-    except Exception:
-        return None
-    if not _configured_agent_artifact_sources():
-        return None
-    runs, errors, complete = _find_configured_exact_run_sources(s3, exact_run)
-    return RunListPage(
-        runs=runs,
-        truncated=not complete,
-        total_runs=len(runs),
-        limit=discovery_limit,
-        discovery_complete=complete,
-        source_errors=errors,
+def _invalidate_agent_artifact_discovery() -> None:
+    """Drop every artifact view derived from an older effective-access report."""
+    if callable(_run_list_cache_clear):
+        _run_list_cache_clear()
+    _clear_artifact_run_cursor_snapshots()
+    _clear_exact_run_ref_source_authorizations()
+    clear_foxglove_inventory = globals().get(
+        "_clear_foxglove_exact_artifact_inventory"
     )
+    if callable(clear_foxglove_inventory):
+        clear_foxglove_inventory()
 
 
 def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
+    if report is None:
+        with _AGENT_ACCESS_CONDITION:
+            _AGENT_ACCESS_CACHE["last_refresh_succeeded"] = False
+            # A failed explicit refresh must not leave a still-live report
+            # available to authorization-sensitive readers. Ordinary access
+            # status may continue to display the stale report, but the next
+            # artifact operation must re-probe and fail closed on error.
+            _AGENT_ACCESS_CACHE["expires_at"] = 0.0
+            _AGENT_ACCESS_CACHE["refreshing"] = False
+            _AGENT_ACCESS_CONDITION.notify_all()
+        return
+
+    # Keep ``refreshing`` true while existing artifact readers drain. New
+    # readers wait in ``_begin_agent_artifact_access``; old readers finish using
+    # the report they leased. Only then invalidate and publish as one generation
+    # transition. This closes the unbounded stale-request race that two best-
+    # effort cache clears cannot close.
     with _AGENT_ACCESS_CONDITION:
-        if report is not None:
-            _AGENT_ACCESS_CACHE["report"] = report
-            _AGENT_ACCESS_CACHE["expires_at"] = (
-                time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
-            )
+        _AGENT_ACCESS_CONDITION.wait_for(
+            lambda: int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0) == 0
+        )
+    _invalidate_agent_artifact_discovery()
+    with _AGENT_ACCESS_CONDITION:
+        _AGENT_ACCESS_CACHE["report"] = report
+        _AGENT_ACCESS_CACHE["expires_at"] = (
+            time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
+        )
+        _AGENT_ACCESS_CACHE["last_refresh_succeeded"] = True
         _AGENT_ACCESS_CACHE["refreshing"] = False
+        _AGENT_ACCESS_CONDITION.notify_all()
+
+
+def _begin_agent_artifact_access() -> "AgentAccessReport":
+    """Lease one current report for a complete artifact operation.
+
+    Ordinary access polling may serve a stale report while it refreshes in the
+    background. Artifact discovery is authorization-sensitive, so it waits for
+    that refresh and pins the resulting report until its S3 index/snapshot has
+    been produced.
+    """
+    while True:
+        with _AGENT_ACCESS_CONDITION:
+            while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
+                _AGENT_ACCESS_CONDITION.wait()
+            report = _AGENT_ACCESS_CACHE.get("report")
+            expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
+            if isinstance(report, AgentAccessReport) and expires_at > time.monotonic():
+                _AGENT_ACCESS_CACHE["artifact_readers"] = (
+                    int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0) + 1
+                )
+                return report
+        # Artifact operations never treat a stale report as current. Perform a
+        # synchronous refresh outside the condition lock; failures propagate and
+        # fail closed instead of leasing the expired report.
+        _agent_access_report(refresh=True)
+
+
+def _end_agent_artifact_access() -> None:
+    """Release a report lease acquired by ``_begin_agent_artifact_access``."""
+    with _AGENT_ACCESS_CONDITION:
+        readers = int(_AGENT_ACCESS_CACHE.get("artifact_readers") or 0)
+        if readers <= 0:
+            raise RuntimeError("artifact access lease is not active")
+        _AGENT_ACCESS_CACHE["artifact_readers"] = readers - 1
         _AGENT_ACCESS_CONDITION.notify_all()
 
 
@@ -409,9 +699,9 @@ def _refresh_agent_access_in_background() -> None:
 
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
+    if refresh:
+        _invalidate_agent_artifact_discovery()
     with _AGENT_ACCESS_CONDITION:
-        if refresh:
-            _AGENT_EXACT_SOURCE_ACCESS_CACHE.clear()
         cached = _AGENT_ACCESS_CACHE.get("report")
         expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
         if not refresh and isinstance(cached, AgentAccessReport):
@@ -428,6 +718,8 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
         if bool(_AGENT_ACCESS_CACHE.get("refreshing")):
             while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
                 _AGENT_ACCESS_CONDITION.wait()
+            if not bool(_AGENT_ACCESS_CACHE.get("last_refresh_succeeded")):
+                raise RuntimeError("agent access refresh did not complete")
             cached = _AGENT_ACCESS_CACHE.get("report")
             if isinstance(cached, AgentAccessReport):
                 return cached
@@ -485,18 +777,19 @@ def _agent_artifact_list_scope(report, resource_bucket: str = "", project_id: st
 
 
 def _resolve_selected_run_source(
-    *,
-    s3,
-    settings,
-    run_id: str,
-    resource_bucket: str,
-    project_id: str = "",
-    resolved_prefix: str = "",
-    source_selected: bool = False,
-    exclude: "set[str] | None" = None,
+    **kwargs,
 ) -> tuple[str, str, str]:
-    """Authorize and resolve one exact server-discovered artifact source."""
-    report = _agent_access_report()
+    """Resolve a selected source while pinning the effective-access report."""
+    _begin_agent_artifact_access()
+    try:
+        return _resolve_selected_run_source_with_access(**kwargs)
+    finally:
+        _end_agent_artifact_access()
+
+
+def _authorized_selected_artifact_bucket(
+    report, resource_bucket: str, project_id: str
+) -> str:
     buckets, _scope = _agent_artifact_list_scope(report, resource_bucket, project_id)
     bucket = str(resource_bucket or "").strip()
     if bucket not in buckets:
@@ -504,7 +797,21 @@ def _resolve_selected_run_source(
             status_code=403,
             detail="artifact bucket is outside effective agent access",
         )
-    prefix = _validated_resolved_prefix(resolved_prefix)
+    return bucket
+
+
+def _selected_run_source_candidates(
+    *,
+    s3,
+    settings,
+    report,
+    bucket: str,
+    run_id: str,
+    project_id: str,
+    prefix: str,
+    source_selected: bool,
+    exclude: "set[str] | None",
+):
     sources, source_errors, complete = find_run_sources_across_buckets(
         [bucket],
         base_prefix=str((settings or {}).get("prefix") or ""),
@@ -520,6 +827,12 @@ def _resolve_selected_run_source(
         sources = [item for item in sources if item.resolved_prefix == prefix]
     elif source_selected:
         sources = [item for item in sources if not item.resolved_prefix]
+    return sources, source_errors, complete
+
+
+def _required_selected_run_source(
+    sources, source_errors, complete: bool, *, prefix: str, source_selected: bool
+):
     if len(sources) > 1:
         raise HTTPException(
             status_code=409,
@@ -535,7 +848,42 @@ def _resolve_selected_run_source(
             status_code=404 if complete and not source_errors else 503,
             detail="selected artifact source was not discovered",
         )
-    selected = sources[0]
+    return sources[0]
+
+
+def _resolve_selected_run_source_with_access(
+    *,
+    s3,
+    settings,
+    run_id: str,
+    resource_bucket: str,
+    project_id: str = "",
+    resolved_prefix: str = "",
+    source_selected: bool = False,
+    exclude: "set[str] | None" = None,
+) -> tuple[str, str, str]:
+    """Authorize and resolve one exact server-discovered artifact source."""
+    report = _agent_access_report()
+    bucket = _authorized_selected_artifact_bucket(report, resource_bucket, project_id)
+    prefix = _validated_resolved_prefix(resolved_prefix)
+    sources, source_errors, complete = _selected_run_source_candidates(
+        s3=s3,
+        settings=settings,
+        report=report,
+        bucket=bucket,
+        run_id=run_id,
+        project_id=project_id,
+        prefix=prefix,
+        source_selected=source_selected,
+        exclude=exclude,
+    )
+    selected = _required_selected_run_source(
+        sources,
+        source_errors,
+        complete,
+        prefix=prefix,
+        source_selected=source_selected,
+    )
     return selected.bucket, selected.project_id, selected.resolved_prefix
 
 
@@ -553,14 +901,18 @@ def _selected_run_request(body: dict) -> tuple[str, str, str, bool]:
 
 
 def _load_selected_run_artifacts(**kwargs):
-    bucket, project, prefix = _resolve_selected_run_source(**kwargs)
-    artifacts = list_artifacts(
-        bucket,
-        run_id=validate_run_id(str(kwargs.get("run_id") or "")),
-        prefix=prefix,
-        s3=kwargs.get("s3"),
-    )
-    return bucket, project, prefix, artifacts
+    _begin_agent_artifact_access()
+    try:
+        bucket, project, prefix = _resolve_selected_run_source_with_access(**kwargs)
+        artifacts = list_artifacts(
+            bucket,
+            run_id=validate_run_id(str(kwargs.get("run_id") or "")),
+            prefix=prefix,
+            s3=kwargs.get("s3"),
+        )
+        return bucket, project, prefix, artifacts
+    finally:
+        _end_agent_artifact_access()
 
 
 def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
@@ -581,8 +933,6 @@ def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
 def _agent_access_api_response(refresh: bool = False):
     try:
         report = _agent_access_report(refresh=bool(refresh))
-        if refresh:
-            _run_list_cache_clear()
         return {
             "ok": True,
             **report.to_dict(),
@@ -657,6 +1007,262 @@ def _validated_resolved_prefix(value: str) -> str:
     return raw
 
 
+class _ExactRunSourceSelection:
+    """Carry one validated exact source through authorization checks."""
+
+    __slots__ = ("run_id", "run_ref", "bucket", "project_id", "prefix")
+
+    def __init__(
+        self, run_id: str, run_ref: str, bucket: str, project_id: str, prefix: str
+    ) -> None:
+        self.run_id = run_id
+        self.run_ref = run_ref
+        self.bucket = bucket
+        self.project_id = project_id
+        self.prefix = prefix
+
+    def result(self) -> tuple[str, str, str]:
+        return self.bucket, self.project_id, self.prefix
+
+
+def _decoded_exact_run_ref(run_ref: str) -> tuple[str, str, str]:
+    try:
+        return decode_run_ref(run_ref)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid run_ref") from exc
+
+
+def _require_matching_exact_run_ref(
+    selection: _ExactRunSourceSelection, decoded: tuple[str, str, str]
+) -> None:
+    ref_bucket, ref_prefix, ref_run = decoded
+    if ref_run != selection.run_id:
+        raise HTTPException(status_code=409, detail="run_ref does not identify run_id")
+    if ref_bucket != selection.bucket:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected artifact bucket does not match run_ref",
+        )
+    if ref_prefix != selection.prefix:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected artifact prefix does not match run_ref",
+        )
+
+
+def _validated_exact_run_source(
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+) -> _ExactRunSourceSelection:
+    selection = _ExactRunSourceSelection(
+        run_id=validate_run_id(str(run_id or "").strip()),
+        run_ref=run_ref,
+        bucket=str(resource_bucket or "").strip(),
+        project_id=str(project_id or "").strip(),
+        prefix=_validated_resolved_prefix(resolved_prefix),
+    )
+    if not selection.bucket or not selection.project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="project and resource bucket are required for exact artifact playback",
+        )
+    _require_matching_exact_run_ref(selection, _decoded_exact_run_ref(run_ref))
+    return selection
+
+
+def _exact_run_source_cache_key(
+    selection: _ExactRunSourceSelection,
+) -> tuple[str, ...]:
+    return (
+        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        selection.project_id,
+        selection.bucket,
+        selection.prefix,
+        selection.run_id,
+        str(selection.run_ref or "").strip(),
+    )
+
+
+def _exact_run_source_authorization_is_cached(
+    selection: _ExactRunSourceSelection,
+) -> bool:
+    cache_key = _exact_run_source_cache_key(selection)
+    now_mono = time.monotonic()
+    with _AGENT_ACCESS_LOCK:
+        expires_at = float(_AGENT_EXACT_SOURCE_ACCESS_CACHE.get(cache_key) or 0.0)
+        if expires_at > now_mono:
+            return True
+        for stale_key, stale_expiry in list(_AGENT_EXACT_SOURCE_ACCESS_CACHE.items()):
+            if stale_expiry <= now_mono:
+                _AGENT_EXACT_SOURCE_ACCESS_CACHE.pop(stale_key, None)
+    return False
+
+
+def _require_searchable_artifact_bucket(
+    s3, bucket: str, *, configured: bool
+) -> None:
+    label = "configured artifact source" if configured else "artifact bucket"
+    try:
+        probe = _agent_probe_bucket(s3, bucket)
+    except Exception as exc:
+        status = getattr(exc, "status", "unavailable")
+        raise HTTPException(
+            status_code=403 if status == "denied" else 503,
+            detail=f"{label} access could not be verified",
+        ) from exc
+    list_status = str(getattr(probe, "list_status", "unavailable"))
+    if list_status != "available":
+        raise HTTPException(
+            status_code=403 if list_status == "denied" else 503,
+            detail=f"{label} is not currently searchable",
+        )
+
+
+def _remember_exact_run_source(selection: _ExactRunSourceSelection) -> None:
+    _remember_exact_run_ref_source_authorization(
+        run_id=selection.run_id,
+        run_ref=selection.run_ref,
+        resource_bucket=selection.bucket,
+        project_id=selection.project_id,
+        resolved_prefix=selection.prefix,
+    )
+
+
+def _configured_exact_run_source(selection: _ExactRunSourceSelection) -> bool:
+    return _configured_agent_artifact_source_matches(
+        project_id=selection.project_id,
+        bucket=selection.bucket,
+        resolved_prefix=selection.prefix,
+    )
+
+
+def _authorize_configured_exact_run_source(
+    s3, selection: _ExactRunSourceSelection
+) -> None:
+    _require_searchable_artifact_bucket(s3, selection.bucket, configured=True)
+    _remember_exact_run_source(selection)
+
+
+def _require_exact_source_project_access(
+    selection: _ExactRunSourceSelection,
+) -> str:
+    deployment_project = str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip()
+    if selection.project_id == deployment_project:
+        return deployment_project
+    tenant_id = str(os.environ.get("NEBIUS_TENANT_ID") or "").strip()
+    if not tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="artifact project is outside effective agent access",
+        )
+    try:
+        visible_projects = {
+            _project_identity(item)[0] for item in _agent_list_tenant_projects(tenant_id)
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="artifact project access could not be verified",
+        ) from exc
+    if selection.project_id not in visible_projects:
+        raise HTTPException(
+            status_code=403,
+            detail="artifact project is outside effective agent access",
+        )
+    return deployment_project
+
+
+def _artifact_project_bucket_inventory(project_id: str) -> tuple[set[str], bool]:
+    try:
+        buckets = {
+            _bucket_identity(item)[1] for item in _agent_list_project_buckets(project_id)
+        }
+        return buckets, False
+    except Exception:
+        return set(), True
+
+
+def _require_exact_source_bucket_ownership(
+    selection: _ExactRunSourceSelection, settings, deployment_project: str
+) -> None:
+    project_buckets, inventory_failed = _artifact_project_bucket_inventory(
+        selection.project_id
+    )
+    configured_deployment_bucket = (
+        selection.project_id == deployment_project
+        and selection.bucket in _configured_agent_s3_buckets(settings)
+    )
+    if selection.bucket in project_buckets or configured_deployment_bucket:
+        return
+    detail = (
+        "artifact bucket ownership could not be verified"
+        if inventory_failed
+        else "artifact bucket does not belong to the selected project"
+    )
+    raise HTTPException(status_code=503 if inventory_failed else 403, detail=detail)
+
+
+def _discover_exact_run_source_candidates(
+    s3, settings, selection: _ExactRunSourceSelection
+):
+    exclusions = globals().get("_discovery_exclude_roots")
+    excluded_roots = exclusions() if callable(exclusions) else set()
+    try:
+        return find_run_sources_across_buckets(
+            [selection.bucket],
+            base_prefix=str((settings or {}).get("prefix") or ""),
+            run_id=selection.run_id,
+            exact_prefix=None,
+            exclude=excluded_roots,
+            bucket_projects={selection.bucket: selection.project_id},
+            s3=s3,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="artifact run-source discovery could not be verified",
+        ) from exc
+
+
+def _exact_source_matches_selection(item, selection: _ExactRunSourceSelection) -> bool:
+    return bool(
+        str(getattr(item, "run_id", "") or "") == selection.run_id
+        and str(getattr(item, "bucket", "") or "") == selection.bucket
+        and str(getattr(item, "project_id", "") or "") == selection.project_id
+        and str(getattr(item, "resolved_prefix", "") or "") == selection.prefix
+    )
+
+
+def _require_discovered_exact_run_source(
+    s3, settings, selection: _ExactRunSourceSelection
+) -> None:
+    discovered, source_errors, complete = _discover_exact_run_source_candidates(
+        s3, settings, selection
+    )
+    if source_errors or not complete:
+        raise HTTPException(
+            status_code=503,
+            detail="artifact run-source discovery was incomplete",
+        )
+    exact_sources = [
+        item for item in discovered if _exact_source_matches_selection(item, selection)
+    ]
+    if not exact_sources:
+        raise HTTPException(
+            status_code=403,
+            detail="artifact run source was not discovered for this access scope",
+        )
+    if len(exact_sources) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact run source is ambiguous for this access scope",
+        )
+
+
 def _authorize_exact_run_ref_source(
     *,
     s3,
@@ -667,164 +1273,21 @@ def _authorize_exact_run_ref_source(
     project_id: str,
     resolved_prefix: str,
 ) -> tuple[str, str, str]:
-    """Authorize one server-issued source without a tenant-wide bucket scan.
-
-    Artifact cards carry the exact project, bucket, prefix, and run reference
-    returned by discovery. Revalidate that narrow ownership chain and current
-    bucket access rather than rebuilding the complete effective-access report,
-    which can probe hundreds of unrelated buckets. The run reference remains a
-    selector, not an authorization capability: every caller-supplied component
-    must agree and the selected bucket must still be discoverable.
-    """
-    requested_run = validate_run_id(str(run_id or "").strip())
-    requested_bucket = str(resource_bucket or "").strip()
-    requested_project = str(project_id or "").strip()
-    requested_prefix = _validated_resolved_prefix(resolved_prefix)
-    if not requested_bucket or not requested_project:
-        raise HTTPException(
-            status_code=400,
-            detail="project and resource bucket are required for exact artifact playback",
-        )
-    try:
-        ref_bucket, ref_prefix, ref_run = decode_run_ref(run_ref)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="invalid run_ref") from exc
-    if ref_run != requested_run:
-        raise HTTPException(status_code=409, detail="run_ref does not identify run_id")
-    if ref_bucket != requested_bucket:
-        raise HTTPException(
-            status_code=409,
-            detail="the selected artifact bucket does not match run_ref",
-        )
-    if ref_prefix != requested_prefix:
-        raise HTTPException(
-            status_code=409,
-            detail="the selected artifact prefix does not match run_ref",
-        )
-
-    cache_key = (
-        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
-        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
-        requested_project,
-        requested_bucket,
-        requested_prefix,
-        requested_run,
-        str(run_ref or "").strip(),
+    """Authorize one server-issued source without a tenant-wide bucket scan."""
+    selection = _validated_exact_run_source(
+        run_id, run_ref, resource_bucket, project_id, resolved_prefix
     )
-    now_mono = time.monotonic()
-    with _AGENT_ACCESS_LOCK:
-        expires_at = float(_AGENT_EXACT_SOURCE_ACCESS_CACHE.get(cache_key) or 0.0)
-        if expires_at > now_mono:
-            return requested_bucket, requested_project, requested_prefix
-        for stale_key, stale_expiry in list(_AGENT_EXACT_SOURCE_ACCESS_CACHE.items()):
-            if stale_expiry <= now_mono:
-                _AGENT_EXACT_SOURCE_ACCESS_CACHE.pop(stale_key, None)
-
-    # A durable owner-configured tuple is the narrow fallback when tenant or
-    # project inventory is unavailable. It is a selector, never a capability:
-    # re-probe the exact bucket with the service's existing S3 credentials
-    # before authorizing any run inventory or object load.
-    if _configured_agent_artifact_source_matches(
-        project_id=requested_project,
-        bucket=requested_bucket,
-        resolved_prefix=requested_prefix,
-    ):
-        try:
-            configured_probe = _agent_probe_bucket(s3, requested_bucket)
-        except Exception as exc:
-            status = getattr(exc, "status", "unavailable")
-            raise HTTPException(
-                status_code=403 if status == "denied" else 503,
-                detail="configured artifact source access could not be verified",
-            ) from exc
-        if str(getattr(configured_probe, "list_status", "unavailable")) != "available":
-            raise HTTPException(
-                status_code=(
-                    403
-                    if str(getattr(configured_probe, "list_status", "")) == "denied"
-                    else 503
-                ),
-                detail="configured artifact source is not currently searchable",
-            )
-        _remember_exact_run_ref_source_authorization(
-            run_id=requested_run,
-            run_ref=run_ref,
-            resource_bucket=requested_bucket,
-            project_id=requested_project,
-            resolved_prefix=requested_prefix,
-        )
-        return requested_bucket, requested_project, requested_prefix
-
-    deployment_project = str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip()
-    tenant_id = str(os.environ.get("NEBIUS_TENANT_ID") or "").strip()
-    if requested_project != deployment_project:
-        if not tenant_id:
-            raise HTTPException(
-                status_code=403,
-                detail="artifact project is outside effective agent access",
-            )
-        try:
-            visible_projects = {
-                _project_identity(item)[0]
-                for item in _agent_list_tenant_projects(tenant_id)
-            }
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="artifact project access could not be verified",
-            ) from exc
-        if requested_project not in visible_projects:
-            raise HTTPException(
-                status_code=403,
-                detail="artifact project is outside effective agent access",
-            )
-
-    inventory_failed = False
-    try:
-        project_buckets = {
-            _bucket_identity(item)[1]
-            for item in _agent_list_project_buckets(requested_project)
-        }
-    except Exception:
-        inventory_failed = True
-        project_buckets = set()
-    configured_deployment_bucket = (
-        requested_project == deployment_project
-        and requested_bucket in _configured_agent_s3_buckets(settings)
-    )
-    if requested_bucket not in project_buckets and not configured_deployment_bucket:
-        raise HTTPException(
-            status_code=503 if inventory_failed else 403,
-            detail=(
-                "artifact bucket ownership could not be verified"
-                if inventory_failed
-                else "artifact bucket does not belong to the selected project"
-            ),
-        )
-
-    try:
-        probe = _agent_probe_bucket(s3, requested_bucket)
-    except Exception as exc:
-        status = getattr(exc, "status", "unavailable")
-        raise HTTPException(
-            status_code=403 if status == "denied" else 503,
-            detail="artifact bucket access could not be verified",
-        ) from exc
-    if str(getattr(probe, "list_status", "unavailable")) != "available":
-        raise HTTPException(
-            status_code=(
-                403 if str(getattr(probe, "list_status", "")) == "denied" else 503
-            ),
-            detail="artifact bucket is not currently searchable",
-        )
-    _remember_exact_run_ref_source_authorization(
-        run_id=requested_run,
-        run_ref=run_ref,
-        resource_bucket=requested_bucket,
-        project_id=requested_project,
-        resolved_prefix=requested_prefix,
-    )
-    return requested_bucket, requested_project, requested_prefix
+    if _exact_run_source_authorization_is_cached(selection):
+        return selection.result()
+    if _configured_exact_run_source(selection):
+        _authorize_configured_exact_run_source(s3, selection)
+        return selection.result()
+    deployment_project = _require_exact_source_project_access(selection)
+    _require_exact_source_bucket_ownership(selection, settings, deployment_project)
+    _require_searchable_artifact_bucket(s3, selection.bucket, configured=False)
+    _require_discovered_exact_run_source(s3, settings, selection)
+    _remember_exact_run_source(selection)
+    return selection.result()
 
 
 def _remember_exact_run_ref_source_authorization(
@@ -923,12 +1386,10 @@ def _resolve_accessible_run_artifact(
 
 def _authorize_agent_artifact_uri(*, s3, settings, uri: str, run_id: str = ""):
     bucket, key = parse_s3_uri(uri)
-    if bucket in _configured_agent_s3_buckets(settings):
-        return bucket, _safe_artifact_key(key), str(run_id or "").strip()
     if not str(run_id or "").strip():
         raise HTTPException(
             status_code=400,
-            detail="cross-project s3_uri requires a run_id and exact discovered artifact",
+            detail="s3_uri requires a run_id and exact discovered artifact membership",
         )
     return _resolve_accessible_run_artifact(
         s3=s3,

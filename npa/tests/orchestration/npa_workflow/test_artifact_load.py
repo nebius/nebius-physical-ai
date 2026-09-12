@@ -36,6 +36,37 @@ class Response:
         return self._payload
 
 
+def _inventory(artifact: str, *, next_cursor: str = "") -> dict:
+    key = artifact.removeprefix("s3://bucket/")
+    return {
+        "ok": True,
+        "run_id": "paidf-1",
+        "run_ref": "npa1_paidf_1",
+        "project_id": "project-a",
+        "bucket": "bucket",
+        "resource_bucket": "bucket",
+        "resolved_prefix": "physical-ai-data-factory",
+        "source_selected": True,
+        "artifacts": [] if next_cursor else [{"key": key, "s3_uri": artifact}],
+        "next_cursor": next_cursor,
+        "truncated": bool(next_cursor),
+    }
+
+
+def _ready_status(artifact: str) -> dict:
+    return {
+        "run_id": "paidf-1",
+        "artifact_uri": artifact,
+        "artifact_key": artifact.removeprefix("s3://bucket/"),
+        "artifact_render": "rerun",
+        "artifact_run_ref": "npa1_paidf_1",
+        "project_id": "project-a",
+        "bucket": "bucket",
+        "resolved_prefix": "physical-ai-data-factory",
+        "rerun_ready": True,
+    }
+
+
 def _patch_agent(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     import npa.cli.agent as agent
 
@@ -69,7 +100,7 @@ def test_discovers_exact_nested_paidf_final_artifact() -> None:
     assert uri == f"s3://bucket/{key}"
 
 
-def test_load_posts_exact_uri_then_verifies_and_persists(
+def test_load_discovers_exact_source_then_posts_strict_v3_and_persists(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -81,14 +112,13 @@ def test_load_posts_exact_uri_then_verifies_and_persists(
 
     def request(method: str, url: str, **kwargs):  # noqa: ANN001, ANN202
         requests.append((method, url, kwargs.get("json")))
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
         if method == "POST":
-            return Response(200, {"ok": True})
-        if len(requests) == 1:
+            return Response(200, {"ok": True, "sim_viz": _ready_status(artifact)})
+        if len([item for item in requests if item[1].endswith("/api/sim-viz/status")]) == 1:
             return Response(200, {"artifact_uri": "", "rerun_ready": False})
-        return Response(
-            200,
-            {"artifact_uri": artifact, "artifact_render": "rerun", "rerun_ready": True},
-        )
+        return Response(200, _ready_status(artifact))
 
     result = load_final_artifact_into_agent(
         project="demo",
@@ -100,10 +130,21 @@ def test_load_posts_exact_uri_then_verifies_and_persists(
 
     assert result.status == "verified"
     assert result.posted is True
-    assert requests[1] == (
+    assert requests[2] == (
         "POST",
         "https://agent.invalid/api/sim-viz/load-artifact",
-        {"s3_uri": artifact},
+        {
+            "run_id": "paidf-1",
+            "run_ref": "npa1_paidf_1",
+            "key": "physical-ai-data-factory/paidf-1/reports/sim2real.rrd",
+            "project_id": "project-a",
+            "resource_bucket": "bucket",
+            "resolved_prefix": "physical-ai-data-factory",
+            "source_selected": True,
+        },
+    )
+    assert all(
+        not payload or "s3_uri" not in payload for _method, _url, payload in requests
     )
     state = (tmp_path / ".npa/workflow-submissions/demo/paidf-1.json").read_text()
     assert artifact in state
@@ -121,10 +162,9 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
 
     def request(method: str, _url: str, **_kwargs):  # noqa: ANN202
         methods.append(method)
-        return Response(
-            200,
-            {"artifact_uri": artifact, "artifact_render": "rerun", "rerun_ready": True},
-        )
+        if "/api/artifacts/run/" in _url:
+            return Response(200, _inventory(artifact))
+        return Response(200, _ready_status(artifact))
 
     result = load_final_artifact_into_agent(
         project="demo",
@@ -136,6 +176,40 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
 
     assert result.verified is True
     assert result.posted is False
+    assert methods == ["GET", "GET"]
+
+
+def test_agent_source_ambiguity_fails_closed_without_post(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    methods: list[str] = []
+
+    def request(method: str, _url: str, **_kwargs):  # noqa: ANN202
+        methods.append(method)
+        return Response(
+            409,
+            {
+                "ok": False,
+                "error": {"code": "ambiguous_run_id"},
+                "sources": [{}, {}],
+            },
+        )
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=client,
+        http_request=request,
+    )
+
+    assert result.status == "partial"
+    assert result.posted is False
+    assert "HTTP 409" in result.detail
     assert methods == ["GET"]
 
 

@@ -110,7 +110,7 @@ def test_no_shipped_file_points_at_a_missing_workflow(path: Path) -> None:
     [
         "workflows/main/definitely-missing.yaml",
         "workflows/testing/definitely-missing.yaml",
-        "npa/workflows/workbench/npa-workflows/definitely-missing.yaml",
+        "workflows/testing/definitely-missing.yaml",
         "npa/src/npa/burst/examples/definitely-missing.yaml",
         "npa/src/npa/workbench/nurec/examples/definitely-missing.yaml",
         "npa/src/npa/workflows/byof/profiles/definitely-missing.yaml",

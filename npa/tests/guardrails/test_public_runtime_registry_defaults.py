@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
-import yaml
 import pytest
+import yaml
 
 from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
@@ -20,16 +21,42 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-WORKFLOW_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW_DIR = REPO_ROOT / "workflows"
+PACKAGING_CONTRACT = REPO_ROOT / "npa/docker/workbench/packaging-contract.yaml"
 # Synthetic offline renderer input, never a publication or acceptance record.
 NCORE_VALIDATION_IMAGE = (
     f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
 )
 
 
+def _is_restricted_operator_placeholder(image: str) -> bool:
+    """A non-runnable BYO default must name a restricted packaging entry."""
+
+    parsed = urlsplit(f"https://{image}")
+    if parsed.hostname != "registry.example.invalid":
+        return False
+    name, separator, digest = parsed.path.removeprefix("/npa-").partition("@sha256:")
+    if not separator or digest != "0" * 64 or "/" in name:
+        return False
+    contract = yaml.safe_load(PACKAGING_CONTRACT.read_text())
+    return contract["images"].get(name, {}).get("redistribution") == "restricted"
+
+
+def test_only_restricted_non_runnable_defaults_are_operator_placeholders() -> None:
+    suffix = "@sha256:" + "0" * 64
+    assert _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-paidf-anomalygen-sky" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-rerun-viewer" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.invalid/npa-paidf-anomalygen-sky" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-paidf-anomalygen-sky@sha256:" + "a" * 64
+    )
 def test_every_published_tool_ignores_ambient_private_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/"
@@ -128,7 +155,7 @@ def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
     assert NCORE_VALIDATION_IMAGE in rendered_images
     assert not any(hostile_registry in image for image in rendered_images)
     assert all(
-        image.startswith(public_prefix)
+        image.startswith(public_prefix) or _is_restricted_operator_placeholder(image)
         for image in rendered_images
         if image.rsplit("/", 1)[-1].startswith("npa-")
     )

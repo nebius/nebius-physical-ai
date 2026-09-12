@@ -43,7 +43,12 @@ KNOWN_STUB_TOOLREFS = {
     "workbench.fiftyone.launch_app",  # echo hook
     "workbench.sim2real.write_decision",  # demo stub
 }
-REAL_RUN_MARKERS = ("npa workbench", "data_factory_stages", "data_factory_viz")
+REAL_RUN_MARKERS = (
+    "npa workbench",
+    "data_factory_stages",
+    "data_factory_viz",
+    "paidf_upstream",
+)
 
 
 def _states() -> dict:
@@ -146,6 +151,22 @@ def test_blueprint_run_shell_stages_are_real() -> None:
         assert any(m in command for m in REAL_RUN_MARKERS), (
             f"stage '{name}' run is not a real command/module call: {command[:100]}"
         )
+
+
+def test_blueprint_records_official_upstream_boundary_first() -> None:
+    spec = _spec()
+    state = spec["states"]["record-upstream"]
+    command = " ".join(str(item) for item in state["run"]["argv"])
+
+    assert spec["initial"] == "record-upstream"
+    assert "paidf_upstream" in command
+    assert "write_upstream_contract" in command
+    assert state["outputs"] == [
+        {
+            "uri": "{{config.upstream_contract_uri}}",
+            "schema": "npa.paidf.upstream.v1",
+        }
+    ]
 
 
 def test_augment_runs_real_cosmos_transfer() -> None:

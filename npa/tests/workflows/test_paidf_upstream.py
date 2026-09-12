@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+import yaml
+
+from npa.workflows.paidf_upstream import (
+    DIRECT_GENERATION_MODELS,
+    PAIDF_ORCHESTRATION_REVISION,
+    PHYSICAL_AI_DATA_FACTORY_REVISION,
+    SCHEMA,
+    upstream_contract,
+    write_upstream_contract,
+)
+
+
+def test_upstream_contract_distinguishes_sources_and_orchestrators() -> None:
+    payload = upstream_contract("cosmos-transfer2.5")
+
+    assert payload["schema"] == SCHEMA
+    sources = {item["repository"]: item for item in payload["sources"]}
+    ecosystem = sources["https://github.com/NVIDIA/physical-ai-data-factory"]
+    scaler = sources["https://github.com/NVIDIA/paidf-orchestration"]
+    assert ecosystem["revision"] == PHYSICAL_AI_DATA_FACTORY_REVISION
+    assert ecosystem["licenses"] == ["CC-BY-4.0", "Apache-2.0"]
+    assert ecosystem["upstream_orchestrator"] == "NVIDIA OSMO"
+    assert scaler["revision"] == PAIDF_ORCHESTRATION_REVISION
+    assert scaler["licenses"] == ["Apache-2.0"]
+    assert scaler["role"] == "airflow-kubernetes-scaled-iaa-and-evg-reference"
+    assert ecosystem["executed_by_npa"] is False
+    assert scaler["executed_by_npa"] is False
+    assert payload["npa_integration"]["orchestrator"] == "SkyPilot"
+    assert payload["npa_integration"]["components"]["execution"] == (
+        "workbench.cosmos2.transfer_execute"
+    )
+
+
+def test_cosmos3_contract_names_real_framework_command() -> None:
+    payload = upstream_contract("cosmos3-video2video")
+    assert payload["npa_integration"]["components"]["execution"] == (
+        "workbench.cosmos3.generate_variants"
+    )
+    assert (
+        payload["npa_integration"]["components"]["translation"]
+        == "npa-specific-variant"
+    )
+
+
+@pytest.mark.parametrize(
+    ("variant", "workflow"),
+    [
+        (
+            "defect-image-generation-day1-manual-roi",
+            "Defect Image Generation Day 1 manual-ROI",
+        ),
+        ("image-attribute-augmentation", "image_attribute_augmentation_dag"),
+        ("event-video-generation", "event_video_generation_dag"),
+    ],
+)
+def test_new_direct_translation_contracts(variant: str, workflow: str) -> None:
+    payload = upstream_contract(variant)
+    components = payload["npa_integration"]["components"]
+    assert components["translation"] == "direct"
+    assert components["upstream_workflow"] == workflow
+    pinned_images = components.get("reference_runtime_images") or components.get(
+        "source_reference_images"
+    )
+    assert pinned_images
+    assert all("@sha256:" in image for image in pinned_images)
+
+
+def test_service_model_revisions_are_recorded_in_direct_translation_provenance() -> (
+    None
+):
+    iaa = upstream_contract("image-attribute-augmentation")
+    evg = upstream_contract("event-video-generation")
+    assert iaa["npa_integration"]["components"]["models"] == {
+        "Qwen/Qwen-Image-Edit-2511": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    }
+    assert evg["npa_integration"]["components"]["models"] == {
+        "nvidia/Cosmos3-Super-Image2Video": "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
+        "nvidia/Cosmos-1.0-Guardrail": "cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
+        "Qwen/Qwen3Guard-Gen-0.6B": "fada3b2f655b89601929198343c94cd2f64d93cc",
+    }
+
+
+@pytest.mark.parametrize(
+    ("variant", "executed_repositories"),
+    [
+        (
+            "defect-image-generation-day1-manual-roi",
+            {
+                "https://github.com/NVIDIA/paidf-anomalygen",
+                "https://github.com/NVIDIA/cosmos-framework",
+            },
+        ),
+        (
+            "image-attribute-augmentation",
+            {
+                "https://github.com/NVIDIA/paidf-augmentation",
+                "https://github.com/NVIDIA/paidf-auto-labeling",
+            },
+        ),
+        (
+            "event-video-generation",
+            {
+                "https://github.com/NVIDIA/paidf-augmentation",
+                "https://github.com/NVIDIA/paidf-auto-labeling",
+            },
+        ),
+    ],
+)
+def test_component_execution_flags_are_variant_specific(
+    variant: str, executed_repositories: set[str]
+) -> None:
+    payload = upstream_contract(variant)
+    actual = {
+        str(source["repository"])
+        for source in payload["sources"]
+        if source.get("executed_by_npa") is True
+    }
+    assert actual == executed_repositories
+
+
+def test_write_upstream_contract_local(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "reports" / "upstream.json"
+    result = write_upstream_contract(
+        "cosmos-transfer2.5", str(target), run_id="unit-run"
+    )
+
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert written == {
+        key: value for key, value in result.items() if key != "written_uri"
+    }
+    assert written["run_id"] == "unit-run"
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+def test_upstream_writer_requires_a_nonempty_run_identity(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="run id"):
+        write_upstream_contract(
+            "cosmos-transfer2.5", str(tmp_path / "upstream.json"), run_id=""
+        )
+    assert not (tmp_path / "upstream.json").exists()
+
+
+def test_write_upstream_contract_records_resolved_private_runtime_image(
+    tmp_path: Path,
+) -> None:
+    image = "registry.invalid/npa-paidf-anomalygen-sky@sha256:" + "a" * 64
+    result = write_upstream_contract(
+        "defect-image-generation-day1-manual-roi",
+        str(tmp_path / "upstream.json"),
+        image,
+        run_id="unit-run",
+    )
+    assert result["npa_integration"]["resolved_runtime_image"] == image
+
+
+@pytest.mark.parametrize(
+    "variant", ["image-attribute-augmentation", "event-video-generation"]
+)
+def test_write_upstream_contract_accepts_reviewed_direct_generation_model(
+    variant: str, tmp_path: Path
+) -> None:
+    model, revision = DIRECT_GENERATION_MODELS[variant]
+    result = write_upstream_contract(
+        variant,
+        str(tmp_path / "upstream.json"),
+        run_id="unit-run",
+        generation_model=model,
+        generation_revision=revision,
+    )
+    components = result["npa_integration"]["components"]
+    assert components["models"][model] == revision
+    assert components["models"] == upstream_contract(variant)["npa_integration"]["components"]["models"]
+    assert "runtime_images" not in components
+    assert (
+        "renderer-selected runtime_image"
+        in result["npa_integration"]["runtime_image_evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "revision"),
+    [
+        ("synthetic/model", "a" * 40),
+        (
+            DIRECT_GENERATION_MODELS["event-video-generation"][0],
+            "a" * 40,
+        ),
+    ],
+)
+def test_direct_translation_rejects_unreviewed_generation_artifact(
+    tmp_path: Path, model: str, revision: str
+) -> None:
+    with pytest.raises(ValueError, match="reviewed generation model and revision"):
+        write_upstream_contract(
+            "event-video-generation",
+            str(tmp_path / "upstream.json"),
+            run_id="unit-run",
+            generation_model=model,
+            generation_revision=revision,
+        )
+    assert not (tmp_path / "upstream.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("variant", "tool_ref"),
+    [
+        ("image-attribute-augmentation", "workflow.paidf.run_iaa_augmentation"),
+        ("event-video-generation", "workflow.paidf.run_evg_augmentation"),
+    ],
+)
+def test_native_provenance_names_registered_execution_tool(
+    variant: str, tool_ref: str
+) -> None:
+    from npa.orchestration.npa_workflow.catalog import validate_tool_ref
+
+    assert (
+        upstream_contract(variant)["npa_integration"]["components"]["execution"]
+        == tool_ref
+    )
+    assert validate_tool_ref(tool_ref).name == tool_ref
+
+
+def test_unknown_variant_fails_closed() -> None:
+    with pytest.raises(ValueError, match="unsupported PAIDF workflow variant"):
+        upstream_contract("airflow")
+
+
+@pytest.mark.parametrize(
+    ("filename", "overrides", "match"),
+    [
+        (
+            "paidf-image-attribute-augmentation.yaml",
+            {"vlm_url": "https://credentials.invalid/v1"},
+            "approved Token Factory HTTPS origin",
+        ),
+        (
+            "paidf-event-video-generation.yaml",
+            {"generation_revision": "a" * 40},
+            "reviewed generation model and revision",
+        ),
+    ],
+)
+def test_direct_translation_rejects_unsafe_overrides_before_render(
+    filename: str, overrides: dict[str, str], match: str
+) -> None:
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    repo_root = Path(__file__).resolve().parents[3]
+    workflow = repo_root / "workflows" / "testing" / filename
+    with pytest.raises(NpaWorkflowError, match=match):
+        merge_config_overrides(load_spec(workflow), overrides)
+
+
+@pytest.mark.parametrize(
+    ("filename", "variant", "successor"),
+    [
+        ("physical-ai-data-factory.yaml", "cosmos-transfer2.5", "generate-configs"),
+        ("paidf-cosmos3.yaml", "cosmos3-video2video", "prepare-input"),
+        (
+            "paidf-defect-image-generation.yaml",
+            "defect-image-generation-day1-manual-roi",
+            "prepare-base-checkpoints",
+        ),
+        (
+            "paidf-image-attribute-augmentation.yaml",
+            "image-attribute-augmentation",
+            "prepare-input",
+        ),
+        (
+            "paidf-event-video-generation.yaml",
+            "event-video-generation",
+            "prepare-input",
+        ),
+    ],
+)
+def test_shipped_workflows_record_upstream_before_processing(
+    filename: str, variant: str, successor: str
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    tier = "main" if filename == "paidf-cosmos3.yaml" else "testing"
+    workflow = yaml.safe_load(
+        (repo_root / "workflows" / tier / filename).read_text(encoding="utf-8")
+    )
+
+    assert workflow["initial"] == "record-upstream"
+    state = workflow["states"]["record-upstream"]
+    expected_tail = [
+        variant,
+        "{{config.upstream_contract_uri}}",
+    ]
+    if filename == "paidf-defect-image-generation.yaml":
+        expected_tail.append("{{config.anomalygen_image}}")
+    elif filename in {
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        expected_tail.extend(
+            ["{{config.generation_model}}", "{{config.generation_revision}}"]
+        )
+    expected_tail.append("{{run.id}}")
+    assert state["run"]["argv"][-len(expected_tail) :] == expected_tail
+    assert state["outputs"] == [
+        {
+            "uri": "{{config.upstream_contract_uri}}",
+            "schema": SCHEMA,
+        }
+    ]
+    assert state["next"] == successor
+    assert workflow["states"][successor]["needs"] == ["record-upstream"]
+
+
+def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (
+            repo_root
+            / "workflows/testing/paidf-image-attribute-augmentation.yaml"
+        ).read_text(encoding="utf-8")
+    )
+
+    states = workflow["states"]
+    assert states["validate-outputs"]["next"] == "cosmos-post-processing"
+    assert states["validate-outputs"]["resources"] == "cpu"
+    assert (
+        states["cosmos-post-processing"]["toolRef"] == "workflow.paidf.postprocess_iaa"
+    )
+    assert states["cosmos-post-processing"]["needs"] == ["validate-outputs"]
+    assert states["cosmos-post-processing"]["resources"] == "postprocess"
+    assert workflow["resources"]["postprocess"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": "16Gi",
+        "image": "{{config.generation_image}}",
+    }
+    assert "accelerators" not in workflow["resources"]["postprocess"]
+    assert (
+        states["cosmos-post-processing"]["next"] == "event-and-person-attribute-search"
+    )
+    assert states["event-and-person-attribute-search"]["toolRef"] == (
+        "workflow.paidf.run_attribute_search"
+    )
+
+
+def test_native_evg_preserves_published_sequential_labeling_chain() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (
+            repo_root
+            / "workflows/testing/paidf-event-video-generation.yaml"
+        ).read_text(encoding="utf-8")
+    )
+
+    states = workflow["states"]
+    chain = [
+        "detection-and-tracking",
+        "captioning",
+        "anomaly-visual-qa",
+        "person-attribute-visual-qa",
+        "person-attribute-search",
+        "generate-anomaly-dataset",
+        "validate-final-outputs",
+    ]
+    for current, successor in zip(chain, chain[1:]):
+        assert states[current]["next"] == successor
+    assert states["detection-and-tracking"]["toolRef"] == "workflow.paidf.run_detection"
+    assert states["captioning"]["toolRef"] == "workflow.paidf.run_captioning"
+    assert states["anomaly-visual-qa"]["toolRef"] == "workflow.paidf.run_visual_qa"
+    assert states["person-attribute-search"]["toolRef"] == (
+        "workflow.paidf.run_attribute_search"
+    )

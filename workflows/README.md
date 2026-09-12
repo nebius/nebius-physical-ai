@@ -82,6 +82,11 @@ The CLI, agent, and live-submit matrix discover both YAML directories. Raw
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
+The Cosmos Transfer VDA and direct NVIDIA DIG, IAA, and EVG translations are
+all testing-tier PAIDF specs. Together with the Cosmos 3 alternative, all five
+record `reports/upstream.json` and execute through SkyPilot rather than OSMO or
+Airflow.
+
 ## Spec catalog
 
 ### Main workflows
@@ -113,6 +118,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
+| [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
+| [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
+| [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 
 #### Robot learning and simulation

@@ -23,6 +23,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
+    tool_vendor_interpreters,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import (
@@ -210,6 +211,21 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
     assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
+    )
+
+
+def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:
+    for tool_ref in (
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
+    ):
+        assert tool_vendor_interpreters(tool_ref) == ()
+
+    # Other tools that require one process to import vendor libraries retain
+    # the established vendor-interpreter setup behavior.
+    assert tool_vendor_interpreters("workbench.lerobot") == (
+        "/opt/lerobot/venv/bin/python",
     )
 
 

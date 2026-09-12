@@ -1,0 +1,252 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Direct translation of NVIDIA/paidf-orchestration's event_video_generation_dag
+# at f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9. It preserves input preparation,
+# deterministic anomaly/environment sampling, the Cosmos3 image2video service
+# lifecycle, the paidf-augmentation batch protocol, strict media validation,
+# and final anomaly-dataset assembly. NPA/SkyPilot replaces Airflow/Kubernetes
+# operators; the adapter preserves the upstream three-retry component policy.
+
+metadata:
+  name: paidf-event-video-generation
+  description: >-
+    Direct PAIDF EVG translation: turn validated seed images into Cosmos3 Super
+    safety-event videos through the real paidf-augmentation protocol, validate
+    media/caption/metadata outputs, and publish an anomaly dataset with lineage.
+
+config:
+  bucket: example-bucket
+  prefix: "paidf-event-video-generation/{{run.id}}"
+  previous_label_result_uri: "{{config.validation_uri}}"
+  paidf_workflow: evg
+  input_uri: "s3://{{config.bucket}}/paidf-authorized-input/evg/"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  prepared_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/manifest.json"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  config_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/manifest.json"
+  augmentation_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos/result.json"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos/validation.json"
+  augmentation_validation_uri: "{{config.validation_uri}}"
+  final_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/anomaly_dataset/dataset.json"
+  terminal_validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/terminal-validation.json"
+  auto_label_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/"
+  auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/person-attribute-search.json"
+  labels_uri: "{{config.auto_label_result_uri}}"
+  upstream_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/upstream.json"
+  num_augmentations: "1"
+  seed: "42"
+  vlm_url: "https://api.tokenfactory.nebius.com/v1"
+  vlm_model: "openbmb/MiniCPM-V-4_5"
+  llm_url: "https://api.tokenfactory.nebius.com/v1"
+  llm_model: "Qwen/Qwen3-30B-A3B-Instruct-2507"
+  generation_url: "http://127.0.0.1:8000/v1"
+  generation_model: "nvidia/Cosmos3-Super-Image2Video"
+  generation_revision: "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+  # Supply the scanned operator-built SkyPilot wrapper by exact digest.
+  generation_image: "registry.example.invalid/npa-paidf-event-video-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # Labeling also requires scanned operator-built compatibility images.
+  detection_image: "registry.example.invalid/npa-paidf-detection-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  captioning_image: "registry.example.invalid/npa-paidf-captioning-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  visual_qa_image: "registry.example.invalid/npa-paidf-visual-qa-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  attribute_search_image: "registry.example.invalid/npa-paidf-attribute-search-sky@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  service_kind: image2video
+  service_port: "8000"
+  service_parallel_size: "2"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  image2video:
+    cloud: kubernetes
+    accelerators: B200:2
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.generation_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - name: HF_HOME
+                  value: /tmp/paidf-models
+                - name: NCCL_P2P_DISABLE
+                  value: "1"
+                - name: VLLM_OMNI_VIDEO_SYNC_TIMEOUT
+                  value: "1800"
+                - name: VLLM_OMNI_INPUT_WAIT_TIMEOUT_S
+                  value: "1800"
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Gi
+  detection:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 4
+    memory: 32Gi
+    image: "{{config.detection_image}}"
+  captioning:
+    cloud: kubernetes
+    # The pinned H.264 decoder requires NVIDIA CUVID even with a hosted VLM.
+    accelerators: B200:1
+    cpus: 4
+    memory: 32Gi
+    image: "{{config.captioning_image}}"
+  visual-qa:
+    cloud: kubernetes
+    # Anomaly VQA needs CUVID; crop-only person VQA shares this profile.
+    accelerators: B200:1
+    cpus: 4
+    memory: 32Gi
+    image: "{{config.visual_qa_image}}"
+  attribute-search:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.attribute_search_image}}"
+
+initial: record-upstream
+
+states:
+  record-upstream:
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_upstream import write_upstream_contract;
+          write_upstream_contract(sys.argv[1], sys.argv[2],
+          generation_model=sys.argv[3], generation_revision=sys.argv[4], run_id=sys.argv[5])
+        - event-video-generation
+        - "{{config.upstream_contract_uri}}"
+        - "{{config.generation_model}}"
+        - "{{config.generation_revision}}"
+        - "{{run.id}}"
+    outputs:
+      - uri: "{{config.upstream_contract_uri}}"
+        schema: npa.paidf.upstream.v1
+    next: prepare-input
+  prepare-input:
+    needs: [record-upstream]
+    toolRef: workflow.paidf.prepare_images
+    resources: cpu
+    outputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.paidf.native.prepared-input.v1
+    next: generate-configs
+  generate-configs:
+    needs: [prepare-input]
+    toolRef: workflow.paidf.build_configs
+    resources: cpu
+    outputs:
+      - uri: "{{config.config_manifest_uri}}"
+        schema: npa.paidf.native.evg-configs.v1
+    next: image2video-service-and-augmentation
+  image2video-service-and-augmentation:
+    description: >-
+      Start real Cosmos3 Super Image2Video in the official vLLM-Omni image,
+      retain it for the complete real paidf-augmentation batch, and shut it down
+      after batch completion. Two reserved B200s replace upstream's two-H100
+      placement while retaining the same two-way CFG parallelism, model, and
+      OpenAI video protocol.
+    needs: [generate-configs]
+    toolRef: workflow.paidf.run_evg_augmentation
+    resources: image2video
+    outputs:
+      - uri: "{{config.augmentation_result_uri}}"
+        schema: npa.paidf.native.evg-augmentation.v1
+    next: validate-cosmos-outputs
+  validate-cosmos-outputs:
+    needs: [image2video-service-and-augmentation]
+    toolRef: workflow.paidf.validate_augmentation
+    resources: cpu
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: npa.paidf.native.evg-validation.v1
+    next: detection-and-tracking
+  detection-and-tracking:
+    needs: [validate-cosmos-outputs]
+    toolRef: workflow.paidf.run_detection
+    resources: detection
+    params:
+      auto_label_stage: detection
+      auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/detection.json"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/detection.json"
+        schema: npa.paidf.native.evg-auto-label-detection.v1
+    next: captioning
+  captioning:
+    needs: [detection-and-tracking]
+    toolRef: workflow.paidf.run_captioning
+    resources: captioning
+    params:
+      auto_label_stage: captioning
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/detection.json"
+      auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
+        schema: npa.paidf.native.evg-auto-label-captioning.v1
+    next: anomaly-visual-qa
+  anomaly-visual-qa:
+    needs: [captioning]
+    toolRef: workflow.paidf.run_visual_qa
+    resources: visual-qa
+    params:
+      auto_label_stage: visual-qa-anomaly
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/captioning.json"
+      auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
+        schema: npa.paidf.native.evg-auto-label-visual-qa-anomaly.v1
+    next: person-attribute-visual-qa
+  person-attribute-visual-qa:
+    needs: [anomaly-visual-qa]
+    toolRef: workflow.paidf.run_visual_qa
+    resources: visual-qa
+    params:
+      auto_label_stage: visual-qa-person
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-anomaly.json"
+      auto_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
+        schema: npa.paidf.native.evg-auto-label-visual-qa-person.v1
+    next: person-attribute-search
+  person-attribute-search:
+    needs: [person-attribute-visual-qa]
+    toolRef: workflow.paidf.run_attribute_search
+    resources: attribute-search
+    params:
+      auto_label_stage: person-attribute-search
+      previous_label_result_uri: "s3://{{config.bucket}}/{{config.prefix}}/auto_labeling/visual-qa-person.json"
+    outputs:
+      - uri: "{{config.auto_label_result_uri}}"
+        schema: npa.paidf.native.evg-auto-label-person-attribute-search.v1
+    next: generate-anomaly-dataset
+  generate-anomaly-dataset:
+    needs: [person-attribute-search]
+    toolRef: workflow.paidf.finalize_dataset
+    resources: cpu
+    outputs:
+      - uri: "{{config.final_dataset_uri}}"
+        schema: npa.paidf.native.evg-dataset.v1
+    next: validate-final-outputs
+  validate-final-outputs:
+    description: >-
+      Re-open the final manifest and require the published EVG contextual and
+      sidecar contract for every scene before declaring workflow success.
+    needs: [generate-anomaly-dataset]
+    toolRef: workflow.paidf.validate_dataset
+    resources: cpu
+    outputs:
+      - uri: "{{config.terminal_validation_uri}}"
+        schema: npa.paidf.native.evg-terminal-validation.v1
+    terminal: true

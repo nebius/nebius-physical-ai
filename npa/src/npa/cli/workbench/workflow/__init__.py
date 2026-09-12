@@ -194,7 +194,7 @@ def _enforce_workflow_access(
         blocked,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials() if hf_token is None or ngc_key is None else None
     resolved_hf = (
@@ -215,7 +215,7 @@ def _enforce_workflow_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
     )
     plan = approval_plan(evidence, resume_command=resume_command)

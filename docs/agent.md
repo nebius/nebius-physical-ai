@@ -94,7 +94,9 @@ environment after service restart or VM reboot.
 
 When the agent's read-only identity can access a known artifact bucket but
 cannot enumerate every project or bucket in the tenant, configure that exact
-source as an owner default. Create a mode-`0600` JSON file outside the checkout:
+source as an owner default. Each entry is a direct run-parent tuple:
+`resolved_prefix` is the directory immediately above the run ids, not a generic
+workflow or category root. Create a mode-`0600` JSON file outside the checkout:
 
 ```json
 [
@@ -112,10 +114,30 @@ Then refresh the existing agent with
 owner-only NPA configuration and stages it in the service environment, so an
 ordinary exact run-id search continues to use the source after a restart. The
 tuple grants no access: the backend still verifies live S3 list/read capability,
-and exact searches do not fall through to broader tenant discovery. Later
-bootstraps reuse the persisted source without requiring the file again.
-Passing a new source file explicitly replaces the saved default after a
-successful bootstrap.
+and searches merge it with every other authorized effective source. If the same
+run id exists in more than one `(project_id, bucket, resolved_prefix)` tuple,
+the API returns an ambiguity response until the caller selects the exact
+server-issued tuple. Later bootstraps reuse the persisted source without
+requiring the file again. Passing a new source file explicitly replaces the
+saved default after a successful bootstrap.
+
+Bootstrap writes the source selectors and their isolated read identity to the
+owner-only `/opt/npa-agent/artifact-sources.env`; operators should use
+`--artifact-source-file` instead of setting that generated file by hand. Its
+runtime keys are:
+
+| Key | Meaning and default |
+| --- | --- |
+| `NPA_AGENT_ARTIFACT_SOURCES_B64` | URL-safe base64 JSON for the validated source tuples; omitted when no owner source is configured. |
+| `NPA_AGENT_ARTIFACT_S3_BUCKET` | Bucket whose isolated read credentials follow; required together with both credential keys. |
+| `NPA_AGENT_ARTIFACT_S3_ENDPOINT` | S3-compatible endpoint for those credentials; empty uses the storage client's configured default. |
+| `NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID` | Isolated read access-key id; never print or persist it outside the owner-only environment file. |
+| `NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY` | Matching isolated read secret; required with the bucket and access-key id. |
+| `NPA_AGENT_ARTIFACT_S3_REGION` | Storage region; defaults to `eu-north1` when omitted. |
+
+If the isolated bucket/credential triple is absent or incomplete, the backend
+uses the Agent's normal S3 identity. Source tuples still act only as selectors:
+they never grant access and cannot authorize an arbitrary S3 URI.
 
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even
@@ -286,6 +308,23 @@ project. Artifact search spans only the buckets where the agent can both
 associate the bucket with a visible project and verify S3 object-list access.
 Partial access is expected, and is reported rather than hidden.
 
+S3 is the durable source of truth for run discovery. On a fresh backend process,
+or when the bounded source index is empty or stale, a run search refreshes the
+authorized S3 sources before applying its `q` filter. The process cache is only
+an accelerator: restarting the backend or deploying a new branch does not make
+previously published runs disappear. Exact lookup likewise searches the
+authorized effective sources before it returns a trustworthy
+`run_not_discovered` response.
+
+An incomplete access report never becomes a globally complete empty result.
+Runs observed in accessible sources remain usable, but `query_complete` and
+`pagination_complete` stay false, `total_runs` stays null, and source errors
+describe the unsearched scope. If an exact run is absent from that bounded
+observation, the API returns an access/incomplete error rather than a definitive
+404. `GET /api/access?refresh=true` replaces the effective source view and
+invalidates run discovery, exact-source authorization, and run-list cursor
+caches before subsequent requests use it.
+
 Workflow submission and artifact writes/deletes stay **scoped to the deployment
 project**. Caller-supplied S3 URIs remain configuration-scoped; an exact artifact
 selected from a discovered cross-project run can be read without widening those
@@ -295,6 +334,24 @@ mutation boundaries.
 > read-only IAM credential.** Deployments may still attach a service account with
 > tenant-level editors grants, so treat that credential as privileged even though
 > cross-project mutation endpoints are not exposed.
+
+### Paging discovered runs
+
+`GET /api/artifacts/runs` returns an opaque `next_cursor` when more discovered
+runs remain. A run-list cursor traverses an immutable server-side snapshot bound
+to the original query, prefix, exact source selection, and effective-access
+generation. Continue with the same request parameters; do not decode or edit the
+cursor. An access refresh, backend restart, cache reset, or changed source/query
+context invalidates it with a stale-cursor response. Restart from the first page
+to obtain a new snapshot. This prevents a source refresh from skipping or
+duplicating rows during one traversal.
+
+When one run id is returned from multiple sources, select its complete
+server-issued `(run_id, run_ref, project_id, resource_bucket, resolved_prefix,
+source_selected)` tuple for exact lookup, artifact pagination, preview,
+download, and load. Loading also requires the selected inventory `key`.
+`s3_uri` is returned as provenance only; neither it nor a bucket name is an
+authorization selector.
 
 ### Paging run artifacts
 

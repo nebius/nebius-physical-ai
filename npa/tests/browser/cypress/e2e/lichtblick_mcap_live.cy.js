@@ -74,33 +74,83 @@ function agentReq(path, options = {}) {
 
 // Discover the run to view (explicit env override, else the latest viewable run)
 // and its MCAP artifact key.
-function resolveMcapArtifact() {
-  return agentReq("/api/artifacts/runs?limit=2000", { timeout: 120000 }).then((resp) => {
+function discoverRuns(explicit, cursor = "", runs = [], seenCursors = new Set()) {
+  const params = new URLSearchParams({ limit: "500" });
+  if (explicit) params.set("q", explicit);
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(`/api/artifacts/runs?${params.toString()}`, { timeout: 120000 }).then((resp) => {
     expect(resp.status, "artifacts/runs status").to.eq(200);
-    const runs = (resp.body && resp.body.runs) || [];
+    const merged = [...runs, ...((resp.body && resp.body.runs) || [])];
+    const nextCursor = String((resp.body && resp.body.next_cursor) || "");
+    if (!nextCursor) return merged;
+    expect(seenCursors.has(nextCursor), "run discovery cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return discoverRuns(explicit, nextCursor, merged, seenCursors);
+  });
+}
+
+function collectRunArtifacts(source, cursor = "", artifacts = [], seenCursors = new Set()) {
+  const params = new URLSearchParams({
+    project_id: String(source.project_id || ""),
+    resource_bucket: String(source.bucket || ""),
+    resolved_prefix: String(source.resolved_prefix || ""),
+    source_selected: "1",
+  });
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(
+    `/api/artifacts/run/${encodeURIComponent(source.run_ref)}?${params.toString()}`,
+    { timeout: 120000 },
+  ).then((detail) => {
+    expect(detail.status, "exact MCAP artifact inventory status").to.eq(200);
+    const body = detail.body || {};
+    const merged = [...artifacts, ...(body.artifacts || [])];
+    const nextCursor = String(body.next_cursor || "");
+    if (!nextCursor) return merged;
+    expect(seenCursors.has(nextCursor), "artifact inventory cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return collectRunArtifacts(source, nextCursor, merged, seenCursors);
+  });
+}
+
+function resolveMcapArtifact() {
+  const explicit = preferredRunId();
+  return discoverRuns(explicit).then((runs) => {
     expect(runs.length, "discovered runs").to.be.greaterThan(0);
-    const explicit = preferredRunId();
-    const viewable = runs.filter((run) => run.has_viewable);
-    const candidates = [
-      ...(explicit ? [runs.find((run) => run.run_id === explicit) || { run_id: explicit }] : []),
-      ...viewable,
-      ...runs,
-    ].filter((run, index, all) => {
+    const exactSources = runs.filter(
+      (run) => run.run_ref && run.project_id && run.bucket,
+    );
+    const viewable = exactSources.filter((run) => run.has_viewable);
+    const candidates = (explicit
+      ? exactSources.filter((run) => String(run.run_id || "") === explicit)
+      : [...viewable, ...exactSources]
+    ).filter((run, index, all) => {
       const identity = String(run.run_ref || run.run_id || "");
       return all.findIndex((item) => String(item.run_ref || item.run_id || "") === identity) === index;
     });
+    if (explicit) {
+      expect(candidates, "one unambiguous server-issued MCAP source").to.have.length(1);
+    }
     const findSubstantiveMcap = (index) => {
       if (index >= candidates.length) return cy.wrap(null, { log: false });
       const chosen = candidates[index];
-      const selector = String(chosen.run_ref || chosen.run_id || "");
-      return agentReq(`/api/artifacts/run/${encodeURIComponent(selector)}`, { timeout: 120000 }).then((detail) => {
-        const artifacts = (detail.body && detail.body.artifacts) || [];
+      expect(String(chosen.run_ref || ""), "source-qualified run reference").to.match(/^npa1_/);
+      expect(String(chosen.project_id || ""), "source project identity").not.to.eq("");
+      expect(String(chosen.bucket || ""), "source bucket identity").not.to.eq("");
+      return collectRunArtifacts(chosen).then((artifacts) => {
         const minimumBytes = explicit && chosen.run_id === explicit ? 1024 : 1000000;
         const mcap = artifacts.find(
           (item) => String(item.key || "").endsWith(".mcap") && Number(item.size || 0) > minimumBytes,
         );
         return mcap
-          ? { runId: chosen.run_id, runRef: String(chosen.run_ref || ""), key: mcap.key, size: mcap.size }
+          ? {
+              runId: String(chosen.run_id || ""),
+              runRef: String(chosen.run_ref || ""),
+              key: String(mcap.key || ""),
+              size: mcap.size,
+              projectId: String(chosen.project_id || ""),
+              resourceBucket: String(chosen.bucket || ""),
+              resolvedPrefix: String(chosen.resolved_prefix || ""),
+            }
           : findSubstantiveMcap(index + 1);
       });
     };
@@ -111,10 +161,18 @@ function resolveMcapArtifact() {
   });
 }
 
-function loadMcap(runId, runRef, key) {
+function loadMcap(source) {
   return agentReq("/api/sim-viz/load-artifact", {
     method: "POST",
-    body: { run_id: runId, run_ref: runRef, key },
+    body: {
+      run_id: source.runId,
+      run_ref: source.runRef,
+      key: source.key,
+      project_id: source.projectId,
+      resource_bucket: source.resourceBucket,
+      resolved_prefix: source.resolvedPrefix,
+      source_selected: true,
+    },
   }).then((resp) => {
     expect(resp.status, "load-artifact status").to.eq(200);
     expect(String(resp.body.render || ""), "artifact render hint").to.eq("mcap");
@@ -136,8 +194,8 @@ describe("Lichtblick MCAP viewer (live system)", () => {
   });
 
   it("loads the run's MCAP and co-serves a substantive recording", () => {
-    resolveMcapArtifact().then(({ runId, runRef, key }) => {
-      loadMcap(runId, runRef, key);
+    resolveMcapArtifact().then((source) => {
+      loadMcap(source);
       agentReq(MCAP_RECORDING_PATH, { encoding: "binary", failOnStatusCode: false }).then((resp) => {
         expect([200, 206]).to.include(resp.status);
         const body = resp.body || "";
@@ -181,8 +239,8 @@ describe("Lichtblick MCAP viewer (live system)", () => {
   });
 
   it("renders the canonical real camera in Lichtblick", () => {
-    resolveMcapArtifact().then(({ runId, runRef, key }) => {
-      loadMcap(runId, runRef, key);
+    resolveMcapArtifact().then((source) => {
+      loadMcap(source);
       cy.get("#tabRerun").click();
       cy.get("#renderModeLichtblick").click();
       cy.window({ timeout: 90000 }).then({ timeout: 90000 }, async (win) => {
@@ -221,7 +279,7 @@ describe("Lichtblick MCAP viewer (live system)", () => {
       if (request.headers.range) request.alias = "lichtblickMcapRange";
     });
     resolveMcapArtifact()
-      .then(({ runId, runRef, key }) => loadMcap(runId, runRef, key))
+      .then((source) => loadMcap(source))
       .then(() => cy.reload());
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");

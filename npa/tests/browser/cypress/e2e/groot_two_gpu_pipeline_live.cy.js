@@ -22,11 +22,70 @@ function agentReq(path, options = {}) {
   });
 }
 
-function artifactContentPath(activeRun, artifact) {
+function exactSourceQuery(entry) {
+  return new URLSearchParams({
+    project_id: String(entry.project_id || ""),
+    resource_bucket: String(entry.bucket || ""),
+    resolved_prefix: String(entry.resolved_prefix || ""),
+    source_selected: "1",
+  }).toString();
+}
+
+function discoverExactRun(id, cursor = "", found = [], seenCursors = new Set()) {
+  const params = new URLSearchParams({ q: id, limit: "100" });
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(`/api/artifacts/runs?${params.toString()}`).then((resp) => {
+    expect(resp.status, "pipeline run discovery status").to.eq(200);
+    const matches = (resp.body.runs || []).filter(
+      (entry) => String(entry.run_id || "") === id,
+    );
+    const all = [...found, ...matches];
+    const nextCursor = String(resp.body.next_cursor || "");
+    if (!nextCursor) return all;
+    expect(seenCursors.has(nextCursor), "run discovery cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return discoverExactRun(id, nextCursor, all, seenCursors);
+  });
+}
+
+function collectRunInventory(source, cursor = "", artifacts = [], firstBody = null, seenCursors = new Set()) {
+  const params = new URLSearchParams(exactSourceQuery(source));
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(
+    `/api/artifacts/run/${encodeURIComponent(source.run_ref)}?${params.toString()}`,
+  ).then((resp) => {
+    expect(resp.status, "pipeline artifact inventory status").to.eq(200);
+    const body = resp.body || {};
+    const merged = [...artifacts, ...(body.artifacts || [])];
+    const base = firstBody || body;
+    const nextCursor = String(body.next_cursor || "");
+    if (!nextCursor) return { status: resp.status, body: { ...base, artifacts: merged, next_cursor: "" } };
+    expect(seenCursors.has(nextCursor), "artifact inventory cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return collectRunInventory(source, nextCursor, merged, base, seenCursors);
+  });
+}
+
+function resolveRunInventory(id) {
+  return discoverExactRun(id).then((matches) => {
+    expect(matches, "one unambiguous server-issued pipeline source").to.have.length(1);
+    const source = matches[0];
+    expect(String(source.run_ref || ""), "source-qualified run reference").to.match(/^npa1_/);
+    expect(String(source.project_id || ""), "source project identity").not.to.eq("");
+    expect(String(source.bucket || ""), "source bucket identity").not.to.eq("");
+    return collectRunInventory(source).then((resp) => ({ resp, source }));
+  });
+}
+
+function artifactContentPath(activeRun, source, artifact) {
   const query = new URLSearchParams({
     run_id: activeRun,
+    run_ref: String(source.run_ref || ""),
     key: String(artifact.key || ""),
-    bucket: String(artifact.bucket || ""),
+    project_id: String(source.project_id || ""),
+    resource_bucket: String(source.bucket || ""),
+    resolved_prefix: String(source.resolved_prefix || ""),
+    source_selected: "1",
   });
   return `/api/artifacts/content?${query.toString()}`;
 }
@@ -51,15 +110,17 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
   let inventory = {};
   let artifacts = [];
   let primaryCamera = "";
+  let source = {};
 
   before(function () {
     if (!liveEnvAvailable() || !runId()) this.skip();
     activeRun = runId();
-    return agentReq(`/api/artifacts/run/${encodeURIComponent(activeRun)}`).then((resp) => {
+    return resolveRunInventory(activeRun).then(({ resp, source: discoveredSource }) => {
       expect(resp.status, "artifact inventory status").to.eq(200);
       expect(resp.body.run_id, "exact run identity").to.eq(activeRun);
       inventory = resp.body;
       artifacts = resp.body.artifacts || [];
+      source = discoveredSource;
       primaryCamera = String(
         (((resp.body.summary || {}).learning || {}).artifact_contract || {}).primary_camera || "",
       ).trim();
@@ -141,7 +202,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
     }
     for (const suffix of [".rrd", ".mcap", "two-gpu-pipeline-report.json"]) {
       const artifact = artifacts.find((item) => String(item.key || "").endsWith(suffix));
-      agentReq(artifactContentPath(activeRun, artifact), {
+      agentReq(artifactContentPath(activeRun, source, artifact), {
         headers: { Range: "bytes=0-255" },
         encoding: "binary",
         failOnStatusCode: false,
@@ -156,14 +217,22 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
     const mcap = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.mcap"));
     agentReq("/api/sim-viz/load-artifact", {
       method: "POST",
-      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: mcap.key },
+      body: {
+        run_id: activeRun,
+        run_ref: String(source.run_ref || ""),
+        key: String(mcap.key || ""),
+        project_id: String(source.project_id || ""),
+        resource_bucket: String(source.bucket || ""),
+        resolved_prefix: String(source.resolved_prefix || ""),
+        source_selected: true,
+      },
     }).then((resp) => {
       expect(resp.status).to.eq(200);
       expect(resp.body.render).to.eq("mcap");
       expect(resp.body.sim_viz.lichtblick_ready).to.eq(true);
       expect(String(resp.body.sim_viz.artifact_key || "")).to.eq(mcap.key);
     });
-    agentReq(artifactContentPath(activeRun, mcap), { encoding: "binary" }).then((resp) => {
+    agentReq(artifactContentPath(activeRun, source, mcap), { encoding: "binary" }).then((resp) => {
       const body = String(resp.body || "");
       expect(resp.status).to.eq(200);
       for (const topic of [

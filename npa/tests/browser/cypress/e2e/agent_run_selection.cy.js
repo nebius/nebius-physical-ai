@@ -35,11 +35,20 @@ describe("NPA agent local demo selection", () => {
       });
       observer.observe(frame, { attributes: true, attributeFilter: ["data-rerun-run-key"] });
     });
-    cy.get(selectionMode === "stages dropdown" ? "#stagesRunSelect" : "#runIdSelect").select("franka-demo");
+    cy.selectRunSource(
+      selectionMode === "stages dropdown" ? "#stagesRunSelect" : "#runIdSelect",
+      { runId: "franka-demo", sourceType: "local_demo" },
+    );
     cy.wait("@loadFranka");
     cy.wrap(null).should(() => expect(demoDetailsStarted).to.eq(true));
     if (selectionMode === "stages dropdown") {
-      cy.get("#stagesRunSelect").select(ARTIFACT_ONLY_RUN_ID);
+      cy.selectRunSource("#stagesRunSelect", {
+        runId: ARTIFACT_ONLY_RUN_ID,
+        projectId: "project-a",
+        bucket: "project-artifacts",
+        resolvedPrefix: "",
+        sourceType: "artifact_storage",
+      });
     } else {
       cy.get("#runIdInput").clear().type(ARTIFACT_ONLY_RUN_ID);
       cy.get("#loadRunData").click();
@@ -76,7 +85,13 @@ describe("NPA agent local demo selection", () => {
       const observer = new win.MutationObserver(() => renderedSummaries.push(summary.textContent));
       observer.observe(summary, { childList: true, characterData: true, subtree: true });
     });
-    cy.get("#runIdSelect").select(ARTIFACT_ONLY_RUN_ID);
+    cy.selectRunSource("#runIdSelect", {
+      runId: ARTIFACT_ONLY_RUN_ID,
+      projectId: "project-a",
+      bucket: "project-artifacts",
+      resolvedPrefix: "",
+      sourceType: "artifact_storage",
+    });
     cy.wait("@artifactOnlyList");
     cy.get("#renderedDataSummary").should("contain.text", ARTIFACT_ONLY_RUN_ID);
     cy.then(() => releaseDemoDetails());

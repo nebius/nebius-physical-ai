@@ -2,13 +2,346 @@
 
 [Guides](README.md)
 
-This guide runs the **NVIDIA Physical AI Data Factory** blueprint natively on
-Nebius + SkyPilot. It is delivered as a single npa.workflow spec
-(`workflows/testing/physical-ai-data-factory.yaml`) that
-**composes existing workbench tools** — there is no OSMO orchestrator and no new
-"data factory" tool. SkyPilot is the sole orchestrator; every stage hands off
-through one S3 run prefix so input, intermediate, and output artifacts are all
-viewable in the NPA agent artifact browser.
+This guide runs **NVIDIA Physical AI Data Factory** workflows natively on
+Nebius + SkyPilot. Five `npa.workflow` specs cover the direct VDA, scoped DIG,
+IAA, and EVG translations plus one clearly labeled NPA-specific Cosmos3 VDA
+alternative. They compose registered Workbench tools and narrow protocol
+adapters; neither OSMO nor Airflow is embedded. SkyPilot is the sole
+orchestrator, and stages hand off durable artifacts through S3-compatible
+storage.
+
+Two official repositories have intentionally different roles. NVIDIA's
+[Physical AI Data Factory](https://github.com/NVIDIA/physical-ai-data-factory)
+repository is the ecosystem and agent-skill entry point; its Video Data
+Augmentation workflow runs on OSMO upstream. NVIDIA's
+[PAIDF Orchestration](https://github.com/NVIDIA/paidf-orchestration) repository
+is an Apache Airflow-on-Kubernetes scaler and currently carries Image Attribute
+Augmentation and Event Video Generation DAGs. NPA does not embed either
+orchestrator and does not describe those Airflow DAGs as this VDA workflow.
+Every NPA run records the reviewed revisions, licenses, and this execution
+boundary in `reports/upstream.json`; see `skills/NOTICE-NVIDIA-PAIDF`.
+
+## Authoritative YAML mapping
+
+| NPA YAML | Upstream repository / workflow | Relationship | NPA orchestrator / runtime |
+| --- | --- | --- | --- |
+| `physical-ai-data-factory.yaml` | `NVIDIA/physical-ai-data-factory` / Video Data Augmentation | Direct VDA translation using Cosmos Transfer 2.5 | `npa.workflow/v0.0.1` on SkyPilot; Workbench GPU/CPU stages + Token Factory |
+| `paidf-defect-image-generation.yaml` | `NVIDIA/physical-ai-data-factory` / DIG Day-1 manual-ROI default fresh-finetune branch | Direct, deliberately scoped translation; not the USD Day-0 or real-alignment branch | `npa.workflow/v0.0.1` on SkyPilot; operator-built restricted AnomalyGen compatibility image on B200 |
+| `paidf-image-attribute-augmentation.yaml` | `NVIDIA/paidf-orchestration` / `image_attribute_augmentation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Qwen Image Edit worker + pinned PAIDF augmentation/auto-label protocols |
+| `paidf-event-video-generation.yaml` | `NVIDIA/paidf-orchestration` / `event_video_generation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Cosmos3 Super worker + pinned PAIDF augmentation and auto-label services |
+| `paidf-cosmos3.yaml` | NPA composition informed by the PAIDF VDA contract; no upstream Airflow DAG | NPA-specific Cosmos3 video2video VDA alternative, not IAA or EVG | `npa.workflow/v0.0.1` on SkyPilot; NPA Cosmos3/Curator/FiftyOne/Rerun images |
+
+All five specs write `npa.paidf.upstream.v1`. Direct translations name the
+exact upstream workflow and revision; the Cosmos3 alternative records
+`translation: npa-specific-variant`. Vendor images are digest-pinned. Gated
+weights and operator inputs remain runtime-only and are never published in NPA
+image layers. IAA pins `Qwen/Qwen-Image-Edit-2511` at
+`6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9`; EVG pins
+`nvidia/Cosmos3-Super-Image2Video` at
+`4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`.
+The direct IAA and EVG translations reject model/revision overrides outside
+these reviewed pairs. Their VLM/LLM endpoints must use the approved Token
+Factory HTTPS origin before the operator's credential is forwarded. Every
+native artifact handoff verifies its schema and run identity; branch-specific
+handoffs also verify the workflow identity. An enabled attribute evaluator must
+return an explicit passing verdict for an output to enter the final dataset.
+
+### Native DIG, IAA, and EVG execution contracts
+
+The three new translations are ordinary generic workflow submissions; they do
+not add one-off top-level CLI commands. Before any GPU or image work, validate
+the exact spec and run its workflow-specific access checks:
+
+```bash
+npa workbench workflow validate-spec workflows/testing/paidf-defect-image-generation.yaml --json
+npa workbench health access --capability paidf-dig
+npa workbench health access --capability paidf-iaa
+npa workbench health access --capability paidf-evg
+npa workbench health access --capability paidf-label-detection
+npa workbench health access --capability paidf-label-captioning
+npa workbench health access --capability paidf-label-visual-qa
+npa workbench health access --capability paidf-label-attribute-search
+```
+
+`validate-spec` derives only human-gated workflow blockers. DIG therefore names
+the exact Cosmos Guardrail payload; IAA names only the attribute-search NGC
+image; EVG names its four exact NGC service digests and gated
+Cosmos-1.0-Guardrail snapshot. The broader
+`health access` calls also probe public, revision-pinned model payloads used at
+runtime. None of these checks accepts terms for the operator.
+
+DIG is the official Day-1 manual-ROI fresh-finetune path: it validates the clean
+images, ROI masks, and defect specification, runtime-fetches and verifies the
+pinned AnomalyGen checkpoint closure, fine-tunes the selected upstream recipe,
+then runs the upstream generator and native label export. It intentionally does
+not claim Day-0 USD scene preparation or the separate PCBA real-alignment path.
+
+DIG's pinned OpenMDW-1.1 Cosmos Framework Qwen guard catches inference and
+parsing errors and returns an allowed result upstream. NPA uses an exact-source
+private overlay to raise on those errors and require one complete published
+safety verdict. Safe and Controversial keep their upstream allowed decisions;
+Unsafe is rejected. The vendor interpreter must import the reviewed module,
+and the completed run must report enforced text screening before publication.
+The result binds the source/license, original and adapted hashes, package trees,
+and actual timing summary. Installed vendor files and NLTK behavior are
+preserved. The upstream image preset runs RetinaFace blur but contains no image
+content classifier; its enforcement flag remains false.
+
+The upstream IAA/EVG generation images lack required SkyPilot worker commands.
+The accepted EVG image also needs an exact-source tokenizer adaptation for its
+Transformers 5.13 runtime: the published Cosmos3 tokenizer specifies Qwen2 but
+does not ship the model config that automatic dispatch requests. NPA selects the
+published `qwen2` tokenizer type in a private copy of the verified vLLM-Omni
+pipeline. The seven pinned tokenizer files, prompt method, special tokens and
+installed vendor package remain unchanged. `generation_runtime` requires the
+exact `tokenizer_source_adaptation` alongside its guardrail adaptation. EVG
+serving and DIG offline children receive no Hugging Face token after staging.
+
+Build `paidf-image-edit-sky` and `paidf-event-video-sky` from their exact pinned
+parents, scan the actual bytes, publish privately, and supply their immutable
+digests with `--var generation_image=<operator-image@sha256:digest>`. DIG uses
+`--var anomalygen_image=<operator-image@sha256:digest>`. The checked-in defaults
+are deliberately non-runnable placeholders. The [container catalog](../container-image-catalog.md)
+records verified wrapper publication separately from native workload acceptance.
+
+IAA selects the official aligned vLLM/Omni 0.22.0 parent to fix the
+[authentication bypass in the blueprint's 0.20 runtime](https://github.com/vllm-project/vllm/security/advisories/GHSA-94f4-hr76-p5j6).
+Its Qwen model revision and image-edit protocol are preserved. Upstream
+provenance records both the original blueprint image and this security update;
+the executed report records the actual worker digest. EVG upgrades NLTK to the
+hash-pinned 3.10.3 wheel to fix its inherited
+[JVM argument injection vulnerability](https://github.com/nltk/nltk/security/advisories/GHSA-m4rf-3fr8-xwx3).
+Its actual service also needs `nvidia/Cosmos-1.0-Guardrail` at
+`cf03c0395fac8c4de386c0bdab12cc4fc8d66362` and
+`Qwen/Qwen3Guard-Gen-0.6B` at `fada3b2f655b89601929198343c94cd2f64d93cc`.
+NPA checks access, fetches the exact snapshots, verifies each file's path, size,
+and hash against the pinned revision's Hub manifest, and
+binds vendor default references inside an isolated cache consumed offline.
+Only the small NLTK data subtree is copied to verified regular files; NLTK's
+symlink protection and the upstream content guardrails stay enabled. The EVG
+`generation_runtime` report binds model inventories and the NLTK tree hash
+through output validation and terminal lineage.
+The pinned upstream EVG template sets per-request `guardrails: false`. NPA
+explicitly sets it to `true` and rejects missing, false, or malformed values
+before execution; this deliberate adaptation keeps the declared guardrail
+contract consistent with actual generation requests.
+The installed Qwen guardrail also catches inference/parser errors and returns
+allow. An exact-source-bound runtime code copy changes those errors to failures
+and requires one complete `Safety: Safe`, `Safety: Unsafe`, or
+`Safety: Controversial` verdict line. Real model inference is preserved;
+`Controversial` retains the upstream allow policy. The installed package remains
+unchanged, and EVG provenance records the original and adapted source hashes.
+Both generation recipes update the distribution kernel headers before scanning.
+Every native handoff retains hashed producer reports, exact scene sets, and
+content manifests; terminal validation reopens the full generation and labeling
+chain, including each executed worker image.
+
+The labeling stages likewise require the exact private digests built from
+`paidf-attribute-search-sky` (IAA and EVG), `paidf-detection-sky`,
+`paidf-captioning-sky`, and `paidf-visual-qa-sky` (EVG). Set
+`attribute_search_image`, `detection_image`, `captioning_image`, and
+`visual_qa_image` as applicable. Their placeholders deliberately fail before
+launch. These restricted recipes retain the pinned NGC service environment and
+real `/app/.venv/bin/main` CLI, adding worker bootstrap and command forwarding.
+NPA uses an independent `/opt/npa-venv` so its setup leaves vendor dependencies
+unchanged.
+Configure pull secrets for the operator registry. Build-byte scanning, registry
+pullability, bootstrap proof and real labeling artifacts remain required.
+
+EVG's detector runtime-fetches the public RF-DETR Base checkpoint with the
+SHA-256 published in the pinned auto-labeling source. NPA requires that same
+digest for custom cache filenames too; a different model hash fails before
+labeling. The source URL and expected hash appear in both upstream provenance
+and the completed detection report. The selected BoostTrack path uses no
+additional ReID model.
+
+The live matrix takes these digests from
+`NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE`, `NPA_E2E_PAIDF_DETECTION_IMAGE`,
+`NPA_E2E_PAIDF_CAPTIONING_IMAGE`, and `NPA_E2E_PAIDF_VISUAL_QA_IMAGE`; it does not
+substitute the incompatible raw NGC parents when an override is missing.
+The EVG live test fetches Lav Varshney's CC0 camera photograph from a pinned
+scikit-image revision, checks its SHA-256 before staging, and records source
+provenance. It exercises real person detection and labeling; IAA and DIG use
+repository-authored inputs. See the [starter-media notice](../../../skills/NOTICE-PAIDF-STARTER-MEDIA)
+for exact source and license boundaries.
+
+IAA and EVG preserve the upstream service/batch boundary by starting the pinned
+vLLM-Omni generation service inside the same SkyPilot state that consumes it.
+Frozen client setup and execution select the worker's Python interpreter.
+IAA postprocessing reuses its generation image on a CPU-only resource because
+the upstream client requires Python 3.11 or newer. Video validation decodes
+actual frames with NPA's pinned PyAV dependency; it requires no host `ffprobe`.
+Input preparation writes real RGB JPEG files and retains both source and
+prepared hashes. The pinned augmentation client otherwise writes PNG response
+bytes under its published `.jpg` output path and declares them as JPEG to its
+verifier. NPA applies an exact-source-bound writer correction before execution:
+JPEG outputs are encoded as JPEG, while video bytes remain unchanged. The
+augmentation report records the original and patched source hashes, and output
+and terminal validation require that exact adaptation. The configured MiniCPM
+model remains unchanged. Runs with previously completed PNG preparation need a
+fresh run identity so completed input artifacts are preserved.
+Each real PAIDF component gets the upstream three retries with a 30-second retry
+delay. EVG then preserves the serial detection → captioning → anomaly Visual QA
+→ per-person Visual QA → person-attribute-search chain. Component adapters
+require the published contextual and sidecar files immediately after each
+service exits. Dataset assembly performs the upstream track-aware completeness
+rules, and a separate terminal state re-opens every media, caption, metadata,
+and labeling handoff before writing `reports/terminal-validation.json`.
+Captioning and anomaly Visual QA need one B200 because the pinned labeling
+stack decodes H.264 through NVIDIA CUVID; hosted VLM calls do not remove that
+local decoder requirement. Per-person Visual QA reads detector JPEG crops and
+shares the same B200 profile. Person attribute search consumes the resulting
+labels and remains a CPU stage. NPA preserves the
+[upstream codec policy](https://github.com/NVIDIA/paidf-auto-labeling/blob/36dc1114dea00d9986df97325a664520993964de/scripts/ffmpeg_codec_policy.py).
+
+The selected Token Factory VLM accepts at most ten images in one request.
+Anomaly Visual QA uses the upstream CLI's `--max-frames 10` (DAG default: 16),
+and per-person Visual QA uses `--max-crops-per-track 10` (DAG default: 12).
+The pinned service [evenly subsamples the candidates](https://github.com/NVIDIA/paidf-auto-labeling/blob/36dc1114dea00d9986df97325a664520993964de/packages/tasks/visual_qa/src/visual_qa/media.py),
+including the first and last candidate in each sequence; a candidate endpoint
+is not necessarily the video's final frame. Question banks, models, resolution,
+sampling rate and retries are preserved. Each VQA result records the exact
+original/effective sampling controls and source hash in `request_media_contract`.
+Downstream stages and terminal validation reject missing or changed contracts.
+This uses the published CLI without patching vendor code or rebuilding an image.
+
+The optional Airflow-only YAML/HTML performance dashboard is not copied: it
+queries Airflow's task-instance REST metadata, which does not exist in the NPA
+runtime. SkyPilot/NPA retain stage timing and terminal state, while the terminal
+JSON records output counts, manifest digest, validated-artifact count, and
+trackless-scene count. This is an explicit orchestration-reporting substitution,
+not a model or data-path substitution.
+
+### Native live validation evidence
+
+The [per-image Rerun evidence](paidf-image-evidence.md) reconciles exactly seven
+restricted compatibility images and their seven digest/run-bound recordings.
+The seven-image count is independently asserted against the packaging contract;
+it is not inferred from a public image catalog. The selected content-addressed
+AnomalyGen recording is
+`npa-paidf-anomalygen-sky-fb099f7b670fede587398c1d5374db7cb6a231bad0fc839432c9da49b6870074.rrd`.
+An earlier immutable DIG pair remains retained but superseded because its
+normalized upstream repository attribution did not match the pinned source.
+
+IAA completed all nine states on reserved B200 capacity from source
+`39120bc9b567d6400d4fe955988132ba1f6ce682`. The upstream attribute evaluator
+accepted one 896×1184 JPEG (81,149 bytes); CPU postprocessing and the real
+attribute-search service produced one person with structured clothing attributes
+and three queries in each of the easy, medium, and hard tiers. The final dataset
+has one entry and 13 assembled files. Independent live assertions and a fresh
+terminal-validation replay verified all four producer handoffs, the executed
+image digests, copied artifacts, and both required terminal artifact groups.
+
+The generated JPEG SHA-256 is
+`d47fb223aa0e4d2354beb94af68b2ae7417a04549c92e336ae3eb3a63c9bb9d0`;
+the dataset manifest SHA-256 is
+`fc245007886b6372a10afd082e156ed2bedf1af7eb7b3ad4ecaef0e63e7b858a`.
+Submission to terminal completion took 1,664.3 seconds; the GPU state took
+269.0 seconds. Ten GPU samples observed up to 61,496 MiB resident memory but
+missed active kernels, so they do not establish compute utilization.
+Visual review confirmed the requested black hoodie, black shorts, and brown
+boots. The result is a three-view illustration from a repository-authored
+silhouette; this acceptance does not establish photographic fidelity or
+preservation of a single-person composition.
+
+EVG completed all twelve states on reserved B200 capacity. The first seven
+states ran from `27700b94612d7f8297a4f879c1c3f550bff467f1`; an explicit durable
+resume retained their verified artifacts and completed the remaining five from
+`f466e119f1249de81e2e752ff3092098c5839964`. The retained first attempt records the
+hosted VLM's rejection of twelve images. The resume used the published ten-image
+controls described above. Independent end-to-end assertions and terminal replay
+verified one assembled scene, 47 files, twelve validated artifacts, no trackless
+scenes, and the complete generation, detection, captioning, VQA and search
+handoffs. All 47 assembled files (22,191,075 bytes) and seven lineage documents
+were reopened; sixteen JPEG detector crops were decoded. PAS produced one
+person with six nonempty, distinct primary queries. The canonical dataset JSON
+SHA-256 is
+`ddc54f5424d5819312bd13678716621ca4c8983b818e0a94ee192367519b9d37`.
+
+The final H.264 video contains 93 fully decoded frames at 1280×720 and 24 fps
+(3.875 seconds, 5,020,456 bytes), with SHA-256
+`d98203dba3798514b1b20dcef0a830aa26e4b1b75b8803082ec2f0895b799a0b`.
+Its bytes match the generated video reviewed visually. Anomaly VQA returned
+21 option-valid answers for 21 questions. Person VQA returned 29 valid answers
+from a 33-question bank: the upstream normalizer skipped two empty answers with
+warnings, and the model omitted two headwear-detail answers. The published
+protocol accepts this partial response; PAS retains its optional-field behavior.
+This result establishes protocol acceptance with recorded missing answers, not
+complete person-attribute coverage.
+
+Four reviewed frames show the source camera and tripod, with a person moving
+beside them and ending low to the ground. Face pixelation is visible in three
+reviewed frames; the final face is angled down and partly obscured. These stills
+do not establish physical accuracy, continuous-motion fidelity or perfect blur
+recall. The resume took 1,081.748 seconds and reused generation. Its nine GPU
+samples observed zero compute utilization and resident memory; the earlier
+generation attempt separately recorded a 100% utilization peak and 86,774 MiB
+peak resident memory. Exact run locations remain in owner-only evidence.
+
+DIG's operator-private image was built and published from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9`, with runnable child digest
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`.
+The distinct OCI index/config identities, 22-diff-ID/21-blob rootfs, 67,908-file
+and 10,673,751,967-byte inventory, 1,683-package SPDX SBOM, and retained
+security findings are recorded in the
+[container catalog](../container-image-catalog.md#external-paidf-runtime-images).
+All 1,924 weight-shaped candidates were reviewed; no gated runtime model
+weights, credential paths, or populated model-cache paths were accepted as
+payload. One JWT-shaped scanner match and six PEM blocks remain retained with
+their exact public-source classifications. The fixed-CRITICAL policy passed,
+which is not a zero-vulnerability claim.
+
+Bootstrap, isolated NPA installation, CUDA dependency imports, offline CPU
+`torchrun`, and W&B fresh, persisted-run, and retry probes passed. The same
+accepted image then passed actual B200 CUDA/FlashAttention/Triton checks and all
+four native causal/full attention cases at the same NPA source. FlashAttention
+maximum absolute error was `0.000273943`, Triton maximum absolute error was `0`,
+and maximum relative L2 was `0.00305612 < 0.015`. Training used default NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference used default cuDNN. The
+diagnostic loaded no model weights and did not run a full model forward.
+
+Native DIG run `paidf-dig-15395d41fe18` completed all four logical states on the
+exact accepted B200 image. The durable resume reused the valid attempt-1
+`record-upstream` state from `743d87df3a19fc0571d95c1d98b2bc53a2b438e9`,
+which took 185 seconds. Attempt 8, bound to
+`ff198c6c289ee05ec5953e5968dc2c626ab27eee`, completed
+`prepare-base-checkpoints` in 1,002 seconds, `finetune` in 4,710 seconds, and
+`anomaly-infer` in 1,051 seconds. It did not rerun or relabel the preserved
+first state as attempt-8 work. A separate source-bound native validation replay
+returned `passed` after reopening the terminal artifacts.
+
+The unchanged fresh-finetune recipe reached exactly 15,000 iterations, with
+validation and checkpoint saves every 1,000 iterations, early stopping disabled,
+and no early-stop artifact. Evaluator-backed selection chose checkpoint 13,000,
+whose SHA-256 is
+`f54b720e786229395717f8a6bde9c8a2864735cddcada6f45d147cd5add04f65`;
+its selected score was `0.4711651623249054`, compared with terminal-checkpoint
+score `0.4695567297935487`. The retained trace contains 1,500 loss samples.
+Fifty-six run-bound B200 samples observed maxima of 100% utilization,
+40,688 MiB resident memory, and 945.84 W.
+All 30 request indices were accounted as 24 generated RGB images and six
+text-guardrail blocks. The 24 images total 605,744 bytes and have 24 native COCO
+annotations in one label file. The anomaly subtree contains 293 objects and
+3,541,820 bytes. The stable whole-run inventory contains 5,007 objects and
+157,040,084,602 bytes, including runtime-fetched checkpoints. Its media-manifest
+SHA-256 is
+`c8eb3b5da00dbfabf2ff3e4b3fd3f96b7d73a827e26227dbdf847127059fb115`;
+the labels SHA-256 is
+`b330be50a83692d05a5bdc692e4d84ff2e7645991d891b1eabe07d78e33d06e8`.
+The inference report measured 98.845 seconds across its internal model path,
+including 22.044 seconds of model initialization, 2.491 seconds of guardrail
+initialization, 74.264 seconds of generation (3.094 seconds per emitted image),
+and 6.452 seconds of guardrail work, inside the 1,051-second workflow-state wall
+time. Its upstream timing summary is 1,261 bytes with SHA-256
+`9c6738a56d9b2fc7d593b0d9b83e50497b1c601ba7fddbeba35bc046457ed5c3`.
+
+The real Qwen text guardrail was enabled, enforcing, and failed closed before
+generation on invalid results. Image enforcement remained false because the
+upstream image preset performs face blurring but has no image-content
+classifier. This is a recorded limitation, not an implied image safety gate.
+Gated checkpoints and data remain runtime fetches, and private acceptance does
+not grant redistribution rights. Day-0 USD preparation and PCBA real-alignment,
+B300 and RTX PRO 6000 acceptance, and live browser switching remain unverified.
 
 > **Want the from-zero runbook?** See
 > [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) for a
@@ -22,6 +355,7 @@ NVIDIA blueprint (OSMO) → NPA stage (toolRef / run):
 
 | NVIDIA stage | NPA state | Tool | Runtime |
 | --- | --- | --- | --- |
+| Source boundary | `record-upstream` | `paidf_upstream.write_upstream_contract` | CPU |
 | Stage 1 Config Generation | `generate-configs` | `run.shell` (sample appearance-only variables) | CPU |
 | Stage 2a Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
 | Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` | GPU (Cosmos Transfer 2.5; optional upstream Meta SAM2 masks) |
@@ -71,11 +405,15 @@ Three NVIDIA components in that table are the real open-source projects:
 See `skills/NOTICE-NVIDIA-COSMOS-OSS` for exactly which upstream code runs and
 where NPA substitutes its own endpoint.
 
-**Model roles** (verified available on Nebius Token Factory):
+**Model roles** (verify against the current key-scoped Token Factory catalog):
 
 - VLM captioning + the evaluator's attribute answering: `MiniMaxAI/MiniMax-M3`
 - Hosted reasoning critic: `MiniMaxAI/MiniMax-M3`
 - Prompt / MCQ LLM: `nvidia/Nemotron-3_5-Lightning`
+
+Model availability can change independently of the workflow. Run
+`npa workbench token-factory models` immediately before execution and override
+`caption_model` if the configured multimodal model is not reachable.
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
@@ -225,6 +563,20 @@ or quality-disposition checks; it should not be made a shared default.
 - **GPU (Nebius Managed K8s):** Cosmos Transfer 2.5 augmentation only.
 - **CPU:** config sampling, hallucination, temporal-consistency, and protected-
   appearance checks, Cosmos Curator curation, FiftyOne review, visualize, finalize.
+
+### Live validation scope
+
+The complete workflow was validated on reserved RTX PRO 6000 capacity with the
+pinned RoboPro physical capture: eight real segmentation-conditioned Cosmos
+Transfer 2.5 variants ran across four GPU nodes with upstream content guardrails
+enabled. One candidate passed all four attribute checks plus hallucination and a
+disjoint decoded-frame holdout at `0.907986` against the default `0.75`
+threshold. The accepted branch then completed real Cosmos Curator and FiftyOne
+Brain curation, finalized 320 artifacts, and wrote a 46,332,150-byte Rerun
+recording. The workflow completed successfully after durable resume replayed the
+already committed stages; no on-demand capacity or synthetic fallback was used.
+Concrete project, cluster, and object-store identifiers remain private runtime
+evidence.
 
 The quality gate is fail closed. PAIDF first ranks every generated candidate,
 then copies only candidates with explicit independently passing 4/4 attribute,

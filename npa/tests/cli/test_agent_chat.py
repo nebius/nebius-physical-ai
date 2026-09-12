@@ -330,12 +330,21 @@ def test_onboard_solution_does_not_shadow_create_workflow() -> None:
 
 
 def test_find_artifacts_apis_include_discovery_and_load() -> None:
-    from npa.cli.agent_chat import apis_for_intent
+    from npa.cli.agent_chat import apis_for_intent, format_find_artifacts
 
     apis = apis_for_intent("find_artifacts")
     assert "artifacts/runs" in apis
     assert "artifacts/run/{run_id}" in apis
     assert "sim-viz/load-artifact" in apis
+
+    guidance = format_find_artifacts()
+    assert "complete server-issued" in guidance
+    assert "`key`" in guidance
+    assert "`project_id`" in guidance
+    assert "`resource_bucket`" in guidance
+    assert "`resolved_prefix`" in guidance
+    assert "`s3_uri` is provenance only" in guidance
+    assert "`run_id` + `s3_uri`" not in guidance
 
 
 def test_component_capabilities_reply_is_targeted() -> None:

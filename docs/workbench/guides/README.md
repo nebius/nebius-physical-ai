@@ -31,15 +31,17 @@ it remains unvalidated end to end. For browser teleoperation measurements, see
 | Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
 | Produce a labeled dataset with Cosmos Transfer | [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
 | Understand Data Factory stages and artifacts | [Component and S3 mapping](physical-ai-data-factory.md) |
+| Audit native DIG, IAA, and EVG image evidence | [Restricted image evidence](paidf-image-evidence.md) |
 | Reuse a verified dataset campaign | [Campaign reuse](paidf-campaign-reuse.md) |
 | Caption or reason about existing artifacts | [Token Factory](../token-factory.md) |
 
 <a id="physical-ai-data-factory-video-data-augmentation"></a>
 
 Data Factory composes annotation, Cosmos augmentation, evaluation, curation, and
-Rerun visualization on Nebius + SkyPilot. Select the actual workflow's inputs
-and model access requirements; generation and input-conditioned augmentation
-have different contracts.
+Rerun visualization on Nebius + SkyPilot. Its native workflow family includes
+VDA, DIG, IAA, and EVG translations plus the NPA-specific Cosmos 3 alternative.
+Select the actual workflow's inputs and model access requirements; generation
+and input-conditioned augmentation have different contracts.
 
 ## Sim-to-real: the full 14-stage loop
 
