@@ -335,7 +335,8 @@ images:
       Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r6;
       the immutable 1.2.2-cu130, r2, and unpublished r3/r4 images remain rollback
       provenance. The r6 image removes imageio-ffmpeg's redundant wheel-bundled
-      executable, uses the attributed distro FFmpeg instead, and keeps a
+      executable, uses the attributed distro FFmpeg instead, removes the unused
+      vulnerable Nsight EFA metrics helper inherited from the CUDA base, and keeps a
       no-argv SkyPilot worker pod alive until bootstrap execs its setup, and
       publishes auditable source-motion-preserving PAIDF composites beside the
       unmodified Cosmos outputs. Bakes

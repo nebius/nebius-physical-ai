@@ -65,7 +65,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the pod user. Without them a workbench image cannot host a SkyPilot k8s task
 # (it dies with `sudo: command not found`), which is why the cosmos3-generate
 # workflow needs them. The final user stays non-root; the sudoers grant below is
-# scoped to that bootstrap.
+# scoped to that bootstrap. The CUDA devel base's Nsight EFA metrics helper is
+# unused by generation and contains a vulnerable Go TLS stdlib; remove the
+# executable instead of exempting the scanner finding.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -77,7 +79,11 @@ RUN apt-get update \
         rsync \
         sudo \
         wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -delete \
+    && test -z "$(find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -print -quit)"
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 

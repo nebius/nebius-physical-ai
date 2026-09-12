@@ -137,6 +137,8 @@ def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
     assert 'CMD ["sleep", "infinity"]' in instructions
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in instructions
     assert "imageio_ffmpeg/binaries/ffmpeg*" in instructions
+    assert "*/plugins/efa_metrics/nic_sampler" in instructions
+    assert "-delete" in instructions
 
     completed = subprocess.run(
         [
