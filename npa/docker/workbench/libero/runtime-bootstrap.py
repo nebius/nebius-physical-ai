@@ -671,7 +671,9 @@ def _manager_sshsig(public_key: bytes, signature: bytes) -> bytes:
     ).encode()
 
 
-def _trusted_manager_public_key(expected_sha256: str) -> bytes:
+def _trusted_manager_public_key() -> bytes:
+    """Load the image-baked trust root without accepting a payload selector."""
+
     try:
         metadata = MANAGER_ACCEPTANCE_PUBLIC_KEY.lstat()
         encoded = MANAGER_ACCEPTANCE_PUBLIC_KEY.read_bytes()
@@ -688,21 +690,23 @@ def _trusted_manager_public_key(expected_sha256: str) -> bytes:
         public_key = base64.b64decode(encoded, validate=True)
     except ValueError as exc:
         raise BootstrapRefusal("manager acceptance trust root is invalid") from exc
-    if (
-        len(public_key) != 32
-        or not _is_hex(expected_sha256, 64)
-        or hashlib.sha256(public_key).hexdigest() != expected_sha256
-    ):
-        raise BootstrapRefusal("manager acceptance trust root differs")
+    if len(public_key) != 32:
+        raise BootstrapRefusal("manager acceptance trust root is invalid")
     return public_key
 
 
 def _verify_manager_signature(
     payload: dict[str, Any], signature_record: dict[str, Any]
 ) -> None:
-    public_key = _trusted_manager_public_key(
-        str(signature_record.get("public_key_sha256") or "")
-    )
+    public_key = _trusted_manager_public_key()
+    claimed_fingerprint = str(signature_record.get("public_key_sha256") or "")
+    if (
+        not _is_hex(claimed_fingerprint, 64)
+        or hashlib.sha256(public_key).hexdigest() != claimed_fingerprint
+    ):
+        # The root-owned key baked into the image is authoritative. This signed
+        # field is only a consistency assertion; it can never select a key.
+        raise BootstrapRefusal("manager acceptance trust root differs")
     try:
         signature = base64.b64decode(
             str(signature_record.get("signature_b64") or ""), validate=True

@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from npa.deploy.images import (
     LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS,
     LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS,
+    LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER,
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
     libero_acceptance_signature_payload,
     libero_accepted_image_manifest,
@@ -543,13 +544,25 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
         assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
         path.write_bytes(original)
 
-    future = tmp_path / "npa/tests/guardrails/test_future_libero_policy.py"
-    future.write_text("def test_libero_future_policy():\n    pass\n", encoding="utf-8")
+    future = tmp_path / "npa/tests/guardrails/test_future_policy.py"
+    future.write_bytes(
+        LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER
+        + b"\ndef test_future_policy():\n    pass\n"
+    )
     assert future.relative_to(tmp_path).as_posix() in (
         libero_publication_enforcement_paths(tmp_path)
     )
     assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
     future.unlink()
+
+    incidental = tmp_path / "npa/tests/guardrails/test_unmarked_policy.py"
+    incidental.write_text(
+        "def test_unmarked_policy():\n    assert 'libero'\n", encoding="utf-8"
+    )
+    assert incidental.relative_to(tmp_path).as_posix() not in (
+        libero_publication_enforcement_paths(tmp_path)
+    )
+    incidental.unlink()
 
     assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 
