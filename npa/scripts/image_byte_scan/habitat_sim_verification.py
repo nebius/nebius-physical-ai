@@ -317,7 +317,7 @@ def _dpkg_findings(
     dict[str, set[str]],
     int,
     str,
-    dict[str, dict[str, str]],
+    dict[str, dict[str, object]],
 ]:
     findings: list[dict[str, object]] = []
     installed = _dpkg_records(tracked.get("var/lib/dpkg/status", b""))
@@ -337,8 +337,33 @@ def _dpkg_findings(
             findings.append(
                 {"code": "runtime_apt_lock_mismatch", "package": row["binary"]}
             )
-    inventory: dict[str, dict[str, str]] = {}
+    list_bindings: dict[str, list[dict[str, str]]] = {
+        package: [] for package in installed
+    }
+    prefix = "var/lib/dpkg/info/"
+    for control_path, payload in tracked.items():
+        if not control_path.startswith(prefix) or not control_path.endswith(".list"):
+            continue
+        package = control_path.removeprefix(prefix).removesuffix(".list")
+        if package not in installed:
+            package = package.split(":", 1)[0]
+        if package in installed:
+            list_bindings[package].append(
+                {
+                    "path": control_path,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+            )
+    inventory: dict[str, dict[str, object]] = {}
     for package, identity in installed.items():
+        package_lists = sorted(list_bindings[package], key=lambda row: row["path"])
+        if len(package_lists) != 1:
+            findings.append(
+                {
+                    "code": "runtime_package_file_list_population",
+                    "package": package,
+                }
+            )
         copyright_path = f"usr/share/doc/{package}/copyright"
         resolved_copyright = _resolve_final_path(
             copyright_path, final_paths, final_links
@@ -348,11 +373,11 @@ def _dpkg_findings(
             findings.append(
                 {"code": "runtime_package_copyright_missing", "package": package}
             )
-            continue
         inventory[package] = {
             **identity,
-            "copyright_path": resolved_copyright,
-            "copyright_sha256": copyright_sha256,
+            "file_lists": package_lists,
+            "copyright_path": resolved_copyright or "",
+            "copyright_sha256": copyright_sha256 or "",
         }
     serialized = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
     inventory_sha256 = hashlib.sha256(serialized.encode()).hexdigest()

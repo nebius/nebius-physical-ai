@@ -190,6 +190,11 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
         "capacity_block_group_id": "reservation-fixture",
         "gpu_count": 1,
         "kubernetes_context": "context-fixture",
+        "node_group_id": "node-group-fixture",
+        "kubernetes_node": {
+            "name": "worker-fixture",
+            "provider_id": "nebius://instance-fixture",
+        },
         "node_group_reservation_policy": {
             "policy": "STRICT",
             "reservation_ids": ["reservation-fixture"],
@@ -203,9 +208,26 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
     provider_path = owner / "strict-provider.json"
     provider_path.write_text(json.dumps(provider), encoding="utf-8")
     provider_path.chmod(0o600)
+    image = "private.invalid/task-owned/npa-habitat-sim@sha256:" + "a" * 64
+    registry_evidence = {
+        "schema_version": "npa.registry.private-pull-refusal.v1",
+        "registry": "private.invalid/task-owned",
+        "image": image,
+        "resolved_digest": "sha256:" + "a" * 64,
+        "anonymous_pull_denied": True,
+        "anonymous_status": 401,
+        "authenticated_pull_succeeded": True,
+    }
+    registry_path = owner / "private-registry.json"
+    registry_path.write_text(json.dumps(registry_evidence), encoding="utf-8")
+    registry_path.chmod(0o600)
     return {
         "registry": "private.invalid/task-owned",
-        "image": "private.invalid/task-owned/npa-habitat-sim@sha256:" + "a" * 64,
+        "image": image,
+        "registry_evidence": {
+            "path": str(registry_path),
+            "sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
+        },
         "kubernetes_context": provider["kubernetes_context"],
         "project": provider["project"],
         "project_id": provider["project_id"],
@@ -218,6 +240,8 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
             "accelerator": provider["accelerator"],
             "capacity_block_group_id": provider["capacity_block_group_id"],
             "gpu_count": 1,
+            "node_group_id": provider["node_group_id"],
+            "kubernetes_node": provider["kubernetes_node"],
             "provider_readback_sha256": readback,
             "provider_receipt_path": str(provider_path),
             "provider_receipt_sha256": hashlib.sha256(
@@ -236,6 +260,13 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
     LIVE._assert_private_image(receipt)
     LIVE._assert_provider_binding(receipt)
 
+    registry_path = Path(receipt["registry_evidence"]["path"])
+    registry_bytes = registry_path.read_bytes()
+    registry_path.write_bytes(registry_bytes + b" ")
+    with pytest.raises(AssertionError):
+        LIVE._assert_private_image(receipt)
+    registry_path.write_bytes(registry_bytes)
+
     provider_path = Path(receipt["reservation"]["provider_receipt_path"])
     provider_bytes = provider_path.read_bytes()
     provider_path.write_bytes(provider_bytes + b" ")
@@ -243,12 +274,46 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
         LIVE._assert_provider_binding(receipt)
     provider_path.write_bytes(provider_bytes)
 
+    private_receipt = receipt.copy()
     receipt["image"] = (
         "ghcr.io/nebius/nebius-physical-ai/npa-habitat-sim@sha256:" + "a" * 64
     )
     receipt["registry"] = "ghcr.io/nebius/nebius-physical-ai"
     with pytest.raises(AssertionError):
         LIVE._assert_private_image(receipt)
+
+    for registry in (
+        "GHCR.IO:443/nebius/nebius-physical-ai",
+        "docker.io/task-owned",
+        "quay.io/task-owned",
+        "public.ecr.aws/task-owned",
+    ):
+        receipt = {
+            **private_receipt,
+            "registry": registry,
+            "image": registry + "/npa-habitat-sim@sha256:" + "a" * 64,
+        }
+        with pytest.raises(AssertionError):
+            LIVE._assert_private_image(receipt)
+
+
+def test_live_selector_binds_pod_node_to_provider_receipt(tmp_path) -> None:
+    receipt = _live_receipt(tmp_path)
+    provider = LIVE._assert_provider_binding(receipt)
+    pod = {"spec": {"nodeName": "worker-fixture"}}
+    node = {
+        "metadata": {"name": "worker-fixture"},
+        "spec": {"providerID": "nebius://instance-fixture"},
+    }
+    LIVE._assert_pod_provider_node(pod, node, provider)
+
+    pod["spec"]["nodeName"] = "other-worker"
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_provider_node(pod, node, provider)
+    pod["spec"]["nodeName"] = "worker-fixture"
+    node["spec"]["providerID"] = "nebius://other-instance"
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_provider_node(pod, node, provider)
 
 
 def test_live_selector_requires_exact_digest_and_terminated_zero_exit() -> None:
