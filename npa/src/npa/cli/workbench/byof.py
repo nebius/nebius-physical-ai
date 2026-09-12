@@ -423,10 +423,7 @@ def run_cmd(
             typer.echo(" ".join(["npa", "workbench", "byof", "run", *argv]))
         return
 
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-        is_robotwin_request,
-    )
+    from npa.orchestration.npa_workflow.robotwin_preflight import is_robotwin_request
 
     if is_robotwin_request(
         solution_name=solution_name,
@@ -437,10 +434,16 @@ def run_cmd(
         capability_name=capability_name,
         yaml_path=yaml_path,
     ):
-        if not os.environ.get(TRANSPORT_CONTEXT_ENV, ""):
-            raise typer.BadParameter(
-                "RoboTwin runs only through normal npa workbench workflow submit"
-            )
+        # The transport is a secret-value carrier, not proof that this public
+        # CLI was invoked by the normal-submit CPU outer task.  Phase A has no
+        # independently attestable outer identity, so accepting an ambient
+        # transport value here would make the direct CLI a scheduler bypass.
+        # Keep the public surface inert until that attestation is designed and
+        # separately approved.
+        raise typer.BadParameter(
+            "RoboTwin runs only through normal npa workbench workflow submit; "
+            "the Phase A worker bridge is disabled"
+        )
 
     runner = _load_runner()
     with _robotwin_runtime_materialization(runner, argv) as authorization:

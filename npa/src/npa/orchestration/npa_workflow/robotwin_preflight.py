@@ -583,6 +583,19 @@ def _validate_authorization_fields(payload: dict[str, Any], raw: bytes) -> dict[
     return values
 
 
+def _require_genuine_runtime_use_receipt(raw: bytes) -> None:
+    """Refuse self-certified decisions until a manager receipt is hash-bound.
+
+    Phase A has no manager-approved receipt format, verifier key, or immutable
+    receipt digest.  The four booleans in the legacy private context are useful
+    only for closed-schema parsing; they are not authority.  Keep this boundary
+    deliberately non-overridable in production.  A later, separately reviewed
+    change must bind genuine manager evidence before this function can return.
+    """
+
+    raise _refusal("manager-runtime-use-receipt-unavailable", raw)
+
+
 def _validate_destination(values: Mapping[str, str], raw: bytes) -> str:
     image = values["bootstrap_image"]
     if (
@@ -677,7 +690,23 @@ def validate_control_plane_source(
         raise _refusal("control-plane-source-output-bucket-reuse")
     if any(private and private in value for private in authorization.redactions):
         raise _refusal("control-plane-source-private-coordinate")
+    _require_verified_control_plane_source_bytes(value, local_fingerprint)
     return value
+
+
+def _require_verified_control_plane_source_bytes(
+    source_uri: str, expected_fingerprint: str
+) -> None:
+    """Refuse until the remote source population has an authenticated manifest.
+
+    A digest-looking prefix is not byte proof.  The existing shared source
+    manifest does not bind every remote object, so Phase A must not download or
+    editable-install that population.  A future scoped change must verify an
+    owner-authorized manifest of every path/mode/digest before this can return.
+    """
+
+    del source_uri, expected_fingerprint
+    raise _refusal("control-plane-source-byte-proof-unavailable")
 
 
 def validate_context_bytes(
@@ -692,6 +721,10 @@ def validate_context_bytes(
     payload = _parse_context_payload(raw)
     values = _validate_authorization_fields(payload, raw)
     summary_uri = _validate_destination(values, raw)
+    # Validate the complete public shape first so malformed fields retain
+    # precise diagnostics.  A syntactically valid context still cannot become
+    # authority: Phase A has no manager-approved receipt format or verifier.
+    _require_genuine_runtime_use_receipt(raw)
     for field_name in ("kubeconfig", "skypilot_config_path"):
         path = Path(values[field_name]).expanduser()
         if not path.is_absolute():

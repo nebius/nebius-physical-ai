@@ -10,6 +10,8 @@ import stat
 
 import pytest
 
+from npa.orchestration.npa_workflow import robotwin_preflight as preflight_module
+
 from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_BUCKET_ENV,
     CHILD_CONFIG_PATH_ENV,
@@ -41,6 +43,24 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[4]
 ROBOTWIN_SPEC = ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
+_REAL_RUNTIME_USE_RECEIPT_GATE = preflight_module._require_genuine_runtime_use_receipt
+_REAL_SOURCE_BYTE_GATE = preflight_module._require_verified_control_plane_source_bytes
+
+
+@pytest.fixture(autouse=True)
+def _supply_phase_b_proofs_only_inside_unit_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Let structural tests reach post-proof checks without weakening production."""
+
+    monkeypatch.setattr(
+        preflight_module, "_require_genuine_runtime_use_receipt", lambda _raw: None
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_require_verified_control_plane_source_bytes",
+        lambda _uri, _fingerprint: None,
+    )
 
 
 def _config_files(tmp_path: Path, context_name: str = "robotwin-context") -> tuple[Path, Path]:
@@ -237,6 +257,21 @@ def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path)
             source_origin="environment",
             local_fingerprint=fingerprint,
             source_staging_requested=True,
+        )
+
+
+def test_phase_a_refuses_self_certified_decisions_and_unproven_source_bytes() -> None:
+    private_context = b'{"license_acceptance":{"self_certified":true}}'
+    with pytest.raises(
+        RobotwinPreflightError, match="manager-runtime-use-receipt-unavailable"
+    ):
+        _REAL_RUNTIME_USE_RECEIPT_GATE(private_context)
+    with pytest.raises(
+        RobotwinPreflightError, match="control-plane-source-byte-proof-unavailable"
+    ):
+        _REAL_SOURCE_BYTE_GATE(
+            "s3://control-source.invalid/npa-src/" + "a" * 64,
+            "a" * 64,
         )
 
 
