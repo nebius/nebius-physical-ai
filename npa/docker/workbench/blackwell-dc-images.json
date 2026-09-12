@@ -961,6 +961,19 @@
       "validated_tag": "2.1-rtfetch-20260916",
       "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
       "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-robotwin",
+      "dockerfile": "robotwin/Dockerfile",
+      "build_script": "robotwin/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "source_compiled_extensions": [
+        "CuRobo v0.7.8 Warp kernels (future runtime JIT; not fetched or resolved)"
+      ],
+      "smoke": "A future exact-digest gate must run the official beat_block_hammer bimanual task through SAPIEN/Vulkan on exactly one STRICT RTX PRO 6000 and validate real HDF5 plus rendered video/frame artifacts.",
+      "notes": "Phase A is a zero-vendor-payload, incomplete-lock bootstrap candidate. No image, digest, wheel architecture set, built-byte scan, public availability, or hardware result exists. It remains publication-quarantined, and its renderer workload is not routed to B200/B300. Replace unknown/pending-build only with the future build and exact-image evidence; this inventory entry is not permission to build, fetch, run, or publish."
     }
   ],
   "validation_evidence": {
