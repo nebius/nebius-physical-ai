@@ -6,6 +6,7 @@ import stat
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -150,6 +151,10 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
             "Isaac-Cartpole-v0",
             "--iterations",
             "3",
+            "--project",
+            "test-project",
+            "--context",
+            "test-context",
             "--output-root",
             "s3://bucket/isaac-lab-rl",
             "--image",
@@ -167,9 +172,17 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
     output = json.loads(capsys.readouterr().out)
     assert output["outputs"]["checkpoint"] == "s3://bucket/isaac-lab-rl/isaac-test-run/npa_isaac_lab_checkpoint.pt"
     assert captured["run_id"] == "isaac-test-run"
+    assert captured["kwargs"]["project"] == "test-project"
+    assert captured["kwargs"]["infra"] == "k8s/test-context"
     rendered_task = captured["docs"][1]
     assert rendered_task["envs"]["ISAAC_LAB_ITERATIONS"] == "3"
     assert rendered_task["envs"]["S3_OUTPUT_PREFIX"] == "s3://bucket/isaac-lab-rl/isaac-test-run/"
+    assert json.loads(rendered_task["envs"]["NPA_EXECUTION_OUTPUTS"]) == [
+        {
+            "uri": "s3://bucket/isaac-lab-rl/isaac-test-run/",
+            "kind": "directory",
+        }
+    ]
     assert rendered_task["resources"]["image_id"] == "docker:registry.example/npa-isaac-lab:test"
     assert rendered_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     assert rendered_task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
@@ -214,3 +227,29 @@ def test_isaac_lab_runner_render_only_keeps_rendered_yaml(capsys) -> None:
     assert rendered.is_file()
     docs = [doc for doc in yaml.safe_load_all(rendered.read_text(encoding="utf-8")) if doc is not None]
     assert docs[1]["envs"]["NPA_ISAAC_LAB_RUN_ID"] == "isaac-render-only"
+
+
+def test_isaac_lab_runner_requires_live_context_before_teardown(monkeypatch, tmp_path) -> None:
+    wrapper = _load_wrapper_module()
+    monkeypatch.setattr(wrapper, "resolve_byof_project", lambda: "test-project")
+    monkeypatch.setattr(
+        wrapper,
+        "resolve_byof_kubernetes_target",
+        lambda _project: type("Target", (), {"context": ""})(),
+    )
+
+    args = wrapper._parse_args(
+        [
+            "--yaml",
+            str(SINGLE_YAML),
+            "--run-id",
+            "missing-context",
+            "--isolated-config-dir",
+            str(tmp_path / "sky"),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="live submission requires --context"):
+        wrapper._submit_and_wait(args)
+
+    assert not (tmp_path / "sky").exists()

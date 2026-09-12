@@ -284,6 +284,20 @@ def test_default_nebius_aws_profile_mutation_is_not_same_principal(local_runtime
         api.ensure_isolated_api(**local_runtime)
 
 
+def test_nebius_short_lived_token_cache_refresh_preserves_identity(local_runtime):
+    token_cache = Path(local_runtime["environment"]["HOME"]) / ".nebius" / "credentials.yaml"
+    token_cache.parent.mkdir()
+    token_cache.write_text("tokens:\n  fixture: first-short-lived-token\n")
+
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    token_cache.write_text("tokens:\n  fixture: refreshed-short-lived-token\n")
+
+    api.ensure_isolated_api(**local_runtime)
+
+    assert _record(local_runtime)["pid"] == original["pid"]
+
+
 def test_invalid_credential_yaml_diagnostic_does_not_include_source_secret():
     with pytest.raises(api.IsolatedApiError) as raised:
         api._yaml_document("credentials: [fixture-secret-token")

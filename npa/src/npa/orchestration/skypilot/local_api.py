@@ -106,10 +106,18 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     home = Path(environment.get("HOME") or "").expanduser()
     kube_paths = [Path(item).expanduser() for item in environment.get("KUBECONFIG", "").split(os.pathsep) if item]
     paths = [*kube_paths, home / ".aws" / "config", home / ".aws" / "credentials"]
-    for directory in (home / ".nebius", Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius"),
-                      Path(environment.get("NPA_CONFIG_DIR") or home / ".npa")):
-        paths.extend(directory / name for name in ("config.yaml", "credentials.yaml", "credentials.json",
+    nebius_directories = {
+        home / ".nebius",
+        Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius"),
+    }
+    for directory in nebius_directories:
+        # Nebius SDK refreshes credentials.yaml in place as its short-lived token
+        # cache. Immutable config and service-account sources still bind identity.
+        paths.extend(directory / name for name in ("config.yaml", "credentials.json",
                      "NEBIUS_IAM_TOKEN.txt", "NEBIUS_TENANT_ID.txt", "NEBIUS_DOMAIN.txt"))
+    npa_directory = Path(environment.get("NPA_CONFIG_DIR") or home / ".npa")
+    paths.extend(npa_directory / name for name in ("config.yaml", "credentials.yaml", "credentials.json",
+                 "NEBIUS_IAM_TOKEN.txt", "NEBIUS_TENANT_ID.txt", "NEBIUS_DOMAIN.txt"))
     for key in ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "NPA_NEBIUS_IAM_TOKEN_FILE", "NEBIUS_IAM_TOKEN_FILE"):
         if environment.get(key):
             paths.append(Path(environment[key]).expanduser())
@@ -151,6 +159,22 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
         except OSError:
             raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
     return result
+
+
+def _immutable_identity_files(files: Mapping[str, str]) -> dict[str, str]:
+    """Discard legacy Nebius token-cache entries from an identity snapshot."""
+
+    return {
+        path: digest
+        for path, digest in files.items()
+        if not (Path(path).parent.name == ".nebius" and Path(path).name == "credentials.yaml")
+    }
+
+
+def _same_identity_files(left: Mapping[str, str], right: Mapping[str, str]) -> bool:
+    """Compare immutable identity files across current and legacy snapshots."""
+
+    return _immutable_identity_files(left) == _immutable_identity_files(right)
 
 
 def _session_members(record: Mapping[str, Any]) -> list[int]:
@@ -252,7 +276,9 @@ def _process(record: Mapping[str, Any], *, verify_files: bool = True) -> dict[st
                 config_path = Path(decoded.get("SKYPILOT_GLOBAL_CONFIG") or "")
                 if not config_path.is_file() or hashlib.sha256(config_path.read_bytes()).hexdigest() != record["config_sha256"]:
                     raise IsolatedApiError("isolated SkyPilot API verified configuration changed on disk")
-            if verify_files and record.get("identity_files") and _identity_files(decoded) != record["identity_files"]:
+            if verify_files and record.get("identity_files") and not _same_identity_files(
+                _identity_files(decoded), record["identity_files"]
+            ):
                 raise IsolatedApiError("isolated SkyPilot API credential configuration changed after verification")
             matches.append({"pid": int(directory.name), "start_ticks": int(stat_fields[19])})
         except (FileNotFoundError, ProcessLookupError):
@@ -395,14 +421,19 @@ def ensure_isolated_api(
         if process:
             if record.get("interpreter") != interpreter or record.get("config_sha256") != config_hash:
                 raise IsolatedApiError("running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting")
-            if record["environment_binding"] != binding or record.get("identity_files") != files:
+            if record["environment_binding"] != binding or not _same_identity_files(
+                record.get("identity_files", {}), files
+            ):
                 raise IsolatedApiError("running isolated SkyPilot API has a different executing identity or changed credential configuration")
         else:
             # No process with this marker exists; starting the same persistent
             # API database recovers controller/job identity, never submits again.
             if _session_members(record):
                 raise IsolatedApiError("owned SkyPilot API children survived their leader; finish its process-session cleanup before recovery")
-            if record.get("environment_binding") and (record["environment_binding"] != binding or record.get("identity_files") != files):
+            if record.get("environment_binding") and (
+                record["environment_binding"] != binding
+                or not _same_identity_files(record.get("identity_files", {}), files)
+            ):
                 raise IsolatedApiError("isolated SkyPilot API recovery requires the original executing identity and credential configuration")
             for port in (record["port"], record["queue_port"], record["metrics_port"]):
                 with socket.socket() as listener:
