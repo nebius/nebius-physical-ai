@@ -482,6 +482,33 @@ def test_manifest_cache_entry_swap_during_validation_removes_current_link(
         preserved.rename(final)
 
 
+def test_cold_cache_entry_swap_after_publication_removes_current_link(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    cache_root = Path(args.cache_root)
+    final = cache_root / fixture["manifest_sha"]
+    preserved = cache_root / ".preserved-final"
+    output = Path(args.output_dir)
+    output.mkdir()
+    original_publish = module._publish_current_cache_link
+
+    def swap_after_publication(*publish_args, **publish_kwargs):
+        original_publish(*publish_args, **publish_kwargs)
+        final.rename(preserved)
+        final.symlink_to(output, target_is_directory=True)
+
+    monkeypatch.setattr(module, "_publish_current_cache_link", swap_after_publication)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+            module.ensure(args)
+        assert not (cache_root / "current").exists()
+    finally:
+        final.unlink(missing_ok=True)
+        preserved.rename(final)
+
+
 @pytest.mark.parametrize(
     "relative",
     ["source/libero/lifelong/utils.py", "venv/bin/python"],
