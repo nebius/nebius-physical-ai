@@ -1,5 +1,10 @@
 # Training Scripts
 
+**Historical standalone deployment reference.** For new LeRobot work, use the
+[current Workbench guide](../../../docs/workbench/guides/reachy2-lerobot-policy.md). The commands below belong to the older
+Terraform/VM setup and have not been revalidated by this documentation update.
+
+
 This directory contains the local source-of-truth for the LeRobot wrapper
 scripts used by this repo.
 
@@ -14,10 +19,10 @@ Files:
 
 ## Local Vs VM Paths
 
-On your Mac, the scripts live here:
+In this checkout, the scripts live here:
 
 ```bash
-/Users/timothyle/repos/lerobot-deploy/training
+<checkout>/research/lerobot-deploy/training
 ```
 
 On the deployed VM, cloud-init writes runnable copies here:
@@ -39,7 +44,7 @@ repo onto the instance.
 Get the current IP from Terraform:
 
 ```bash
-cd /Users/timothyle/repos/lerobot-deploy
+cd '<checkout>/research/lerobot-deploy'
 terraform -chdir=terraform output -raw ssh_command
 ```
 

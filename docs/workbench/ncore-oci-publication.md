@@ -1,5 +1,7 @@
 # NCore OCI development publication
 
+[Workbench docs](README.md)
+
 NCore remains quarantined from supported releases pending complete conversion,
 RTX NRE training/rendering and readback acceptance. This command publishes only
 `ghcr.io/nebius/nebius-physical-ai/npa-ncore:dev-<full-source-sha>`. It does not

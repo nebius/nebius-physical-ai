@@ -1,4 +1,15 @@
-# Contributing Workbench Tools
+# Contributing to Nebius Physical AI
+
+Start with the task you are changing. The detailed contracts below cover a new
+Workbench tool; small fixes can go directly to the relevant section.
+
+| Task | Start here |
+| --- | --- |
+| Improve a README or guide | [Documentation requirements](#documentation-requirements) and [documentation checks](npa/README.md#developing-and-testing-npa) |
+| Fix a CLI, SDK, or service | [Required interfaces](#required-interfaces) and [testing](#testing-requirements) |
+| Add a tool and container | [End-to-end contribution skill](skills/workflows/add-workbench-tool/SKILL.md) |
+| Add or adapt a workflow | [Workflow authoring](skills/workflows/author-npa-workflow/SKILL.md) |
+| Prepare a pull request | [Validation gates](skills/atomic/pre-pr-validation/SKILL.md) and [PR conventions](#commit-and-pr-conventions) |
 
 ## Contribution quality
 
@@ -495,14 +506,30 @@ a pull request; `requires-python` is `>=3.10`.
 
 ## Testing Requirements
 
-Create the virtualenv at `npa/.venv` and install the dev tooling once (this pulls
-in `pytest`, `pytest-mock`, `pytest-cov`, `pytest-timeout`, `pytest-xdist`,
-`ruff`, and the `server` extra so the suite collects):
+Create the contributor virtualenv at `npa/.venv` from the repository root using CPython 3.12.
+The development and adapter extras supply test, lint, and conversion dependencies:
 
 ```bash
 python3 -m venv npa/.venv
-npa/.venv/bin/pip install -e "npa[dev]"
+npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 ```
+
+Run the full suite on **Linux**: native filesystem and controller tests use
+Linux-specific behavior, including `/proc`. macOS supports the CLI, documentation
+checks, and many focused tests, but does not reproduce the complete Linux gate.
+Use an interpreter with `os.memfd_create`; some Conda builds omit it.
+Install `ffmpeg`/`ffprobe` and the same CPU checkpoint/export runtime as CI:
+
+```bash
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install -e "npa[sonic]"
+export PATH="$PWD/npa/.venv/bin:$PATH"
+export NPA_REQUIRE_FFMPEG=1
+umask 077  # Publication handoff tests require private files.
+```
+
+This exercises real tensor serialization and ONNX export without GPU allocation.
+The [CI workflow](.github/workflows/test.yml) is the complete environment recipe.
 
 `npa/.venv` is the repo convention, not a preference: `AGENTS.md`, the guardrail
 CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
@@ -513,8 +540,8 @@ you must then point the tooling at it — `make test PYTHON=...`,
 Then use the `make` targets from the repo root:
 
 ```bash
-make check            # everything the PR gates block on: lint, docs-check, test
-make test             # full unit suite, no live/GPU/network (~11 min)
+make check            # local subset: lint, docs-check, unit tests
+make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
 make test-guardrails  # repo guardrails: catalogs, specs, skills, docs, hygiene
 make lint             # ruff
@@ -541,7 +568,7 @@ just `--ignore=tests/e2e` — is what keeps the default suite hermetic.
 The equivalent raw command is:
 
 ```bash
-cd npa && python -m pytest tests/ --ignore=tests/e2e \
+cd npa && .venv/bin/python -m pytest tests/ --ignore=tests/e2e \
   -m "not e2e and not e2e_serverless and not e2e_skypilot and not e2e_pipeline and not gpu and not multi_gpu and not byovm_live and not ngc_e2e" \
   --timeout=180 -q
 ```
@@ -640,6 +667,18 @@ Add an agent skill under `skills/tools/`; examples are
 only when the platform architecture changes.
 ## Documentation Requirements
 A new tool needs human docs and agent docs.
+
+For README and guide changes, run the offline documentation contracts:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
+```
+
+They check local links and heading anchors, shell/Python syntax, literal CLI names and
+options, declared workflow variables, and the executable package planning example.
+Keep prerequisites, first commands, expected artifacts, and cleanup together.
+Move optional operator details to linked references; retain the scope of historical
+measurements. Quote shell placeholders and mark abbreviated grammar as `text`.
 
 Human docs should cover the tool role, upstream project, runtime modes, GPU
 routing, image build path, credentials, input and output formats, S3 handoff

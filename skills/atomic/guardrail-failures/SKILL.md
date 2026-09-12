@@ -5,8 +5,8 @@ description: Use when a guardrail test or CI gate in npa fails and you need to m
 
 # Decoding A Guardrail Failure
 
-The guardrail suite is ~2000 assertions over 43 files and runs in under a
-minute. It is static: it reads the repo and checks that surfaces which must
+The guardrail suite checks thousands of repository contracts. It reads the
+repo and checks that surfaces which must
 agree still agree. A failure almost always means one of two things — you changed
 one side of a contract and not the other, or you added something the contract
 requires you to register.
@@ -62,6 +62,7 @@ change hits most.
 | `test_develop_skills` | A development skill names a repo path or guardrail that does not exist, or a new guardrail file is undocumented. Update the skill. |
 | `test_no_dangling_workflow_references` | A doc, skill, or script names a workflow YAML that does not exist. Repoint or remove the reference. |
 | `test_docs_green_path` | The documented path from README to a real submit is no longer runnable end to end. Update the quickstart with the new step. |
+| `test_documentation_examples` | Fix the reported Markdown link/heading, shell/Python syntax, CLI command/option, or undeclared workflow variable. Quote shell placeholders; label HTTP routes and abbreviated grammar as `text`. Keep the package README's planning example executable offline. Generated CLI references and historical command records retain separate validation scope. |
 | `test_agent_workflow_operations` | The agent operations guide omitted a lifecycle stage, exposed a non-NPA subprocess, or coupled workflow operation to a model/provider flag. Restore the fixed, provider-neutral NPA command journey. |
 | `test_audit_container_docs_skill` | The public container catalog disagrees with the publish inventory. Update `docs/workbench/container-image-catalog.md`. |
 | `test_solution_licensing_skill` | The licensing skill no longer covers an artifact boundary. Update the skill, not the test. |

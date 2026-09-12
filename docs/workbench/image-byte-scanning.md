@@ -1,5 +1,7 @@
 # Complete-byte checks for cuRobo images
 
+[Workbench docs](README.md)
+
 The trusted cuRobo publication workflow adds an archive byte scan before pushing
 an image and after pulling its exact digest. It retains the existing Trivy,
 license, runtime, provenance, SBOM, and payload checks. Other workbench images

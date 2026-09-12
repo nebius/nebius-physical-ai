@@ -1,5 +1,7 @@
 # SONIC Whole-Body Control
 
+[Cookbooks](README.md)
+
 SONIC / GEAR-SONIC is NVIDIA GEAR's humanoid whole-body-control stack. It is a
 standalone Workbench tool for low-level motor control, motion tracking,
 teleoperation, sim2sim validation, and deployment of full-body humanoid
@@ -49,7 +51,7 @@ Kubernetes with GPU Operator driver mounts:
 
 ```bash
 npa workbench sonic train --runtime serverless --embodiment unitree-g1 \
-  --image <validated-compute-only-image>
+  --image "<validated-compute-only-image>"
 ```
 
 Internally this maps to the SONIC embodiment tag `UNITREE_G1_SONIC`.

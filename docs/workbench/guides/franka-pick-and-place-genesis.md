@@ -1,11 +1,11 @@
 # Pick-and-Place with a Franka Arm in Genesis
 
-**The hook:** spin up thousands of Franka Emika Panda arms in parallel inside
-the Genesis physics engine, train one of them to pick up a cube and drop it in a
-target zone, then record demonstrations you can turn into a LeRobot dataset —
-the same format the famous DROID Franka dataset uses.
+[Guides](README.md)
 
-This is the classic "hello robot" of manipulation, done at GPU scale.
+Train and evaluate a PPO teacher for Franka cube pick-and-place in Genesis,
+then record demonstrations for LeRobot. The recorded H200 run produced real
+checkpoint weights but zero successful held-out episodes; use evaluation to
+determine whether a checkpoint is suitable for demonstrations.
 
 ## Ingredients
 
@@ -100,11 +100,11 @@ A serverless H200 training example:
 
 ```bash
 npa workbench genesis train-teacher \
-  --runtime serverless --project-id <your-project-id> \
+  --runtime serverless --project-id "<your-project-id>" \
   --gpu-type h200 --gpu-count 1 \
-  --job-name <your-training-job-name> \
+  --job-name "<your-training-job-name>" \
   --n-envs 1024 --max-iterations 500 --action-space cartesian \
-  --output-path s3://<your-bucket>/<new-training-prefix>/
+  --output-path "s3://<your-bucket>/<new-training-prefix>/"
 ```
 
 Inspect `model.pt`, `arch_config.json`, `train_teacher_summary.json`, and

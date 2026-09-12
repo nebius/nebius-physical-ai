@@ -1,5 +1,7 @@
 # Cosmos3-Super serving on the workbench (`npa-cosmos3-serving`)
 
+[Workbench docs](README.md)
+
 `npa workbench cosmos3 generate` runs Cosmos 3 generation as a batch job: one
 invocation, one artifact, and a full model load every time. For the 64B
 `Cosmos3-Super` checkpoint that load costs minutes, so a synthetic-data
@@ -112,12 +114,12 @@ release promotion.
 ```bash
 docker run -d --name cosmos3-serving --gpus all --ipc=host --shm-size 32g \
   --ulimit nofile=1048576:1048576 \
-  -v <runtime-dir>:/opt/npa-cosmos3-serving/runtime \
-  -v <hf-cache-dir>:/opt/npa-cosmos3-serving/hf-cache \
+  -v "<runtime-dir>:/opt/npa-cosmos3-serving/runtime" \
+  -v "<hf-cache-dir>:/opt/npa-cosmos3-serving/hf-cache" \
   -e NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES \
-  -e HF_TOKEN=<your-token> \
+  -e HF_TOKEN="<your-token>" \
   -p 8000:8000 \
-  ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:<validated-digest>
+  "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:<validated-digest>"
 ```
 
 Both mounted directories must be writable by uid 1000: the image runs as a non-root

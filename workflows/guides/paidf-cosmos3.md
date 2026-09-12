@@ -275,6 +275,10 @@ npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME
   --dry-run --output-format json
 ```
 
+Check `status` and `preflight.decision`: a dry run can exit zero while reporting
+`blocked`. Resolve the listed `preflight.reasons` first; reserved GPU capacity
+does not replace the boot-disk quota required by the cluster.
+
 Check the project, region, node types, and disk sizes in the plan. When they
 match your intended setup and quota, run the same `provision-if-absent` command
 without `--dry-run --output-format json`. Wait for provisioning and node health

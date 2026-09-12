@@ -1,5 +1,7 @@
 # Nebius Token Factory integration
 
+[Workbench docs](README.md)
+
 Token Factory provides hosted text generation, image captioning, and scene
 reasoning. Use these capabilities to annotate inputs or interpret results from
 your Nebius GPU workloads. Direct CLI calls run from your machine; the

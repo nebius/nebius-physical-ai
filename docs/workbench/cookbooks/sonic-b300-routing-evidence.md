@@ -1,5 +1,7 @@
 # SONIC B300 routing evidence workflow
 
+[Cookbooks](README.md)
+
 `sonic-b300-routing-evidence.yaml` is a released, CPU-only workflow that executes
 the installed SONIC accelerator resolver. It fails closed unless both `b300` and
 `gpu-b300-sxm` resolve to `B300:1`, while retaining L40S, H100, and B200
@@ -13,8 +15,8 @@ npa workbench workflow plan-spec \
   --run-id sonic-b300-routing-preview --json
 npa workbench workflow submit \
   workflows/testing/sonic-b300-routing-evidence.yaml \
-  --run-id <new-run-id> --var bucket=<configured-bucket> \
-  --var tested_commit_sha=<git-sha>
+  --run-id "<new-run-id>" --var bucket="<configured-bucket>" \
+  --var tested_commit_sha="<git-sha>"
 ```
 
 The run-scoped prefix contains `manifest.json`, `test-report.json`, and
