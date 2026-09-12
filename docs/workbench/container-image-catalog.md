@@ -48,9 +48,8 @@ separate claims.
 
 The current source inventory, including the pending NCore integration, has
 **38 packaging entries** (36 redistribution-eligible and two restricted) and
-**39 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robotwin`). One additional
-mapped tool is outside those mutually exclusive publication groups. These counts come
+**39 mapped tools**: 32 public-release members, two restricted tools, and five
+quarantined tools (`curobo`, `ncore`, `openpi`, `robocasa`, and `robotwin`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
 

@@ -600,10 +600,11 @@ def _scan_robotwin_image(image: str, *, redactions: tuple[str, ...]) -> dict[str
             [
                 sys.executable,
                 str(ROBOTWIN_IMAGE_SCANNER),
-                image,
+                "--image-stdin",
                 "--output",
                 str(report_path),
             ],
+            stdin=image,
             capture=True,
             redactions=redactions,
         )

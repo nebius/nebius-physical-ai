@@ -10,6 +10,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -170,3 +172,34 @@ def test_cli_report_records_a_clean_offline_scan(tmp_path: Path) -> None:
         "archives_scanned": 1,
         "findings": [],
     }
+
+
+def test_private_image_stdin_is_bounded_and_never_echoed_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
+    monkeypatch.setattr(
+        scanner.sys,
+        "stdin",
+        io.TextIOWrapper(io.BytesIO(private.encode()), encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        scanner.walker,
+        "remote_material",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(private)),
+    )
+
+    assert scanner.main(["--image-stdin"]) == 2
+    output = capsys.readouterr().out
+    assert "private image scan failed" in output
+    assert private not in output
+
+    oversized = b"x" * (scanner.MAX_IMAGE_REFERENCE_BYTES + 1)
+    monkeypatch.setattr(
+        scanner.sys,
+        "stdin",
+        io.TextIOWrapper(io.BytesIO(oversized), encoding="utf-8"),
+    )
+    assert scanner.main(["--image-stdin"]) == 2
+    assert "private image scan failed" in capsys.readouterr().out
