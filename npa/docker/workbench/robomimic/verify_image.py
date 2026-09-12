@@ -47,6 +47,7 @@ BAKED_LOCK_SHA256 = "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399c
 BAKED_DISTRIBUTION_COUNT = 40
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
+RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
 
 
 class VerificationError(RuntimeError):
@@ -944,21 +945,106 @@ def verify_missing_runtime_refusal(
     }
 
 
-def _copy_runtime_inventory(
-    source: Path, staging: Path, inventory: dict[str, Any]
+def _copy_bounded_regular_file(
+    source: Path,
+    destination: Path,
+    *,
+    expected_size: int | None,
+    expected_sha256: str | None,
+    maximum_size: int | None = None,
 ) -> None:
-    """Copy only inventory-declared runtime objects into a private staging tree."""
+    """Copy one regular file without following links or exceeding its identity.
+
+    Args:
+        source: File in the manager-selected external runtime.
+        destination: New file in the private snapshot staging tree.
+        expected_size: Exact inventory size, or ``None`` to lock the opened size.
+        expected_sha256: Exact inventory digest when one is available.
+        maximum_size: Optional hard byte ceiling for metadata without a size lock.
+
+    Raises:
+        VerificationError: The source is unsafe or changes from its declared identity.
+        OSError: Opening, reading, or writing either file fails.
+    """
+
+    source_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    source_fd = os.open(source, source_flags)
+    try:
+        source_stat = os.fstat(source_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise VerificationError(f"runtime snapshot source is not regular: {source}")
+        locked_size = source_stat.st_size if expected_size is None else expected_size
+        if source_stat.st_size != locked_size:
+            raise VerificationError(f"runtime snapshot source size changed: {source}")
+        if maximum_size is not None and locked_size > maximum_size:
+            raise VerificationError(f"runtime snapshot metadata exceeds limit: {source}")
+
+        destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+        destination_fd = os.open(destination, destination_flags, 0o600)
+        try:
+            digest = hashlib.sha256()
+            remaining = locked_size
+            with os.fdopen(source_fd, "rb", closefd=False) as source_handle, os.fdopen(
+                destination_fd, "wb", closefd=False
+            ) as destination_handle:
+                while remaining:
+                    chunk = source_handle.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise VerificationError(
+                            f"runtime snapshot source shrank while copying: {source}"
+                        )
+                    destination_handle.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                if source_handle.read(1):
+                    raise VerificationError(
+                        f"runtime snapshot source grew while copying: {source}"
+                    )
+                destination_handle.flush()
+            if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+                raise VerificationError(
+                    f"runtime snapshot source hash changed while copying: {source}"
+                )
+            os.fchmod(destination_fd, stat.S_IMODE(source_stat.st_mode))
+        finally:
+            os.close(destination_fd)
+    finally:
+        os.close(source_fd)
+
+
+def _copy_runtime_inventory(
+    source: Path, staging: Path, expected_inventory_sha256: str
+) -> None:
+    """Copy only manager-bound runtime objects into a private staging tree."""
 
     staging.mkdir(mode=0o700)
-    for name in (".ready.json", "inventory.json"):
-        shutil.copyfile(source / name, staging / name, follow_symlinks=False)
+    _copy_bounded_regular_file(
+        source / ".ready.json",
+        staging / ".ready.json",
+        expected_size=None,
+        expected_sha256=None,
+        maximum_size=RUNTIME_METADATA_MAX_BYTES,
+    )
+    _copy_bounded_regular_file(
+        source / "inventory.json",
+        staging / "inventory.json",
+        expected_size=None,
+        expected_sha256=expected_inventory_sha256,
+        maximum_size=RUNTIME_METADATA_MAX_BYTES,
+    )
+    inventory = _json_object(staging / "inventory.json")
     files = _checked_entries(inventory.get("files"), symlinks=False)
     links = _checked_entries(inventory.get("symlinks"), symlinks=True)
-    for relative in files:
+    for relative, entry in files.items():
         source_path = source / relative
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, destination, follow_symlinks=False)
+        _copy_bounded_regular_file(
+            source_path,
+            destination,
+            expected_size=entry["size"],
+            expected_sha256=entry["sha256"],
+        )
     for relative, entry in links.items():
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1000,8 +1086,7 @@ def materialize_external_runtime(
     )
     try:
         staging.rmdir()
-        inventory = _json_object(runtime_root / "inventory.json")
-        _copy_runtime_inventory(runtime_root, staging, inventory)
+        _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
         snapshot_proof = verify_external_runtime(
             runtime_root=staging,
             runtime_lock_path=runtime_lock_path,

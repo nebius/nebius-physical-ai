@@ -55,6 +55,10 @@ def _open_allowed_https(
     for _ in range(6):
         parsed = urllib.parse.urlsplit(current_url)
         hostname = (parsed.hostname or "").lower()
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("refusing malformed approved HTTPS URL") from exc
         allowed = hostname in allowed_hosts or (
             allow_hf_redirects
             and (
@@ -69,14 +73,14 @@ def _open_allowed_https(
             or not allowed
             or parsed.username is not None
             or parsed.password is not None
-            or parsed.port not in {None, 443}
+            or port not in {None, 443}
             or parsed.fragment
         ):
             raise RuntimeError("refusing URL outside the approved HTTPS origins")
         target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
         connection = http.client.HTTPSConnection(
             hostname,
-            port=parsed.port,
+            port=port,
             context=context,
             timeout=120,
         )

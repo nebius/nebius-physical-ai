@@ -119,7 +119,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -172,6 +172,12 @@ image (`public` | `restricted`), enforced by
   expressly listed as redistributable by their included SDK terms. Both current
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
+
+- **`unvalidated`** — no restricted payload is asserted, but the complete exact
+  selected-byte base/package/wheel/license closure has not yet been accepted.
+  This fail-closed state is private and publication-quarantined; it becomes
+  `public` or `restricted` only after exact built-byte evidence supports that
+  decision.
 
 ## Manual gate audit (2026-08-16)
 
@@ -486,6 +492,10 @@ non-CUDA dependency closure on a digest-pinned Python base. It must contain no
 torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
 credential, or output. `scan_image_robomimic_payload.py` must inspect every
 layer and OCI history after a future authorized build.
+
+Its packaging class remains `unvalidated`: pinned source and lock metadata do
+not establish redistribution rights for the exact base and selected package
+bytes. A future exact built-byte licence review must establish the final class.
 
 The CUDA-capable Python environment is not a runtime downloader. It is an exact
 file/package/ABI inventory prepared outside the image and mounted read-only.

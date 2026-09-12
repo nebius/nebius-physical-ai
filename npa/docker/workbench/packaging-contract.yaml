@@ -147,6 +147,15 @@ redistribution:
         not alter the classification of those old artifacts. Credentials or
         runtime consent never repair already baked restricted bytes.
       reason: bakes-a-non-redistributable-runtime
+    unvalidated:
+      description: >
+        Proposed neutral bytes whose complete selected base, package, wheel,
+        notice, and source-conveyance closure has not yet been inspected and
+        accepted. This class makes no claim that restricted bytes are present;
+        it also supplies no public redistribution eligibility. Keep the image
+        private and publication-quarantined until an exact built-byte review
+        establishes and records the applicable class.
+      reason: exact-built-byte-license-closure-not-yet-established
 
 # Relative to npa/docker/workbench/
 images:
@@ -230,7 +239,7 @@ images:
     passwordless_root_exemption: >-
       SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
       no sshd service is enabled by default, and no credentials are baked.
-    redistribution: public
+    redistribution: unvalidated
     notes: >-
       Phase A neutral candidate only: pinned MIT robomimic source and 40
       hash-locked non-CUDA Python distributions on a pinned Python base. It

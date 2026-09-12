@@ -336,11 +336,11 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
 
 
-def test_robomimic_is_a_public_eligible_but_quarantined_neutral_contract() -> None:
+def test_robomimic_is_an_unvalidated_and_quarantined_neutral_contract() -> None:
     entry = _load_contract()["images"]["robomimic"]
     assert entry["dockerfile"] == "robomimic/Dockerfile"
     assert entry["tier"] == "job"
-    assert entry["redistribution"] == "public"
+    assert entry["redistribution"] == "unvalidated"
     assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
     notes = entry["notes"].lower()
     for boundary in (

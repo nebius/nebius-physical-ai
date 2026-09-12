@@ -158,6 +158,8 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robomimic"})
+# Neutral candidates have not yet established exact built-byte redistribution
+# eligibility. They are neither known-restricted nor eligible for public delivery.
 # Display-only sentinels for inventory commands. These are deliberately outside
 # SUPPORTED_TOOL_VERSIONS: resolution still refuses every neutral candidate
 # before consulting a tag, so an unbuilt label cannot become an image default.
@@ -1137,9 +1139,12 @@ def is_publicly_redistributable(tool: str) -> bool:
 
     ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
-    build-your-own use only. See the set's comment for current membership.
+    build-your-own use only — and for neutral unbuilt candidates whose exact-byte
+    redistribution eligibility has not been established. See the sets' comments.
     """
-    return tool not in RESTRICTED_PUBLICATION_TOOLS
+    return tool not in (
+        RESTRICTED_PUBLICATION_TOOLS | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    )
 
 
 def restricted_image_names() -> list[str]:
