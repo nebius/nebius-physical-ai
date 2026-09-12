@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -12,6 +13,7 @@ IMAGE_ROOT = ROOT / "npa" / "docker" / "workbench" / "libero"
 DOCKERFILE = IMAGE_ROOT / "Dockerfile"
 LOCK = IMAGE_ROOT / "debian-packages.lock"
 MANIFEST = IMAGE_ROOT / "runtime-manifest.json"
+REQUIREMENTS = IMAGE_ROOT / "runtime-requirements.txt"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 
 BASE_MANIFEST = "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
@@ -111,6 +113,22 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
     assert manifest["source"]["revision"] == "8f1084e3132a39270c3a13ebe37270a43ece2a01"
     assert manifest["demonstration"]["license"] == "CC-BY-4.0"
     assert manifest["language_model"]["license"] == "Apache-2.0"
+    assert {item["id"] for item in manifest["governing_terms"]} == {
+        "libero-mit",
+        "dataset-cc-by-4.0",
+        "bert-apache-2.0",
+        "pytorch-bsd",
+        "cuda-eula",
+        "nvidia-software-license",
+        "cudnn-eula",
+    }
+    assert all(
+        set(item) == {"id", "boundary", "url", "size_bytes", "sha256"}
+        and item["url"].startswith("https://")
+        and item["size_bytes"] > 0
+        and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+        for item in manifest["governing_terms"]
+    )
     assert "ACCEPT_" not in serialized
     assert "credential" not in serialized.lower()
     assert all(
@@ -125,6 +143,29 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         }
         for item in manifest["runtime_artifacts"]
     )
+    lines = [
+        line
+        for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert len(lines) == len(manifest["runtime_artifacts"])
+    assert lines == [
+        f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']} # {item['url']}"
+        for item in manifest["runtime_artifacts"]
+    ]
+
+
+def test_image_manifest_binds_runtime_manifest_requirements_and_terms() -> None:
+    path = ROOT / "npa" / "src" / "npa" / "deploy" / "libero_image_manifest.json"
+    image_manifest = json.loads(path.read_text(encoding="utf-8"))
+
+    assert image_manifest["runtime_manifest_sha256"] == hashlib.sha256(
+        MANIFEST.read_bytes()
+    ).hexdigest()
+    assert image_manifest["runtime_requirements_sha256"] == hashlib.sha256(
+        REQUIREMENTS.read_bytes()
+    ).hexdigest()
+    assert image_manifest["governing_terms_count"] == 7
 
 
 def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
@@ -147,6 +188,8 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b" in text
     assert "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb" in text
     assert text.count("npa/scripts/scan_image_libero_payload.py") == 2
+    assert text.count("--exported-rootfs") == 2
+    assert text.count("docker export --output") >= 2
     assert text.count('--base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json"') == 2
     assert 'if tool != "libero":\n              history = subprocess.check_output(' in text
     assert "--provenance=mode=max" in text
