@@ -634,6 +634,15 @@ def _seal_runtime_tree(root: Path) -> None:
             path.chmod(0o500)
         else:
             _refuse("runtime cache contains a special file")
+    metadata = root.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+    ):
+        _refuse("runtime cache staging root is unsafe or unowned")
+    root.chmod(0o500)
 
 
 def _discard_stage(stage: Path) -> None:
@@ -648,6 +657,36 @@ def _discard_stage(stage: Path) -> None:
     with contextlib.suppress(OSError):
         stage.chmod(0o700)
     shutil.rmtree(stage, ignore_errors=True)
+
+
+def _discard_published(
+    target: Path,
+    versions: Path,
+    *,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    """Quarantine and remove only the exact version directory just published."""
+
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_dev != expected_device
+        or metadata.st_ino != expected_inode
+    ):
+        _refuse("refusing to remove a changed published runtime target")
+    quarantine = versions / f".rejected-{os.getpid()}-{expected_inode}"
+    if quarantine.exists() or quarantine.is_symlink():
+        _refuse("runtime cache quarantine target already exists")
+    target.rename(quarantine)
+    moved = quarantine.lstat()
+    if moved.st_dev != expected_device or moved.st_ino != expected_inode:
+        _refuse("published runtime changed while it was quarantined")
+    _discard_stage(quarantine)
 
 
 def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
@@ -778,25 +817,33 @@ def prepare(
     runtime_lock = load_lock(manifest, requirements)
     cache_root = _validate_cache_root(cache_root)
     versions = cache_root / "versions"
-    staging = cache_root / ".staging"
     versions.mkdir(mode=0o700, exist_ok=True)
-    staging.mkdir(mode=0o700, exist_ok=True)
-    for directory in (versions, staging):
-        metadata = directory.lstat()
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != os.geteuid()
-            or stat.S_IMODE(metadata.st_mode) & 0o022
-        ):
-            _refuse("runtime cache control directory is unsafe")
+    metadata = versions.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        _refuse("runtime cache control directory is unsafe")
     target = versions / runtime_lock.digest
     with _exclusive_lock(cache_root):
+        partials = [
+            path
+            for path in versions.iterdir()
+            if path.name.startswith((".staging-", ".rejected-"))
+        ]
+        if partials:
+            _refuse("runtime cache contains an unreviewed partial publication")
         cache_reused = target.exists()
         if cache_reused:
             receipt = _validated_existing(target, runtime_lock)
         else:
-            stage = Path(tempfile.mkdtemp(prefix="runtime-", dir=staging))
+            # A sealed directory cannot be renamed across parents on Linux because
+            # its ``..`` entry would change.  Stage under the versions directory so
+            # the final rename is both same-parent atomic and performed only after
+            # the root itself has become non-writable.
+            stage = Path(tempfile.mkdtemp(prefix=".staging-runtime-", dir=versions))
             try:
                 downloads = stage / "downloads"
                 wheelhouse = stage / "wheelhouse"
@@ -851,8 +898,20 @@ def prepare(
                     receipt_path,
                     (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(),
                 )
+                staged = stage.lstat()
+                if stat.S_IMODE(staged.st_mode) & 0o222:
+                    _refuse("runtime staging root was not sealed before publication")
                 os.replace(stage, target)
-                target.chmod(0o500)
+                try:
+                    receipt = _validated_existing(target, runtime_lock)
+                except BaseException:
+                    _discard_published(
+                        target,
+                        versions,
+                        expected_device=staged.st_dev,
+                        expected_inode=staged.st_ino,
+                    )
+                    raise
             except BaseException:
                 _discard_stage(stage)
                 raise
