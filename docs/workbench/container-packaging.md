@@ -461,7 +461,8 @@ cannot populate it or accept terms. This packaging split does not supply
 distribution, use, or service rights. Until an authoritative rights decision,
 manager transaction authorization, built-byte/security/SBOM/provenance gates,
 private exact-digest B200 qualification, and anonymous pull proof all pass, the
-tool remains in `UNVALIDATED_PUBLICATION_TOOLS` and has no public catalog row.
+tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
+`PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
 
 ## Operator checklist (new or changed image)
 

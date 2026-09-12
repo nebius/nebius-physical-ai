@@ -1015,6 +1015,11 @@ def development_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return an official public development reference for redistributable bytes."""
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        raise ValueError(
+            f"{tool!r} remains publication-quarantined and has no official "
+            "public development image"
+        )
     if not is_publicly_redistributable(tool):
         raise ValueError(
             f"{tool!r} is restricted/build-your-own and cannot be pushed to "

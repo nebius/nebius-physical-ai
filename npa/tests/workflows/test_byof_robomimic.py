@@ -19,6 +19,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from npa.cli.workbench import workflow as workflow_cli
 from npa.cli.main import app
 from npa.deploy import images
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -712,6 +713,12 @@ def test_robomimic_publication_quarantine_covers_explicit_dev_tags() -> None:
     with pytest.raises(ValueError, match="publication-quarantined"):
         images.development_image_for_tool("robomimic", git_sha=source_sha)
     with pytest.raises(ValueError, match="publication-quarantined"):
+        images.development_image_for_tool(
+            "robomimic",
+            git_sha=source_sha,
+            registry="ghcr.io/example/public",
+        )
+    with pytest.raises(ValueError, match="publication-quarantined"):
         images.container_image_for_tool(
             "robomimic",
             tag=f"dev-{source_sha}",
@@ -844,6 +851,40 @@ def test_robomimic_runner_recognizes_direct_image_references(
         ]
     )
     assert runner._is_robomimic_request(args) is True
+
+
+def test_robomimic_runner_recognizes_exact_source_ref_through_renamed_mirror() -> None:
+    runner = _byof_runner_module()
+    args = runner._parse_args(
+        [
+            "--repo-url",
+            "https://github.com/example/renamed-mirror.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "renamed",
+            "--capability-name",
+            "renamed",
+            "--smoke-artifact-name",
+            "renamed.json",
+            "--smoke-command",
+            "python train.py",
+        ]
+    )
+    assert runner._is_robomimic_request(args) is True
+
+
+def test_workflow_refusal_recognizes_exact_source_ref_through_renaming() -> None:
+    spec = SimpleNamespace(
+        name="renamed",
+        config={
+            "repo_url": "https://github.com/example/renamed-mirror.git",
+            "repo_ref": SOURCE_REVISION,
+            "solution_name": "renamed",
+            "execution_policy": "direct",
+        },
+    )
+    assert workflow_cli._is_dedicated_live_gate_spec(spec) is True
 
 
 @pytest.mark.parametrize(
@@ -1100,6 +1141,8 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
         "skip-push",
         "skip-run",
         "no-cleanup",
+        "build-enabled",
+        "run-id",
         "repository",
         "source-revision",
         "base-image",
@@ -1160,6 +1203,7 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         "capability": ("--capability-name", "renamed"),
         "smoke-artifact": ("--smoke-artifact-name", "renamed.json"),
         "image": ("--image", "private.invalid/robomimic/other:tag"),
+        "run-id": ("--run-id", "../../tmp"),
     }
     flag = (
         (f"--{mutation}",)
@@ -1212,7 +1256,7 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         run_id,
         "--image",
         accepted_image,
-        "--skip-build",
+        *(("--skip-build",) if mutation != "build-enabled" else ()),
         *flag,
     ]
     result = subprocess.run(

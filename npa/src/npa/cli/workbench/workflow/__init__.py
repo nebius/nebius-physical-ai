@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 DEFAULT_LOG_OUTPUT_CHARS = 32_768
 MAX_LOG_OUTPUT_CHARS = 262_144
+ROBOMIMIC_SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 
 
 class OutputFormat(str, Enum):
@@ -72,6 +73,8 @@ def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
         or str(spec.config.get("solution_name") or "").strip().lower()
         == "robomimic"
         or config_repo == "robomimic"
+        or str(spec.config.get("repo_ref") or "").strip().lower()
+        == ROBOMIMIC_SOURCE_REVISION
         or str(spec.config.get("execution_policy") or "").strip()
         == "dedicated-live-gate-only"
     )

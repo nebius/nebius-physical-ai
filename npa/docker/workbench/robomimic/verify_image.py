@@ -311,6 +311,26 @@ def verify_external_runtime(
     if not payload_root.is_dir() or payload_root.is_symlink():
         raise VerificationError("runtime payload directory is absent")
     declared = set(files) | set(links)
+    allowed_directories = {"payload"}
+    for relative in declared:
+        allowed_directories.update(
+            parent.as_posix()
+            for parent in PurePosixPath(relative).parents
+            if parent.as_posix() != "."
+        )
+    allowed_objects = declared | allowed_directories | {".ready.json", "inventory.json"}
+    for path in runtime_root.rglob("*"):
+        relative = path.relative_to(runtime_root).as_posix()
+        if relative not in allowed_objects:
+            raise VerificationError(f"undeclared object in runtime root: {relative}")
+        mode = path.lstat().st_mode
+        if relative in allowed_directories:
+            if not stat.S_ISDIR(mode) or path.is_symlink():
+                raise VerificationError(f"runtime directory is not regular: {relative}")
+        elif relative in {".ready.json", "inventory.json"} and (
+            not stat.S_ISREG(mode) or path.is_symlink()
+        ):
+            raise VerificationError(f"runtime metadata is not regular: {relative}")
     observed: set[str] = set()
     for path in payload_root.rglob("*"):
         relative = path.relative_to(runtime_root).as_posix()
@@ -361,6 +381,41 @@ def verify_external_runtime(
         "artifact_count": len(artifacts),
         "payload_file_count": len(files),
         "payload_symlink_count": len(links),
+    }
+
+
+def verify_missing_runtime_refusal(
+    *, runtime_root: Path, runtime_lock_path: Path
+) -> dict[str, Any]:
+    """Prove that an empty runtime is rejected specifically for its missing marker."""
+
+    if not runtime_root.is_dir() or runtime_root.is_symlink():
+        raise VerificationError("missing-runtime refusal probe requires a regular directory")
+    if any(runtime_root.iterdir()):
+        raise VerificationError("missing-runtime refusal probe requires an empty directory")
+    sentinel_inventory_sha256 = "0" * 64
+    expected = f"required regular file is absent: {runtime_root / '.ready.json'}"
+    try:
+        verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=sentinel_inventory_sha256,
+            require_read_only_mount=False,
+        )
+    except VerificationError as exc:
+        if str(exc) != expected:
+            raise VerificationError(
+                "runtime verifier refused the empty runtime for an unexpected reason"
+            ) from exc
+    else:
+        raise VerificationError("empty runtime unexpectedly passed verification")
+    if any(runtime_root.iterdir()):
+        raise VerificationError("runtime verifier mutated the empty runtime root")
+    return {
+        "schema": "npa.robomimic.missing-runtime-refusal.v1",
+        "expected_inventory_sha256": sentinel_inventory_sha256,
+        "refusal_reason": "missing-ready-marker",
+        "runtime_root_unchanged": True,
     }
 
 
@@ -476,6 +531,13 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-inventory-sha256",
         default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
     )
+    missing_runtime = subparsers.add_parser("assert-missing-runtime")
+    missing_runtime.add_argument("--runtime-root", type=Path, required=True)
+    missing_runtime.add_argument(
+        "--runtime-lock",
+        type=Path,
+        default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
+    )
     snapshot = subparsers.add_parser("snapshot")
     snapshot.add_argument(
         "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
@@ -515,13 +577,18 @@ def main() -> int:
                 expected_inventory_sha256=args.expected_inventory_sha256,
                 require_read_only_mount=True,
             )
-        else:
+        elif args.mode == "snapshot":
             result = materialize_external_runtime(
                 runtime_root=args.runtime_root,
                 runtime_lock_path=args.runtime_lock,
                 expected_inventory_sha256=args.expected_inventory_sha256,
                 destination=args.destination,
                 require_source_read_only=True,
+            )
+        else:
+            result = verify_missing_runtime_refusal(
+                runtime_root=args.runtime_root,
+                runtime_lock_path=args.runtime_lock,
             )
     except VerificationError as exc:
         print(f"NPA_ROBOMIMIC_RUNTIME_REFUSED: {exc}", file=sys.stderr)

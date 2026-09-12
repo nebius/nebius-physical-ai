@@ -42,7 +42,7 @@
       "reason": "A credential, environment flag, private registry, runtime fetch, or click-through proxy is not legal acceptance. An authorized Nebius/operator representative must record the applicable CUDA/cuDNN distribution, use, and service-rights decision before a separate manager transaction authorization.",
       "evidence": [
         "runtime bootstrap contains no acceptance proxy",
-        "production runner retains an unconditional Phase A runtime-use refusal"
+        "production runner refuses the exact registered source revision and every recognized robomimic identity during Phase A"
       ]
     },
     "source_image": {
