@@ -439,11 +439,14 @@ images:
       Gymnasium-Robotics 1.4.2 / MuJoCo 3.12.0 runtime cache. Candidate layers
       exclude the upstream solution, Shadow assets, MuJoCo/Python workload,
       populated cache, vendor runtime, credentials, datasets, checkpoints, and
-      outputs. The Dockerfile refuses before package network access while exact
-      Ubuntu/Python bootstrap binaries and corresponding source are incomplete.
+      outputs. Exact Ubuntu/Python inputs and corresponding-source metadata are
+      content-locked for a separately approved private non-conveying build; the
+      Dockerfile verifies those reviewed bytes before package network access.
       Runtime fetch changes delivery only and grants no use, derivative, output,
-      or service rights. No image, supported tag, accepted manifest, public pull,
-      current-byte GPU qualification, or SM120 claim exists.
+      or service rights. No image has been built; post-build scanner anchors
+      remain unset, Shadow public-rights closure is incomplete, and no supported
+      tag, accepted manifest, public pull, current-byte GPU qualification, or
+      SM120 claim exists.
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

@@ -81,6 +81,17 @@ def test_image_build_accepts_only_the_exact_complete_pre_network_locks() -> None
     assert "https://snapshot.ubuntu.com/ubuntu/20260905T000000Z" in script
 
 
+def test_apt_reads_only_the_ephemeral_world_readable_ca_secret() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text(encoding="utf-8")
+    secret_mount = (
+        "--mount=type=secret,id=npa_host_ca_bundle,required=true,"
+        "target=/run/npa-host-ca-bundle.crt,mode=0444"
+    )
+    assert secret_mount in dockerfile
+    assert "COPY /run/npa-host-ca-bundle.crt" not in dockerfile
+    assert "ADD /run/npa-host-ca-bundle.crt" not in dockerfile
+
+
 def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
