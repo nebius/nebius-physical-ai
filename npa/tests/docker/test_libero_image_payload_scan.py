@@ -61,8 +61,14 @@ def _metadata(module, *, provenance: object | None = None) -> dict[str, object]:
         "buildx.build.provenance": provenance
         if provenance is not None
         else {
-            "materials": [module.BASE_MANIFEST, module.BASE_ROOTFS_MATERIAL],
-            "invocation": {"source_revision": REVISION},
+            "materials": [
+                {
+                    "uri": f"pkg:docker/python@{module.BASE_MANIFEST}",
+                    "digest": {
+                        "sha256": module.BASE_MANIFEST.removeprefix("sha256:")
+                    },
+                }
+            ],
         },
     }
 
@@ -109,6 +115,7 @@ def _scan(module, layers, config, metadata, *, base_provenance=None):
         metadata,
         provenance_bytes,
         provenance,
+        observed_config_digest="sha256:" + "2" * 64,
     )
 
 
@@ -121,6 +128,25 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
     )
 
     assert _scan(module, [first, second], _config(module), _metadata(module)) == []
+
+
+def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    smoke = ROOT / "npa" / "docker" / "workbench" / "libero" / "libero_smoke.py"
+    content = smoke.read_bytes()
+    assert (
+        hashlib.sha256(content).hexdigest()
+        == module.NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST[
+            "opt/npa/libero/libero_smoke.py"
+        ]
+    )
+    layer = _layer(
+        tmp_path / "layer.tar", {"opt/npa/libero/libero_smoke.py": content}
+    )
+
+    assert _scan(module, [layer], _config(module), _metadata(module)) == []
 
 
 @pytest.mark.parametrize(
@@ -162,6 +188,59 @@ def test_scanner_refuses_forbidden_bytes_hidden_in_nested_archive(tmp_path) -> N
     findings = _scan(module, [layer], _config(module), _metadata(module))
 
     assert any(item.kind == "torch_distribution" for item in findings)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"from libero.lifelong.algos import Sequential\n",
+        b"import robomimic.utils.obs_utils\n",
+        b"from torch._C import TensorBase\n",
+        b"import torchvision.transforms\n",
+        b"import mujoco\n",
+        b"from robosuite import macros\n",
+    ],
+)
+def test_scanner_refuses_renamed_runtime_source_by_content(tmp_path, content) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"srv/renamed/module.py": content})
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "renamed_runtime_payload_content" for item in findings)
+
+
+def test_scanner_refuses_payload_signature_at_allowlisted_path_when_bytes_drift(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    layer = _layer(
+        tmp_path / "layer.tar",
+        {
+            "opt/npa/libero/libero_smoke.py": (
+                b"from libero.lifelong.algos import Sequential\n# substituted bytes\n"
+            )
+        },
+    )
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "renamed_runtime_payload_content" for item in findings)
+
+
+def test_scanner_refuses_exact_runtime_payload_bytes_under_neutral_name(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    content = b"exact runtime artifact fixture"
+    monkeypatch.setattr(
+        module, "_runtime_payload_hashes", lambda: frozenset({hashlib.sha256(content).hexdigest()})
+    )
+    layer = _layer(tmp_path / "layer.tar", {"srv/neutral-name": content})
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "exact_runtime_payload_bytes" for item in findings)
 
 
 def test_scanner_refuses_nonzero_tar_padding(tmp_path) -> None:
@@ -273,6 +352,37 @@ def test_scanner_refuses_config_or_independent_lineage_drift(tmp_path, mutation)
     )
 
 
+def test_scanner_rejects_base_identity_buried_in_unstructured_metadata(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/npa/libero/readme": b"neutral\n"})
+    metadata = _metadata(
+        module,
+        provenance={"unrelated": {"note": module.BASE_MANIFEST}},
+    )
+
+    findings = _scan(module, [layer], _config(module), metadata)
+
+    assert any(item.kind == "independent_build_lineage" for item in findings)
+
+
+def test_docker_save_scans_require_an_independent_exported_rootfs() -> None:
+    module = _load_module()
+
+    with pytest.raises(SystemExit):
+        module.main(
+            [
+                "--docker-save",
+                "image.tar",
+                "--build-metadata",
+                "metadata.json",
+                "--base-provenance",
+                "provenance.json",
+            ]
+        )
+
+
 @pytest.mark.parametrize("mutation", ["subject", "rootfs", "source", "builder", "bytes"])
 def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> None:
     module = _load_module()
@@ -297,6 +407,7 @@ def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> 
         _metadata(module),
         provenance_bytes,
         provenance,
+        observed_config_digest="sha256:" + "2" * 64,
     )
 
     assert any(item.kind == "independent_base_provenance" for item in findings)

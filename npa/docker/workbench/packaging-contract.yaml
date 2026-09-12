@@ -149,7 +149,7 @@ redistribution:
 images:
   libero:
     dockerfile: libero/Dockerfile
-    tier: interactive
+    tier: job
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
     passwordless_root_exemption: >-
       SkyPilot may start or restart only the preinstalled SSH daemon. The

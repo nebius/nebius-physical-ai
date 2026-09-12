@@ -22,4 +22,7 @@ metadata, not embedded software or a permission claim. When separately
 authorized, pinned LIBERO source is MIT, the selected demonstration is
 CC-BY-4.0 with attribution to LIBERO / Lifelong Robot Learning, and
 `google-bert/bert-base-cased` is Apache-2.0. Each GPU/runtime package remains
-subject to its own upstream terms and the manager-issued use decision.
+subject to its own upstream terms and the manager-issued use decision. The
+manifest's hash-bound official MIT, CC BY 4.0, Apache 2.0, PyTorch, CUDA,
+NVIDIA software, and cuDNN terms sources are runtime refusal inputs only; none
+of their fetched bytes is retained in this image or treated as acceptance.

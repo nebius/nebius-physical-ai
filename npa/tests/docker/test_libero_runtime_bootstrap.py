@@ -64,6 +64,26 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     manifest: dict[str, object] = {
         "schema": module.SCHEMA,
         "solution": "libero",
+        "governing_terms": [
+            {
+                "id": term_id,
+                "boundary": boundary,
+                "url": f"https://www.apache.org/licenses/{index}.txt",
+                "size_bytes": len(f"term-{index}"),
+                "sha256": _sha(f"term-{index}".encode()),
+            }
+            for index, (term_id, boundary) in enumerate(
+                [
+                    ("libero-mit", "source"),
+                    ("dataset-cc-by-4.0", "demonstration"),
+                    ("bert-apache-2.0", "language_model"),
+                    ("pytorch-bsd", "runtime_packages"),
+                    ("cuda-eula", "runtime_packages"),
+                    ("nvidia-software-license", "runtime_packages"),
+                    ("cudnn-eula", "runtime_packages"),
+                ]
+            )
+        ],
         "source": {
             "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO.git",
             "revision": "1" * 40,
@@ -126,6 +146,16 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     manifest_path = tmp_path / "runtime-manifest.json"
     manifest_sha = _write_json(manifest_path, manifest)
     module.EXPECTED_RUNTIME_MANIFEST_SHA256 = manifest_sha
+    requirements_path = tmp_path / "runtime-requirements.txt"
+    requirements_path.write_text(
+        "\n".join(
+            f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']} # {item['url']}"
+            for item in artifacts
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    module.EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = _sha(requirements_path.read_bytes())
     decision = {
         "schema": module.DECISION_SCHEMA,
         "solution": "libero",
@@ -140,6 +170,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     decision_sha = _write_json(decision_path, decision)
     args = argparse.Namespace(
         manifest=str(manifest_path),
+        requirements=str(requirements_path),
         cache_root=str(tmp_path / "cache"),
         decision=str(decision_path),
         decision_sha256=decision_sha,
@@ -173,7 +204,11 @@ def _install_fake_materializers(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
 
-    def install_runtime(root: Path, _artifacts: list[dict[str, object]]) -> None:
+    def install_runtime(
+        root: Path,
+        _artifacts: list[dict[str, object]],
+        _requirements: list[str],
+    ) -> None:
         python = root / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
         python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -192,6 +227,7 @@ def _install_fake_materializers(
     monkeypatch.setattr(module, "_fetch_source", fetch_source)
     monkeypatch.setattr(module, "_install_runtime", install_runtime)
     monkeypatch.setattr(module, "_fetch_inputs", fetch_inputs)
+    monkeypatch.setattr(module, "_verify_governing_terms", lambda _manifest: "6" * 64)
 
 
 def test_missing_decision_refuses_before_network_or_cache_mutation(
@@ -228,6 +264,83 @@ def test_mismatched_decision_refuses_before_cache_mutation(tmp_path, mutation) -
     with pytest.raises(module.BootstrapRefusal):
         module.ensure(args)
     assert not Path(args.cache_root).exists()
+
+
+def test_terms_resolution_refuses_before_cache_mutation(monkeypatch, tmp_path) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda _manifest: (_ for _ in ()).throw(
+            module.BootstrapRefusal("governing terms source no longer resolves")
+        ),
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="terms source"):
+        module.ensure(args)
+
+    assert not Path(args.cache_root).exists()
+
+
+def test_governing_terms_use_the_separate_terms_allowlist_and_exact_hashes(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest, _ = module._validate_manifest(Path(args.manifest))
+    calls: list[dict[str, object]] = []
+
+    def fake_download(_destination: Path, **kwargs) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(module, "_download_verified", fake_download)
+
+    digest = module._verify_governing_terms(manifest)
+
+    assert len(calls) == 7
+    assert all(call["terms"] is True for call in calls)
+    assert all(call["sha256"] for call in calls)
+    assert all(call["size"] for call in calls)
+    assert len(digest) == 64
+
+
+def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest, _ = module._validate_manifest(Path(args.manifest))
+    lines, _ = module._validate_requirements(Path(args.requirements), manifest)
+    commands: list[list[str]] = []
+
+    def fake_download(destination: Path, **_kwargs) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"fixture")
+
+    def fake_run(command: list[str], **_kwargs) -> None:
+        commands.append(command)
+        if command[1:4] == ["-m", "venv", str(tmp_path / "runtime" / "venv")]:
+            python = tmp_path / "runtime" / "venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    site_packages = tmp_path / "runtime" / "venv" / "lib" / "site-packages"
+    site_packages.mkdir(parents=True)
+    monkeypatch.setattr(module, "_download_verified", fake_download)
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(
+        module.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: str(site_packages),
+    )
+
+    module._install_runtime(tmp_path / "runtime", manifest["runtime_artifacts"], lines)
+
+    installs = [command for command in commands if "install" in command]
+    assert len(installs) == 2
+    assert all("--require-hashes" in command for command in installs)
+    assert all("--no-deps" in command for command in installs)
+    assert all("--no-index" in command for command in installs)
+    assert all("--find-links" in command for command in installs)
+    assert all("--no-cache-dir" in command for command in installs)
 
 
 def test_authorized_materialization_is_atomic_and_warm_reusable(

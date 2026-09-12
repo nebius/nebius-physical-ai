@@ -29,9 +29,13 @@ DECISION_SCHEMA = "npa.libero.runtime-use-decision.v1"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "c8e621ddf7a2db6ed67f92f8f8c23e3fb3ccd1f48d0736248f56e063af435a1d"
+    "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712"
+)
+EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
+    "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
 )
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
+DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
@@ -40,8 +44,28 @@ ALLOWED_DOWNLOAD_HOSTS = frozenset(
         "huggingface.co",
     }
 )
+ALLOWED_TERMS_HOSTS = frozenset(
+    {
+        "raw.githubusercontent.com",
+        "creativecommons.org",
+        "www.apache.org",
+        "docs.nvidia.com",
+        "www.nvidia.com",
+    }
+)
 EXPECTED_DECISION_BOUNDARIES = frozenset(
     {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
+)
+EXPECTED_GOVERNING_TERMS = frozenset(
+    {
+        "libero-mit",
+        "dataset-cc-by-4.0",
+        "bert-apache-2.0",
+        "pytorch-bsd",
+        "cuda-eula",
+        "nvidia-software-license",
+        "cudnn-eula",
+    }
 )
 
 
@@ -89,6 +113,42 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
     manifest = _load_json(path)
     if manifest.get("schema") != SCHEMA or manifest.get("solution") != "libero":
         raise BootstrapRefusal("runtime manifest identity is invalid")
+    governing_terms = manifest.get("governing_terms")
+    if not isinstance(governing_terms, list) or len(governing_terms) != len(
+        EXPECTED_GOVERNING_TERMS
+    ):
+        raise BootstrapRefusal("governing terms inventory is incomplete")
+    term_ids: set[str] = set()
+    term_boundaries: set[str] = set()
+    for term in governing_terms:
+        if not isinstance(term, dict) or set(term) != {
+            "id",
+            "boundary",
+            "url",
+            "size_bytes",
+            "sha256",
+        }:
+            raise BootstrapRefusal("governing terms entry is not closed")
+        term_id = str(term.get("id") or "")
+        boundary = str(term.get("boundary") or "")
+        if (
+            term_id in term_ids
+            or boundary not in EXPECTED_DECISION_BOUNDARIES
+            or not isinstance(term.get("size_bytes"), int)
+            or term["size_bytes"] <= 0
+            or not _is_hex(term.get("sha256"), 64)
+        ):
+            raise BootstrapRefusal("governing terms identity is invalid")
+        _validate_terms_url(str(term.get("url") or ""))
+        term_ids.add(term_id)
+        term_boundaries.add(boundary)
+    if term_ids != EXPECTED_GOVERNING_TERMS or not {
+        "source",
+        "runtime_packages",
+        "demonstration",
+        "language_model",
+    } <= term_boundaries:
+        raise BootstrapRefusal("governing terms inventory is incomplete")
     source = manifest.get("source") or {}
     if (
         source.get("repository")
@@ -187,6 +247,32 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], str]:
     return manifest, manifest_sha256
 
 
+def _validate_requirements(
+    path: Path, manifest: dict[str, Any]
+) -> tuple[list[str], str]:
+    if not path.is_file() or path.is_symlink():
+        raise BootstrapRefusal("runtime requirements must be a regular image file")
+    requirements_sha256 = _sha256(path)
+    if requirements_sha256 != EXPECTED_RUNTIME_REQUIREMENTS_SHA256:
+        raise BootstrapRefusal("runtime requirements bytes differ from the image contract")
+    lines = [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    artifacts = manifest["runtime_artifacts"]
+    if len(lines) != len(artifacts):
+        raise BootstrapRefusal("runtime requirements and artifact inventory differ")
+    for line, artifact in zip(lines, artifacts, strict=True):
+        expected_prefix = (
+            f"{artifact['name']}=={artifact['version']} "
+            f"--hash=sha256:{artifact['sha256']} # {artifact['url']}"
+        )
+        if line != expected_prefix:
+            raise BootstrapRefusal("runtime requirements do not bind the manifest order")
+    return lines, requirements_sha256
+
+
 def _is_hex(value: object, length: int) -> bool:
     text = str(value or "")
     return len(text) == length and all(
@@ -208,17 +294,37 @@ def _validate_download_url(url: str) -> None:
         )
 
 
-def _validate_redirect_url(url: str) -> urllib.parse.SplitResult:
+def _validate_terms_url(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.hostname not in ALLOWED_TERMS_HOSTS
+        or parsed.fragment
+    ):
+        raise BootstrapRefusal("governing terms URL is outside its allowlist")
+
+
+def _validate_redirect_url(
+    url: str, *, terms: bool = False
+) -> urllib.parse.SplitResult:
     parsed = urllib.parse.urlsplit(url)
     hostname = parsed.hostname or ""
+    allowed_hosts = ALLOWED_TERMS_HOSTS if terms else ALLOWED_DOWNLOAD_HOSTS
     if (
         parsed.scheme != "https"
         or parsed.username is not None
         or parsed.password is not None
         or not (
-            hostname in ALLOWED_DOWNLOAD_HOSTS
-            or hostname.endswith(".hf.co")
-            or hostname.endswith(".huggingface.co")
+            hostname in allowed_hosts
+            or (
+                not terms
+                and (
+                    hostname.endswith(".hf.co")
+                    or hostname.endswith(".huggingface.co")
+                )
+            )
         )
         or parsed.fragment
     ):
@@ -227,11 +333,11 @@ def _validate_redirect_url(url: str) -> urllib.parse.SplitResult:
 
 
 def _open_https_download(
-    url: str,
+    url: str, *, terms: bool = False
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
     current_url = url
     for _ in range(6):
-        parsed = _validate_redirect_url(current_url)
+        parsed = _validate_redirect_url(current_url, terms=terms)
         connection = http.client.HTTPSConnection(
             parsed.hostname, parsed.port or 443, timeout=60
         )
@@ -311,9 +417,14 @@ def _validate_decision(
 
 
 def _download_verified(
-    destination: Path, *, url: str, sha256: str, size: int | None
+    destination: Path,
+    *,
+    url: str,
+    sha256: str,
+    size: int | None,
+    terms: bool = False,
 ) -> None:
-    _validate_download_url(url)
+    (_validate_terms_url if terms else _validate_download_url)(url)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.partial")
     temporary.unlink(missing_ok=True)
@@ -322,7 +433,7 @@ def _download_verified(
     connection: http.client.HTTPSConnection | None = None
     response: http.client.HTTPResponse | None = None
     try:
-        connection, response = _open_https_download(url)
+        connection, response = _open_https_download(url, terms=terms)
         with temporary.open("xb") as stream:
             os.chmod(temporary, 0o600)
             while True:
@@ -348,6 +459,34 @@ def _download_verified(
             "runtime download bytes do not match their immutable identity"
         )
     temporary.replace(destination)
+
+
+def _verify_governing_terms(manifest: dict[str, Any]) -> str:
+    """Resolve and hash every governing terms source before cache mutation."""
+
+    identities = []
+    with tempfile.TemporaryDirectory(prefix="npa-libero-terms-") as temporary:
+        root = Path(temporary)
+        for index, term in enumerate(manifest["governing_terms"]):
+            destination = root / f"term-{index}"
+            _download_verified(
+                destination,
+                url=term["url"],
+                sha256=term["sha256"],
+                size=int(term["size_bytes"]),
+                terms=True,
+            )
+            identities.append(
+                {
+                    "id": term["id"],
+                    "boundary": term["boundary"],
+                    "sha256": term["sha256"],
+                    "size_bytes": term["size_bytes"],
+                    "url": term["url"],
+                }
+            )
+    encoded = json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -407,7 +546,11 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
     shutil.rmtree(destination / ".git")
 
 
-def _install_runtime(root: Path, artifacts: list[dict[str, Any]]) -> None:
+def _install_runtime(
+    root: Path,
+    artifacts: list[dict[str, Any]],
+    requirement_lines: list[str],
+) -> None:
     wheelhouse = root / "downloads"
     wheelhouse.mkdir(mode=0o700)
     for item in artifacts:
@@ -420,37 +563,56 @@ def _install_runtime(root: Path, artifacts: list[dict[str, Any]]) -> None:
     venv = root / "venv"
     _run([sys.executable, "-m", "venv", str(venv)])
     bootstrap_names = {"pip", "setuptools", "wheel"}
-    bootstrap = [
-        str(wheelhouse / item["filename"])
-        for item in artifacts
-        if item["name"] in bootstrap_names
-    ]
-    remaining = [
-        str(wheelhouse / item["filename"])
-        for item in artifacts
-        if item["name"] not in bootstrap_names
-    ]
-    pip = str(venv / "bin" / "python")
-    _run([pip, "-m", "pip", "install", "--no-index", "--no-deps", *bootstrap])
-    _run(
-        [
-            pip,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--no-deps",
-            "--no-build-isolation",
-            *remaining,
-        ]
+    bootstrap_lock = root / ".bootstrap-requirements.txt"
+    runtime_lock = root / ".runtime-requirements.txt"
+    bootstrap_lock.write_text(
+        "\n".join(
+            line
+            for line, item in zip(requirement_lines, artifacts, strict=True)
+            if item["name"] in bootstrap_names
+        )
+        + "\n",
+        encoding="utf-8",
     )
+    runtime_lock.write_text(
+        "\n".join(
+            line
+            for line, item in zip(requirement_lines, artifacts, strict=True)
+            if item["name"] not in bootstrap_names
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(bootstrap_lock, 0o400)
+    os.chmod(runtime_lock, 0o400)
+    for artifact in wheelhouse.iterdir():
+        os.chmod(artifact, 0o400)
+    os.chmod(wheelhouse, 0o500)
+    pip = str(venv / "bin" / "python")
+    common = [
+        pip,
+        "-m",
+        "pip",
+        "install",
+        "--require-hashes",
+        "--no-index",
+        "--no-deps",
+        "--no-cache-dir",
+        "--find-links",
+        str(wheelhouse),
+    ]
+    _run([*common, "-r", str(bootstrap_lock)])
+    _run([*common, "--no-build-isolation", "-r", str(runtime_lock)])
     site_packages = subprocess.check_output(
         [pip, "-c", "import site; print(site.getsitepackages()[0])"], text=True
     ).strip()
     Path(site_packages, "npa-libero-source.pth").write_text(
         str(root / "source") + "\n", encoding="utf-8"
     )
+    os.chmod(wheelhouse, 0o700)
     shutil.rmtree(wheelhouse)
+    bootstrap_lock.unlink()
+    runtime_lock.unlink()
 
 
 def _fetch_inputs(root: Path, manifest: dict[str, Any]) -> None:
@@ -560,7 +722,12 @@ def _validate_read_only_tree(root: Path) -> None:
 
 
 def _complete_record(
-    root: Path, manifest: dict[str, Any], manifest_sha256: str, decision_sha256: str
+    root: Path,
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+    decision_sha256: str,
+    requirements_sha256: str,
+    governing_terms_sha256: str,
 ) -> dict[str, Any]:
     source = manifest["source"]
     demonstration = manifest["demonstration"]
@@ -570,6 +737,9 @@ def _complete_record(
         "solution": "libero",
         "manifest_sha256": manifest_sha256,
         "decision_sha256": decision_sha256,
+        "runtime_requirements_sha256": requirements_sha256,
+        "governing_terms_sha256": governing_terms_sha256,
+        "governing_terms_count": len(manifest["governing_terms"]),
         "source_revision": source["revision"],
         "source_tree": source["tree"],
         "source_license_sha256": source["license_sha256"],
@@ -596,10 +766,18 @@ def _validate_complete(
     manifest: dict[str, Any],
     manifest_sha256: str,
     decision_sha256: str,
+    requirements_sha256: str,
+    governing_terms_sha256: str,
 ) -> dict[str, Any]:
     _validate_read_only_tree(root)
     record = _load_json(root / ".complete.json")
-    expected = _complete_record_values(manifest, manifest_sha256, decision_sha256)
+    expected = _complete_record_values(
+        manifest,
+        manifest_sha256,
+        decision_sha256,
+        requirements_sha256,
+        governing_terms_sha256,
+    )
     dynamic_keys = {"content_inventory_sha256", "content_inventory_entry_count"}
     if set(record) != set(expected) | dynamic_keys or any(
         record.get(key) != value for key, value in expected.items()
@@ -655,7 +833,11 @@ def _validate_complete(
 
 
 def _complete_record_values(
-    manifest: dict[str, Any], manifest_sha256: str, decision_sha256: str
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+    decision_sha256: str,
+    requirements_sha256: str,
+    governing_terms_sha256: str,
 ) -> dict[str, Any]:
     source = manifest["source"]
     demonstration = manifest["demonstration"]
@@ -664,6 +846,9 @@ def _complete_record_values(
         "solution": "libero",
         "manifest_sha256": manifest_sha256,
         "decision_sha256": decision_sha256,
+        "runtime_requirements_sha256": requirements_sha256,
+        "governing_terms_sha256": governing_terms_sha256,
+        "governing_terms_count": len(manifest["governing_terms"]),
         "source_revision": source["revision"],
         "source_tree": source["tree"],
         "source_license_sha256": source["license_sha256"],
@@ -686,8 +871,12 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     _, decision_sha256 = _validate_decision(
         decision_path, args.decision_sha256, manifest, manifest_sha256
     )
+    requirement_lines, requirements_sha256 = _validate_requirements(
+        Path(args.requirements), manifest
+    )
     output = Path(args.output_dir) if args.output_dir else None
     cache_root = _validate_cache_root(Path(args.cache_root), output)
+    governing_terms_sha256 = _verify_governing_terms(manifest)
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(cache_root, 0o700)
     lock_path = cache_root / ".bootstrap.lock"
@@ -699,7 +888,12 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
         warm_reuse = final.is_dir()
         if warm_reuse:
             record = _validate_complete(
-                final, manifest, manifest_sha256, decision_sha256
+                final,
+                manifest,
+                manifest_sha256,
+                decision_sha256,
+                requirements_sha256,
+                governing_terms_sha256,
             )
         else:
             partial = Path(
@@ -709,10 +903,17 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 _fetch_source(partial, manifest["source"])
                 _validate_task_inputs(partial, manifest)
-                _install_runtime(partial, manifest["runtime_artifacts"])
+                _install_runtime(
+                    partial, manifest["runtime_artifacts"], requirement_lines
+                )
                 _fetch_inputs(partial, manifest)
                 record = _complete_record(
-                    partial, manifest, manifest_sha256, decision_sha256
+                    partial,
+                    manifest,
+                    manifest_sha256,
+                    decision_sha256,
+                    requirements_sha256,
+                    governing_terms_sha256,
                 )
                 _seal_cache_tree(partial)
                 partial.replace(final)
@@ -728,6 +929,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
 
 def status(args: argparse.Namespace) -> dict[str, Any]:
     manifest, manifest_sha256 = _validate_manifest(Path(args.manifest))
+    _validate_requirements(Path(args.requirements), manifest)
     cache_root = _validate_cache_root(Path(args.cache_root), None)
     final = cache_root / manifest_sha256
     complete = final / ".complete.json"
@@ -744,6 +946,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("ensure", "status"))
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--requirements", default=str(DEFAULT_REQUIREMENTS))
     parser.add_argument("--cache-root", default=str(DEFAULT_CACHE))
     parser.add_argument("--decision", default="")
     parser.add_argument("--decision-sha256", default="")

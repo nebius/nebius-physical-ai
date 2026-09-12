@@ -32,12 +32,19 @@ use decision. Missing or mismatched decisions refuse before cache creation or
 network access. Runtime fetch changes delivery only; it is not consent and
 does not grant use, redistribution, commercial, service, or output rights.
 The fetched cache stays non-root, atomic, sealed read-only, and separate from
-`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. Offline
-warm reuse revalidates a complete source/runtime/data/model file inventory and
-refuses writable or changed trees. The qualification gate itself requires a
-cold-fetch receipt from the current run.
+`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. Warm reuse
+revalidates the governing terms plus a complete source/runtime/data/model file
+inventory and refuses unavailable terms, writable trees, or changed bytes. The
+qualification gate itself requires a cold-fetch receipt from the current run.
+
+The manifest separately pins seven official governing-terms documents by URL,
+size, and SHA-256. They are resolved into ephemeral storage only after the
+manager decision passes and before any cache mutation; drift or unavailability
+refuses. The image-shipped runtime requirements lock must exactly match all 135
+artifact identities, and installation uses `--require-hashes --no-deps` from a
+read-only wheelhouse. These controls prove identity and refusal, not consent.
 
 The candidate remains unbuilt, unvalidated, and quarantined. It must pass the
-dedicated complete-byte scanner, SBOM/provenance/security gates, anonymous
-pull proof, and an exact-digest B200 hard gate before any supported release or
-public catalog claim.
+dedicated complete-byte/layer/exported-rootfs scanner,
+SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
+hard gate before any supported release or public catalog claim.

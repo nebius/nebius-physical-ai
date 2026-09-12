@@ -208,8 +208,12 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     ):
         assert contract in profile
     assert '"rendering_invoked": False' in profile
-    assert "path.is_symlink()" in profile
-    assert "resolved_root not in resolved.parents" in profile
+    assert 'descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)' in profile
+    assert "dir_fd=descriptor" in profile
+    assert "dir_fd=directory_fd" in profile
+    assert "root.rglob" not in profile
+    assert "root.resolve" not in profile
+    assert "stat.S_ISLNK(info.st_mode)" in profile
     assert "stat.S_ISREG(info.st_mode)" in profile
     assert "info.st_nlink != 1" in profile
     assert "os.O_NOFOLLOW" in profile
@@ -269,6 +273,7 @@ def test_libero_readiness_hashes_bind_every_execution_input() -> None:
         "workflow": WORKFLOW_PATH,
         "resource_profile": PROFILE_PATH,
         "runtime_manifest": RUNTIME_MANIFEST_PATH,
+        "runtime_requirements": IMAGE_ROOT / "runtime-requirements.txt",
         "runtime_bootstrap": IMAGE_ROOT / "runtime-bootstrap.py",
         "smoke": SMOKE_PATH,
         "image_manifest": IMAGE_MANIFEST_PATH,

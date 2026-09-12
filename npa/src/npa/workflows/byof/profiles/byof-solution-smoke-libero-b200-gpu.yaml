@@ -59,6 +59,7 @@ setup: |
   bootstrap_receipt="${output_dir}/npa_runtime_bootstrap.json"
   if ! /opt/npa/libero/runtime-bootstrap.py ensure \
     --manifest /opt/npa/libero/runtime-manifest.json \
+    --requirements /opt/npa/libero/runtime-requirements.txt \
     --cache-root /workspace/.cache/npa/libero \
     --decision "${decision}" \
     --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
@@ -147,35 +148,75 @@ run: |
           client_kwargs["aws_session_token"] = session_token
   client = boto3.client("s3", **client_kwargs)
   prefix = parsed.path.lstrip("/")
-  resolved_root = root.resolve(strict=True)
-  if root.is_symlink() or not resolved_root.is_dir():
-      raise RuntimeError("LIBERO output root is not a real directory")
-  for path in root.rglob("*"):
-      if path.is_symlink():
-          raise RuntimeError("LIBERO output contains a forbidden symlink")
-      resolved = path.resolve(strict=True)
-      if resolved_root not in resolved.parents:
-          raise RuntimeError("LIBERO output path escaped its root")
-      info = path.lstat()
-      if stat.S_ISDIR(info.st_mode):
-          continue
-      if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-          raise RuntimeError("LIBERO output contains an unsupported file")
-      descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-      with os.fdopen(descriptor, "rb") as stream:
-          opened = os.fstat(stream.fileno())
-          if (
-              not stat.S_ISREG(opened.st_mode)
-              or opened.st_nlink != 1
-              or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
-          ):
-              raise RuntimeError("LIBERO output changed during confinement check")
-          client.put_object(
-              Bucket=parsed.netloc,
-              Key=prefix + str(path.relative_to(root)),
-              Body=stream,
-              IfNoneMatch="*",
+  def open_output_root(path: Path) -> int:
+      if not path.is_absolute() or path == Path("/"):
+          raise RuntimeError("LIBERO output root must be a narrow absolute path")
+      descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+      try:
+          for component in path.parts[1:]:
+              if component in {"", ".", ".."}:
+                  raise RuntimeError("LIBERO output root is not canonical")
+              child = os.open(
+                  component,
+                  os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                  dir_fd=descriptor,
+              )
+              os.close(descriptor)
+              descriptor = child
+          if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+              raise RuntimeError("LIBERO output root is not a real directory")
+          return descriptor
+      except Exception:
+          os.close(descriptor)
+          raise
+
+  def upload_directory(directory_fd: int, relative: Path) -> None:
+      for name in sorted(os.listdir(directory_fd)):
+          if name in {"", ".", ".."} or "/" in name:
+              raise RuntimeError("LIBERO output contains a noncanonical name")
+          info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+          child_relative = relative / name
+          if stat.S_ISLNK(info.st_mode):
+              raise RuntimeError("LIBERO output contains a forbidden symlink")
+          if stat.S_ISDIR(info.st_mode):
+              child_fd = os.open(
+                  name,
+                  os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                  dir_fd=directory_fd,
+              )
+              try:
+                  opened = os.fstat(child_fd)
+                  if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                      raise RuntimeError("LIBERO output directory changed during scan")
+                  upload_directory(child_fd, child_relative)
+              finally:
+                  os.close(child_fd)
+              continue
+          if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+              raise RuntimeError("LIBERO output contains an unsupported file")
+          file_fd = os.open(
+              name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd
           )
+          with os.fdopen(file_fd, "rb") as stream:
+              opened = os.fstat(stream.fileno())
+              if (
+                  not stat.S_ISREG(opened.st_mode)
+                  or opened.st_nlink != 1
+                  or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+              ):
+                  raise RuntimeError("LIBERO output changed during confinement check")
+              client.put_object(
+                  Bucket=parsed.netloc,
+                  Key=prefix + child_relative.as_posix(),
+                  Body=stream,
+                  IfNoneMatch="*",
+              )
+
+  root_fd = open_output_root(root)
+  try:
+      upload_directory(root_fd, Path())
+  finally:
+      os.close(root_fd)
   client.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
   PY
   exit "${smoke_exit_code}"

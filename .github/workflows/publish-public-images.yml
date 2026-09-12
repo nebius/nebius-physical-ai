@@ -412,6 +412,13 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            if [ -n "$libero_export_container" ]; then
+              docker container rm "$libero_export_container" >/dev/null
+            fi
+          }
+          trap cleanup_libero_export EXIT
           npa/.venv/bin/python - <<'PY'
           import json
           import os
@@ -450,11 +457,18 @@ jobs:
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$IMAGE")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
             npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
               --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
           fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
@@ -645,6 +659,13 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            if [ -n "$libero_export_container" ]; then
+              docker container rm "$libero_export_container" >/dev/null
+            fi
+          }
+          trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
@@ -715,11 +736,18 @@ jobs:
               --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
           fi
           if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$exact")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
             npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
