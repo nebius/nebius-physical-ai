@@ -45,7 +45,7 @@ def test_sweep_cli_and_sdk_use_shared_request_and_keep_stdout_json(monkeypatch):
     assert observed[0] == observed[1]
 
 
-def test_public_sweep_cli_rejects_local_handoffs_before_execution(monkeypatch):
+def test_public_sweep_cli_rejects_local_handoffs_before_execution(monkeypatch, tmp_path):
     from typer.testing import CliRunner
     from npa.cli.main import app
     from npa.workbench.alpamayo2_super import ray_sweep
@@ -54,7 +54,7 @@ def test_public_sweep_cli_rejects_local_handoffs_before_execution(monkeypatch):
         pytest.fail("invalid path reached inference")
     monkeypatch.setattr(ray_sweep, "run_sweep", forbidden)
     result = CliRunner().invoke(app, ["workbench", "alpamayo2-super", "sweep",
-        "--output-path", "/tmp/fixture", "--run-id", "fixture"])
+        "--output-path", str(tmp_path / "fixture"), "--run-id", "fixture"])
     assert result.exit_code == 1
     assert "S3 handoff contract" in result.output
 

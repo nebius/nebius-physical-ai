@@ -118,6 +118,9 @@ The extended work also fixed two failures found through testing:
 | Full Linux `make test` target, two pytest workers | 20,104 passed; 123 skipped; 1 XPASS |
 | Package-only coverage | 75.98%; 60% gate passed |
 | Guardrails after startup fix | 2,828 passed |
+| Guardrails after rebasing onto current main for PR review | 3,414 passed |
+| Focused Alpamayo tests after the PR review fixture fix | 64 passed |
+| Bandit 1.9.4 scan of the sweep tests at the CI severity/confidence thresholds | Reproduced B108 before replacing the fixed temporary path with `tmp_path`; zero findings after the fix |
 | Focused startup regressions | Failed before fix; 49 related tests passed after fix |
 | Dedicated Linux security regression target before PR publication | 651 passed; real CPU checkpoint runtime; tested code matches the branch |
 | Independent live artifact tests | Two passed for each of three reports |
