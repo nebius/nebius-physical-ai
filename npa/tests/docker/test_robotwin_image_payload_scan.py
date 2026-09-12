@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import json
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -185,8 +187,8 @@ def test_private_image_stdin_is_bounded_and_never_echoed_on_failure(
         io.TextIOWrapper(io.BytesIO(private.encode()), encoding="utf-8"),
     )
     monkeypatch.setattr(
-        scanner.walker,
-        "remote_material",
+        scanner,
+        "_private_remote_material",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(private)),
     )
 
@@ -203,3 +205,116 @@ def test_private_image_stdin_is_bounded_and_never_echoed_on_failure(
     )
     assert scanner.main(["--image-stdin"]) == 2
     assert "private image scan failed" in capsys.readouterr().out
+
+
+class _RegistryResponse(io.BytesIO):
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self.headers: dict[str, str] = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
+
+
+def _tar_bytes(members: dict[str, bytes]) -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        for name, payload in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return stream.getvalue()
+
+
+def _digest(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def test_private_registry_transport_downloads_exact_oci_bytes_without_child_image_argv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layer = _tar_bytes({"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA notice"})
+    config = json.dumps({"history": []}, separators=(",", ":")).encode()
+    layer_digest = _digest(layer)
+    config_digest = _digest(config)
+    platform_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "config": {"digest": config_digest, "size": len(config)},
+            "layers": [{"digest": layer_digest, "size": len(layer)}],
+        },
+        separators=(",", ":"),
+    ).encode()
+    platform_digest = _digest(platform_manifest)
+    index = json.dumps(
+        {
+            "schemaVersion": 2,
+            "manifests": [
+                {
+                    "digest": platform_digest,
+                    "size": len(platform_manifest),
+                    "platform": {"os": "linux", "architecture": "amd64"},
+                }
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    index_digest = _digest(index)
+    image = f"registry.example/private/npa-robotwin@{index_digest}"
+    payloads = {
+        f"manifests/{index_digest}": index,
+        f"manifests/{platform_digest}": platform_manifest,
+        f"blobs/{config_digest}": config,
+        f"blobs/{layer_digest}": layer,
+    }
+
+    class FakeOpener:
+        def open(self, request, **_kwargs):
+            suffix = request.full_url.split("/v2/private/npa-robotwin/", 1)[1]
+            return _RegistryResponse(payloads[suffix])
+
+    monkeypatch.setattr(scanner, "_URL_OPENER", FakeOpener())
+    monkeypatch.setattr(scanner, "_docker_credentials", lambda _registry: {})
+
+    def no_child_process(argv, **_kwargs):
+        assert image not in argv
+        raise AssertionError("private OCI materialization must not launch a child")
+
+    monkeypatch.setattr(scanner.subprocess, "run", no_child_process)
+    tars, parsed_config = scanner._private_remote_material(image, tmp_path)
+
+    assert len(tars) == 2
+    assert parsed_config == {"history": []}
+    assert scanner.scan_tars(tars, parsed_config) == []
+
+
+def test_docker_credential_helper_receives_registry_only_on_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    docker_config = tmp_path / "docker"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text(
+        json.dumps({"credHelpers": {"registry.example": "unit"}}),
+        encoding="utf-8",
+    )
+    calls: list[tuple[list[str], str]] = []
+
+    def helper(argv, **kwargs):
+        calls.append((list(argv), kwargs["input"]))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=json.dumps({"Username": "operator", "Secret": "credential"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(scanner.subprocess, "run", helper)
+    credentials = scanner._docker_credentials(
+        "registry.example", {"DOCKER_CONFIG": str(docker_config), "HOME": str(tmp_path)}
+    )
+
+    assert credentials == {"username": "operator", "secret": "credential"}
+    assert calls == [(["docker-credential-unit", "get"], "registry.example\n")]

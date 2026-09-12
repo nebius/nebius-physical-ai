@@ -8,10 +8,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import stat
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 import yaml
 
@@ -86,6 +87,52 @@ INVOCATION = {
 }
 
 
+def _is_official_robotwin_repository(value: str) -> bool:
+    """Recognize equivalent Git spellings of the pinned official repository."""
+
+    text = value.strip()
+    if not text:
+        return False
+    scp_match = re.fullmatch(
+        r"(?:[^@/:\s]+@)?(?P<host>(?:www\.)?github\.com\.?):(?P<path>[^?#]+)",
+        text,
+        re.I,
+    )
+    if scp_match:
+        host = scp_match.group("host").lower().rstrip(".")
+        path = scp_match.group("path")
+    else:
+        candidate = text if "://" in text else f"//{text}"
+        try:
+            parsed = urlsplit(candidate)
+            port = parsed.port
+        except ValueError:
+            return False
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if port not in (None, 443):
+            return False
+        path = parsed.path
+    if host not in {"github.com", "www.github.com"}:
+        return False
+    normalized = posixpath.normpath("/" + unquote(path).lstrip("/"))
+    normalized = normalized.rstrip("/").removesuffix(".git").lower()
+    return normalized == "/robotwin-platform/robotwin"
+
+
+def _is_robotwin_image_reference(value: str) -> bool:
+    """Recognize immutable and mutable references to the RoboTwin image repo."""
+
+    reference = value.strip().removeprefix("docker:")
+    if not reference or any(character.isspace() for character in reference):
+        return False
+    repository = reference.split("@", 1)[0]
+    last_slash = repository.rfind("/")
+    last_colon = repository.rfind(":")
+    if last_colon > last_slash:
+        repository = repository[:last_colon]
+    return repository.rsplit("/", 1)[-1].lower() == "npa-robotwin"
+
+
 def is_robotwin_request(
     *,
     solution_name: str = "",
@@ -98,14 +145,13 @@ def is_robotwin_request(
 ) -> bool:
     """Recognize public inputs that could otherwise relabel the RoboTwin path."""
 
-    normalized_repo = repo_url.strip().rstrip("/").lower().removesuffix(".git")
-    official_repo = INVOCATION["repo_url"].removesuffix(".git").lower()
     return any(
         (
             solution_name.strip().lower() == "robotwin",
-            normalized_repo == official_repo,
+            _is_official_robotwin_repository(repo_url),
             base_image.strip().lower() == "tool://robotwin",
-            "/npa-robotwin@sha256:" in image.strip().lower(),
+            _is_robotwin_image_reference(base_image),
+            _is_robotwin_image_reference(image),
             smoke_command.strip() == "/opt/npa/robotwin/robotwin-runtime run",
             capability_name.strip() == INVOCATION["capability_name"],
             Path(yaml_path).name.removesuffix(".yaml") == INVOCATION["yaml"],
