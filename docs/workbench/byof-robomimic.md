@@ -15,10 +15,10 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Boundary | Phase A contract | Status and gate |
 | --- | --- | --- |
 | Source | Bake only `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`. Its MIT `LICENSE` SHA-256 is `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. | Intended and statically checked; source bytes were not fetched or built in Phase A. A future build must record the observed commit and tree hash. |
-| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 34 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
+| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 40 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
 | Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
-| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the manager-approved `inventory.json` SHA-256 plus the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the consumed bytes. |
+| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the manager-approved `inventory.json` SHA-256 plus the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
 | Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
 Runtime fetching changes delivery, not permission. A credential, environment
@@ -33,12 +33,21 @@ The Dockerfile intends to use the exact parent index digest
 An authorized build must re-resolve its Linux/amd64 child and record the result;
 historical resolution metadata is not byte-portable evidence.
 
-`baked-requirements.lock` contains 34 exact version pins with approved artifact
-hashes and intentionally omits optional rendering, video, TensorBoard, and
-language-model packages as well as torch, torchvision, Triton, and every
-`nvidia-*` distribution. The Dockerfile
-installs the wheels with `--only-binary=:all: --no-deps --require-hashes`,
-retains the immutable source without `.git`, removes SSH host keys, runs as
+`baked-requirements.lock` contains 40 exact version pins with approved artifact
+hashes. The retained packages cover the pinned source's unconditional import
+graph: `robomimic.algo` registers Diffusion Policy, while
+`robomimic.models.obs_core` imports the matplotlib-backed visualization helper
+even for low-dimensional BC. TensorBoard, transformer language-model,
+imageio-ffmpeg, and EGL-probe packages are lazy paths that this headless gate
+does not invoke. Torch, torchvision, Triton, and every `nvidia-*` distribution
+also remain absent. The Dockerfile installs the wheels with
+`--only-binary=:all: --no-deps --require-hashes`. Before any future authorized
+smoke begins, the verified external runtime interpreter must pass a pinned BC
+entrypoint import gate, including the upstream registry's Diffusers scheduler
+and EMA symbols, against the security-updated Diffusers 0.38 candidate. This is
+import compatibility for BC only; Diffusion Policy execution and the full
+algorithm matrix remain deferred to later separately scoped qualification. The
+image retains the immutable source without `.git`, removes SSH host keys, runs as
 `ubuntu`, starts no SSH daemon by default, and leaves the runtime/input/output
 mount points empty. Passwordless sudo exists solely for the repository's
 SkyPilot Kubernetes bootstrap contract.
@@ -54,7 +63,9 @@ warm, or network path. `exec` verifies the read-only source, constructs a
 run-private snapshot from only declared objects, independently verifies the
 snapshot, atomically publishes it, and executes its interpreter. The ephemeral
 snapshot is a separate runtime-consumption boundary and is removed with the pod;
-it is neither baked into the image nor uploaded as output.
+it is neither baked into the image nor uploaded as output. Its absent write bits
+do not make it an enforced read-only filesystem; identity comes from the
+independently selected inventory hash and the observed read-only source mount.
 
 The checked-in `npa.workflow` remains a valid plan and immutable configuration
 source for the dedicated live harness. Its outer task names the proposed

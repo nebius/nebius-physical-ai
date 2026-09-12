@@ -25,5 +25,8 @@ select its exact inventory SHA-256 independently, and the bootstrap must match
 that hash while observing the mount read-only. Execution copies only declared
 objects into a private staging tree, verifies the copy again, removes write
 bits, and atomically publishes that run-local snapshot before invoking its
-interpreter. This is byte identity and race resistance only; it grants no
+interpreter. Because the runtime UID owns this copy, absent write bits are
+hygiene rather than an enforced read-only boundary. The independently selected
+inventory hash and observed read-only source mount supply byte identity; the
+private snapshot supplies point-in-time race resistance only. Neither grants a
 license, entitlement, redistribution, or service right.

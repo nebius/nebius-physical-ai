@@ -20,6 +20,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.deploy import images
 from npa.orchestration.npa_workflow import build_plan, load_spec
 
 
@@ -48,7 +49,7 @@ BUILD_COMMAND_SHA256 = (
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 DEPENDENCY_LOCK_SHA256 = (
-    "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
+    "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
 )
 
 
@@ -241,6 +242,7 @@ def _fake_robomimic_kubectl(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256",
+        "AWS_ENDPOINT_URL",
     ),
 )
 def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
@@ -263,6 +265,7 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
     }
     for variable, value in selectors.items():
         monkeypatch.setenv(variable, value)
@@ -270,6 +273,32 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
 
     with pytest.raises(AssertionError):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://storage.test-region.nebius.cloud",
+        "https://user:secret@storage.test-region.nebius.cloud",
+        "https://storage.test-region.nebius.cloud.attacker.invalid",
+        "https://127.0.0.1",
+        "https://storage.test-region.nebius.cloud:8443",
+        "https://storage.test-region.nebius.cloud/path",
+        "https://storage.test-region.nebius.cloud?target=other",
+        "https://storage.test-region.nebius.cloud#fragment",
+        "https://storage.test-region.nebius.cloud:invalid",
+    ),
+)
+def test_robomimic_storage_endpoint_refuses_credential_exfiltration(
+    endpoint: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        _live_e2e_module()._robomimic_storage_endpoint(endpoint)
+
+
+def test_robomimic_storage_endpoint_returns_one_canonical_https_origin() -> None:
+    endpoint = "https://storage.test-region.nebius.cloud"
+    assert _live_e2e_module()._robomimic_storage_endpoint(endpoint) == endpoint
 
 
 def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
@@ -407,6 +436,7 @@ def test_robomimic_target_refuses_context_namespace_mismatch(
         "kubeconfig": target.kubeconfig,
         "context": target.context,
         "namespace": target.namespace,
+        "storage_endpoint": "https://storage.test-region.nebius.cloud",
     }
 
     with pytest.raises(AssertionError, match="namespace does not match"):
@@ -675,6 +705,25 @@ def test_robomimic_gate_rejects_known_public_registry_hosts(
 
     with pytest.raises(AssertionError):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+def test_robomimic_publication_quarantine_covers_explicit_dev_tags() -> None:
+    source_sha = "a" * 40
+    with pytest.raises(ValueError, match="publication-quarantined"):
+        images.development_image_for_tool("robomimic", git_sha=source_sha)
+    with pytest.raises(ValueError, match="publication-quarantined"):
+        images.container_image_for_tool(
+            "robomimic",
+            tag=f"dev-{source_sha}",
+        )
+    assert (
+        images.container_image_for_tool(
+            "robomimic",
+            registry="private.invalid/robomimic",
+            tag=f"dev-{source_sha}",
+        )
+        == f"private.invalid/robomimic/npa-robomimic:dev-{source_sha}"
+    )
 
 
 def test_robomimic_runner_refuses_before_build_without_manager_context() -> None:
@@ -1270,10 +1319,20 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
             bool(re.match(rb"^[A-Za-z0-9_.-]+==", line))
             for line in lock_bytes.splitlines()
         )
-        == 34
+        == 40
     )
     assert hashlib.sha256(lock_bytes).hexdigest() == DEPENDENCY_LOCK_SHA256
     smoke = _smoke_python()
+
+    assert 'allowed_hosts=("huggingface.co",)' in smoke
+    for hf_redirect_host in (
+        r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co",
+        "cas-bridge.xethub.hf.co",
+        ".cdn.hf.co",
+    ):
+        assert hf_redirect_host in smoke
+    for broad_redirect_domain in ("amazonaws.com", "cloudfront.net"):
+        assert broad_redirect_domain not in smoke
 
     for required in (
         SOURCE_REVISION,
@@ -1331,7 +1390,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"pretrained_weights": False',
         '"runtime_cache": "external-read-only-prepopulated"',
         '"manager_inventory_digest_matched": True',
-        '"atomic_execution_snapshot": True',
+        '"atomic_private_snapshot_published": True',
         '"snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0',
         '"exit_status": 0',
     ):
@@ -1381,6 +1440,14 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert "runtime input must not be uploaded as output" in PROFILE.read_text(
         encoding="utf-8"
     )
+    profile_text = PROFILE.read_text(encoding="utf-8")
+    for endpoint_gate in (
+        'endpoint_parts.scheme != "https"',
+        "endpoint_parts.username is not None",
+        're.fullmatch(r"storage\\.[a-z0-9-]+\\.nebius\\.cloud"',
+        'RuntimeError("refusing S3 credentials for an unapproved endpoint")',
+    ):
+        assert endpoint_gate in profile_text
     assert "if smoke_exit_code == 0:" in PROFILE.read_text(encoding="utf-8")
     assert 'smoke_artifact["exit_status"] = smoke_exit_code' in PROFILE.read_text(
         encoding="utf-8"
