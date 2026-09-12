@@ -86,13 +86,15 @@ discarding unrelated capabilities that can be packaged and proven safely.
    until that exact scoped mechanism is satisfied. For gated Hugging Face
    artifacts, the operator's token and the upstream repository permission are
    the access gate; do not add an NPA-side EULA or terms-acceptance boolean.
-7. Use the repository model-cache surface for durable reuse. Key cache identity
-   by provider, artifact, revision/digest, and format. Gated or
-   non-redistributable bytes require an operator-owned, access-restricted cache
-   whose reuse policy is no broader than the upstream entitlement. Default to
-   node-local ephemeral caching when durable-cache permission or isolation is
-   not established. Mount a completed durable cache read-only in authorized
-   consumers; never copy it into another image.
+7. For either runtime-fetch shape, use the repository model-cache surface for
+   durable reuse. Key cache identity by provider, artifact, revision/digest,
+   and format. Gated or non-redistributable bytes require an operator-owned,
+   access-restricted cache whose reuse policy is no broader than the upstream
+   entitlement. Default to node-local ephemeral caching when durable-cache
+   permission or isolation is not established. Mount a completed durable cache
+   read-only in authorized consumers; never copy it into another image. A
+   build-your-own image does not need a runtime downloader or runtime cache
+   unless its declared capability independently fetches another artifact.
 8. Keep planning and image validation useful without credentials. When the
    selected artifact requires credentials, its artifact-dependent runtime path
    fails early with a specific remediation and without provisioning or partial
@@ -101,7 +103,25 @@ discarding unrelated capabilities that can be packaged and proven safely.
 
 ## Required Proof
 
-Before calling the container or capability ready, prove all of the following:
+Apply the common gates, then only the subsection for the selected packaging
+shape. Do not report runtime-fetch gates as failed or passed for a
+build-your-own image when they are not part of its declared delivery path.
+
+### Every packaging shape
+
+- **Real capability:** the exact image digest runs the documented workload on
+  compatible target hardware and produces the declared output artifact.
+  Import, CUDA visibility, a successful download, and build success are not
+  capability evidence.
+- **No secret leakage:** scan the image, logs, workflow render, artifacts, and
+  diff. Preserve terms links and provenance, never credentials or private
+  infrastructure identifiers.
+- **Rights and containment:** record official rights for every baked, fetched,
+  and output boundary. Keep any image containing restricted bytes in an
+  operator-controlled private registry unless redistribution is independently
+  permitted.
+
+### Runtime-fetch shapes only
 
 - **Byte absence:** inspect the built image's files, layers, history, OCI
   configuration, SBOM, and caches. A Dockerfile review is not evidence that
@@ -117,14 +137,25 @@ Before calling the container or capability ready, prove all of the following:
 - **Positive fetch:** using operator-authorized access, the container downloads
   the exact immutable artifact directly from upstream, verifies identity and
   checksums, and records non-secret provenance.
-- **Real capability:** the fetched artifact runs the documented workload on the
-  compatible target hardware and produces the declared output artifact. Import,
-  CUDA visibility, and a successful download are not capability evidence.
 - **Cache behavior:** a restart either reuses the verified immutable cache or
   fails safely; concurrent population cannot expose a partial artifact.
-- **No secret leakage:** scan the image, logs, workflow render, artifacts, and
-  diff. Preserve terms links and provenance, never credentials or private
-  infrastructure identifiers.
+
+### Build-your-own shape only
+
+- **Restricted-input provenance:** record the exact digest or checksum of each
+  operator-authorized restricted base, SDK, source archive, and other build
+  input, together with its official terms and the trusted-build receipt.
+- **Resulting-byte inventory:** inspect the resulting image's files, layers,
+  history, OCI configuration, and SBOM. Identify restricted components and
+  their provenance; do not claim their absence when the point of the private
+  build is to include them.
+- **Build-secret absence:** inspect layers, history, OCI configuration, files,
+  logs, and SBOM for credentials and secret material used by the trusted build.
+- **Private-registry containment:** resolve the resulting immutable digest,
+  prove pullability only from the operator-controlled private registry, and
+  record that no public tag or registry copy was created. Public promotion is a
+  separate gate requiring verified redistribution rights and a new complete
+  publication review.
 
 Classify `redistribution: public` only from the bytes actually shipped and the
 verified rights for those bytes. Keep the image restricted or unvalidated when
@@ -141,9 +172,13 @@ downstream consumer exists.
 
 - Completed runtime-fetch contract and six-boundary license decision.
 - Digest-pinned bootstrap image or build-your-own recipe.
-- Runtime downloader/bootstrap with immutable identity and safe caching.
-- Negative refusal tests, built-image absence scan, and positive real-workload
-  evidence.
+- For a runtime-fetch shape: a downloader/bootstrap with immutable identity and
+  safe caching, applicable refusal tests, built-image restricted-byte absence,
+  positive fetch, and positive real-workload evidence.
+- For build-your-own: exact restricted-input provenance, resulting-image
+  byte/SBOM inventory, build-secret absence, private-registry containment, and
+  positive real-workload evidence. Do not require a runtime downloader, empty
+  runtime cache, or cache-reuse test unless runtime fetch is also declared.
 - NPA workflow YAML with runtime secret references only when the artifact's
   exact access or product-acceptance policy requires them, declared
   input/output artifacts, compatible GPU resources, and no embedded restricted

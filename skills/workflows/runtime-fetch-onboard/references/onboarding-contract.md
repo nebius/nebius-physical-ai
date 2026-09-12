@@ -22,10 +22,10 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Baked runtime | `<base@sha256 and packages>` | `<official URLs>` | `baked` | `<SBOM/scan>` |
 | Weights | `<repo@revision and files>` | `<official URL>` | `<choice>` | `<access probe/hash>` |
 | Dataset/assets | `<dataset@revision and files>` | `<official URL>` | `<choice>` | `<manifest/hash>` |
-| Runtime cache | `<provider/artifact/revision/format key>` | `<inherits artifact terms>` | `runtime only` | `<empty-image/reuse proof>` |
+| Runtime cache | `<provider/artifact/revision/format key, or not applicable for build-your-own without runtime fetch>` | `<inherits artifact terms, or not applicable>` | `runtime only` or `not applicable` | `<empty-image/reuse proof, or packaging-shape rationale>` |
 | Outputs | `<artifact types>` | `<applicable terms>` | `external output` | `<fail-closed downstream gate, or note only when no automated consumer exists>` |
 
-## Runtime or operator-build delivery
+## Shared delivery identity
 
 | Field | Required value |
 | --- | --- |
@@ -35,26 +35,67 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Authorization source | `<runtime secret name, operator-owned build-time credential source, or anonymous>` |
 | Credential phase | `runtime`, `build-only`, or `none` |
 | Acceptance mechanism | `<vendor entitlement, exact product mechanism, or none>` |
+| Cleanup | `<exact task-owned image/cache/workload cleanup>` |
+
+Complete exactly one of the following packaging-shape sections. Do not invent
+runtime-cache evidence for a build-your-own image, and do not use private
+containment as a substitute for proving restricted-byte absence from a public
+runtime-fetch bootstrap.
+
+## Runtime-fetch delivery only
+
+Use for `weights/data runtime fetch` and `whole-source/SDK runtime fetch`. For
+`build-your-own`, mark this entire section `not applicable — build-your-own`.
+
+| Field | Required value |
+| --- | --- |
 | Cache tier | `node-local ephemeral` or `shared durable PVC/object storage` |
 | Cache owner/access policy | `<operator/tenant isolation and authorized consumers; default ephemeral if unknown>` |
 | Cache reuse permission | `<official source establishing permitted persistence/reuse>` |
 | Temporary-download path | `<unique non-image path>` |
 | Atomic ready marker | `<path and contents>` |
 | Offline/restart behavior | `<safe reuse or explicit refusal>` |
-| Cleanup | `<exact task-owned cache/workload cleanup>` |
 
-## Validation ledger
+## Build-your-own delivery only
+
+Use for `build-your-own`. For either runtime-fetch shape, mark this entire
+section `not applicable — runtime-fetch shape`.
+
+| Field | Required value |
+| --- | --- |
+| Restricted build inputs | `<artifact, exact digest/checksum, official terms, and operator authorization evidence>` |
+| Trusted build receipt | `<builder plus non-secret input/result provenance>` |
+| Resulting image inventory | `<image digest plus files/layers/history/OCI configuration/SBOM evidence>` |
+| Build-secret absence | `<files/layers/history/OCI configuration/log/SBOM scan evidence>` |
+| Private-registry containment | `<operator-controlled registry pull receipt and proof that no public tag/copy was created>` |
+| Public-promotion disposition | `not permitted`, `deferred`, or `<separate verified redistribution/publication evidence>` |
+
+## Shared validation ledger
+
+| Gate | Command/evidence | Result |
+| --- | --- | --- |
+| SBOM, vulnerability, license, and secret scans | `<artifacts>` | `<pass/fail>` |
+| Real capability on target hardware | `<run evidence>` | `<pass/fail>` |
+| Workflow validate/plan and declared artifacts | `<commands>` | `<pass/fail>` |
+
+### Runtime-fetch validation only
 
 | Gate | Command/evidence | Result |
 | --- | --- | --- |
 | Applicable refusal before network | `<missing gated entitlement, explicit documented opt-out, or missing exact product opt-in; command and named failure>` | `<pass/fail; not applicable only for anonymous access with no documented acceptance gate>` |
-| Empty image/cache and byte-level payload scan | `<scanner and image digest>` | `<pass/fail>` |
-| SBOM, vulnerability, license, and secret scans | `<artifacts>` | `<pass/fail>` |
+| Empty image/cache and byte-level restricted-payload absence | `<scanner and image digest>` | `<pass/fail>` |
 | Private staging digest before public publication | `<registry digest>` | `<pass/fail>` |
-| Exact delivery and checksum verification | `<non-secret runtime-fetch manifest or trusted-build input and private-image receipt>` | `<pass/fail>` |
-| Real capability on target hardware | `<run evidence>` | `<pass/fail>` |
+| Exact delivery and checksum verification | `<non-secret runtime-fetch manifest>` | `<pass/fail>` |
 | Restart/cache reuse and concurrent-population safety | `<test evidence>` | `<pass/fail>` |
-| Workflow validate/plan and declared artifacts | `<commands>` | `<pass/fail>` |
+
+### Build-your-own validation only
+
+| Gate | Command/evidence | Result |
+| --- | --- | --- |
+| Exact restricted-input provenance | `<digest/checksum, official terms, and trusted-build receipt>` | `<pass/fail>` |
+| Resulting-byte and SBOM inventory | `<private image digest and inspection evidence>` | `<pass/fail>` |
+| Build-secret absence | `<image and build-log scan evidence>` | `<pass/fail>` |
+| Private-registry containment and pullability | `<private digest pull receipt and no-public-copy evidence>` | `<pass/fail>` |
 
 ## Claim disposition
 

@@ -17,6 +17,13 @@ def _normalized(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split()).lower()
 
 
+def _section(text: str, heading: str, next_heading: str | None = None) -> str:
+    """Return one Markdown section so shape-specific rules cannot bleed together."""
+    start = text.index(heading)
+    end = text.index(next_heading, start) if next_heading else len(text)
+    return text[start:end]
+
+
 def test_runtime_fetch_onboard_is_discoverable_for_legal_packaging_blocks() -> None:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
     entry = next(
@@ -142,6 +149,59 @@ def test_skill_separates_runtime_fetch_from_operator_build_credentials() -> None
         "build-only credentials never appear in the workflow",
     ):
         assert phrase in text, phrase
+
+
+def test_proof_and_worksheet_requirements_are_packaging_shape_specific() -> None:
+    skill = _normalized(SKILL)
+    runtime_proof = _section(
+        skill, "### runtime-fetch shapes only", "### build-your-own shape only"
+    )
+    build_proof = _section(
+        skill, "### build-your-own shape only", "## deliverables"
+    )
+    for phrase in (
+        "byte absence",
+        "positive fetch",
+        "cache behavior",
+        "leaves the cache empty",
+    ):
+        assert phrase in runtime_proof, phrase
+        assert phrase not in build_proof, phrase
+    for phrase in (
+        "restricted-input provenance",
+        "resulting-byte inventory",
+        "build-secret absence",
+        "private-registry containment",
+    ):
+        assert phrase in build_proof, phrase
+        assert phrase not in runtime_proof, phrase
+
+    contract = _normalized(CONTRACT)
+    runtime_delivery = _section(
+        contract, "## runtime-fetch delivery only", "## build-your-own delivery only"
+    )
+    build_delivery = _section(
+        contract, "## build-your-own delivery only", "## shared validation ledger"
+    )
+    for phrase in ("cache reuse permission", "temporary-download path"):
+        assert phrase in runtime_delivery, phrase
+        assert phrase not in build_delivery, phrase
+    for phrase in (
+        "restricted build inputs",
+        "resulting image inventory",
+        "private-registry containment",
+    ):
+        assert phrase in build_delivery, phrase
+        assert phrase not in runtime_delivery, phrase
+
+    assert "not applicable — build-your-own" in runtime_delivery
+    assert "not applicable — runtime-fetch shape" in build_delivery
+    runtime_cache_row = next(
+        line
+        for line in CONTRACT.read_text(encoding="utf-8").splitlines()
+        if line.startswith("| Runtime cache |")
+    ).lower()
+    assert "not applicable for build-your-own without runtime fetch" in runtime_cache_row
 
 
 def test_primary_onboarding_skills_route_to_runtime_fetch() -> None:
