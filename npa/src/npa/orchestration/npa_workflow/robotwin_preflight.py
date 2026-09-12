@@ -942,6 +942,15 @@ def _contract_marker(spec: Any) -> bool:
             config.get("solution_name") == "robotwin",
             config.get("runtime_context_env") == PUBLIC_CONTEXT_ENV,
             config.get("repo_ref") == SOURCE_REVISION,
+            is_robotwin_request(
+                solution_name=str(config.get("solution_name") or ""),
+                repo_url=str(config.get("repo_url") or ""),
+                base_image=str(config.get("base_image") or ""),
+                image=str(config.get("image") or ""),
+                smoke_command=str(config.get("smoke_command") or ""),
+                capability_name=str(config.get("capability_name") or ""),
+                yaml_path=str(config.get("resource_profile_yaml") or ""),
+            ),
         )
     )
 
