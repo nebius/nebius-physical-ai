@@ -47,6 +47,29 @@ def _layer(
     return path
 
 
+def _descriptor(content: bytes, media_type: str) -> dict[str, object]:
+    return {
+        "mediaType": media_type,
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+    }
+
+
+def _outer_archive(
+    path: Path, members: dict[str, bytes], *, directories: tuple[str, ...] = ()
+) -> Path:
+    with tarfile.open(path, "w") as archive:
+        for name, content in members.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+        for name in directories:
+            member = tarfile.TarInfo(name)
+            member.type = tarfile.DIRTYPE
+            archive.addfile(member)
+    return path
+
+
 def _config(module, *, user: str = "ubuntu") -> dict[str, object]:
     return {
         "config": {
@@ -994,6 +1017,138 @@ def test_scanner_refuses_missing_or_nonregular_recursive_oci_config(
         else "invalid_oci_descriptor_member"
     )
     assert any(item.kind == expected and item.path == config_path for item in findings)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "non-regular", "drift", "malformed"])
+def test_scanner_refuses_invalid_recursive_oci_subject(tmp_path, mutation) -> None:
+    module = _load_module()
+    manifest_media_type = "application/vnd.oci.image.manifest.v1+json"
+    config = b"{}"
+    config_descriptor = _descriptor(config, "application/vnd.oci.image.config.v1+json")
+    subject = (
+        b"[]"
+        if mutation == "malformed"
+        else json.dumps(
+            {
+                "schemaVersion": 2,
+                "mediaType": manifest_media_type,
+                "config": config_descriptor,
+                "layers": [],
+            },
+            separators=(",", ":"),
+        ).encode()
+    )
+    subject_descriptor = _descriptor(subject, manifest_media_type)
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": manifest_media_type,
+            "config": config_descriptor,
+            "layers": [],
+            "subject": subject_descriptor,
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = _descriptor(image_manifest, manifest_media_type)
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    subject_path = "blobs/sha256/" + str(subject_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    members = {
+        "manifest.json": json.dumps(
+            [{"Config": config_path, "Layers": []}], separators=(",", ":")
+        ).encode(),
+        "index.json": index,
+        config_path: config,
+        manifest_path: image_manifest,
+    }
+    directories: tuple[str, ...] = ()
+    if mutation == "non-regular":
+        directories = (subject_path,)
+    elif mutation == "drift":
+        members[subject_path] = b"drifted subject"
+    elif mutation != "missing":
+        members[subject_path] = subject
+    archive = _outer_archive(
+        tmp_path / f"subject-{mutation}.tar", members, directories=directories
+    )
+
+    if mutation == "malformed":
+        with pytest.raises(RuntimeError, match="OCI descriptor document is malformed"):
+            module._docker_save_outer_findings(archive)
+        return
+
+    findings = module._docker_save_outer_findings(archive)
+    expected = {
+        "missing": "missing_oci_descriptor_member",
+        "non-regular": "invalid_oci_descriptor_member",
+        "drift": "oci_descriptor_identity_mismatch",
+    }[mutation]
+    assert any(item.kind == expected and item.path == subject_path for item in findings)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "non-regular", "drift", "malformed"])
+def test_scanner_refuses_invalid_oci_attestation_descendant(tmp_path, mutation) -> None:
+    module = _load_module()
+    config = b'{"architecture":"amd64"}'
+    attestation = b"[]" if mutation == "malformed" else b"{}"
+    config_descriptor = _descriptor(config, "application/vnd.oci.empty.v1+json")
+    layer_descriptor = _descriptor(attestation, "application/vnd.in-toto+json")
+    image_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [layer_descriptor],
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = _descriptor(
+        image_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    config_path = "blobs/sha256/" + str(config_descriptor["digest"])[7:]
+    layer_path = "blobs/sha256/" + str(layer_descriptor["digest"])[7:]
+    manifest_path = "blobs/sha256/" + str(manifest_descriptor["digest"])[7:]
+    members = {
+        "manifest.json": json.dumps(
+            [{"Config": config_path, "Layers": []}], separators=(",", ":")
+        ).encode(),
+        "index.json": index,
+        config_path: config,
+        manifest_path: image_manifest,
+    }
+    directories: tuple[str, ...] = ()
+    if mutation == "non-regular":
+        directories = (layer_path,)
+    elif mutation == "drift":
+        members[layer_path] = b"drifted attestation"
+    elif mutation != "missing":
+        members[layer_path] = attestation
+    archive = _outer_archive(
+        tmp_path / f"attestation-descendant-{mutation}.tar",
+        members,
+        directories=directories,
+    )
+
+    if mutation == "malformed":
+        with pytest.raises(RuntimeError, match="OCI layer JSON descriptor target"):
+            module._docker_save_outer_findings(archive)
+        return
+
+    findings = module._docker_save_outer_findings(archive)
+    expected = {
+        "missing": "missing_oci_descriptor_member",
+        "non-regular": "invalid_oci_descriptor_member",
+        "drift": "oci_descriptor_identity_mismatch",
+    }[mutation]
+    assert any(item.kind == expected and item.path == layer_path for item in findings)
 
 
 def test_scanner_refuses_non_manifest_oci_index_root(tmp_path) -> None:
