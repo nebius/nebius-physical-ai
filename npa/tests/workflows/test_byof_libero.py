@@ -177,6 +177,8 @@ def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> N
     assert "np.resize" not in smoke
     assert "deterministic_single_task_768d_sha256" not in smoke
     assert '"rendering_invoked": False' in smoke
+    assert "runtime_materialized_this_run" in smoke
+    assert 'receipt.get("warm_reuse") is not False' in smoke
     assert ".render(" not in smoke
     assert "offscreen" not in smoke.lower()
 
@@ -198,11 +200,18 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
         "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256",
         "/opt/npa/libero/runtime-bootstrap.py ensure",
+        "npa_runtime_bootstrap.json",
         "/opt/npa/libero/smoke.sh",
         "npa-byof-libero-payload",
     ):
         assert contract in profile
     assert '"rendering_invoked": False' in profile
+    assert "path.is_symlink()" in profile
+    assert "resolved_root not in resolved.parents" in profile
+    assert "stat.S_ISREG(info.st_mode)" in profile
+    assert "info.st_nlink != 1" in profile
+    assert "os.O_NOFOLLOW" in profile
+    assert "os.fstat(stream.fileno())" in profile
     assert ".render(" not in profile
 
 

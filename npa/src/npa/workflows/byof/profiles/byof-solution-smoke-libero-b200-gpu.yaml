@@ -56,12 +56,18 @@ setup: |
   mv "${decision}.partial" "${decision}"
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   install -d -m 0700 "${output_dir}"
-  /opt/npa/libero/runtime-bootstrap.py ensure \
+  bootstrap_receipt="${output_dir}/npa_runtime_bootstrap.json"
+  if ! /opt/npa/libero/runtime-bootstrap.py ensure \
     --manifest /opt/npa/libero/runtime-manifest.json \
     --cache-root /workspace/.cache/npa/libero \
     --decision "${decision}" \
     --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
-    --output-dir "${output_dir}"
+    --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
+    rm -f "${bootstrap_receipt}.partial"
+    exit 1
+  fi
+  chmod 0600 "${bootstrap_receipt}.partial"
+  mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
   test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
   test -d "${BYOF_REPO_ROOT}/libero/lifelong"
   test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
@@ -89,6 +95,7 @@ run: |
   "${LIBERO_RUNTIME_ROOT}/venv/bin/python" <<'PY'
   import json
   import os
+  import stat
   import time
   from pathlib import Path
   from urllib.parse import urlparse
@@ -140,12 +147,33 @@ run: |
           client_kwargs["aws_session_token"] = session_token
   client = boto3.client("s3", **client_kwargs)
   prefix = parsed.path.lstrip("/")
+  resolved_root = root.resolve(strict=True)
+  if root.is_symlink() or not resolved_root.is_dir():
+      raise RuntimeError("LIBERO output root is not a real directory")
   for path in root.rglob("*"):
-      if path.is_file():
+      if path.is_symlink():
+          raise RuntimeError("LIBERO output contains a forbidden symlink")
+      resolved = path.resolve(strict=True)
+      if resolved_root not in resolved.parents:
+          raise RuntimeError("LIBERO output path escaped its root")
+      info = path.lstat()
+      if stat.S_ISDIR(info.st_mode):
+          continue
+      if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+          raise RuntimeError("LIBERO output contains an unsupported file")
+      descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+      with os.fdopen(descriptor, "rb") as stream:
+          opened = os.fstat(stream.fileno())
+          if (
+              not stat.S_ISREG(opened.st_mode)
+              or opened.st_nlink != 1
+              or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+          ):
+              raise RuntimeError("LIBERO output changed during confinement check")
           client.put_object(
               Bucket=parsed.netloc,
               Key=prefix + str(path.relative_to(root)),
-              Body=path.read_bytes(),
+              Body=stream,
               IfNoneMatch="*",
           )
   client.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
