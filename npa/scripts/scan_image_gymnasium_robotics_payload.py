@@ -161,7 +161,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
     "runtime-bootstrap.py": "1f127f8b67dbee7049c3ceda98d2a7894168ad974aba1278cf084fc687f3477b",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
-    "verify_image.py": "e0095400ccd21ea89d8ed1e1a591cc529b9c6e52e6c999e4456f28392e278d48",
+    "verify_image.py": "e0095400ccd21ea89d8ed1e1a591cc529b9c6e52e6c999e4456f28392e278d48",  # gitleaks:allow; public file-content SHA-256
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
