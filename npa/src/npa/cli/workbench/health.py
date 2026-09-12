@@ -22,6 +22,7 @@ from npa.clients.credentials import CredentialsConfig, load_credentials
 from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 from npa.clients.kube import run_kubectl
 from npa.clients.nebius_auth import ProfileVerification, nebius_profile, verify_profile
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
@@ -151,7 +152,9 @@ def _selected_checks(checks: str) -> list[str]:
 def _project_credentials(project: str, credentials: CredentialsConfig) -> CredentialsConfig:
     if project not in list_projects():
         raise ConfigError("Unknown project alias. Pass an alias saved by `npa configure`.")
-    storage = resolve_project_storage(project, include_shared_credentials=False)
+    storage = resolve_project_storage(
+        project, include_shared_credentials=False, include_environment=False,
+    )
     if not all((
         storage.checkpoint_bucket, storage.endpoint_url,
         storage.aws_access_key_id, storage.aws_secret_access_key,
@@ -191,7 +194,7 @@ def _credential_results(checks: list[str], *, project: str, offline: bool) -> li
     if project and "s3" in checks:
         try:
             credentials = _project_credentials(project, credentials)
-        except ConfigError as exc:
+        except (ConfigError, ProjectCredentialStoreError) as exc:
             storage_failure = CheckResult(
                 name="s3", status=FAIL,
                 summary="Selected project storage is not configured.", remedy=str(exc),

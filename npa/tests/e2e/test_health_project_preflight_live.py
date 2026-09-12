@@ -30,7 +30,9 @@ def live_project(tmp_path):
     if not project:
         pytest.skip("Set NPA_E2E_PROJECT to an explicitly configured test project")
     with operation_intent(OperationIntent.OBSERVE):
-        storage = resolve_project_storage(project, include_shared_credentials=False)
+        storage = resolve_project_storage(
+            project, include_shared_credentials=False, include_environment=False,
+        )
     if not all(
         (
             storage.checkpoint_bucket,
@@ -109,6 +111,38 @@ def test_live_bad_project_signature_is_a_failure(live_project):
     record["aws_secret_access_key"] = "synthetic-invalid-signing-key"
     path.write_text(yaml.safe_dump(document))
     assert _preflight(project, directory) == (1, False, ["FAIL"])
+
+
+@pytest.mark.parametrize("missing", [
+    "bucket", "endpoint_url", "aws_access_key_id", "aws_secret_access_key", "record",
+])
+def test_live_incomplete_project_does_not_borrow_valid_host_credentials(live_project, missing):
+    project, storage, directory = live_project
+    overrides = {
+        "AWS_ACCESS_KEY_ID": storage.aws_access_key_id,
+        "AWS_SECRET_ACCESS_KEY": storage.aws_secret_access_key,
+        "AWS_ENDPOINT_URL": storage.endpoint_url,
+        "NPA_CHECKPOINT_BUCKET": "s3://" + storage.checkpoint_bucket.removeprefix("s3://"),
+    }
+    config_path = directory / "config.yaml"
+    document = yaml.safe_load(config_path.read_text())
+    project_config = document["projects"][project]
+    project_id = project_config["project_id"]
+    for section in ("object-storage", "object_storage", "storage", "terraform_state"):
+        project_config.pop(section, None)
+    config_path.write_text(yaml.safe_dump(document))
+    path = directory / "credentials.yaml"
+    document = yaml.safe_load(path.read_text())
+    projects = document["project_credentials"]["projects"]
+    if missing == "record":
+        projects.pop(project_id)
+    else:
+        projects[project_id]["storage"].pop(missing)
+    path.write_text(yaml.safe_dump(document))
+    before = {item.name: item.read_bytes() for item in directory.iterdir()}
+    assert _preflight(None, directory, **overrides) == (0, True, ["PASS"])
+    assert _preflight(project, directory, **overrides) == (1, False, ["FAIL"])
+    assert before == {item.name: item.read_bytes() for item in directory.iterdir()}
 
 
 def test_live_probe_checks_empty_and_populated_prefix_with_one_request(live_project):

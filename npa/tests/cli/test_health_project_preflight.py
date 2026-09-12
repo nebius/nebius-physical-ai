@@ -68,6 +68,17 @@ def _invoke(*options):
     )
 
 
+@pytest.fixture
+def host_storage_environment(monkeypatch):
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "unrelated-access",
+        "AWS_SECRET_ACCESS_KEY": "unrelated-secret",
+        "AWS_ENDPOINT_URL": "https://unrelated.invalid",
+        "NPA_CHECKPOINT_BUCKET": "s3://unrelated-bucket",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
 def test_project_probe_uses_exact_record_and_preserves_files(
     project_files, monkeypatch
 ):
@@ -100,7 +111,7 @@ def test_project_probe_uses_exact_record_and_preserves_files(
     "missing", ["bucket", "endpoint_url", "aws_access_key_id", "aws_secret_access_key"]
 )
 def test_partial_project_storage_does_not_use_host_credentials(
-    project_files, monkeypatch, missing
+    project_files, monkeypatch, missing, host_storage_environment
 ):
     project_files["project_credentials"]["projects"]["project-target"]["storage"].pop(
         missing
@@ -112,6 +123,29 @@ def test_partial_project_storage_does_not_use_host_credentials(
     assert result.exit_code == 1, result.output
     assert json.loads(result.stdout)["checks"][0]["status"] == "FAIL"
     factory.assert_not_called()
+
+
+def test_missing_project_record_does_not_use_environment_credentials(
+    project_files, monkeypatch, host_storage_environment
+):
+    factory = Mock()
+    monkeypatch.setattr(health.StorageClient, "from_environment", factory)
+    result = _invoke("--project", "other")
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["checks"][0]["status"] == "FAIL"
+    factory.assert_not_called()
+
+
+def test_invalid_project_store_preserves_json_and_other_checks(project_files):
+    project_files["project_credentials"]["schema_version"] = "unsupported-schema"
+    credentials.CREDENTIALS_PATH.write_text(yaml.safe_dump(project_files))
+    before = credentials.CREDENTIALS_PATH.read_bytes()
+    result = _invoke("--project", "target", "--checks", "s3,nebius", "--offline")
+    assert result.exit_code == 1
+    assert [(item["name"], item["status"]) for item in json.loads(result.stdout)["checks"]] == [
+        ("s3", "FAIL"), ("nebius", "SKIP"),
+    ]
+    assert credentials.CREDENTIALS_PATH.read_bytes() == before
 
 
 def test_unknown_project_returns_json_failure_without_a_probe(
@@ -178,3 +212,33 @@ def test_project_preserves_non_storage_credentials(project_files):
     resolved = health._project_credentials("target", original)
     assert resolved.hf_token == original.hf_token
     assert resolved.s3_bucket != original.s3_bucket
+
+
+@pytest.mark.parametrize("section", ["storage", "object_storage", "object-storage", "terraform_state"])
+def test_inline_project_storage_stays_read_only_without_legacy_migration(
+    project_files, monkeypatch, host_storage_environment, section
+):
+    del project_files["project_credentials"]
+    credentials.CREDENTIALS_PATH.write_text(yaml.safe_dump(project_files))
+    document = yaml.safe_load(config.CONFIG_PATH.read_text())
+    document["projects"]["target"][section] = {
+        "bucket": "inline-bucket/prefix",
+        "endpoint": "https://inline.invalid",
+        "access_key": "inline-access",
+        "secret_key": "inline-secret",
+    }
+    config.CONFIG_PATH.write_text(yaml.safe_dump(document))
+    paths = (config.CONFIG_PATH, credentials.CREDENTIALS_PATH)
+    before = [path.read_bytes() for path in paths]
+    client = Mock()
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(health.StorageClient, "from_environment", factory)
+    result = _invoke("--project", "target")
+    assert result.exit_code == 0, result.output
+    factory.assert_called_once_with(
+        endpoint_url="https://inline.invalid",
+        aws_access_key_id="inline-access",
+        aws_secret_access_key="inline-secret",
+    )
+    client.probe_list_access.assert_called_once_with("s3://inline-bucket/prefix")
+    assert [path.read_bytes() for path in paths] == before

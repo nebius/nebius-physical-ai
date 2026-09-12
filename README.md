@@ -227,7 +227,8 @@ A few highlights:
 - **`health preflight`** — validates HF / NGC / S3 / Token Factory before a
   deploy or a GPU job. Use `npa workbench health preflight --project <alias>
   --checks s3,nebius` to check the selected project's storage and your current
-  Nebius CLI authentication. Without `--project`, S3 uses the existing host
+  Nebius CLI authentication. Missing project storage fails without borrowing
+  shell or host credentials. Without `--project`, S3 uses the existing host
   credential selection. The S3 check makes one listing request; it does not
   enumerate your dataset or verify write access.
 - **`foxglove`** — packs run frames, metrics, and logs into MCAP for the

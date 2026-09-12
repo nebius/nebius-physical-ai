@@ -41,7 +41,7 @@ combined with `all`. Repeated names run once.
 
 Select `--project <alias>` (or `-p`) when checking a configured project's S3
 storage. This reads the project's bucket, endpoint, and credential pair through
-the project storage resolver, without adopting the host credential file or
+the project storage resolver, without adopting host credential files or shell S3 settings, or
 changing saved configuration. A complete exact-project record wins over ambient
 S3 settings. Unknown projects and missing or deselected project storage produce
 a JSON-compatible FAIL and a nonzero exit, including offline; `--warn-only`
