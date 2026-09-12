@@ -212,6 +212,31 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
         boundary.assert_not_called()
 
 
+def test_robotwin_self_certified_context_refuses_before_external_boundaries(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    _install_robotwin_submit_context(monkeypatch, tmp_path)
+    boundaries = [
+        mocker.patch(
+            "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
+        ),
+        mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
+        mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
+    ]
+
+    result = _submit_robotwin(
+        "--secret-env", ROBOTWIN_CONTEXT_ENV, "--skip-preflight"
+    )
+
+    assert result.exit_code == 1
+    assert "manager-runtime-use-receipt-unavailable" in result.output
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
 def test_robotwin_plan_only_is_context_free_and_publicly_sanitized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -250,8 +275,19 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
 ) -> None:
     from types import SimpleNamespace
 
+    from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.skypilot.workflow import WorkflowResult
 
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_verified_control_plane_source_bytes",
+        lambda _uri, _fingerprint: None,
+    )
     private, context_path = _install_robotwin_submit_context(monkeypatch, tmp_path)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
@@ -390,6 +426,13 @@ def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
 ) -> None:
     from types import SimpleNamespace
 
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
     _install_robotwin_submit_context(monkeypatch, tmp_path)
     monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
     mocker.patch(
