@@ -16,7 +16,12 @@ bake only a digest-pinned Ubuntu bootstrap and exact snapshot/version-locked OS
 closure. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python runtime, assets, caches,
 credentials, and outputs stay runtime-side. Incomplete base/apt/runtime locks
 must refuse before Docker or network access, and publication quarantine remains
-until exact OCI scans plus the separate legal and RTX gates pass.
+until exact OCI scans plus the separate legal and RTX gates pass. The bounded
+operator statement is `noncommercial` validation/evaluation, not a general use
+grant; public artifacts use exact-revision payload probes, while gated artifacts
+require the customer's runtime-only credential and an exact entitlement probe
+before provisioning. The default planned cache is customer-isolated,
+node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
