@@ -264,6 +264,18 @@ def _assert_process_gone(pid: int) -> None:
         os.kill(pid, 0)
 
 
+def _wait_for_process_gone(pid: int, supervisor: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        assert supervisor.poll() is None
+        time.sleep(0.01)
+    pytest.fail(f"process {pid} remained alive")
+
+
 def _assert_process_group_gone(process_group: int) -> None:
     with pytest.raises(ProcessLookupError):
         os.killpg(process_group, 0)
@@ -789,8 +801,9 @@ def test_successful_leader_keeps_snapshot_until_descendant_exits(
         snapshot_root = Path(
             (tmp_path / "snapshot-record").read_text(encoding="utf-8")
         )
-        time.sleep(0.2)
+        _wait_for_process_gone(payload_group, process)
         assert process.poll() is None
+        os.killpg(payload_group, 0)
         assert snapshot_root.is_dir()
 
         (tmp_path / "descendant-release").touch()
