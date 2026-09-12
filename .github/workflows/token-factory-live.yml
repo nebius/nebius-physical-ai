@@ -24,7 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     # Encrypted test key; selected-branch protection must permit only main and
     # the explicitly reviewed continuation branch. No pull_request_target.
-    environment: token-factory-live
+    # Live API checks need environment secrets without deployment history.
+    environment:
+      name: token-factory-live
+      deployment: false
     steps:
       - uses: actions/checkout@v6
         with:
@@ -63,7 +66,7 @@ jobs:
           NEBIUS_TOKEN_FACTORY_BASE_URL: ${{ secrets.NEBIUS_TOKEN_FACTORY_BASE_URL }}
           NPA_TF_RECHECK_SCOPE: ${{ vars.NPA_TF_RECHECK_SCOPE || 'authorized-account' }}
           NPA_TF_RECHECK_REQUIRED_MODELS: ${{ vars.NPA_TF_RECHECK_REQUIRED_MODELS }}
-          NPA_TF_RECHECK_JSON_BASELINE: ${{ vars.NPA_TF_RECHECK_JSON_BASELINE || 'malformed_json' }}
+          NPA_TF_RECHECK_JSON_BASELINE: ${{ vars.NPA_TF_RECHECK_JSON_BASELINE || 'healthy' }}
         run: npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-live"
       - name: Publish sanitized result and failure visibility
         if: always()
