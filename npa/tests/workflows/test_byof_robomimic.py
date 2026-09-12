@@ -13,7 +13,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import yaml
@@ -64,6 +64,32 @@ def _workflow_config() -> dict[str, object]:
 
 def _smoke_python() -> str:
     return SMOKE.read_text(encoding="utf-8")
+
+
+def _smoke_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    h5py = ModuleType("h5py")
+    robomimic = ModuleType("robomimic")
+    config = ModuleType("robomimic.config")
+    utils = ModuleType("robomimic.utils")
+    file_utils = ModuleType("robomimic.utils.file_utils")
+    verifier = ModuleType("verify_image")
+    setattr(config, "config_factory", lambda *_args: None)
+    setattr(file_utils, "policy_from_checkpoint", lambda *_args, **_kwargs: None)
+    setattr(verifier, "verified_source_identity", lambda *_args: None)
+    for name, module in (
+        ("h5py", h5py),
+        ("robomimic", robomimic),
+        ("robomimic.config", config),
+        ("robomimic.utils", utils),
+        ("robomimic.utils.file_utils", file_utils),
+        ("verify_image", verifier),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    specification = importlib.util.spec_from_file_location("robomimic_smoke", SMOKE)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def _live_e2e_module():
@@ -1501,6 +1527,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
 
 def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class OversizedResponse:
         def __init__(self) -> None:
@@ -1515,31 +1542,19 @@ def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
         def read(self, _size: int) -> bytes:
             return next(self.chunks)
 
-    source_tree = ast.parse(_smoke_python())
-    download_function = next(
-        node
-        for node in source_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_download_dataset"
-    )
+    module = _smoke_module(monkeypatch)
     response = OversizedResponse()
     connection_closed: list[bool] = []
     connection = SimpleNamespace(close=lambda: connection_closed.append(True))
-    namespace = {
-        "Path": Path,
-        "hashlib": hashlib,
-        "DATASET_REVISION": "immutable-revision",
-        "DATASET_PATH": "immutable/path.hdf5",
-        "DATASET_SHA256": "0" * 64,
-        "DATASET_BYTES": 3,
-        "_open_allowed_https": lambda *_args, **_kwargs: (connection, response),
-    }
-    exec(
-        compile(ast.Module(body=[download_function], type_ignores=[]), SMOKE, "exec"),
-        namespace,
+    monkeypatch.setattr(module, "DATASET_BYTES", 3)
+    monkeypatch.setattr(
+        module,
+        "_open_allowed_https",
+        lambda *_args, **_kwargs: (connection, response),
     )
 
     with pytest.raises(RuntimeError, match="exceeds its locked byte count"):
-        namespace["_download_dataset"](tmp_path / "inputs")
+        module._download_dataset(tmp_path / "inputs")
 
     assert connection_closed == [True]
     assert list((tmp_path / "inputs").iterdir()) == []
