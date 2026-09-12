@@ -14,9 +14,22 @@ import pytest
 from npa.workflows import paidf_cosmos3 as c3
 
 FFMPEG = shutil.which("ffmpeg")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 requires_ffmpeg = pytest.mark.skipif(
     FFMPEG is None, reason="ffmpeg is required for video fixture tests"
 )
+
+
+def test_mp4_guide_preserves_the_fresh_run_audit_contract() -> None:
+    guide = (REPO_ROOT / "workflows/guides/paidf-cosmos3.md").read_text()
+    section = guide.split("### R3b.", 1)[1].split("### R4.", 1)[0]
+
+    timestamp = 'NPA_E2E_PAIDF_MP4_FRESH_AFTER="$(date -u'
+    submit = 'npa workbench workflow submit "$SPEC"'
+    audit = "test_paidf_cosmos3_mp4_live.py -q"
+    assert timestamp in section
+    assert section.index(timestamp) < section.index(submit) < section.index(audit)
+    assert 'NPA_E2E_PAIDF_MP4_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/"' in section
 
 
 def _quality_disposition(*, accepted: bool) -> dict[str, object]:
