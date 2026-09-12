@@ -9,6 +9,7 @@ import re
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE_ROOT = ROOT / "npa" / "docker" / "workbench" / "robomimic"
 DOCKERFILE = IMAGE_ROOT / "Dockerfile"
+BUILD_SCRIPT = IMAGE_ROOT / "build.sh"
 VERIFY_SPEC = importlib.util.spec_from_file_location(
     "verify_robomimic_image_contract", IMAGE_ROOT / "verify_image.py"
 )
@@ -133,3 +134,12 @@ def test_no_local_consent_proxy_exists() -> None:
     assert "NPA_ROBOMIMIC_ACCEPT" not in combined
     assert "CUDA_ACCEPT" not in combined
     assert "CUDNN_ACCEPT" not in combined
+
+
+def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert 'registry="${NPA_BYOF_ROBOMIMIC_REGISTRY:-local.invalid}"' in text
+    assert "NPA_PUBLIC_REGISTRY" not in text
+    assert 'archive "${revision}:npa/docker/workbench/robomimic"' in text
+    assert 'docker build --pull=false --tag "${image}" "${context}"' in text
+    assert '"${repo_root}/npa/docker/workbench/robomimic"' not in text
