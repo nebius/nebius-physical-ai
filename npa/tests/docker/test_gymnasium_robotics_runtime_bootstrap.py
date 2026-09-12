@@ -168,10 +168,14 @@ def _installer(stage: Path, requirements: Path) -> None:
 
 
 def test_repository_lock_refuses_before_any_network_access(tmp_path: Path) -> None:
+    payload = json.loads(LOCK.read_text(encoding="utf-8"))
+    payload["status"] = "incomplete"
+    manifest = tmp_path / "source-lock.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
     calls: list[str] = []
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="before network access"):
         BOOTSTRAP.prepare(
-            LOCK,
+            manifest,
             REQUIREMENTS,
             tmp_path / "cache",
             opener=_opener({}, calls),

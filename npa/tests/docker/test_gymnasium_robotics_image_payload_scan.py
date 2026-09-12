@@ -27,7 +27,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "_validated_zip_infos(path, content)",
         "_validated_tar_members(path, content)",
         "_nested_archive_members(path, content)",
-        '"requirements.lock": None',
+        '"requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a"',
         "KNOWN_FORBIDDEN_CONTENT_SHA256",
         "forbidden upstream/runtime byte",
         "six-boundary runtime delivery classification changed",

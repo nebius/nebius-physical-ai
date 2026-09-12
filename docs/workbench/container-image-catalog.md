@@ -22,8 +22,9 @@ reference or an explicit workflow `--registry`.
 
 The Gymnasium-Robotics public candidate is a proposed neutral bootstrap with no
 upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
-cache in its layers. It remains unbuilt and pre-registration quarantined, has
-no public image row, and does not change public-release or mapped-tool counts.
+cache in its layers. It has no accepted or public build and remains
+pre-registration quarantined, has no public image row, and does not change
+public-release or mapped-tool counts.
 
 The combined public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-17**. All **34 current release tags**

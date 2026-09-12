@@ -15,12 +15,12 @@ EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO = "3.12.0"
 EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb4133d65568"
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
-    "source-lock.json": None,
-    "apt-runtime.lock.json": None,
-    "corresponding-source.lock.json": None,
-    "requirements.lock": None,
-    "runtime-bootstrap.py": None,
-    "capability_smoke.py": None,
+    "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
+    "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
+    "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
+    "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
+    "runtime-bootstrap.py": "1f127f8b67dbee7049c3ceda98d2a7894168ad974aba1278cf084fc687f3477b",
+    "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
     {

@@ -42,39 +42,44 @@ def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
     assert config["smoke_artifact_name"] == "gymnasium-robotics-smoke.json"
 
 
-def test_neutral_image_lock_gate_refuses_before_any_package_fetch() -> None:
+def test_neutral_image_lock_gate_accepts_only_the_reviewed_content_closure() -> None:
     completed = subprocess.run(
         [str(IMAGE_ROOT / "build.sh"), "verify-bootstrap-locks"],
         text=True,
         capture_output=True,
         check=False,
     )
-    assert completed.returncode != 0
-    assert "refusal before network access" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
     text = (IMAGE_ROOT / "build.sh").read_text(encoding="utf-8")
     assert not any(
         command in text for command in ("curl ", "wget ", "git clone", "pip install")
     )
 
 
-def test_runtime_and_neutral_baked_closures_stay_incomplete() -> None:
+def test_runtime_and_neutral_baked_closures_are_exact_but_publicly_quarantined() -> None:
     source = json.loads((IMAGE_ROOT / "source-lock.json").read_text())
     apt = json.loads((IMAGE_ROOT / "apt-runtime.lock.json").read_text())
     corresponding = json.loads(
         (IMAGE_ROOT / "corresponding-source.lock.json").read_text()
     )
-    assert {source["status"], apt["status"], corresponding["status"]} == {"incomplete"}
+    assert {source["status"], apt["status"], corresponding["status"]} == {"complete"}
     assert source["source_commit"] == SOURCE_COMMIT
     assert source["mujoco_version"] == "3.12.0"
     assert source["components"]["shadow_sr_common"]["preferred_form_complete"] is False
-    assert apt["resolved_binary_packages"] == apt["resolved_source_packages"] == []
-    assert "python3-boto3" in apt["requested_runtime_packages"]
+    assert len(apt["resolved_binary_packages"]) == 142
+    assert len(apt["resolved_source_packages"]) == 102
+    assert sum(
+        len(item["artifacts"]) for item in apt["resolved_source_packages"]
+    ) == 318
+    assert "python3-boto3" in {
+        item["package"] for item in apt["requested_runtime_packages"]
+    }
     assert corresponding["scope"] == "candidate-image-layers-only"
     assert corresponding["runtime_fetched_material_excluded"]
-    assert source["requirements_lock_sha256"] is None
+    assert len(source["requirements_lock_sha256"]) == 64
     assert (
         source["resolved_python_artifact_count"]
-        < source["expected_python_distribution_count"]
+        == source["expected_python_distribution_count"]
     )
     assert source["expected_python_distribution_count"] == 19
     runtime_requirements = (IMAGE_ROOT / "requirements.in").read_text()
@@ -204,7 +209,7 @@ def test_documentation_keeps_neutral_and_historical_evidence_separate() -> None:
         "neutral bootstrap",
         "pre-registration quarantine",
         "historical",
-        "corresponding source",
+        "corresponding-source",
         "No model, external dataset, gated artifact, or terms-acceptance flag",
         "RTX PRO 6000 Blackwell",
     ):

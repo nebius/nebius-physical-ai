@@ -13,10 +13,10 @@ has no supported tag, accepted manifest, SM120 compatibility record, registry
 object, or anonymous-pull evidence. The candidate layers exclude the upstream
 solution tree, Shadow Hand assets, MuJoCo/Python wheels, runtime cache, CUDA or
 other vendor runtime, credentials, datasets, checkpoints, and outputs. The
-Dockerfile's first executable gate fails before package network access because
-the exact neutral Ubuntu/Python bootstrap closure and its corresponding source
-are incomplete. A URL, credential, private registry, or consent proxy must not
-bypass that refusal.
+Dockerfile's first executable gate binds the exact neutral Ubuntu/Python
+bootstrap closure and corresponding-source metadata before package network
+access, and rejects any incomplete or mismatched lock. A URL, credential,
+private registry, or consent proxy must not bypass that refusal.
 
 At execution time, the bootstrap reads a repository-pinned manifest before any
 fetch, permits only the declared credential-free HTTPS origins, checks exact
@@ -30,14 +30,14 @@ The fetched interpreter is opened and executed by validated file descriptor,
 never through the mutable `current` convenience link. Runtime installation and
 the capability smoke have AWS credential variables removed. Pod-receipt
 validation and artifact bookkeeping stay on the image-baked system Python and
-Ubuntu `python3-boto3`; their transitive binary/source/license closure is still
-part of the build blocker.
+Ubuntu `python3-boto3`; their transitive binary/source/license closure is bound
+to the signed immutable Ubuntu snapshot.
 
 The accepted private result at repository head `c308945a` is historical proof
 for its exact private digest and workflow bytes only. It is not evidence for
-this redesigned source, an executable image, the current head, or a
-future public digest. Fresh private and anonymous-public exact-digest RTX runs
-remain required after a manager-authorized evidence closure and build.
+this redesigned source, an executable image, the current head, or a future
+public digest. Any later private qualification remains owner-only evidence and
+does not establish an accepted or anonymously pullable public image.
 
 ## Pinned inputs and licensing
 
@@ -73,12 +73,11 @@ The base is the Linux amd64 Docker Official Image
 Its config is `sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c`
 and its sole layer is
 `sha256:e51aee9c82ec5dd5ba2add49c45c6d85d460512757e2615b69bcdf9469c7cb58`.
-Ubuntu is a package collection under the individual package licenses. Prior
-owner-only assessment inventory counts are not release evidence and are not
-carried into the repository locks. An authorized closure transaction must persist
-the exact installed binary/source package manifests, copyright material, and
-common-license bytes before any build can proceed; until then no conclusion
-about the complete package set or interactive-license state is claimed.
+Ubuntu is a package collection under the individual package licenses. The
+repository lock now records 142 final binary packages, 102 source packages, 318
+source artifacts, and 142 installed copyright records from the signed immutable
+snapshot. This source closure permits the separately reviewed private build;
+it is not public corresponding-source delivery or release acceptance.
 
 No model, external dataset, gated artifact, or terms-acceptance flag is used.
 There is no checkpoint. The official pinned source archive contains the Shadow
@@ -90,7 +89,7 @@ is republished as an output.
 | Artifact class | Delivery and decision |
 | --- | --- |
 | Source | Exact official commit and MIT grant are reviewed inputs. The source archive is runtime-cache-only and must never enter candidate layers. |
-| Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact binary, license, and corresponding-source closure is incomplete. MuJoCo and the Python workload graph are runtime-cache-only. |
+| Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact signed-snapshot binary, license/copyright, and corresponding-source mapping is locked. MuJoCo and the Python workload graph are runtime-cache-only; public corresponding-source delivery remains withheld. |
 | Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
 | Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded. The assets remain runtime-cache-only; their preferred-form, transformation, use, and derivative questions remain unresolved. |
 | Runtime cache | External, private to the runtime operator, versioned by the exact fetch-manifest hash, sealed read-only, and atomically published only after full-tree verification. Every reuse rechecks its exact receipt and path/type/mode/size/file-hash manifest. It is neither an image layer nor a rights grant. |
@@ -102,8 +101,8 @@ private custody does not change that boundary. The built bytes must still be
 scanned to prove the absence of upstream source/assets, MuJoCo/Python workload
 runtime, vendor runtime, secrets, datasets, checkpoints, and persistent caches.
 The future acceptance scanner binds independently reviewed hashes for every
-completed neutral-image lock and the Ubuntu base diff ID; this source pins none
-of those completion hashes. It also checks the exact Docker config, every
+completed neutral-image lock and the Ubuntu base diff ID; the post-build config
+and ordered layer graph remain withheld until real bytes exist. It also checks the exact Docker config, every
 raw ordered layer (including header/padding bytes), all retained regular files,
 directories, links and metadata, and recursively nested source/package
 archives. A locally self-consistent lock or rootfs classification cannot pass.
