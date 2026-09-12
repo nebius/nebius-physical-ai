@@ -1,9 +1,9 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "63d9710b6dfda46caa10adb302e7356e01a190f0ef9076e434be1a863ffd9f79",
+  "workflow_sha256": "f7748fc3e60de78abcae2a070b5d399dcfdbce2e42db2b3c436c5fa9b9d39128",
   "planning": {
     "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real Isaac Arena evaluate command with completed-episode, environment, seed, and output arguments.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
+    "task_fidelity": {"status": "verified", "reason": "The four planned states resolve to real Isaac Arena evaluate commands with distinct seeds and output prefixes plus completed-episode and environment arguments.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
   },
   "prerequisites": {
     "output_storage": {"status": "verified", "reason": "A tenant-matched project credential completed the writable-storage preflight and retained independently readable evaluation and runtime-provenance objects.", "evidence": ["docs/workbench/isaac-arena.md", "npa/docker/workbench/blackwell-dc-images.json"]},

@@ -4,16 +4,16 @@ kind: Workflow
 metadata:
   name: isaac-arena-evaluation-b200
   description: >-
-    Run a complete scored Isaac Lab-Arena cube_goal_pose episode with the real
-    upstream policy runner on B200. This state-only path records episode JSONL,
-    the upstream HTML evaluation report, logs, hashes, and aggregate metrics;
-    it deliberately does not claim camera or viewport rendering on a GPU with
-    no RT cores.
+    Run a four-seed scored Isaac Lab-Arena cube_goal_pose evaluation suite with
+    the real upstream policy runner on B200. Every state completes an episode
+    and records its own JSONL, upstream HTML report, logs, hashes, and aggregate
+    metrics. This state-only path deliberately makes no camera or viewport
+    claim on a GPU with no RT cores.
 
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/isaac-arena/b200"
-  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-42/"
   input_uri: ""
   environment: cube_goal_pose
   policy_type: zero_action
@@ -30,13 +30,64 @@ resources:
     cpus: 16
     memory: 64Gi
 
-initial: evaluate
+initial: evaluate-seed-42
 
 states:
-  evaluate:
-    description: Complete and score one real Arena episode without a render claim.
+  evaluate-seed-42:
+    description: Complete and score the seed-42 Arena episode without rendering.
     toolRef: workbench.isaac_arena.evaluate
     resources: gpu
+    params:
+      seed: "42"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-42/"
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-43
+
+  evaluate-seed-43:
+    description: Complete and score the seed-43 Arena episode without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "43"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-43/"
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-44
+
+  evaluate-seed-44:
+    description: Complete and score the seed-44 Arena episode without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "44"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-44/"
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    next: evaluate-seed-45
+
+  evaluate-seed-45:
+    description: Complete and score the seed-45 Arena episode without rendering.
+    toolRef: workbench.isaac_arena.evaluate
+    resources: gpu
+    params:
+      seed: "45"
+      output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-45/"
     outputs:
       - uri: "{{config.output_uri}}result.json"
         schema: npa.workbench.isaac_arena.evaluation.v1

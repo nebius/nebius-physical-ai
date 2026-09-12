@@ -28,6 +28,9 @@ import json
 import re
 from typing import Any, Callable, Mapping, Sequence
 
+DEFAULT_OBSERVATION_LIMIT = 4000
+TOOL_CATALOG_OBSERVATION_LIMIT = 8192
+
 # ── Tool allowlist ───────────────────────────────────────────────────────────
 # read_only tools observe state and never spend GPU or mutate infra. Tools with
 # requires_confirmation are state-changing / GPU-spending and only execute when
@@ -644,7 +647,21 @@ def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[st
     return None
 
 
-def _observe(observation: Any, *, limit: int = 4000) -> Any:
+def _observation_limit(tool: str) -> int:
+    """Return the bounded planner-observation budget for one allowlisted tool.
+
+    The catalog is a trusted list of registered toolRef names. Its complete
+    contents are needed for factual planning and can legitimately exceed the
+    generic observation budget as the workbench grows, so it receives a
+    separate finite ceiling. Other tools retain the tighter default.
+    """
+
+    if tool == "tools_catalog":
+        return TOOL_CATALOG_OBSERVATION_LIMIT
+    return DEFAULT_OBSERVATION_LIMIT
+
+
+def _observe(observation: Any, *, limit: int = DEFAULT_OBSERVATION_LIMIT) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
     try:
         text = json.dumps(observation, sort_keys=True)
@@ -923,7 +940,7 @@ def run_action_loop(
                 observation = {"error": str(exc)}
             replan_reason = _replan_reason(observation, raised=raised)
             status = "error" if replan_reason else "ok"
-            observed = _observe(observation)
+            observed = _observe(observation, limit=_observation_limit(confirmed_tool))
             return {
                 "ok": not replan_reason,
                 "goal": goal_text,
@@ -1224,7 +1241,7 @@ def run_action_loop(
         if terminal_empty:
             replan_reason = ""
         status = "error" if replan_reason == "tool_error" else "empty" if empty_result else "ok"
-        observed = _observe(observation)
+        observed = _observe(observation, limit=_observation_limit(tool))
         steps.append(
             {
                 "step": step_index + 1,

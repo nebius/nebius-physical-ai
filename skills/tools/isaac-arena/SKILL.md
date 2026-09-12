@@ -35,9 +35,11 @@ launcher in a Dockerfile `RUN`; that would bake the restricted runtime.
 
 ## Evaluate
 
-Use the CUDA state-only workflow on B200; it must not record cameras or a
-viewport because B200 has no RT cores. Use RTX PRO 6000 for the independent
-graphics qualification and require a non-empty MP4.
+Use the four-seed CUDA state-only workflow on B200; it must not record cameras
+or a viewport because B200 has no RT cores. Its four sequential real evaluation
+states are the comprehensive daily workflow coverage for this image. Use RTX
+PRO 6000 for the independent graphics qualification and require a non-empty
+MP4.
 
 ```bash
 npa workbench health preflight --checks nebius,s3

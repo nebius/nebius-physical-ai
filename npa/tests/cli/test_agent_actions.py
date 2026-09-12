@@ -968,6 +968,12 @@ def test_small_observation_is_passed_through_unchanged():
     assert A._observe(observation) is observation
 
 
+def test_tool_catalog_has_a_separate_finite_observation_budget():
+    assert A._observation_limit("tools_catalog") == A.TOOL_CATALOG_OBSERVATION_LIMIT
+    assert A._observation_limit("health") == A.DEFAULT_OBSERVATION_LIMIT
+    assert A.TOOL_CATALOG_OBSERVATION_LIMIT > A.DEFAULT_OBSERVATION_LIMIT
+
+
 def test_planner_prompt_carries_the_grounding_rule():
     """The final answer must be told to copy values verbatim from observations."""
     messages = A._planner_messages("goal", A.TOOL_ALLOWLIST, [])

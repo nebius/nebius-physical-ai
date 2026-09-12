@@ -70,9 +70,10 @@ result = evaluate(
 
 ## Supported workflows
 
-- `workflows/testing/isaac-arena-evaluation-b200.yaml` runs state-only
-  completed-episode evaluation on one B200. B200 has no RT cores, so this path
-  makes no render claim.
+- `workflows/testing/isaac-arena-evaluation-b200.yaml` runs a sequential
+  four-seed state-only evaluation suite on one B200. Each state completes and
+  scores an independent episode. B200 has no RT cores, so this path makes no
+  render claim.
 - `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` runs an independent
   RTX PRO 6000 evaluation and requires a viewport MP4.
 
