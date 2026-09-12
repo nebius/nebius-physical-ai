@@ -449,6 +449,30 @@ def _libero_namespaced_inventory(
                 f"LIBERO namespace is not isolated to its reviewed {kind} inventory"
             )
         inventory[kind] = names
+    cluster_bindings = _kubectl_json(
+        ["--context", context, "get", "clusterrolebindings"],
+        purpose="LIBERO cluster RoleBinding inventory",
+        kubeconfig=kubeconfig,
+    )
+    items = cluster_bindings.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
+    scoped_bindings = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and any(
+            isinstance(subject, dict)
+            and subject.get("kind") == "ServiceAccount"
+            and subject.get("namespace") == namespace
+            for subject in item.get("subjects") or []
+        )
+    ]
+    if scoped_bindings:
+        raise RuntimeError(
+            "LIBERO namespace service accounts may not receive ClusterRoleBindings"
+        )
+    inventory["clusterrolebindings"] = []
     return inventory
 
 

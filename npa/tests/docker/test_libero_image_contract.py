@@ -319,14 +319,16 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         )
         == 2
     )
-    assert (
-        'if tool != "libero":\n              history = subprocess.check_output(' in text
-    )
+    assert 'history = subprocess.check_output(' in text
+    assert 'if tool != "libero"' not in text
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
     assert "libero_accepted_image_manifest" in text
     assert "checked-in acceptance development SHA does not match" in text
+    assert "only the checked-in acceptance manifest may differ" in text
+    assert 'git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD' in text
+    assert '"npa/src/npa/deploy/libero_image_manifest.json"' in text
     assert "libero_publication_lineage_values" in text
     assert 'crane tag "$LIBERO_ACCEPTED_CANDIDATE_IMAGE"' in text
     assert 'test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"' in text
@@ -349,7 +351,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "Private destination contains image or referrer versions" in text
     assert "Private destination is genuinely empty" in text
     assert "exactly the accepted untagged OCI graph" in text
-    assert "tagged_count=" not in text
+    assert "tagged_count=" in text
     assert "public-image-${{ inputs.target" in text
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")

@@ -1360,7 +1360,7 @@
     }
   ],
   "runtime_use_decision": {
-    "schema": "npa.libero.runtime-use-decision.v1",
+    "schema": "npa.libero.runtime-use-decision.v2",
     "required": true,
     "accepted_by_download": false
   },

@@ -13,11 +13,12 @@ import pytest
 import yaml
 
 from npa.deploy.images import (
+    LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS,
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
-    LIBERO_PUBLICATION_ENFORCEMENT_PATHS,
     libero_accepted_image_manifest,
     libero_build_input_bundle_sha256,
     libero_publication_enforcement_bundle_sha256,
+    libero_publication_enforcement_paths,
     libero_publication_lineage_values,
     validate_libero_accepted_image_manifest,
 )
@@ -446,15 +447,50 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure() -> 
 def test_publication_enforcement_bundle_detects_descendant_policy_drift(
     tmp_path,
 ) -> None:
-    for relative in LIBERO_PUBLICATION_ENFORCEMENT_PATHS:
+    enforcement_paths = libero_publication_enforcement_paths(ROOT)
+    for relative in enforcement_paths:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, target)
     accepted = libero_publication_enforcement_bundle_sha256(tmp_path)
-    workflow = tmp_path / ".github/workflows/publish-public-images.yml"
-    workflow.write_bytes(workflow.read_bytes() + b"\n# policy drift\n")
+    assert set(LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS) == {
+        "npa/scripts",
+        "npa/src/npa",
+        "npa/tests/e2e",
+    }
+    assert {
+        "npa/src/npa/execution_preflight.py",
+        "npa/src/npa/orchestration/skypilot/cleanup.py",
+        "npa/src/npa/orchestration/skypilot/launch_transaction.py",
+        "npa/src/npa/orchestration/skypilot/signal_teardown.py",
+        "npa/src/npa/orchestration/skypilot/workflow.py",
+        "npa/src/npa/orchestration/skypilot/workflow_state.py",
+        "npa/src/npa/teardown_receipts.py",
+        "npa/src/npa/cleanup_identity.py",
+        "npa/src/npa/config_schema.py",
+        "npa/src/npa/progress.py",
+        "npa/src/npa/verification.py",
+        "npa/src/npa/workflows/byof/live.py",
+        "npa/tests/e2e/agent_live_helpers.py",
+        "npa/tests/e2e/conftest.py",
+        "npa/tests/e2e/npa_workflow_live_helpers.py",
+        "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
+    } <= set(enforcement_paths)
+    representatives = {
+        ".github/workflows/publish-public-images.yml",
+        "npa/scripts/run_byof_container_verify.py",
+        "npa/src/npa/cleanup_identity.py",
+        "npa/tests/e2e/conftest.py",
+    }
+    assert representatives <= set(enforcement_paths)
+    for relative in representatives:
+        path = tmp_path / relative
+        original = path.read_bytes()
+        path.write_bytes(original + b"\n# policy drift\n")
+        assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
+        path.write_bytes(original)
 
-    assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
+    assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 
 
 def test_libero_readiness_hashes_bind_every_execution_input() -> None:

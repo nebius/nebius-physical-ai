@@ -35,8 +35,39 @@ SCHEMA = "npa.libero.runtime-manifest.v1"
 DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
+EXPECTED_MANIFEST_KEYS = frozenset(
+    {
+        "boundaries",
+        "demonstration",
+        "governing_terms",
+        "language_model",
+        "runtime_artifact_count",
+        "runtime_artifacts",
+        "runtime_python",
+        "runtime_use_decision",
+        "schema",
+        "solution",
+        "source",
+        "task",
+    }
+)
+EXPECTED_RUNTIME_PYTHON = {
+    "version": "3.10",
+    "abi": "cp310",
+    "platform": "linux_x86_64",
+}
+EXPECTED_RUNTIME_DECISION_METADATA = {
+    "schema": DECISION_SCHEMA,
+    "required": True,
+    "accepted_by_download": False,
+}
+EXPECTED_BOUNDARIES = {
+    "cache": "operator-owned non-root atomic runtime cache",
+    "outputs": "NPA_SMOKE_OUTPUT_DIR only",
+    "rendering": False,
+}
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712"
+    "2db4ca50fa3c324bf60eeb6a4f9d9ba9f36fc377a958ef3458e1bf97a51b83ea"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -172,6 +203,14 @@ def _validate_manifest(
     manifest = _load_json(path)
     if manifest.get("schema") != SCHEMA or manifest.get("solution") != "libero":
         raise BootstrapRefusal("runtime manifest identity is invalid")
+    if set(manifest) != EXPECTED_MANIFEST_KEYS:
+        raise BootstrapRefusal("runtime manifest top-level schema is not closed")
+    if manifest.get("runtime_python") != EXPECTED_RUNTIME_PYTHON:
+        raise BootstrapRefusal("runtime Python identity is invalid")
+    if manifest.get("runtime_use_decision") != EXPECTED_RUNTIME_DECISION_METADATA:
+        raise BootstrapRefusal("runtime-use decision metadata is stale or invalid")
+    if manifest.get("boundaries") != EXPECTED_BOUNDARIES:
+        raise BootstrapRefusal("runtime cache/output boundary metadata is invalid")
     governing_terms = manifest.get("governing_terms")
     if not isinstance(governing_terms, list) or len(governing_terms) != len(
         EXPECTED_GOVERNING_TERMS
@@ -723,15 +762,45 @@ def _run(
     )
 
 
+def _runtime_materialization_environment(root: Path) -> dict[str, str]:
+    """Return the credential-free environment shared by every fetch/build child."""
+
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name in RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES
+    }
+    environment.update(
+        {
+            "GIT_ASKPASS": "/bin/false",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "HOME": str(root),
+        }
+    )
+    return environment
+
+
 def _fetch_source(root: Path, source: dict[str, Any]) -> None:
     destination = root / "source"
     destination.mkdir(mode=0o700)
-    _run(["git", "init", "--quiet"], cwd=destination)
-    _run(["git", "remote", "add", "origin", source["repository"]], cwd=destination)
-    _run(["git", "config", "remote.origin.promisor", "true"], cwd=destination)
+    environment = _runtime_materialization_environment(root)
+    _run(["git", "init", "--quiet"], cwd=destination, environment=environment)
+    _run(
+        ["git", "remote", "add", "origin", source["repository"]],
+        cwd=destination,
+        environment=environment,
+    )
+    _run(
+        ["git", "config", "remote.origin.promisor", "true"],
+        cwd=destination,
+        environment=environment,
+    )
     _run(
         ["git", "config", "remote.origin.partialclonefilter", "blob:none"],
         cwd=destination,
+        environment=environment,
     )
     _run(
         [
@@ -744,23 +813,39 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
             source["revision"],
         ],
         cwd=destination,
+        environment=environment,
     )
     fetched = subprocess.check_output(
-        ["git", "rev-parse", "FETCH_HEAD^{commit}"], cwd=destination, text=True
+        ["git", "rev-parse", "FETCH_HEAD^{commit}"],
+        cwd=destination,
+        env=environment,
+        text=True,
     ).strip()
     tree = subprocess.check_output(
-        ["git", "rev-parse", "FETCH_HEAD^{tree}"], cwd=destination, text=True
+        ["git", "rev-parse", "FETCH_HEAD^{tree}"],
+        cwd=destination,
+        env=environment,
+        text=True,
     ).strip()
     if fetched != source["revision"] or tree != source["tree"]:
         raise BootstrapRefusal(
             "fetched LIBERO source identity differs from the manifest"
         )
-    _run(["git", "sparse-checkout", "init", "--no-cone"], cwd=destination)
+    _run(
+        ["git", "sparse-checkout", "init", "--no-cone"],
+        cwd=destination,
+        environment=environment,
+    )
     _run(
         ["git", "sparse-checkout", "set", "--no-cone", "--", *source["sparse_paths"]],
         cwd=destination,
+        environment=environment,
     )
-    _run(["git", "checkout", "--quiet", "--detach", fetched], cwd=destination)
+    _run(
+        ["git", "checkout", "--quiet", "--detach", fetched],
+        cwd=destination,
+        environment=environment,
+    )
     if _sha256(destination / source["license_file"]) != source["license_sha256"]:
         raise BootstrapRefusal(
             "LIBERO source license does not match the reviewed MIT file"
@@ -775,20 +860,7 @@ def _install_runtime(
     artifacts: list[dict[str, Any]],
     requirement_lines: list[str],
 ) -> None:
-    materialization_environment = {
-        name: value
-        for name, value in os.environ.items()
-        if name in RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES
-    }
-    materialization_environment.update(
-        {
-            "GIT_ASKPASS": "/bin/false",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "HOME": str(root),
-        }
-    )
+    materialization_environment = _runtime_materialization_environment(root)
     wheelhouse = root / "downloads"
     wheelhouse.mkdir(mode=0o700)
     for item in artifacts:
@@ -800,7 +872,7 @@ def _install_runtime(
         )
     venv = root / "venv"
     _run(
-        [sys.executable, "-m", "venv", str(venv)],
+        [sys.executable, "-m", "venv", "--copies", str(venv)],
         environment=materialization_environment,
     )
     bootstrap_names = {"pip", "setuptools", "wheel"}
@@ -915,8 +987,8 @@ def _inventory_entries(root: Path) -> list[dict[str, Any]]:
             continue
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
-            entries.append(
-                {"path": relative, "type": "symlink", "target": os.readlink(path)}
+            raise BootstrapRefusal(
+                f"runtime cache may not contain symlinks: {relative}"
             )
         elif stat.S_ISDIR(info.st_mode):
             entries.append({"path": relative, "type": "directory"})
@@ -961,7 +1033,7 @@ def _seal_cache_tree(root: Path) -> None:
     for path in paths:
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
-            continue
+            raise BootstrapRefusal("runtime cache may not contain symlinks")
         os.chown(path, -1, execution_gid)
         if stat.S_ISDIR(info.st_mode):
             os.chmod(path, SEALED_DIRECTORY_MODE)
@@ -978,8 +1050,13 @@ def _seal_cache_tree(root: Path) -> None:
 
 def _validate_read_only_tree(root: Path) -> None:
     for path in (root, *root.rglob("*")):
-        info = path.lstat()
-        if not stat.S_ISLNK(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o222:
+        # _open_cache_entry intentionally exposes the stable root through a
+        # descriptor symlink under /proc/self/fd. Validate that descriptor's
+        # target; no descendant symlink is part of the cache contract.
+        info = path.stat() if path == root else path.lstat()
+        if path != root and stat.S_ISLNK(info.st_mode):
+            raise BootstrapRefusal("runtime cache may not contain symlinks")
+        if stat.S_IMODE(info.st_mode) & 0o222:
             raise BootstrapRefusal("existing runtime cache is writable")
 
 
@@ -1248,15 +1325,28 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     manifest, manifest_sha256 = _validate_manifest(
         Path(args.manifest), require_runtime_closure=False
     )
-    _validate_requirements(Path(args.requirements), manifest)
+    _, requirements_sha256 = _validate_requirements(Path(args.requirements), manifest)
     cache_root = _validate_cache_root(Path(args.cache_root), None)
     final = cache_root / manifest_sha256
     identity = _cache_entry_identity(final)
     materialized = False
     if identity is not None:
         with _open_cache_entry(final, expected=identity) as stable_final:
-            complete = stable_final / ".complete.json"
-            materialized = complete.is_file() and not complete.is_symlink()
+            record = _load_json(stable_final / ".complete.json")
+            decision_sha256 = str(record.get("decision_sha256") or "")
+            if not _is_hex(decision_sha256, 64):
+                raise BootstrapRefusal(
+                    "existing runtime cache decision identity is invalid"
+                )
+            _validate_complete(
+                stable_final,
+                manifest,
+                manifest_sha256,
+                decision_sha256,
+                requirements_sha256,
+                _governing_terms_identity(manifest),
+            )
+            materialized = True
     return {
         "schema": "npa.libero.runtime-status.v1",
         "solution": "libero",

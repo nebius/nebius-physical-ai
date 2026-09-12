@@ -705,7 +705,8 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
             "secrets": [],
             "serviceaccounts": ["default", "npa-byof-libero-payload"],
             "roles": ["npa-byof-libero-pod-reader"],
-            "rolebindings": ["npa-byof-libero-pod-reader"],
+            "rolebindings": ["npa-byof-libero-payload-pod-reader"],
+            "clusterrolebindings": [],
         },
     )
 
@@ -728,6 +729,56 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
     with pytest.raises(RuntimeError, match="differs"):
         module._libero_rbac_evidence(
             kubeconfig, "payload-context", namespace, run_id
+        )
+
+
+def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    namespace = "isolated-namespace"
+    expected = {
+        "pods": [],
+        "serviceaccounts": ["default", "npa-byof-libero-payload"],
+        "roles": ["npa-byof-libero-pod-reader"],
+        "rolebindings": ["npa-byof-libero-payload-pod-reader"],
+        "secrets": [],
+    }
+
+    def kubectl_json(arguments, **_kwargs):
+        kind = arguments[-1]
+        if kind == "clusterrolebindings":
+            return {"items": []}
+        return {"items": [{"metadata": {"name": name}} for name in expected[kind]]}
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    inventory = module._libero_namespaced_inventory(
+        Path("/private/payload-kubeconfig"), "payload-context", namespace
+    )
+    assert inventory == {**expected, "clusterrolebindings": []}
+
+    def broadened(arguments, **kwargs):
+        if arguments[-1] != "clusterrolebindings":
+            return kubectl_json(arguments, **kwargs)
+        return {
+            "items": [
+                {
+                    "metadata": {"name": "unexpected-binding"},
+                    "subjects": [
+                        {
+                            "kind": "ServiceAccount",
+                            "name": "npa-byof-libero-payload",
+                            "namespace": namespace,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", broadened)
+    with pytest.raises(RuntimeError, match="may not receive ClusterRoleBindings"):
+        module._libero_namespaced_inventory(
+            Path("/private/payload-kubeconfig"), "payload-context", namespace
         )
 
 

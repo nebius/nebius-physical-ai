@@ -88,7 +88,12 @@ The trusted build must then:
 4. prove non-root/config/bootstrap identity and independently bind the candidate
    index, platform manifest, config, Buildx metadata, base manifest, rootfs
    material, upstream source revision, and canonical publication/infrastructure
-   bundles;
+   bundles. The publication bundle recursively binds the complete Python source
+   trees used for provider identity, preflight, managed submission, scheduler
+   identity, storage readback, signal teardown, and cleanup, plus the exact live
+   evidence collector; the checked-in acceptance manifest is the only permitted
+   path delta after the accepted development SHA, so enforcement/runtime drift
+   requires a new candidate and renewed manager acceptance;
 5. pass package-license, corresponding-source, Trivy fixed-critical,
    repository Gitleaks, credential, private-infrastructure, cache, data, model,
    output, and confidentiality gates; and
