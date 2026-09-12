@@ -137,6 +137,8 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
+    && PYTHONPATH=/opt/npa/src "${COSMOS3_REPO}/.venv/bin/python" -c \
+       'from npa.workbench.cosmos.guarded_inference import GUARDRAIL_STATE_SCHEMA; assert GUARDRAIL_STATE_SCHEMA == "npa.cosmos3.guardrail-state.v1"' \
     && /opt/npa/.venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \

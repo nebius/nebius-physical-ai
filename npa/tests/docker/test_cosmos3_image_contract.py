@@ -110,6 +110,15 @@ def test_dockerfile_pins_the_framework_and_guards_against_baked_weights() -> Non
     assert "/opt/cosmos3/licenses" in instructions
 
 
+def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
+    instructions = _dockerfile_instructions()
+    verifier = VERIFY_ENV.read_text(encoding="utf-8")
+
+    assert "npa.workbench.cosmos.guarded_inference" in instructions
+    assert "npa.cosmos3.guardrail-state.v1" in instructions
+    assert "VideoContentSafetyFilter" in verifier
+
+
 def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
     instructions = _dockerfile_instructions()
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")

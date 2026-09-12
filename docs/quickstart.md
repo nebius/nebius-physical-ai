@@ -310,9 +310,10 @@ planning, cluster, and image checks, then the
 [Cosmos 3 guide](workbench/cosmos3-generate.md#workflow) for submission.
 
 After the run succeeds, inspect the generated media and manifest. A completed
-job alone does not prove usable output. The Cosmos guide records the known
-upstream guardrail limitations; `guardrails: true` records the requested setting,
-not proof that every safety model ran.
+job alone does not prove usable output. `guardrails: true` records the requested
+setting; the nested `guardrail_state` is the execution proof and must report both
+prompt and generated-media models as discovered/evaluated with
+`effective: true`. Missing or ineffective models now fail closed.
 
 The older `cosmos deploy --runtime serverless` endpoint has no supported
 serverless generated-media export to S3. Likewise,

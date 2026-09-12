@@ -117,8 +117,14 @@ def check_model_module() -> str:
 
 def check_guardrail() -> str:
     from cosmos_framework.auxiliary.guardrail import common  # noqa: F401
+    from cosmos_framework.auxiliary.guardrail.video_content_safety_filter.video_content_safety_filter import (
+        VideoContentSafetyFilter,
+    )
 
-    return "guardrail package importable (guardrails stay on by default)"
+    return (
+        "guardrail package and generated-media safety model importable "
+        f"({VideoContentSafetyFilter.__name__}; guardrails stay on by default)"
+    )
 
 
 def check_checkpoint_lookup() -> str:

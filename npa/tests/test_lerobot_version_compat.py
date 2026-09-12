@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from npa.workbench.lerobot.version_compat import (
@@ -53,6 +55,22 @@ def test_060_requests_the_extras_its_policies_gate_on() -> None:
     spec = lerobot_pip_spec("0.6.0")
     assert "diffusion" in spec, "--policy.type=diffusion needs lerobot[diffusion]"
     assert "smolvla" in spec, "--policy.type=smolvla needs lerobot[smolvla]"
+
+
+def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    smoke = (root / "npa/src/npa/smoke/test_lerobot_env.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in dockerfile
+    assert "python -m npa.smoke.test_lerobot_env" in dockerfile
+    assert "DiffusionPolicy(config)" in smoke
+    assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
+    assert 'policy.to("cuda")' in smoke
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
