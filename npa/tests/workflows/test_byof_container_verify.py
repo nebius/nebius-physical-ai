@@ -258,6 +258,27 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
+    runtime_manifest_sha256 = module.hashlib.sha256(
+        module.LIBERO_RUNTIME_MANIFEST.read_bytes()
+    ).hexdigest()
+    decision = {
+        "schema": "npa.libero.runtime-use-decision.v1",
+        "solution": "libero",
+        "decision": "authorized",
+        "runtime_fetch_authorized": True,
+        "runtime_manifest_sha256": runtime_manifest_sha256,
+        "source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+        "authorized_boundaries": sorted(module.LIBERO_DECISION_BOUNDARIES),
+        "manager_receipt_sha256": "sha256:" + "7" * 64,
+    }
+    decision_path = tmp_path / "runtime-use-decision.json"
+    decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
+    decision_path.write_bytes(decision_bytes)
+    decision_path.chmod(0o600)
+    decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", str(decision_path))
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", "8" * 64)
     kubeconfig = tmp_path / "payload-kubeconfig"
     kubeconfig.write_text("payload proof\n", encoding="utf-8")
     kubeconfig.chmod(0o600)
@@ -302,10 +323,39 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
 
     assert evidence == expected_evidence
-    assert documents[1]["envs"] == {
+    expected_envs = {
         f"NPA_LIBERO_EXPECTED_{key.upper()}": value
         for key, value in evidence.items()
     }
+    expected_envs.update(
+        {
+            "NPA_LIBERO_RUNTIME_USE_DECISION_B64": module.base64.b64encode(
+                decision_bytes
+            ).decode("ascii"),
+            "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+            "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256": "8" * 64,
+        }
+    )
+    assert documents[1]["envs"] == expected_envs
+
+    invalid_decision = {**decision, "authorized_boundaries": ["source"]}
+    invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
+    decision_path.write_bytes(invalid_bytes)
+    decision_path.chmod(0o600)
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        module.hashlib.sha256(invalid_bytes).hexdigest(),
+    )
+    with pytest.raises(ValueError, match="decision identity is invalid"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    decision_path.write_bytes(decision_bytes)
+    decision_path.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
 
     for direct, allowed in (
         (True, {"names": ["worker"]}),

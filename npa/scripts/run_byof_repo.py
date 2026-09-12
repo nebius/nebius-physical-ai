@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,16 +50,11 @@ LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 LIBERO_REPOSITORY_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
-LIBERO_BASE_IMAGE = (
-    "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
-    "sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
-)
-LIBERO_SOURCE_PRUNE_PATH = "libero/libero/assets"
-LIBERO_BUILD_COMMAND_SHA256 = (
-    "e77d6ecf52b3b37edd33269a9c22e31350a60575cb0dad5c38daf82e95049a87"
-)
+LIBERO_BASE_IMAGE = "tool://libero"
+LIBERO_SOURCE_PRUNE_PATH = ""
+LIBERO_BUILD_COMMAND_SHA256 = hashlib.sha256(b"").hexdigest()
 LIBERO_SMOKE_COMMAND_SHA256 = (
-    "9dfd7e586fd0c090a9a2a455d74501ece7c395c7dcc4d6af4836b1b6eb74a343"
+    "a38bfcb66f40fd7d192b2793873aca4ba959a0136f422d3cfe46c9e5c3e9dc43"
 )
 LIBERO_CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
 LIBERO_SMOKE_ARTIFACT = "libero-smoke.json"
@@ -135,6 +131,48 @@ def _normalize_optional(value: str) -> str:
     return cleaned
 
 
+def _libero_acceptance_candidate(value: str) -> str:
+    candidate = str(value or "").strip().removeprefix("docker:")
+    if re.fullmatch(r"(?:[^/@\s]+/)+npa-libero@sha256:[0-9a-f]{64}", candidate) is None:
+        raise ValueError(
+            "LIBERO requires an explicit immutable npa-libero acceptance candidate"
+        )
+    return candidate
+
+
+def _libero_runtime_decision(args: argparse.Namespace) -> tuple[Path, str]:
+    path = Path(str(args.libero_runtime_use_decision_file or "")).expanduser()
+    expected = str(args.libero_runtime_use_decision_sha256 or "").strip()
+    if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+        raise ValueError("LIBERO requires the runtime-use decision SHA-256")
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise ValueError("LIBERO runtime-use decision file is unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError("LIBERO runtime-use decision must be an owner-private regular file")
+    observed = hashlib.sha256(path.read_bytes()).hexdigest()
+    if observed != expected:
+        raise ValueError("LIBERO runtime-use decision hash differs")
+    try:
+        decision = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("LIBERO runtime-use decision is not valid JSON") from exc
+    if (
+        not isinstance(decision, dict)
+        or decision.get("schema") != "npa.libero.runtime-use-decision.v1"
+        or decision.get("solution") != "libero"
+        or decision.get("decision") != "authorized"
+    ):
+        raise ValueError("LIBERO runtime-use decision identity is invalid")
+    return path.resolve(), observed
+
+
 def _validate_libero_identity(args: argparse.Namespace) -> None:
     """Reject ambiguous LIBERO identity before registry or build operations."""
 
@@ -163,7 +201,7 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         "repository": (args.repo_url, f"{LIBERO_REPOSITORY}.git"),
         "source revision": (args.repo_ref, LIBERO_REPOSITORY_REF),
         "repository authentication": (args.repo_auth, "none"),
-        "base profile": (args.base_profile, "ubuntu"),
+        "base profile": (args.base_profile, "prebuilt"),
         "base image": (args.base_image, LIBERO_BASE_IMAGE),
         "source prune path": (args.source_prune_path, LIBERO_SOURCE_PRUNE_PATH),
         "capability": (args.capability_name, LIBERO_CAPABILITY),
@@ -176,6 +214,10 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
     for label, (observed, expected) in exact_values.items():
         if observed != expected:
             raise ValueError(f"LIBERO requires its exact {label} contract")
+    _libero_acceptance_candidate(args.libero_acceptance_candidate_image)
+    _libero_runtime_decision(args)
+    if re.fullmatch(r"[0-9a-f]{64}", args.libero_build_metadata_sha256) is None:
+        raise ValueError("LIBERO requires independently observed build metadata SHA-256")
     command_hashes = {
         "build command": (
             hashlib.sha256(args.build_command.encode()).hexdigest(),
@@ -876,6 +918,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--libero-acceptance-candidate-image",
+        default="",
+        help=(
+            "Explicit digest-pinned npa-libero image for a separately authorized "
+            "acceptance run; never read from ambient environment."
+        ),
+    )
+    parser.add_argument("--libero-runtime-use-decision-file", default="")
+    parser.add_argument("--libero-runtime-use-decision-sha256", default="")
+    parser.add_argument("--libero-build-metadata-sha256", default="")
+    parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
     parser.add_argument(
@@ -963,6 +1016,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
     explicit_base = _normalize_optional(args.base_image)
+    if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+        explicit_base = _libero_acceptance_candidate(
+            args.libero_acceptance_candidate_image
+        )
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
@@ -1307,7 +1364,19 @@ def _run_byof(
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
+            live_env = _live_runner_env(args.project)
+            if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+                decision_path, decision_sha256 = _libero_runtime_decision(args)
+                live_env.update(
+                    {
+                        "NPA_LIBERO_RUNTIME_USE_DECISION_FILE": str(decision_path),
+                        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+                        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256": (
+                            args.libero_build_metadata_sha256
+                        ),
+                    }
+                )
+            run_proc = _run(cmd, capture=True, env=live_env)
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)

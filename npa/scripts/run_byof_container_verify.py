@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -69,6 +70,20 @@ LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
 LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
+LIBERO_RUNTIME_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "docker"
+    / "workbench"
+    / "libero"
+    / "runtime-manifest.json"
+)
+LIBERO_DECISION_BOUNDARIES = {
+    "source",
+    "runtime_packages",
+    "demonstration",
+    "task_inputs",
+    "language_model",
+}
 
 
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
@@ -446,6 +461,51 @@ def _bind_libero_runtime_contract(
         raise ValueError("LIBERO requires verified managed cleanup")
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
         raise ValueError("LIBERO requires verified isolated Sky API shutdown")
+    decision_path = _mode_private_regular_file(
+        os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", "").strip(),
+        label="runtime-use decision",
+    )
+    decision_bytes = decision_path.read_bytes()
+    decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
+    expected_decision_sha256 = os.environ.get(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
+    ).strip()
+    if decision_sha256 != expected_decision_sha256:
+        raise ValueError("LIBERO runtime-use decision differs from its owner receipt")
+    try:
+        decision = json.loads(decision_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError("LIBERO runtime-use decision is not valid JSON") from exc
+    if not isinstance(decision, dict):
+        raise ValueError("LIBERO runtime-use decision identity is invalid")
+    runtime_manifest_sha256 = hashlib.sha256(
+        LIBERO_RUNTIME_MANIFEST.read_bytes()
+    ).hexdigest()
+    boundaries = decision.get("authorized_boundaries")
+    if (
+        decision.get("schema") != "npa.libero.runtime-use-decision.v1"
+        or decision.get("solution") != "libero"
+        or decision.get("decision") != "authorized"
+        or decision.get("runtime_fetch_authorized") is not True
+        or decision.get("runtime_manifest_sha256") != runtime_manifest_sha256
+        or decision.get("source_revision")
+        != "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+        or not isinstance(boundaries, list)
+        or set(boundaries) != LIBERO_DECISION_BOUNDARIES
+        or len(boundaries) != len(LIBERO_DECISION_BOUNDARIES)
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            str(decision.get("manager_receipt_sha256") or ""),
+        )
+        is None
+        or any(str(key).startswith("ACCEPT_") for key in decision)
+    ):
+        raise ValueError("LIBERO runtime-use decision identity is invalid")
+    build_metadata_sha256 = os.environ.get(
+        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", ""
+    ).strip()
+    if re.fullmatch(r"[0-9a-f]{64}", build_metadata_sha256) is None:
+        raise ValueError("LIBERO requires independent build metadata SHA-256")
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
         raise ValueError("LIBERO requires one explicit Kubernetes context")
     allowed_node = _libero_allowed_node(global_config)
@@ -483,6 +543,11 @@ def _bind_libero_runtime_contract(
         envs = document.setdefault("envs", {})
         for name, value in evidence.items():
             envs[f"NPA_LIBERO_EXPECTED_{name.upper()}"] = value
+        envs["NPA_LIBERO_RUNTIME_USE_DECISION_B64"] = base64.b64encode(
+            decision_bytes
+        ).decode("ascii")
+        envs["NPA_LIBERO_RUNTIME_USE_DECISION_SHA256"] = decision_sha256
+        envs["NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256"] = build_metadata_sha256
     return evidence
 
 

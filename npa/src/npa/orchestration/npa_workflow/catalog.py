@@ -95,6 +95,14 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--libero-acceptance-candidate-image",
+    "{{config.libero_acceptance_candidate_image}}",
+    "--libero-runtime-use-decision-file",
+    "{{config.libero_runtime_use_decision_file}}",
+    "--libero-runtime-use-decision-sha256",
+    "{{config.libero_runtime_use_decision_sha256}}",
+    "--libero-build-metadata-sha256",
+    "{{config.libero_build_metadata_sha256}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -119,6 +127,10 @@ _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
     "source_prune_path": "",
+    "libero_acceptance_candidate_image": "",
+    "libero_runtime_use_decision_file": "",
+    "libero_runtime_use_decision_sha256": "",
+    "libero_build_metadata_sha256": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
