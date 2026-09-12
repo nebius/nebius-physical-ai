@@ -69,6 +69,10 @@ def _verify_case(client, row, directory):
     assert result["runtime"]["weights_baked"] is False
     assert result["runtime"]["dataset_baked"] is False
     assert "@sha256:" in result["runtime"]["image"]
+    for field in ("sample_index", "seed", "diffusion_steps"):
+        assert result["request"][field] == row[field]
+        flag_index = result["argv"].index("--" + field.replace("_", "-"))
+        assert result["argv"][flag_index + 1] == str(row[field])
     assert result["sample"] == row["sample"]
     assert metadata["clip_id"] == row["sample"]["clip_id"]
     assert metadata["t0_us"] == row["sample"]["t0_us"]
