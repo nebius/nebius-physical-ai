@@ -377,6 +377,31 @@ def test_provider_binding_requires_ready_transaction_fresh_readback(tmp_path) ->
         LIVE._assert_provider_binding(receipt)
 
 
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    (
+        "2026-09-11 00:00:00Z",
+        "2026-09-11T00:00:00+00:00",
+        "2026-9-11T00:00:00Z",
+    ),
+)
+def test_provider_binding_rejects_non_rfc3339_utc_timestamps(
+    tmp_path, invalid_timestamp
+) -> None:
+    receipt = _live_receipt(tmp_path)
+    provider_path = Path(receipt["reservation"]["provider_receipt_path"])
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    provider["verified_at"] = invalid_timestamp
+    receipt["reservation"]["verified_at"] = invalid_timestamp
+    provider_path.write_text(json.dumps(provider), encoding="utf-8")
+    receipt["reservation"]["provider_receipt_sha256"] = hashlib.sha256(
+        provider_path.read_bytes()
+    ).hexdigest()
+
+    with pytest.raises(AssertionError):
+        LIVE._assert_provider_binding(receipt)
+
+
 def test_named_smoke_proof_declares_schema_at_artifact_root() -> None:
     import numpy as np
 

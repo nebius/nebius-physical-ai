@@ -32,10 +32,14 @@ PUBLIC_REGISTRY_HOSTS = {
     "registry.k8s.io",
 }
 MAX_PRIVATE_RECEIPT_BYTES = 1024 * 1024
+RFC3339_UTC = re.compile(
+    r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?Z"
+)
 
 
 def _utc_instant(value: object) -> datetime:
-    assert isinstance(value, str) and value.endswith("Z")
+    assert isinstance(value, str) and RFC3339_UTC.fullmatch(value)
     instant = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
     assert instant.utcoffset() is not None and instant.utcoffset().total_seconds() == 0
     return instant

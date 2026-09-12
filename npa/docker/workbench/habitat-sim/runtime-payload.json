@@ -17,7 +17,7 @@
     "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md"
   ],
   "required_final_file_sha256": {
-    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "37163d05d00e1498a6558a535e9d56c323e47f31ec66091a0ea920c64e0bc2ef",
+    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "1b1d7af997f35ba1ff2f4db39507ff11ac4306b6fcfc74a32385c9fde8bc5120",
     "/usr/share/doc/npa-habitat-sim/source-manifest.json": "44918d8afc1241183e2b5d2f763dd48aec705f6da847be3f65d79c6fa9e5e743",
     "/usr/share/doc/npa-habitat-sim/licenses.json": "cc91ae7745287f08cdd655bed0dc3c94a98e3c72ff7bb2ceca75235f3dcebf63",
     "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "1b1906ea2f32ee46b6882b92f333c30747342adcf62fcfb91312be7793e96b09",
