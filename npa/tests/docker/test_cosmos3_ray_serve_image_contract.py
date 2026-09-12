@@ -141,7 +141,9 @@ def test_dockerfile_uses_uv_not_pip_in_run_directives() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     # Remove comment lines so we don't flag the documentation that mentions
     # .venv/bin/pip in the intentionally explanatory comment.
-    non_comment_lines = [line for line in text.split("\n") if not line.strip().startswith("#")]
+    non_comment_lines = [
+        line for line in text.split("\n") if not line.strip().startswith("#")
+    ]
     non_comment = "\n".join(non_comment_lines)
     assert "uv pip install --python .venv/bin/python --no-deps" in non_comment
     # The executable instruction must not use the nonexistent pip binary
@@ -156,7 +158,7 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     content = req_file.read_text(encoding="utf-8")
     assert "ray==2.58.0" in content
     assert "ray[serve]==2.58.0" in req_file.with_suffix(".in").read_text()
-    assert "nltk==3.10.3" in content
+    assert not re.search(r"^nltk==", content, re.M)
     assert "ray-haproxy==2.8.25" in content
     # Every dependency is exact and hash-bound, including the new serve extra.
     requirements = re.split(r"\n(?=[a-zA-Z])", content)
@@ -172,15 +174,14 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
         "security-upgrades-requirements.txt"
         " /tmp/cosmos3-ray-security-upgrades-requirements.txt"
     ) in text
-    assert (
-        "--requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt"
-    ) in text
-    assert 'assert importlib.metadata.version("nltk") == "3.10.3"' in text
+    assert ("--requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt") in text
+    assert "/opt/npa/install_hardened_nltk.sh .venv/bin/python" in text
+    assert ".venv/bin/python /opt/npa/verify_hardened_nltk.py" in text
     assert "${COSMOS3_RAY_VERSION}" in text
     assert "--no-deps --require-hashes" in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
-        'test "$(.venv/bin/python -c \'import ray; print(ray.__version__)\')"'
+        "test \"$(.venv/bin/python -c 'import ray; print(ray.__version__)')\""
         ' = "${COSMOS3_RAY_VERSION}"'
     ) in text
 

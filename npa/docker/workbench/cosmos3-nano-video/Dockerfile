@@ -5,10 +5,14 @@ FROM ${BASE_IMAGE}
 
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg linux-libc-dev \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/workbench/cosmos3-nano-video/requirements.txt /opt/npa/requirements.txt
+COPY --chmod=755 docker/workbench/common/install_hardened_nltk.sh /opt/npa/install_hardened_nltk.sh
+COPY docker/workbench/common/verify_hardened_nltk.py /opt/npa/verify_hardened_nltk.py
 RUN uv pip install --system --no-cache -r /opt/npa/requirements.txt \
+    && /opt/npa/install_hardened_nltk.sh SYSTEM \
+    && python /opt/npa/verify_hardened_nltk.py \
     && useradd --create-home --uid 10001 --shell /bin/bash npa-video \
     && mkdir -p /opt/npa/npa/workbench/cosmos /models /outputs /tmp/ray \
     && chown -R 10001:10001 /models /outputs /tmp/ray
