@@ -73,11 +73,28 @@ FORBIDDEN_ROOTS = (
     Path("/root/.docker"),
     Path("/root/.ssh"),
 )
-FORBIDDEN_NAME = re.compile(
-    r"(?:^|/)(?:gymnasium_robotics|shadow[_-]?hand|mujoco[^/]*)"
-    r"(?:/|$)|\.(?:whl|pt|pth|ckpt|safetensors|onnx|engine)$",
-    re.IGNORECASE,
+EXPECTED_LOCK_FILENAMES = frozenset(
+    {
+        *EXPECTED_NEUTRAL_FILE_SHA256,
+        "asset-lock.json",
+        "build.sh",
+        "verify_image.py",
+    }
 )
+EXPECTED_FIXED_FILE_SHA256 = {
+    "opt/npa/gymnasium-robotics/build.sh": (
+        "8f9cb981d8b9e0e821af502f4fca97d06f29b74d01c9a7324a16f9e3ac40c8b0"
+    ),
+    "usr/local/bin/npa-gymnasium-entrypoint": (
+        "8f9cb981d8b9e0e821af502f4fca97d06f29b74d01c9a7324a16f9e3ac40c8b0"
+    ),
+    "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
+        "a91e6df63d826b2df1cff942b288e6c23a84fec31a75af659d217eb1d8f8a121"
+    ),
+    "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": (
+        "ec19141ab09703de4c149b774184a98e739573edf54cd8245d1f4103695f02c3"
+    ),
+}
 
 
 def _sha256(path: Path) -> str:
@@ -108,28 +125,32 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         candidate = at(forbidden)
         if candidate.exists() and (not candidate.is_dir() or any(candidate.iterdir())):
             raise ValueError(f"forbidden baked payload or state: {forbidden}")
+    lock_root = at(LOCK_ROOT)
+    if not lock_root.is_dir():
+        raise ValueError("neutral bootstrap lock root is absent")
+    observed_lock_names = {path.name for path in lock_root.iterdir()}
+    if observed_lock_names != EXPECTED_LOCK_FILENAMES:
+        raise ValueError("neutral bootstrap lock-root inventory changed")
+    for path in lock_root.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"invalid neutral bootstrap lock entry: {path.name}")
+    for relative, expected in EXPECTED_FIXED_FILE_SHA256.items():
+        path = root / relative
+        if path.is_symlink() or not path.is_file() or _sha256(path) != expected:
+            raise ValueError(f"reviewed immutable image file changed: /{relative}")
     for relative, record in EXPECTED_SYSTEM_WHEEL_FILES.items():
         wheel = root / relative
-        if not wheel.is_file() or _sha256(wheel) != record["sha256"]:
+        if wheel.is_symlink() or not wheel.is_file() or _sha256(wheel) != record["sha256"]:
             raise ValueError(f"reviewed system bootstrap wheel changed: /{relative}")
-    system_wheel_hashes = {
-        record["sha256"]: path for path, record in EXPECTED_SYSTEM_WHEEL_FILES.items()
-    }
-    for path in root.rglob("*"):
-        if path.is_symlink() or not path.is_file():
-            continue
-        relative = str(path.relative_to(root))
-        if FORBIDDEN_NAME.search(relative) and relative not in EXPECTED_SYSTEM_WHEEL_FILES:
-            raise ValueError(f"forbidden upstream/runtime path: /{relative}")
-        try:
-            digest = _sha256(path)
-        except PermissionError as error:
-            raise ValueError(f"unreadable final image byte: /{relative}") from error
+    scoped_files = [
+        *(lock_root / name for name in EXPECTED_LOCK_FILENAMES),
+        *(root / relative for relative in EXPECTED_FIXED_FILE_SHA256),
+        *(root / relative for relative in EXPECTED_SYSTEM_WHEEL_FILES),
+    ]
+    for path in scoped_files:
+        digest = _sha256(path)
         if digest in KNOWN_FORBIDDEN_CONTENT_SHA256:
-            raise ValueError(f"forbidden upstream/runtime byte: /{relative}")
-        reviewed_path = system_wheel_hashes.get(digest)
-        if reviewed_path is not None and relative != reviewed_path:
-            raise ValueError(f"system bootstrap wheel at unauthorized path: /{relative}")
+            raise ValueError(f"forbidden upstream/runtime byte: {path}")
     if root == Path("/") and os.geteuid() == 0:
         raise ValueError("image verifier must run as the non-root runtime user")
     return {
