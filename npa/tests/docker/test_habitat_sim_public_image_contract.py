@@ -23,6 +23,12 @@ def test_candidate_is_public_eligible_but_unbuilt_and_unpublishable() -> None:
     assert "habitat-sim" not in images.publicly_publishable_tools()
 
 
+def test_candidate_has_no_generic_build_and_push_remedy() -> None:
+    reference = "registry.invalid/task-owned/npa-habitat-sim:missing"
+
+    assert images.build_and_push_command(reference) == ""
+
+
 def test_dedicated_image_pins_base_snapshot_and_ca_bootstrap() -> None:
     base = "ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986"
     assert f"ARG BASE_IMAGE={base}" in DOCKERFILE
