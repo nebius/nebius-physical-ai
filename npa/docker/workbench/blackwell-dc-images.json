@@ -847,6 +847,19 @@
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
       "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+    },
+    {
+      "name": "npa-robotwin",
+      "dockerfile": "robotwin/Dockerfile",
+      "build_script": "robotwin/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "source_compiled_extensions": [
+        "CuRobo v0.7.8 Warp kernels (future runtime JIT; not fetched or resolved)"
+      ],
+      "smoke": "A future exact-digest gate must run the official beat_block_hammer bimanual task through SAPIEN/Vulkan on exactly one STRICT RTX PRO 6000 and validate real HDF5 plus rendered video/frame artifacts.",
+      "notes": "Phase A is a zero-vendor-payload, incomplete-lock bootstrap candidate. No image, digest, wheel architecture set, built-byte scan, public availability, or hardware result exists. It remains publication-quarantined, and its renderer workload is not routed to B200/B300. Replace unknown/pending-build only with the future build and exact-image evidence; this inventory entry is not permission to build, fetch, run, or publish."
     }
   ],
   "validation_evidence": {
