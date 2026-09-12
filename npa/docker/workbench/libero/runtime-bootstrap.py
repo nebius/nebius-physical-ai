@@ -1799,6 +1799,8 @@ def _sigv4_request(
     canonical_uri = urllib.parse.quote(
         urllib.parse.unquote(parsed.path), safe="/-_.~"
     )
+    if parsed.path != canonical_uri:
+        raise BootstrapRefusal("output storage object path is not canonical")
     canonical_request = "\n".join(
         (
             method,
@@ -1837,7 +1839,7 @@ def _sigv4_request(
     connection = http.client.HTTPSConnection(
         parsed.hostname, parsed.port or 443, timeout=120
     )
-    target = urllib.parse.urlunsplit(("", "", parsed.path or "/", "", ""))
+    target = urllib.parse.urlunsplit(("", "", canonical_uri or "/", "", ""))
     try:
         connection.request(
             method,
@@ -1864,6 +1866,18 @@ def _sigv4_request(
     if len(body) > MAX_OUTPUT_BYTES:
         raise BootstrapRefusal("output storage response exceeds the aggregate size budget")
     return response_headers, body
+
+
+def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
+    """Encode each S3 key segment while preserving separators on the wire."""
+
+    if not bucket or not object_key or object_key.startswith("/"):
+        raise BootstrapRefusal("output storage object identity is invalid")
+    path = "/".join(
+        urllib.parse.quote(segment, safe="-_.~")
+        for segment in (bucket, *object_key.split("/"))
+    )
+    return f"{endpoint}/{path}"
 
 
 def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
@@ -1938,11 +1952,7 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
 
     def upload_and_read_back(name: str, payload: bytes, digest: str) -> dict[str, Any]:
         checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-        object_path = "/".join(
-            urllib.parse.quote(part, safe="-_.~")
-            for part in (parsed.netloc, prefix + name)
-        )
-        url = f"{endpoint}/{object_path}"
+        url = _s3_object_url(endpoint, parsed.netloc, prefix + name)
         _sigv4_request(
             "PUT",
             url,

@@ -440,6 +440,7 @@ class LiberoAccessState:
     controller_role_binding_uid: str = ""
     execution_kubeconfig: Path | None = None
     execution_context: str = ""
+    run_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -447,6 +448,32 @@ class LiberoRuntimeBinding:
     evidence: dict[str, str]
     access_state: LiberoAccessState
     manager_acceptance_b64: str = ""
+
+
+def _reject_libero_cluster_role_bindings(
+    kubeconfig: Path, context: str, namespace: str
+) -> None:
+    cluster_bindings = _kubectl_json(
+        ["--context", context, "get", "clusterrolebindings"],
+        purpose="LIBERO cluster RoleBinding inventory",
+        kubeconfig=kubeconfig,
+    )
+    items = cluster_bindings.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
+    if any(
+        isinstance(item, dict)
+        and any(
+            isinstance(subject, dict)
+            and subject.get("kind") == "ServiceAccount"
+            and subject.get("namespace") == namespace
+            for subject in item.get("subjects") or []
+        )
+        for item in items
+    ):
+        raise RuntimeError(
+            "LIBERO namespace service accounts may not receive ClusterRoleBindings"
+        )
 
 
 def _libero_namespaced_inventory(
@@ -490,29 +517,7 @@ def _libero_namespaced_inventory(
                 f"LIBERO namespace is not isolated to its reviewed {kind} inventory"
             )
         inventory[kind] = names
-    cluster_bindings = _kubectl_json(
-        ["--context", context, "get", "clusterrolebindings"],
-        purpose="LIBERO cluster RoleBinding inventory",
-        kubeconfig=kubeconfig,
-    )
-    items = cluster_bindings.get("items")
-    if not isinstance(items, list):
-        raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
-    scoped_bindings = [
-        item
-        for item in items
-        if isinstance(item, dict)
-        and any(
-            isinstance(subject, dict)
-            and subject.get("kind") == "ServiceAccount"
-            and subject.get("namespace") == namespace
-            for subject in item.get("subjects") or []
-        )
-    ]
-    if scoped_bindings:
-        raise RuntimeError(
-            "LIBERO namespace service accounts may not receive ClusterRoleBindings"
-        )
+    _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
     inventory["clusterrolebindings"] = []
     return inventory
 
@@ -610,7 +615,12 @@ def _libero_controller_rbac_evidence(
 
 
 def _libero_rbac_evidence(
-    kubeconfig: Path, context: str, namespace: str, run_id: str
+    kubeconfig: Path,
+    context: str,
+    namespace: str,
+    run_id: str,
+    *,
+    require_empty_inventory: bool = True,
 ) -> tuple[dict[str, str], LiberoAccessState]:
     namespace_record = _kubectl_json(
         ["--context", context, "get", "namespace", namespace],
@@ -661,7 +671,11 @@ def _libero_rbac_evidence(
         raise RuntimeError("LIBERO payload Role is broader than pods/get")
     if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
         raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
-    inventory = _libero_namespaced_inventory(kubeconfig, context, namespace)
+    inventory = None
+    if require_empty_inventory:
+        inventory = _libero_namespaced_inventory(kubeconfig, context, namespace)
+    else:
+        _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
     evidence = {
         "service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
@@ -684,8 +698,9 @@ def _libero_rbac_evidence(
         "namespace_uid_sha256": hashlib.sha256(
             namespace_metadata["uid"].encode()
         ).hexdigest(),
-        "namespace_inventory_sha256": _sha256_json(inventory),
     }
+    if inventory is not None:
+        evidence["namespace_inventory_sha256"] = _sha256_json(inventory)
     access_state = LiberoAccessState(
         kubeconfig=kubeconfig,
         context=context,
@@ -694,6 +709,7 @@ def _libero_rbac_evidence(
         service_account_uid=account["metadata"]["uid"],
         role_uid=role["metadata"]["uid"],
         role_binding_uid=binding["metadata"]["uid"],
+        run_id=run_id,
     )
     return evidence, access_state
 
@@ -873,6 +889,30 @@ def _verify_libero_controller_unchanged(binding: LiberoRuntimeBinding) -> None:
     for name, value in observed.items():
         if binding.evidence.get(name) != value:
             raise RuntimeError("LIBERO controller RBAC changed after acceptance")
+
+
+def _verify_libero_payload_unchanged(
+    binding: LiberoRuntimeBinding, *, require_empty_inventory: bool
+) -> None:
+    state = binding.access_state
+    observed, observed_state = _libero_rbac_evidence(
+        state.kubeconfig,
+        state.context,
+        state.namespace,
+        state.run_id,
+        require_empty_inventory=require_empty_inventory,
+    )
+    for name, value in observed.items():
+        if binding.evidence.get(name) != value:
+            raise RuntimeError("LIBERO payload RBAC changed after acceptance")
+    identities = (
+        "namespace_uid",
+        "service_account_uid",
+        "role_uid",
+        "role_binding_uid",
+    )
+    if any(getattr(state, name) != getattr(observed_state, name) for name in identities):
+        raise RuntimeError("LIBERO payload RBAC identity changed after acceptance")
 
 
 def _validate_libero_output_storage_authorization(
@@ -1768,6 +1808,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             # before submission. Any ClusterRoleBinding or wildcard drift stops
             # before the untrusted payload can be created.
             if libero_binding is not None:
+                _verify_libero_payload_unchanged(
+                    libero_binding, require_empty_inventory=True
+                )
                 _verify_libero_controller_unchanged(libero_binding)
             if args.direct_launch:
                 return _direct_launch(
@@ -1838,6 +1881,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 teardown_guard.mark_launched()
                 submit_config_path = Path(config_path) if config_path else None
                 if libero_binding is not None:
+                    _verify_libero_payload_unchanged(
+                        libero_binding, require_empty_inventory=True
+                    )
                     _verify_libero_controller_unchanged(libero_binding)
                 result = submit_workflow(
                     rendered_yaml,
@@ -1877,6 +1923,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
                 if libero_binding is not None:
+                    _verify_libero_payload_unchanged(
+                        libero_binding, require_empty_inventory=False
+                    )
                     _verify_libero_controller_unchanged(libero_binding)
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
