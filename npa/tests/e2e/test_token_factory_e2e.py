@@ -44,7 +44,7 @@ def test_live_provider_contract_recheck(request: pytest.FixtureRequest, tmp_path
     )))
     report = run_contract(
         TokenFactoryClient(), additional_models=additional,
-        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "malformed_json"),
+        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "healthy"),
     )
     request.node.user_properties.append(("provider_contract", report))
     (tmp_path / "provider-contract.json").write_text(json.dumps(report, indent=2) + "\n")

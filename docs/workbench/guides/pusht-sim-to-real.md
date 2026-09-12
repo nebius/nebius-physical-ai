@@ -1,42 +1,32 @@
-# Teach a Robot to Push a T (PushT, Sim-to-Real)
+# PushT: inspect the sim-to-real SDK
 
-**The hook:** PushT is the beloved toy benchmark of robot learning — shove a
-T-shaped block onto a target. In this guide you run the **whole sim-to-real
-loop** end to end with one command: stage a public dataset, train a policy,
-evaluate it, collect feedback, and record a Rerun visualization you can scrub
-frame by frame.
+[Guides](README.md) · [LeRobot training](reachy2-lerobot-policy.md) · [Sim2Real workflow](sim2real-workflow.md)
 
-The best part: you can dry-run the entire spine locally before spending a
-single GPU-minute.
+PushT uses a planar pusher to move a T-shaped block onto a target. This guide
+shows the SDK's **structural smoke**: dataset inspection, splitting, feedback,
+and report wiring. For GPU policy training, use the [LeRobot guide](reachy2-lerobot-policy.md)
+with a compatible PushT dataset and policy configuration.
 
 ## Ingredients
 
-- **Robot:** a simulated planar pusher (the PushT task).
-- **Sim / engine:** the workbench **sim-to-real loop** — imitation training plus
-  a pluggable evaluator and feedback source.
-- **Public dataset:**
-  [`lerobot/pusht`](https://huggingface.co/lerobot/pusht) — MIT-licensed, with
-  vision, state, action, episode, and timestamp fields. Pinned revision
+- Install [npa](../../install.md) and allow access to the public Hugging Face dataset.
+- The helper defaults to `lerobot/pusht` at revision
   `7628202a2180972f291ba1bc6723834921e72c19`.
-- **You need:** `npa` installed for the local smoke; Nebius creds + an H100 for
-  the live run.
+- The base NPA install does not include the upstream `lerobot` package.
+  Dataset checks can report partial or blocked when that package is unavailable.
 
 ## Fast path (local smoke, no cluster)
 
-Run the same structural spine the live pipeline uses, entirely on your machine,
-with typed return objects:
+Run this Python example in the environment where NPA is installed:
 
 ```python
 from npa.sdk.workbench import sim_to_real
 
 report = sim_to_real.local_smoke(
     run_id="pusht-hello",
-    s3_bucket="your-bucket-name",
-    s3_endpoint="https://storage.eu-north1.nebius.cloud",
-    s3_prefix="sim-to-real/pusht-hello",
-    input_data_uri="s3://your-bucket-name/datasets/lerobot-pusht/",
-    policy_image="npa-lerobot-policy:0.1.1",
-    gpu="H100:1",
+    output_dir="./outputs/pusht-hello",
+    input_data_uri="hf://datasets/lerobot/pusht",
+    s3_bucket="example-bucket",  # artifact layout only; no S3 round trip
     eval_backend="state-success",
     feedback_source="sim-env",
     feedback_type="scalar",
@@ -44,78 +34,35 @@ report = sim_to_real.local_smoke(
     attempt_s3_roundtrip=False,
 )
 print(report.status)
+for component in report.components:
+    print(component.name, component.tier, component.evidence)
+print(report.artifacts["local_report_dir"])
 ```
 
-This validates the data split, the eval backend, the feedback object, and the
-Rerun recording wiring without provisioning anything. It downloads and inspects
-the public `lerobot/pusht` metadata (≈206 episodes, ≈25k frames) on the fly.
-
-The report is **tiered**, so read `report.status` and the per-component tiers
-literally. In a plain `pip install -e npa` environment the `LeRobotDataset`
-import isn't present, so the dataset component reports `PARTIAL`/`BLOCKED` and
-`report.status` is `blocked` — that's expected. Install the LeRobot extra (so
-`import lerobot` works) for a fully green local smoke; the live H100 run below
-uses the policy image and doesn't need LeRobot on your laptop.
-
-## The one-command live run
-
-When you're ready to do it for real on an H100:
-
-```bash
-npa workbench workflow submit \
-  workflows/main/sim2real.yaml \
-  --run-id <run-id> \
-  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
-  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
-```
-
-That wrapper renders `sim-to-real-pipeline.yaml`, submits it on `H100:1`, runs
-the real training/eval loop, prints the **task-success score** plus the
-checkpoint / report / Rerun S3 URIs, and tears down the run-scoped cluster.
-Warm runs target about 5-6 minutes for the small proof config.
-
-## What's happening under the hood
-
-```text
-lerobot/pusht ─▶ split (train / heldout) ─▶ imitation train ─▶ eval ─▶ feedback
-                                                   │                      │
-                                                   └──── checkpoint ◀──────┘
-                                                          + Rerun .rrd
-```
-
-Both the **evaluator** and the **feedback source** are swappable:
-
-- `--eval-backend`: `state-success` (pose predicate), `vlm-frames` (VLM judges
-  rendered frames), or `heldout-metrics`.
-- `--feedback-source`: `none`, `sim-env`, `vlm`, or `byo-container`.
-
-The `vlm-eval` judge is documented in its own
-[skill](../../../skills/tools/vlm-eval/SKILL.md).
+This downloads dataset content. It uses fixture rollouts and stub VLM feedback;
+it produces no trained policy weights and does not test cloud execution.
+`attempt_s3_roundtrip=False` skips the explicit storage round-trip probe; the
+explicit `hf://datasets/` input also avoids selecting an S3 dataset source.
+Read each component's evidence instead of treating the overall status as a
+training result. Installing another dependency does not turn this smoke into
+real policy training.
 
 ## Look at it
 
-Download the Rerun recording and scrub through demonstrations, the policy
-rollout, and per-episode feedback:
+Inspect the local report directory. The `rerun` component records the generated
+recording and its `view_command`, or explains why only a partial recording was
+possible. Open that recording to inspect the documented data and feedback;
+fixture rollout data is not a learned policy evaluation.
 
-```bash
-rerun /tmp/npa-sim-to-real-<run-id>/<run-id>.rrd
-```
+## Continue with a real workflow
 
-## Bring your own dataset
+The maintained 14-stage workflow is
+[`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).
+Follow its [runbook](sim2real-workflow.md) and
+[data contracts](sim2real-data-contracts.md) for inputs, GPU resources, images,
+submission, and quality gates. It has different requirements from this SDK smoke.
+The retired `sim-to-real-pipeline.yaml` is not a runnable next step.
 
-Point the loop at any `LeRobotDataset` in S3 and keep the same visualization:
-
-```bash
---input-data-uri "s3://your-bucket-name/datasets/my-lerobot-dataset/"
-```
-
-This is exactly how you'd plug in the [Franka demos](franka-pick-and-place-genesis.md)
-you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
-
-## Dig deeper
-
-- **14-stage production loop:** [Sim-to-real workflow](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
-- Canonical 14-stage YAML: `workflows/main/sim2real.yaml`
-- Generic loop semantics remain covered by a test-only fixture under
-  `npa/tests/fixtures/npa-workflows/`; it is not an operator workflow.
-- Skill: `skills/workflows/sim-to-real/SKILL.md`
+A custom dataset must match the selected trainer's observation, action, and
+robot schemas. See [customer assets](sim2real-customer-assets.md) before
+substituting a different robot or dataset.

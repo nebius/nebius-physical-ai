@@ -1,5 +1,7 @@
 # Nebius Physical AI Workbench — Pipeline Authoring Guide
 
+[Docs](README.md)
+
 > Living document. Updated as new pipeline patterns are introduced.
 > Last updated: 2026-08-03
 
@@ -232,10 +234,10 @@ toolRefs.
 Run these from the repository root:
 
 ```bash
-npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
-npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id preview --json
-npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id preview --plan-only
-npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id <run-id>
+npa/.venv/bin/npa workbench workflow validate-spec "<spec.yaml>" --json
+npa/.venv/bin/npa workbench workflow plan-spec "<spec.yaml>" --run-id preview --json
+npa/.venv/bin/npa workbench workflow submit "<spec.yaml>" --run-id preview --plan-only
+npa/.venv/bin/npa workbench workflow submit "<spec.yaml>" --run-id "<run-id>"
 ```
 
 For a dynamic branch, add `--assume-decision promote_checkpoint` while planning.
@@ -260,7 +262,7 @@ and artifact commands instead of adding per-spec log upload code:
 
 ```bash
 npa/.venv/bin/npa workbench workflow status "s3://<bucket>/<prefix>/"
-npa/.venv/bin/npa workbench workflow logs "s3://<bucket>/<prefix>/" --stage <state>
+npa/.venv/bin/npa workbench workflow logs "s3://<bucket>/<prefix>/" --stage "<state>"
 npa/.venv/bin/npa workbench workflow artifacts "s3://<bucket>/<prefix>/"
 ```
 

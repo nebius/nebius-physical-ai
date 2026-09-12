@@ -1,5 +1,7 @@
 # Compositional Sim2Real operator runbook
 
+[Guides](README.md)
+
 This is the onboarding source of truth for the canonical 14-stage workflow:
 [`sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 Complete the gates in order. A production submit repeats the decisive S3,
@@ -190,7 +192,7 @@ kubectl get pvc npa-isaac-cache -o custom-columns=NAME:.metadata.name,PHASE:.sta
 Expected: the Job completes, its log ends with a successful bootstrap, and the
 PVC is `Bound` with `RWX`. Exit 78 means acceptance was explicitly disabled;
 image pull failures are handled in the next gate. See
-[runtime-fetch packaging](../container-packaging.md#nvidia-isaac--omniverse-runtime-fetch-images).
+[runtime-fetch packaging](../container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are-publishable).
 
 After changing the image, check `isaac-bootstrap status` from that exact digest
 against the PVC: its `expected_tree` must report `ready=yes`. The cache stamp
@@ -567,7 +569,7 @@ A wave that reached a genuine terminal `FAILED` status is preserved as-is and
 gated-model license, for example). Add `--retries 1` to authorize one new
 attempt at that specific wave:
 
-```bash
+```text
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
   --runtime --resume-run "${RUN_ID}" --retries 1 --max-wait-seconds 0 \

@@ -837,7 +837,8 @@ def test_guide_only_documents_commands_that_exist() -> None:
         for part in parts:
             get_sub = getattr(cmd, "get_command", None)
             if get_sub is None:
-                return False
+                # A leaf command may take positional values, including a run ID.
+                return True
             cmd = get_sub(None, part)  # type: ignore[arg-type]
             if cmd is None:
                 return False

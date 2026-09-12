@@ -44,7 +44,7 @@ def _response(model=LIGHTNING, content="4, because at most three draws are blue.
 
 
 class FakeProvider:
-    def __init__(self, *, json_healthy=False, ignored_controls=False):
+    def __init__(self, *, json_healthy=True, ignored_controls=False):
         self.calls = []
         self.json_healthy = json_healthy
         self.ignored_controls = ignored_controls
@@ -80,12 +80,22 @@ def test_contract_actually_infers_defaults_and_observes_both_controls():
 
 
 def test_json_mode_improvement_is_visible_drift_until_reviewed():
-    report = run_contract(FakeProvider(json_healthy=True))
+    report = run_contract(FakeProvider(), expected_json_behavior="malformed_json")
     drift = [check for check in report["checks"] if check.get("observed_json_behavior") == "healthy"]
     assert not report["passed"]
     assert {check["check"] for check in drift} == {"json_object", "json_schema", "prompted_json_workaround"}
     assert sum(not check["passed"] for check in drift) == 2
-    assert run_contract(FakeProvider(json_healthy=True), expected_json_behavior="healthy")["passed"]
+    assert run_contract(FakeProvider())["passed"]
+
+
+def test_reviewed_healthy_baseline_rejects_malformed_structured_output():
+    report = run_contract(FakeProvider(json_healthy=False))
+    failures = [check for check in report["checks"] if not check["passed"]]
+    assert not report["passed"]
+    assert report["expected_json_behavior"] == "healthy"
+    assert {check["check"] for check in failures} == {"json_object", "json_schema"}
+    assert all(check["observed_json_behavior"] == "malformed_json" for check in failures)
+    assert all(check["errors"] == ["structured_output_baseline_changed"] for check in failures)
 
 
 def test_ignored_thinking_controls_fail():
@@ -349,7 +359,7 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert set(triggers) == {"schedule", "workflow_dispatch", "push"}
     assert triggers["schedule"] == [{"cron": "17 6 * * *"}]
     job = workflow["jobs"]["token-factory-live"]
-    assert job["environment"] == "token-factory-live"
+    assert job["environment"] == {"name": "token-factory-live", "deployment": False}
     assert "refs/heads/main" in job["if"]
     assert len(triggers["push"]["branches"]) == 1
     assert "refs/heads/" + triggers["push"]["branches"][0] in job["if"]

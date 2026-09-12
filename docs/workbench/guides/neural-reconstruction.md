@@ -1,5 +1,7 @@
 # Turn a real photo capture into a 3D scene you can fly through
 
+[Guides](README.md)
+
 Point a camera at a thing. Get back a 3D scene you can re-render from angles the
 camera never visited.
 
@@ -54,36 +56,28 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 
 ## Fast path
 
-Free, no GPU, no credentials — see the shape of the pipeline before committing to
-it:
+Inspect the workflow locally before preparing its GPU runtime:
 
 ```bash
 npa workbench workflow plan-spec \
   workflows/main/nurec-reconstruct.yaml
 ```
 
-Then the cheap real preflight (seconds, no image pull):
+With your NGC key in the private environment or credential store, check access:
 
 ```bash
-export NGC_API_KEY=...
-npa workbench nurec check --json
+npa workbench nurec check --output json
 ```
 
 This probes actual **download authorization**, not just visibility — a gated
 Hugging Face repo still answers `200` on its metadata endpoint, so "I can see it"
 is not "I can fetch it".
 
-> **Never** test a token with `echo "${HF_TOKEN:+yes}${HF_TOKEN:-no}"`. That
-> prints the token: `${VAR:-no}` only falls back when the variable is *empty*.
-> Use `hf auth whoami` or `echo ${#HF_TOKEN}`.
-
 ## Go bigger: the real GPU run
 
-The NRE container has no `npa` inside it, so stage the source the pods install:
-
-```bash
-export NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/<tag>
-```
+Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
+Source staging is automatic when the task needs NPA; an explicit
+`NPA_SRC_S3_URI` is an override. Use the same project and target throughout.
 
 Submit:
 
@@ -92,9 +86,9 @@ RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
   workflows/main/nurec-reconstruct.yaml \
-  --run-id "$RUN_ID" \
-  --infra k8s/<your-rt-core-context> \
-  --var bucket=<your-bucket> \
+  --run-id "$RUN_ID" --project "<project-alias>" --runtime \
+  --infra "k8s/<your-rt-core-context>" \
+  --var bucket="<your-bucket>" \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
@@ -103,7 +97,7 @@ npa workbench workflow submit \
 Watch it:
 
 ```bash
-sky jobs queue
+npa workbench workflow status "$RUN_ID" --project "<project-alias>" --watch
 ```
 
 A healthy run looks like this — `reconstruct` is the long pole:

@@ -12,6 +12,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+HARDENED_NLTK_VERSION = "3.10.3.post1+npa.cbc98458"
 
 
 @pytest.mark.parametrize(
@@ -34,6 +35,41 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     assert sync < overlay < check
     assert "pillow==12.3.0" in lock
     assert "setuptools==84.0.0" in lock
+
+
+def test_hardened_nltk_source_install_contract() -> None:
+    installer = (ROOT / "common" / "install_hardened_nltk.sh").read_text()
+    verifier = (ROOT / "common" / "verify_hardened_nltk.py").read_text()
+    commit = "cbc98458b43de5f792f0382583c16df39e5c5117"
+    archive_sha = "3c4a9e92b53e34074ae5b7bbf21109868b5ef620b40c68b8542a2db37f7d9d0c"
+
+    assert f'NLTK_SOURCE_COMMIT="{commit}"' in installer
+    assert f'NLTK_SOURCE_SHA256="{archive_sha}"' in installer
+    assert f'NLTK_HARDENED_VERSION="{HARDENED_NLTK_VERSION}"' in installer
+    assert "codeload.github.com/nltk/nltk/tar.gz/${NLTK_SOURCE_COMMIT}" in installer
+    assert "sha256sum --check --strict" in installer
+    assert "--no-deps --no-build-isolation" in installer
+    assert f'HARDENED_VERSION = "{HARDENED_NLTK_VERSION}"' in verifier
+
+    affected = {
+        "cosmos3": ROOT / "cosmos3" / "security-upgrades-requirements.in",
+        "cosmos3-nano-video": ROOT / "cosmos3-nano-video" / "requirements.txt",
+        "cosmos3-ray-serve": (
+            ROOT / "cosmos3-ray-serve" / "security-upgrades-requirements.in"
+        ),
+    }
+    for image, manifest in affected.items():
+        requirements = manifest.read_text()
+        docker = (ROOT / image / "Dockerfile").read_text()
+        assert not re.search(r"^nltk(?:\[[^]]+\])?\s*[=<>~!]", requirements, re.M)
+        assert "docker/workbench/common/install_hardened_nltk.sh" in docker
+        assert "docker/workbench/common/verify_hardened_nltk.py" in docker
+        assert "/opt/npa/install_hardened_nltk.sh" in docker
+        assert "/opt/npa/verify_hardened_nltk.py" in docker
+
+    nano_requirements = affected["cosmos3-nano-video"].read_text()
+    for dependency in ("click", "defusedxml", "joblib", "regex", "tqdm"):
+        assert re.search(rf"^{dependency}==", nano_requirements, re.M)
 
 
 def test_transfer_overlay_retains_exact_verified_wheel_urls() -> None:

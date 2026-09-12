@@ -116,6 +116,16 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         ("research/lerobot-deploy/training/profile_train.py",),
     ),
     (
+        "lerobot.configs.types",
+        "FeatureType",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
+        "lerobot.configs.types",
+        "PolicyFeature",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
         "lerobot.policies.factory",
         "make_policy",
         (
@@ -152,9 +162,17 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         ("npa/src/npa/smoke/test_lerobot_env.py",),
     ),
     (
+        "lerobot.policies.diffusion.configuration_diffusion",
+        "DiffusionConfig",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
         "lerobot.policies.diffusion.modeling_diffusion",
         "DiffusionPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/smoke/test_lerobot_env.py",
+        ),
     ),
     (
         "lerobot.policies.smolvla.modeling_smolvla",

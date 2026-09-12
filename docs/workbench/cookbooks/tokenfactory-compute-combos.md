@@ -1,5 +1,7 @@
 # Token Factory with Nebius GPU workloads
 
+[Cookbooks](README.md)
+
 These workflows train or roll out a policy on Nebius GPUs, then use hosted
 Token Factory inference to interpret the resulting artifacts. Start with the
 [composition guide](../composing-cloud-and-token-factory.md) for credentials,

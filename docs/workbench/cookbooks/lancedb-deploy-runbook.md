@@ -1,5 +1,7 @@
 # LanceDB Deploy Runbook
 
+[Cookbooks](README.md)
+
 This runbook covers the OSS LanceDB Workbench path. The persistent service is
 CPU-only, but the optional CLIP embedding UDF is GPU-accelerated.
 
@@ -35,7 +37,7 @@ npa workbench lancedb deploy \
   --port 8686 \
   --auth-mode none \
   --replace \
-  --image <your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
+  --image "<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 ```
 
 Check status:
@@ -84,7 +86,7 @@ npa workbench lancedb deploy \
 
 ```bash
 npa workbench lancedb status \
-  --endpoint http://<vm-ip>:8686 \
+  --endpoint "http://<vm-ip>:8686" \
   --token-env LANCEDB_TOKEN
 ```
 

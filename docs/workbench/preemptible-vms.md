@@ -1,5 +1,7 @@
 # Workbench preemptible VMs
 
+[Workbench docs](README.md)
+
 **Short answer:** yes — Workbench GPU VM deploys support Nebius **preemptible**
 (spot-style) instances. They are **on by default** for most tools. Use
 `--no-preemptible` when you need a VM that stays up until you tear it down.
@@ -29,7 +31,7 @@ Under the hood, Terraform sets `enable_preemptible=true`, which maps to
 Deploy a preemptible LeRobot VM (default — no extra flag needed):
 
 ```bash
-npa workbench lerobot -p <project> -n cheap-h200 deploy \
+npa workbench lerobot -p "<project>" -n cheap-h200 deploy \
   --gpu-type gpu-h200-sxm \
   --gpu-preset 1gpu-16vcpu-200gb
 ```
@@ -37,7 +39,7 @@ npa workbench lerobot -p <project> -n cheap-h200 deploy \
 Force a **non-preemptible** VM for a long training block:
 
 ```bash
-npa workbench lerobot -p <project> -n stable-h200 deploy \
+npa workbench lerobot -p "<project>" -n stable-h200 deploy \
   --gpu-type gpu-h200-sxm \
   --gpu-preset 1gpu-16vcpu-200gb \
   --no-preemptible
@@ -48,7 +50,7 @@ Same pattern works on `genesis`, `groot`, `isaac-lab`, and `cosmos` VM deploys.
 Preview without provisioning:
 
 ```bash
-npa workbench lerobot -p <project> -n preview deploy \
+npa workbench lerobot -p "<project>" -n preview deploy \
   --gpu-type gpu-h200-sxm --gpu-preset 1gpu-16vcpu-200gb \
   --preemptible --dry-run
 ```
@@ -79,7 +81,7 @@ runtime.
    left orphaned:
 
    ```bash
-   npa workbench lerobot -p <project> -n cheap-h200 deploy --destroy
+   npa workbench lerobot -p "<project>" -n cheap-h200 deploy --destroy
    ```
 
 See also the preemptible H200 research flow in
@@ -93,7 +95,7 @@ with yours):
 
 ```bash
 # From ~/.npa/config.yaml workbench entry or terraform output
-nebius compute instance get --id <instance-id> --format json \
+nebius compute instance get --id "<instance-id>" --format json \
   | jq '.spec.preemptible // .preemptible'
 ```
 

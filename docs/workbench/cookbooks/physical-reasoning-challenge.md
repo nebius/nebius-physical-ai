@@ -1,9 +1,11 @@
 # Physical Reasoning Challenge (Token Factory + Cosmos3-Super-Reasoner)
 
+[Cookbooks](README.md)
+
 > Historical Cosmos3 recipe: its public hosted model was retired under the
 > [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
-> Use the current [Token Factory guide](/docs/workbench/token-factory.md) and
-> [migration verification](/docs/workbench/token-factory-deprecation-verification.md)
+> Use the current [Token Factory guide](../token-factory.md) and
+> [migration verification](../token-factory-deprecation-verification.md)
 > for current defaults. Explicit legacy model IDs require a serving endpoint;
 > this page does not establish their current availability.
 

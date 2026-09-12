@@ -1,5 +1,7 @@
 # BDD100K SkyPilot Pipeline
 
+[Cookbooks](README.md)
+
 **Workflow:** [bdd100k-pipeline.yaml](../../../workflows/testing/bdd100k-pipeline.yaml)
 (`npa.workflow/v0.0.1`) — a readable stage graph of `toolRef`s. See
 [npa-workflow-guide.md](../npa-workflow-guide.md). `run_bdd100k_pipeline.py` renders that
@@ -10,9 +12,9 @@ Two in-cluster services must be reachable before a live run, because three stage
 
 ```bash
 npa workbench lancedb deploy --runtime kubernetes --namespace workbench \
-  --storage-path s3://<your-bucket>/lancedb/
-npa workbench detection-training deploy --namespace workbench --gpu-type <h100|l40s|rtxpro6000> \
-  --output-path s3://<your-bucket>/detection-training/
+  --storage-path "s3://<your-bucket>/lancedb/"
+npa workbench detection-training deploy --namespace workbench --gpu-type "<h100|l40s|rtxpro6000>" \
+  --output-path "s3://<your-bucket>/detection-training/"
 ```
 
 > This pipeline reproduces LanceDB's autonomous-vehicle perception walkthrough on
@@ -60,7 +62,7 @@ Terraform/AWS-CLI tooling, and the SkyPilot runtime bootstrap.
 Export the non-secret identifiers used throughout this cookbook:
 
 ```bash
-export NPA_S3_BUCKET=<your-bucket>            # bucket name only, no s3:// prefix
+export NPA_S3_BUCKET="<your-bucket>"            # bucket name only, no s3:// prefix
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -124,7 +126,7 @@ secret exists in the namespace SkyPilot uses (normally `default`):
 export KUBECONFIG=~/.npa/clusters/npa-cluster/kubeconfig
 kubectl auth can-i create pods -n default
 # Private images only: verify the operator-managed secret named by your workload.
-kubectl get secret <your-ghcr-pull-secret> -n default
+kubectl get secret "<your-ghcr-pull-secret>" -n default
 ```
 
 ### 3. In-cluster workbench services
@@ -157,8 +159,8 @@ submission time:
 python npa/scripts/run_bdd100k_pipeline.py \
   --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
-  --lancedb-endpoint http://<your-lancedb-endpoint>:8686 \
-  --run-id <your-run-id>
+  --lancedb-endpoint "http://<your-lancedb-endpoint>:8686" \
+  --run-id "<your-run-id>"
 ```
 
 See [lancedb-deploy-runbook.md](lancedb-deploy-runbook.md) for deploy runtimes,
@@ -170,7 +172,7 @@ table, query, and import usage.
 After the demo, remove the GPU node group and the cluster to stop GPU spend:
 
 ```bash
-npa cluster node-group remove --cluster-name npa-cluster --name <node-group-name>
+npa cluster node-group remove --cluster-name npa-cluster --name "<node-group-name>"
 npa cluster down --terraform-dir deploy/cluster
 ```
 

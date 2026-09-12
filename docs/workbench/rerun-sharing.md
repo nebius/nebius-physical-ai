@@ -1,5 +1,7 @@
 # Share Rerun recordings safely
 
+[Workbench docs](README.md)
+
 `npa rerun host` and `npa rerun share` create time-boxed `app.rerun.io` links
 for `.rrd` recordings in object storage. Browser loading requires a one-time
 bucket CORS rule because the viewer fetches the recording from a different
@@ -11,8 +13,8 @@ First inspect the additive plan, then apply it with a Nebius profile that can
 administer the bucket:
 
 ```bash
-npa storage bucket cors --project <alias>
-npa storage bucket cors --project <alias> --apply
+npa storage bucket cors --project "<alias>"
+npa storage bucket cors --project "<alias>" --apply
 ```
 
 Use `--name <bucket>` when sharing from a bucket other than the project's
@@ -41,11 +43,11 @@ if plan.changed:
 ## Create and verify a share
 
 ```bash
-npa rerun host recording.rrd --target-project <alias> --ttl-hours 1
+npa rerun host recording.rrd --target-project "<alias>" --ttl-hours 1
 npa rerun share recording.rrd \
-  --target-project <alias> \
-  --workspace <workspace> \
-  --label <label> \
+  --target-project "<alias>" \
+  --workspace "<workspace>" \
+  --label "<label>" \
   --ttl-hours 24
 ```
 
@@ -58,8 +60,8 @@ The URL is itself a temporary credential. Give it the shortest useful lifetime
 and revoke durable shares when the review ends:
 
 ```bash
-npa rerun list-shares --target-project <alias> --output json
-npa rerun revoke <sha256-or-label> --target-project <alias>
+npa rerun list-shares --target-project "<alias>" --output json
+npa rerun revoke "<sha256-or-label>" --target-project "<alias>"
 ```
 
 ## Native local fallback
@@ -68,7 +70,7 @@ When a bucket administrator cannot update CORS, download the recording and open
 it in the native viewer:
 
 ```bash
-rerun <recording.rrd>
+rerun "<recording.rrd>"
 ```
 
 This fallback does not require a browser origin, a presigned URL, or bucket

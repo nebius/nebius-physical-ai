@@ -1,5 +1,7 @@
 # RTX PRO 6000 hardware MIG fleets
 
+[Docs](README.md)
+
 NPA supports true NVIDIA MIG on Nebius Managed Kubernetes as an additive
 `npa.fleet/v0.0.1` policy. The first supported tuple is deliberately narrow and
 fail-closed:

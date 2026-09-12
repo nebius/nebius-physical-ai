@@ -1,5 +1,7 @@
 # Agent-operated Workbench workflows
 
+[Workbench docs](README.md)
+
 An automation agent can operate any Workbench workflow through NPA without
 knowing how NPA schedules or executes it. The caller owns its reasoning system
 and provider configuration. Workflow operations do not select, configure, or

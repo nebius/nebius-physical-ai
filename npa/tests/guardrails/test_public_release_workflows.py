@@ -74,6 +74,18 @@ def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted(
             assert job["runs-on"] == "ubuntu-latest"
 
 
+def test_lerobot_development_build_version_is_manifest_scoped() -> None:
+    spec = _spec(PUBLISH)
+    inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
+    text = PUBLISH.read_text(encoding="utf-8")
+
+    assert inputs["lerobot_version"]["default"] == ""
+    assert "lerobot_version requires a lerobot development build" in text
+    assert 'manifest["supported_versions"]' in text
+    assert 'build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")' in text
+    assert '"LEROBOT_VERSION=${{ inputs.lerobot_version }}"' not in text
+
+
 def test_public_channel_workflows_do_not_restore_retired_channel_language() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8").lower()
