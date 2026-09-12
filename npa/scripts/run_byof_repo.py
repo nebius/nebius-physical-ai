@@ -927,8 +927,7 @@ def _run_byof(
                 cmd.extend(["--sky-bin", args.sky_bin])
             if args.config_path:
                 cmd.extend(["--config-path", args.config_path])
-            if args.cleanup:
-                cmd.append("--cleanup")
+            cmd.append("--cleanup" if args.cleanup else "--no-cleanup")
             run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:

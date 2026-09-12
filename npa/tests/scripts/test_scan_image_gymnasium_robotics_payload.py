@@ -279,6 +279,42 @@ def test_only_exact_locked_system_bootstrap_wheel_path_and_bytes_are_allowed(
         SCAN.scan(renamed)
 
 
+def test_in_pod_verifier_ignores_unreadable_locked_base_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_source = ROOT / "npa/docker/workbench/gymnasium-robotics"
+    lock_root = tmp_path / "opt/npa/gymnasium-robotics"
+    lock_root.mkdir(parents=True)
+    for name in VERIFIER.EXPECTED_LOCK_FILENAMES:
+        (lock_root / name).write_bytes((image_source / name).read_bytes())
+    for relative in VERIFIER.EXPECTED_FIXED_FILE_SHA256:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source_name = (
+            "build.sh"
+            if target.name == "npa-gymnasium-entrypoint"
+            else target.name
+        )
+        target.write_bytes((image_source / source_name).read_bytes())
+    system_wheels = {}
+    for relative, record in VERIFIER.EXPECTED_SYSTEM_WHEEL_FILES.items():
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = f"fixture:{relative}".encode()
+        target.write_bytes(content)
+        system_wheels[relative] = {
+            **record,
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+    monkeypatch.setattr(VERIFIER, "EXPECTED_SYSTEM_WHEEL_FILES", system_wheels)
+
+    shadow = tmp_path / "etc/shadow"
+    shadow.parent.mkdir(parents=True)
+    shadow.write_text("root:locked", encoding="utf-8")
+    shadow.chmod(0o000)
+    assert VERIFIER.verify(tmp_path)["status"] == "passed"
+
+
 def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(
     tmp_path: Path, structural_scan: None
 ) -> None:
