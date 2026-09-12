@@ -71,6 +71,17 @@ RUN set -eux; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
+# The key is public verification material, but it is injected as a BuildKit
+# secret so Docker history and build arguments cannot substitute runtime trust.
+RUN --mount=type=secret,id=npa_libero_manager_acceptance_public_key_b64,required=true \
+    set -eux; \
+    tr -d '\r\n' \
+      < /run/secrets/npa_libero_manager_acceptance_public_key_b64 \
+      > /opt/npa/libero/manager-acceptance-public-key.b64; \
+    test "$(base64 -d /opt/npa/libero/manager-acceptance-public-key.b64 | wc -c)" = 32; \
+    chown root:root /opt/npa/libero/manager-acceptance-public-key.b64; \
+    chmod 0444 /opt/npa/libero/manager-acceptance-public-key.b64
+
 COPY docker/workbench/libero/runtime-manifest.json /opt/npa/libero/runtime-manifest.json
 COPY docker/workbench/libero/runtime-requirements.txt /opt/npa/libero/runtime-requirements.txt
 COPY docker/workbench/libero/runtime-bootstrap.py /opt/npa/libero/runtime-bootstrap.py

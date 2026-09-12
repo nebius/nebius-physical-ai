@@ -19,15 +19,17 @@ An accepted record is not repository-self-attested. Its canonical JSON bytes
 must carry an Ed25519 signature from the manager-held private key, verified
 against `NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64` supplied by repository
 access control for publication or by the owner-only operator environment for
-qualification. The private signing key is never stored in this repository,
-workflow inputs, task YAML, or runtime cache.
+qualification. That public key is baked into the accepted candidate as a
+root-owned verification trust root; the image independently verifies the same
+signature before runtime fetch. The private signing key is never stored in this
+repository, workflow inputs, task YAML, image, or runtime cache.
 
 ## Six independent boundaries
 
 | Boundary | Phase A contract |
 | --- | --- |
 | Source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT. Source is absent from the image. An authorized runtime sparse-fetch retains only training/config/task-definition paths, verifies the source tree and license hash, and removes `.git`. `libero/libero/assets` is excluded. |
-| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, and NPA-owned files. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
+| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, the public Ed25519 manager-verification key, and NPA-owned files. The corresponding private signing key never enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
 | Runtime cache | `/workspace/.cache/npa/libero/<runtime-manifest-sha256>` is manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, mismatched, overbroad, expired, or locally invented acceptance decisions refuse before cache or network effects. Runtime fetch changes delivery, not permission. |
@@ -74,6 +76,11 @@ or embedded attestation graph. Other first publications still require a nonexist
 or zero-version destination. The target namespace is globally serialized. A failed first publish
 deletes the still-private package only after proving its exact run tag, removing
 the image and its referrers before any retry.
+If a build runner fails or is cancelled after the package-wide visibility
+transition, an `always()` reconciliation job on a separate runner validates the
+signed complete graph and deletes the entire public package. Requested LIBERO
+cleanup applies the same package-wide rule; it refuses retained private evidence
+or any extra/shared version instead of deleting only the tagged index.
 Both build paths derive `SOURCE_DATE_EPOCH` from that exact source commit so the
 identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's
@@ -131,6 +138,13 @@ binds the official GHCR candidate, OCI/platform/config identities,
 complete-image inventory, Buildx/base/publication receipts, exact source/runtime
 manifest, reviewed infrastructure, run/namespace, issuer, five boundaries,
 nonce, and a maximum 24-hour decision window. It rejects any `ACCEPT_*` proxy.
+The host sends the complete signed acceptance only through the redacted secret
+channel. Before reading governing terms or creating the cache root, the neutral
+image verifies that complete canonical manifest with `/usr/bin/ssh-keygen`
+against the root-owned, read-only public key baked into the accepted image, then
+derives the permitted decision digest and lineage fields from the signed record.
+A caller-provided key, locally invented `issuer`, or matching environment hashes
+cannot substitute for that trust root.
 Only after that decision passes does it resolve and hash all
 official terms into ephemeral storage; any changed or unavailable terms source
 refuses before cache mutation. Network availability, registry access, a
@@ -144,9 +158,10 @@ always passes `--no-direct-launch` for LIBERO. `run_byof_container_verify.py`
 submits through the managed scheduler, requires its nonempty scheduler job ID,
 and polls that ID—not the human run name. Absence remains a failure.
 
-The decision, complete short-lived storage credential triplet, and output-storage
-authorization bytes travel only through the scheduler's redacted secret channel,
-never ordinary rendered workflow state or persisted prepared YAML.
+The signed manager acceptance, decision, complete short-lived storage credential
+triplet, and output-storage authorization bytes travel only through the
+scheduler's redacted secret channel, never ordinary rendered workflow state or
+persisted prepared YAML.
 The storage authorization is hash-bound by the checked-in infrastructure bundle,
 binds the exact run prefix and policy receipt, and requires short-lived session
 credentials. Storage secrets are removed from the fetched-code subprocess; only
@@ -158,13 +173,17 @@ start of the run phase.
 
 The payload profile selects `npa-byof-libero-payload`; `default` and
 `skypilot-service-account` are forbidden for the payload. The manager-owned
-SkyPilot controller remains on its engine-required account. Before a future run,
+SkyPilot controller remains on its separate engine account. Before a future run,
 the exact run-labelled namespace must be empty of Pods and Secrets and contain
-only `default` plus the reviewed payload ServiceAccount, core `pods/get`-only
-Role, and exact RoleBinding. This makes the sole readable Pod the subsequently
-created run Pod. After managed launch, the host also verifies SkyPilot's generated
-engine ServiceAccount, namespace-only Role, and exact RoleBinding and rejects any
-ClusterRoleBinding for that identity before accepting success. Every
+only `default`, the reviewed payload and controller ServiceAccounts, their two
+exact Roles, and their two exact RoleBindings. The payload Role is core
+`pods/get` only. The controller Role has no wildcard: it enumerates only the
+namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service operations
+needed by this fixed container job. The host verifies both identities and rejects
+every ClusterRoleBinding before submission, repeats the controller check after
+infrastructure preflight immediately before submission, and verifies it again
+after terminal status. This makes the sole readable Pod for the payload the
+subsequently created run Pod. Every
 namespace/object UID, inventory, and payload permission is bound to the checked-in
 acceptance record. The payload reads its own Pod and bound JWT and records
 the actual service account, Pod UID, node, and `containerStatuses.imageID`.
@@ -173,10 +192,10 @@ The execution and payload-proof kubeconfig contexts remain distinct but must
 flatten to the same cluster identity. A single owner-receipted allowed node and
 STRICT B200 reservation are mandatory. All access objects and isolated scheduler
 state are ephemeral. After exact job cancellation and cluster absence, cleanup
-uses UID preconditions in RoleBinding → Role → ServiceAccount → namespace order,
-polls every object to 404, stops the isolated API, and only then removes the
-payload kubeconfig and exact-run local SkyPilot state. Any ambiguity is a failed
-cleanup and preserves recovery state.
+uses UID preconditions for both controller and payload RoleBindings, Roles, and
+ServiceAccounts before the namespace, polls every object to 404, stops the
+isolated API, and only then removes the payload kubeconfig and exact-run local
+SkyPilot state. Any ambiguity is a failed cleanup and preserves recovery state.
 
 ## Acceptance artifact
 

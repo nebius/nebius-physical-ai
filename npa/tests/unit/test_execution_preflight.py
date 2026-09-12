@@ -602,8 +602,18 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
     assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
 
 
-def test_libero_preflight_rejects_inline_pod_storage_credentials(
-    provider, configured
+@pytest.mark.parametrize(
+    ("secret_name", "expected_error"),
+    [
+        ("AWS_ACCESS_KEY_ID", "pod storage credentials or endpoint differ"),
+        (
+            "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
+            "inline authorization or storage material",
+        ),
+    ],
+)
+def test_libero_preflight_rejects_inline_pod_authorization_or_storage_material(
+    provider, configured, secret_name, expected_error
 ) -> None:
     from npa.execution_preflight import preflight_skypilot_submission
 
@@ -611,10 +621,10 @@ def test_libero_preflight_rejects_inline_pod_storage_credentials(
     document["config"]["kubernetes"]["pod_config"]["spec"]["containers"] = [
         {
             "name": "payload",
-            "env": [{"name": "AWS_ACCESS_KEY_ID", "value": "yaml-access"}],
+            "env": [{"name": secret_name, "value": "inline-material"}],
         }
     ]
-    with pytest.raises(ExecutionPreflightError, match="inline storage credentials"):
+    with pytest.raises(ExecutionPreflightError, match=expected_error):
         preflight_skypilot_submission(
             [document],
             project="unit",

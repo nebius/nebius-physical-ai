@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -163,6 +165,17 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         encoding="utf-8",
     )
     module.EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = _sha(requirements_path.read_bytes())
+    infrastructure = {
+        "run_id": "libero-runtime-bootstrap-fixture",
+        "namespace_sha256": "c" * 64,
+    }
+    infrastructure_sha256 = _sha(
+        json.dumps(
+            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
     decision = {
         "schema": module.DECISION_SCHEMA,
         "solution": "libero",
@@ -172,7 +185,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "candidate_image": "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
         + "9" * 64,
         "publication_bundle_sha256": "a" * 64,
-        "infrastructure_bundle_sha256": "b" * 64,
+        "infrastructure_bundle_sha256": infrastructure_sha256,
         "runtime_manifest_sha256": manifest_sha,
         "upstream_source_revision": "1" * 40,
         "authorized_boundaries": sorted(module.EXPECTED_DECISION_BOUNDARIES),
@@ -185,12 +198,53 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     }
     decision_path = tmp_path / "runtime-use-decision.json"
     decision_sha = _write_json(decision_path, decision)
+    manager_key = Ed25519PrivateKey.generate()
+    manager_public_key = manager_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    trust_root = tmp_path / "manager-acceptance-public-key.b64"
+    trust_root.write_bytes(module.base64.b64encode(manager_public_key))
+    trust_root.chmod(0o444)
+    module.MANAGER_ACCEPTANCE_PUBLIC_KEY = trust_root
+    module.MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID = os.getuid()
+    acceptance = {
+        "schema": "npa.libero.qualification-acceptance.v3",
+        "status": "accepted",
+        "acceptance_id": decision["acceptance_id"],
+        "accepted_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": decision["expires_at"],
+        "candidate_image": decision["candidate_image"],
+        "runtime_manifest_sha256": manifest_sha,
+        "runtime_use_decision_sha256": decision_sha,
+        "publication_bundle_sha256": decision["publication_bundle_sha256"],
+        "infrastructure_bundle_sha256": infrastructure_sha256,
+        "infrastructure": infrastructure,
+        "manager_signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": _sha(manager_public_key),
+            "signature_b64": "",
+        },
+    }
+    signed_manifest = {
+        "schema": "npa.workbench.image-manifest.v1",
+        "tool": "libero",
+        "image_name": "npa-libero",
+        "runtime_payloads_baked": False,
+        "runtime_use_decision_required": True,
+        "acceptance": acceptance,
+    }
+    acceptance["manager_signature"]["signature_b64"] = module.base64.b64encode(
+        manager_key.sign(module._manager_signature_payload(signed_manifest))
+    ).decode("ascii")
+    acceptance_path = tmp_path / "manager-acceptance.json"
+    _write_json(acceptance_path, signed_manifest)
     args = argparse.Namespace(
         manifest=str(manifest_path),
         requirements=str(requirements_path),
         cache_root=str(tmp_path / "cache"),
         decision=str(decision_path),
         decision_sha256=decision_sha,
+        acceptance=str(acceptance_path),
         output_dir=str(tmp_path / "output"),
     )
     os.environ.update(
@@ -217,6 +271,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "demonstration": demonstration_bytes,
         "model": model_bytes,
         "manifest_sha": manifest_sha,
+        "manager_private_key": manager_key,
+        "manager_public_key": manager_public_key,
+        "acceptance_path": acceptance_path,
     }
     return module, args, fixture
 
@@ -456,6 +513,33 @@ def test_missing_decision_refuses_before_network_or_cache_mutation(
         module.BootstrapRefusal, match="decision file is unavailable|owner-only"
     ):
         module.ensure(args)
+    assert not Path(args.cache_root).exists()
+
+
+def test_locally_invented_manager_acceptance_refuses_before_network_or_cache(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    payload = json.loads(Path(args.acceptance).read_text(encoding="utf-8"))
+    attacker = Ed25519PrivateKey.generate()
+    attacker_public = attacker.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    signature = payload["acceptance"]["manager_signature"]
+    signature["public_key_sha256"] = _sha(attacker_public)
+    signature["signature_b64"] = module.base64.b64encode(
+        attacker.sign(module._manager_signature_payload(payload))
+    ).decode("ascii")
+    _write_json(Path(args.acceptance), payload)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda *_args: pytest.fail("network authorization began for a local signer"),
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="trust root differs"):
+        module.ensure(args)
+
     assert not Path(args.cache_root).exists()
 
 

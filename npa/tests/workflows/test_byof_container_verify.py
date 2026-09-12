@@ -369,12 +369,32 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         service_account_uid="service-account-uid",
         role_uid="role-uid",
         role_binding_uid="binding-uid",
+        controller_service_account_uid="controller-account-uid",
+        controller_role_uid="controller-role-uid",
+        controller_role_binding_uid="controller-binding-uid",
     )
     monkeypatch.setattr(
         module, "_libero_rbac_evidence", lambda *_a: (dict(rbac), access_state)
     )
+    controller_evidence = {
+        "controller_service_account_uid_sha256": "9" * 64,
+        "controller_role_uid_sha256": "a" * 64,
+        "controller_role_binding_uid_sha256": "b" * 64,
+        "controller_rbac_spec_sha256": "d" * 64,
+    }
+    controller_identities = {
+        "controller_service_account_uid": "controller-account-uid",
+        "controller_role_uid": "controller-role-uid",
+        "controller_role_binding_uid": "controller-binding-uid",
+    }
+    monkeypatch.setattr(
+        module,
+        "_libero_controller_rbac_evidence",
+        lambda *_a: (dict(controller_evidence), dict(controller_identities)),
+    )
     expected_evidence = {
         **rbac,
+        **controller_evidence,
         "cluster_identity_sha256": "6" * 64,
         "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest(),
         "payload_kubeconfig_sha256": module.hashlib.sha256(
@@ -407,7 +427,13 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             "output_storage_policy_sha256": policy_sha256,
         },
     }
-    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
+    signed_manifest = {"schema": "fixture", "acceptance": acceptance}
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: signed_manifest)
+    monkeypatch.setattr(
+        module,
+        "validate_libero_accepted_image_manifest",
+        lambda payload: payload["acceptance"],
+    )
     args = SimpleNamespace(
         solution_name="libero", direct_launch=False, cleanup=True, image=candidate
     )
@@ -427,6 +453,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     assert binding.evidence == expected_evidence
     assert binding.access_state == module.replace(
         access_state,
+        **controller_identities,
         execution_kubeconfig=execution_kubeconfig,
         execution_context="execution-context",
     )
@@ -450,6 +477,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
     assert documents[1]["envs"] == expected_envs
     assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in documents[1]["envs"]
+    assert json.loads(module.base64.b64decode(binding.manager_acceptance_b64)) == (
+        signed_manifest
+    )
 
     invalid_decision = {**decision, "authorized_boundaries": ["source"]}
     invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
@@ -743,9 +773,19 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
     namespace = "isolated-namespace"
     expected = {
         "pods": [],
-        "serviceaccounts": ["default", "npa-byof-libero-payload"],
-        "roles": ["npa-byof-libero-pod-reader"],
-        "rolebindings": ["npa-byof-libero-payload-pod-reader"],
+        "serviceaccounts": [
+            "default",
+            "npa-byof-libero-payload",
+            "skypilot-service-account",
+        ],
+        "roles": [
+            "npa-byof-libero-pod-reader",
+            "skypilot-service-account-role",
+        ],
+        "rolebindings": [
+            "npa-byof-libero-payload-pod-reader",
+            "skypilot-service-account-role-binding",
+        ],
         "secrets": [],
     }
 
@@ -804,11 +844,17 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         },
         "skypilot-service-account-role": {
             "metadata": metadata("skypilot-service-account-role"),
-            "rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}],
+            "rules": module.LIBERO_CONTROLLER_RULES,
         },
         "skypilot-service-account-role-binding": {
             "metadata": metadata("skypilot-service-account-role-binding"),
-            "subjects": [{"kind": "ServiceAccount", "name": "skypilot-service-account"}],
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "skypilot-service-account",
+                    "namespace": namespace,
+                }
+            ],
             "roleRef": {
                 "apiGroup": "rbac.authorization.k8s.io",
                 "kind": "Role",
@@ -823,7 +869,7 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         return objects[arguments[-1]]
 
     monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
-    evidence = module._libero_controller_rbac_evidence(
+    evidence, identities = module._libero_controller_rbac_evidence(
         Path("/private/execution-kubeconfig"), "execution-context", namespace
     )
     assert set(evidence) == {
@@ -832,6 +878,19 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         "controller_role_binding_uid_sha256",
         "controller_rbac_spec_sha256",
     }
+    assert identities == {
+        "controller_service_account_uid": "uid-skypilot-service-account",
+        "controller_role_uid": "uid-skypilot-service-account-role",
+        "controller_role_binding_uid": "uid-skypilot-service-account-role-binding",
+    }
+    objects["skypilot-service-account-role"]["rules"] = [
+        {"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}
+    ]
+    with pytest.raises(RuntimeError, match="namespace-only contract"):
+        module._libero_controller_rbac_evidence(
+            Path("/private/execution-kubeconfig"), "execution-context", namespace
+        )
+    objects["skypilot-service-account-role"]["rules"] = module.LIBERO_CONTROLLER_RULES
 
     objects["skypilot-service-account-role-binding"]["roleRef"]["kind"] = (
         "ClusterRole"
@@ -864,6 +923,21 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         module._libero_controller_rbac_evidence(
             Path("/private/execution-kubeconfig"), "execution-context", namespace
         )
+
+
+def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    submit_function = source[source.index("def _submit_and_wait(") :]
+    submit_call = submit_function.index("result = submit_workflow(")
+    pre_submit = submit_function[:submit_call]
+    last_nonblank_lines = [
+        line.strip() for line in pre_submit.splitlines() if line.strip()
+    ][-2:]
+
+    assert last_nonblank_lines == [
+        "if libero_binding is not None:",
+        "_verify_libero_controller_unchanged(libero_binding)",
+    ]
 
 
 def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> None:
@@ -940,6 +1014,9 @@ def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> N
         service_account_uid="service-account-uid",
         role_uid="role-uid",
         role_binding_uid="binding-uid",
+        controller_service_account_uid="controller-account-uid",
+        controller_role_uid="controller-role-uid",
+        controller_role_binding_uid="controller-binding-uid",
     )
 
     result = module._cleanup_libero_access_objects(state, timeout=1)
@@ -948,6 +1025,17 @@ def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> N
     assert result.verified is True
     assert result.remote_absence_verified is True
     assert calls == [
+        (
+            "rolebinding",
+            module.LIBERO_CONTROLLER_ROLE_BINDING,
+            "controller-binding-uid",
+        ),
+        ("role", module.LIBERO_CONTROLLER_ROLE, "controller-role-uid"),
+        (
+            "serviceaccount",
+            module.SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+            "controller-account-uid",
+        ),
         ("rolebinding", module.LIBERO_PAYLOAD_ROLE_BINDING, "binding-uid"),
         ("role", module.LIBERO_PAYLOAD_ROLE, "role-uid"),
         (

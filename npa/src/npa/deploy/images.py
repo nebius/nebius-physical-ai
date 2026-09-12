@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import shlex
 from typing import Any
 
@@ -445,17 +446,36 @@ def _canonical_sha256(payload: Any) -> str:
     ).hexdigest()
 
 
+def _ssh_signature_string(value: bytes) -> bytes:
+    return struct.pack(">I", len(value)) + value
+
+
 def libero_acceptance_signature_payload(payload: dict[str, Any]) -> bytes:
-    """Return the canonical bytes signed by the external LIBERO manager."""
+    """Return the SSHSIG-framed bytes signed by the external LIBERO manager.
+
+    The checked-in signature remains a raw Ed25519 signature so the trusted
+    host can verify it without shelling out.  Framing the canonical manifest as
+    OpenSSH SSHSIG data also lets the neutral image verify the same signature
+    with its pinned system ``ssh-keygen`` and an image-baked public trust root.
+    """
 
     unsigned = json.loads(json.dumps(payload))
     acceptance = unsigned.get("acceptance")
     if not isinstance(acceptance, dict):
         raise RuntimeError("LIBERO acceptance signature requires a manifest record")
     acceptance.pop("manager_signature", None)
-    return json.dumps(
+    canonical = json.dumps(
         unsigned, sort_keys=True, separators=(",", ":")
     ).encode()
+    return b"".join(
+        (
+            b"SSHSIG",
+            _ssh_signature_string(b"npa.libero.acceptance"),
+            _ssh_signature_string(b""),
+            _ssh_signature_string(b"sha512"),
+            _ssh_signature_string(hashlib.sha512(canonical).digest()),
+        )
+    )
 
 
 def _verify_libero_manager_signature(payload: dict[str, Any]) -> None:
@@ -779,6 +799,10 @@ def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "role_binding_uid_sha256",
         "role_uid_sha256",
         "service_account_uid_sha256",
+        "controller_rbac_spec_sha256",
+        "controller_role_binding_uid_sha256",
+        "controller_role_uid_sha256",
+        "controller_service_account_uid_sha256",
         "payload_kubeconfig_sha256",
         "execution_kubeconfig_sha256",
         "skypilot_config_sha256",

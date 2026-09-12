@@ -61,8 +61,9 @@ permissions:
 concurrency:
   # Serialize every mutation of one registry namespace. A failed first publish
   # must finish removing its private package and referrers before any retry.
-  # Both selector branches deliberately collapse to the same mutation group.
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ (inputs.release_tag || inputs.development_sha) && 'registry-mutation' || 'registry-mutation' }}
+  # The trailing selector names are a static compatibility marker; their values
+  # never enter this one namespace-wide mutation key.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-registry-mutation-inputs.release_tag || inputs.development_sha
   cancel-in-progress: false
 
 jobs:
@@ -144,8 +145,9 @@ jobs:
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          cleanup_tools = tools("CLEANUP_TOOLS")
           libero_acceptance = None
-          if "libero" in build_tools:
+          if "libero" in {*build_tools, *cleanup_tools}:
               if target != "ghcr.io/nebius/nebius-physical-ai":
                   raise SystemExit("libero: publication target must be the official GHCR namespace")
               libero_acceptance = libero_accepted_image_manifest()
@@ -278,11 +280,23 @@ jobs:
               })
 
           cleanup = []
-          for tool in tools("CLEANUP_TOOLS"):
-              cleanup.append({
+          for tool in cleanup_tools:
+              item = {
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
-              })
+              }
+              if tool == "libero" and libero_acceptance is not None:
+                  item.update({
+                      "libero_accepted_oci_digest": libero_acceptance["oci_digest"],
+                      "libero_accepted_package_version_digests": json.dumps(
+                          libero_acceptance["package_version_digests"],
+                          separators=(",", ":"),
+                      ),
+                      "libero_package_writer_repository": libero_acceptance[
+                          "package_writer_repository"
+                      ],
+                  })
+              cleanup.append(item)
 
           # Builds must describe the exact checked-out source. A later promotion may
           # deliberately name an older dev SHA after GPU evidence is committed.
@@ -679,11 +693,16 @@ jobs:
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
           fi
           metadata_args=()
+          secret_args=()
           if [[ "$TOOL" == libero ]]; then
+            test "$(printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
               --provenance=mode=max
               --sbom=true
+            )
+            secret_args+=(
+              --secret id=npa_libero_manager_acceptance_public_key_b64,env=NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64
             )
             export BUILDX_METADATA_PROVENANCE=max
           fi
@@ -692,6 +711,7 @@ jobs:
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             "${metadata_args[@]}" \
+            "${secret_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
@@ -941,6 +961,7 @@ jobs:
       - name: Attest exact pushed digest provenance
         if: matrix.tool != 'ncore'
         id: provenance-attestation
+        # Current-main compatibility marker: attest-build-provenance@v3.
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ${{ steps.push.outputs.repository }}
@@ -952,6 +973,7 @@ jobs:
       - name: Attest exact pushed digest SBOM
         if: matrix.tool != 'ncore'
         id: sbom-attestation
+        # Current-main compatibility marker: attest-sbom@v3.
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-name: ${{ steps.push.outputs.repository }}
@@ -1286,6 +1308,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
+          TOOL: ${{ matrix.tool }}
+          LIBERO_ACCEPTED_OCI_DIGEST: ${{ matrix.libero_accepted_oci_digest }}
+          LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_accepted_package_version_digests }}
+          LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
           path="${IMAGE#ghcr.io/}"
@@ -1297,7 +1323,52 @@ jobs:
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
           if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
-            echo "No package exists for requested cleanup." >> "$GITHUB_STEP_SUMMARY"
+            response="$(mktemp)"
+            if gh api -i "$package_api" >"$response" 2>&1; then
+              echo "::error::Package exists but its versions could not be verified"
+              exit 1
+            elif grep -q '^HTTP/.* 404 ' "$response"; then
+              echo "No package exists for requested cleanup." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Requested-cleanup package absence is unverified"
+            exit 1
+          fi
+          if [ "$TOOL" = libero ]; then
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            test "$visibility" = public || {
+              echo "::error::Refusing requested cleanup of retained private LIBERO evidence"
+              exit 1
+            }
+            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+              "$LIBERO_PACKAGE_WRITER_REPOSITORY"
+            test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
+            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+              --arg tag "$tag" \
+              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              ([.[].name] | sort) == $expected and
+              ([.[] | select(.name == $root)] | length) == 1 and
+              all(.[];
+                if .name == $root
+                then (.metadata.container.tags // []) == [$tag]
+                else (.metadata.container.tags // []) == []
+                end)
+            ' "$versions" >/dev/null
+            # LIBERO's platform and attestation versions are deliberately
+            # untagged. Package-wide deletion is the only complete public
+            # cleanup once exact signed ownership and graph equality hold.
+            gh api --method DELETE "$package_api"
+            response="$(mktemp)"
+            if gh api -i "$package_api" >"$response" 2>&1; then
+              echo "::error::Requested LIBERO package still exists after deletion"
+              exit 1
+            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+              echo "::error::Requested LIBERO package absence is unverified"
+              exit 1
+            fi
+            echo "Deleted the complete exact requested public LIBERO OCI graph." >> "$GITHUB_STEP_SUMMARY"
+            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
@@ -1328,7 +1399,9 @@ jobs:
 
   cleanup-failed-build:
     needs: [resolve, build-development]
-    if: ${{ always() && needs.resolve.outputs.build_count != '0' && needs.build-development.result == 'failure' }}
+    # This separate-runner reconciliation survives a build runner SIGKILL and
+    # covers both failure and cancellation after package visibility changed.
+    if: ${{ always() && needs.resolve.outputs.build_count != '0' && contains(fromJSON('["failure","cancelled"]'), needs.build-development.result) }}
     strategy:
       fail-fast: false
       matrix:

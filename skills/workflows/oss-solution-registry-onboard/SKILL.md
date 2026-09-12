@@ -234,8 +234,14 @@ never bake it. The selected task names Google Scanned Objects and a HOPE
 distractor; the headless qualification's runtime sparse checkout never fetches
 the unused render-asset tree while retaining the hash-bound MIT task
 definitions. Require a manager-issued manifest/source/boundary-bound use
-decision before any cache or network mutation; never invent an acceptance
-variable or treat fetch/authentication as permission. Rendered closed-loop sweeps, all 130
+decision before any cache or network mutation. The neutral image must verify
+the complete signed acceptance against its baked, root-owned Ed25519 public
+trust root and derive the permitted decision digest from that record; caller
+environment hashes are not authorization. Keep the payload on its pods/get-only
+account and require the separately precreated, non-wildcard controller Role to
+pass exact namespaced and no-ClusterRoleBinding checks before submission.
+Never invent an acceptance variable or treat fetch/authentication as permission.
+Rendered closed-loop sweeps, all 130
 tasks, lifelong-algorithm comparison, and physical-robot use remain deferred.
 
 ### ManiSkill (`byof-maniskill.yaml`)
