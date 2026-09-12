@@ -932,8 +932,12 @@ def _download_verified(
             raise BootstrapRefusal(
                 "runtime download Content-Length differs from expected size"
             )
-        with temporary.open("xb") as stream:
-            os.chmod(temporary, 0o600)
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
@@ -1871,11 +1875,18 @@ def _sigv4_request(
 def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
     """Encode each S3 key segment while preserving separators on the wire."""
 
-    if not bucket or not object_key or object_key.startswith("/"):
+    segments = object_key.split("/")
+    if (
+        not bucket
+        or bucket in {".", ".."}
+        or not object_key
+        or object_key.startswith("/")
+        or any(segment in {"", ".", ".."} for segment in segments)
+    ):
         raise BootstrapRefusal("output storage object identity is invalid")
     path = "/".join(
         urllib.parse.quote(segment, safe="-_.~")
-        for segment in (bucket, *object_key.split("/"))
+        for segment in (bucket, *segments)
     )
     return f"{endpoint}/{path}"
 
