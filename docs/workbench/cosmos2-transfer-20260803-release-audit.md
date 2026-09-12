@@ -1,5 +1,7 @@
 # Cosmos Transfer 2.5 release audit — 2026-08-03
 
+[Workbench docs](README.md)
+
 > **Historical release only — not a current SkyPilot bootstrap attestation.**
 > The exact index below predates `skypilot-0.12.2-v1`; its linux/amd64 OCI
 > config does not carry

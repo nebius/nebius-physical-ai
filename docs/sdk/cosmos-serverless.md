@@ -1,5 +1,7 @@
 # Cosmos serverless job via the SDK
 
+[Docs](../README.md)
+
 This is the Python SDK counterpart to:
 
 ```bash

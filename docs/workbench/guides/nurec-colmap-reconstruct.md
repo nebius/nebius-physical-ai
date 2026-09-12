@@ -1,5 +1,7 @@
 # Reconstruct a COLMAP source capture with NCore and NRE
 
+[Guides](README.md)
+
 The new COLMAP ingestion path is **not yet live validated**. It extends the
 existing NuRec capability with NVIDIA's Apache-2.0 NCore converter. The full
 workflow runs conversion on CPU, then uses the existing, separately licensed

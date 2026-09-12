@@ -1,5 +1,7 @@
 # BYOF SkyPilot resource profiles
 
+[BYOF cookbook](../../../../../../docs/workbench/cookbooks/byof-isaac-lab/README.md) · [Workflow catalog](../../../../../../workflows/README.md)
+
 These are **resource profiles**, not workflow templates. Each one describes the pod a
 BYOF workload runs in — accelerator, CPU/memory floors, the image placeholder the runner
 substitutes, and the smoke command for that workload — and nothing else.
@@ -17,11 +19,25 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `isaac-lab-rl-train-rtxpro-smoke.yaml` | `rl-train` smoke | RTX PRO, `num_envs=4`, `iterations=1` |
 | `byof-datagen-rtxpro-smoke.yaml` | `datagen` smoke | RTX PRO, scripted LeIsaac datagen |
 | `byof-container-smoke-rtxpro.yaml` | `container-verify` / `solution-smoke` | CPU only |
+| `byof-solution-smoke-ltx2-rtxpro-gpu.yaml` | LTX-2.5 candidate shape with CPU offload; not hardware validated | One RTX PRO, 192 GiB host memory |
+| `byof-solution-smoke-rtxpro-2gpu.yaml` | Capability smoke requiring two GPUs in one pod | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:2` |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
 | `byof-solution-smoke-openpi-b200-gpu.yaml` | OpenPI pi0.5 Polaris immutable-image builder regression: direct + same-pod served inference, runtime-only checkpoint; the digest then feeds `openpi-pi05-four-mode.yaml` | `B200:1` (`sm_100`) |
 | `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |
-| `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) setting `imagePullSecrets` | — |
+| `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) Kubernetes options (the committed file is empty) | — |
+
+## Select a profile
+
+Choose by the workload and the exact accelerator label reported by your cluster.
+A two-GPU profile requires two available GPUs on **one node**. Filenames do not
+establish hardware validation; read the solution guide and any candidate status.
+
+Pass the profile to `npa workbench byof run --yaml <profile-path>`, or to the
+Isaac runner as shown in the cookbook. Use a private copy when changing CPU,
+memory, GPU, image, or command requirements. Supply credentials privately;
+the runner materializes placeholders and preserves the S3 output contract.
+The global `skypilot-kubernetes-rtxpro.yaml` is supplied as `--config`, not `--yaml`.
 
 ## Why they are here and not in the SkyPilot catalog
 

@@ -7,25 +7,26 @@ Use the single canonical spec and complete the operator runbook before submit:
 - [canonical RobotSpec and URDF example](../../../../docs/workbench/guides/sim2real-robot-spec.md)
 - [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
 
-Configured operators submit through the standard durable runtime:
+## Start with your inputs
+
+| Prepare | Contract |
+| --- | --- |
+| Robot embodiment and capture assets | [Customer assets](../../../../docs/workbench/guides/sim2real-customer-assets.md) and [RobotSpec](../../../../docs/workbench/guides/sim2real-robot-spec.md) |
+| Project, cluster, bucket, immutable images, and Isaac cache | [Operator runbook](../../../../docs/workbench/guides/sim2real-workflow.md) |
+| Expected 14-stage graph and recovery behavior | [Architecture](../../../../docs/architecture/sim2real-compositional-workflow.md) |
+
+From the repository root, validate the canonical spec locally:
 
 ```bash
-npa workbench workflow submit \
-  workflows/main/sim2real.yaml \
-  --runtime --run-id <run-id> \
-  --var bucket=<bucket> \
-  --var robot_spec_uri=<exact-s3-object-or-empty> \
-  --var controller_image=<immutable-ref> \
-  --var transfer_image=<immutable-ref> \
-  --var envgen_image=<immutable-ref> \
-  --var isaac_image=<immutable-ref> \
-  --var viewer_image=<immutable-ref> \
-  --var isaac_cache_pvc=<bound-rwx-pvc> \
-  --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN \
-  --secret-env NEBIUS_TOKEN_FACTORY_KEY
+npa workbench workflow validate-spec workflows/main/sim2real.yaml
 ```
+
+This checks the declaration; it does not prove image access, model access, GPU
+placement, or customer-data compatibility. Continue with the operator runbook's
+preflight and complete `submit --runtime` command using your verified inputs.
+Keep the returned run ID for status, logs, artifacts, and durable resume.
+
+## Runtime and outputs
 
 The YAML exposes all 14 stages and runs through the standard workflow runtime.
 Each real solution has its own image/resource state, S3 inputs and outputs, and
@@ -38,7 +39,7 @@ Runtime values are operator inputs; this directory contains no
 tenant, project, registry, bucket, cluster, credential, or run identifier.
 
 `controller_image` must be the small CPU-only image built from
-`docker/workbench/sim2real-control/Dockerfile`. It contains the exact source and
+[npa/docker/workbench/sim2real-control/Dockerfile](../../../docker/workbench/sim2real-control/Dockerfile). It contains the exact source and
 pinned S3 dependencies but no Genesis, Isaac, CUDA, trainer, or injected source
 bootstrap. GPU solution images remain attached only to their corresponding
 workflow states.

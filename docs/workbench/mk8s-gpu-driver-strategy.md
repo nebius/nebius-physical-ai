@@ -1,5 +1,7 @@
 # Managed Kubernetes GPU driver strategy
 
+[Workbench docs](README.md)
+
 NPA uses one GPU driver policy for both direct `npa cluster` provisioning and
 `npa fleet`: GPU node groups use a Nebius managed-driver image by default, while
 CPU-only node groups and clusters receive no GPU driver settings. The policy is

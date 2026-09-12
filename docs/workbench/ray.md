@@ -1,5 +1,7 @@
 # Use Workbench with Ray
 
+[Workbench docs](README.md)
+
 Workbench uses Ray through a small set of explicit paths. There is no `npa ray`
 command and no NPA wrapper around Ray Jobs. Use the native `ray` CLI for
 application submission and control; use `npa` only for the infrastructure,
@@ -118,9 +120,9 @@ Then submit a durable batch from a CPU client:
 
 ```bash
 npa workbench cosmos3 ray-batch \
-  --input-path s3://<bucket>/<prefix>/batch.json \
-  --output-path s3://<bucket>/<prefix>/outputs/ \
-  --endpoint http://<private-service>:8000
+  --input-path "s3://<bucket>/<prefix>/batch.json" \
+  --output-path "s3://<bucket>/<prefix>/outputs/" \
+  --endpoint "http://<private-service>:8000"
 ```
 
 The bearer token comes from `NPA_COSMOS3_RAY_TOKEN`, not the command line. The
