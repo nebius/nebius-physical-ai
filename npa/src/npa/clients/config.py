@@ -1456,6 +1456,7 @@ def resolve_project_storage(
     project: str | None = None,
     *,
     include_shared_credentials: bool = True,
+    include_environment: bool = True,
 ) -> StorageConfig:
     """Resolve project-level object storage settings.
 
@@ -1466,6 +1467,19 @@ def resolve_project_storage(
     workflows that only need a writable default bucket. Exact-project
     credential-store records are selected atomically: a partial record is
     ignored rather than mixed with routing or key fields from another source.
+
+    Args:
+        project: Configured project alias, or the saved default when omitted.
+        include_shared_credentials: Allow fallback to host credential files.
+        include_environment: Allow fallback to process S3 settings. Disable with
+            include_shared_credentials for readiness of saved project storage.
+
+    Returns:
+        Storage settings resolved from the permitted sources.
+
+    Raises:
+        ConfigError: The saved configuration cannot be read.
+        ProjectCredentialStoreError: The project credential store is invalid.
     """
     yml = _load_yaml()
     try:
@@ -1572,16 +1586,17 @@ def resolve_project_storage(
             return value
         return default
 
-    env_bucket = os.environ.get("NPA_CHECKPOINT_BUCKET", "") or os.environ.get(
+    environment = os.environ if include_environment else {}
+    env_bucket = environment.get("NPA_CHECKPOINT_BUCKET", "") or environment.get(
         "NEBIUS_S3_BUCKET", ""
     )
     env_endpoint = (
-        os.environ.get("AWS_ENDPOINT_URL", "")
-        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+        environment.get("AWS_ENDPOINT_URL", "")
+        or environment.get("NEBIUS_S3_ENDPOINT", "")
+        or environment.get("NPA_STORAGE_ENDPOINT", "")
     )
-    env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    env_access_key = environment.get("AWS_ACCESS_KEY_ID", "")
+    env_secret_key = environment.get("AWS_SECRET_ACCESS_KEY", "")
 
     # Shared credentials are host-scoped. The scoped config stanza remains
     # primary; shared values are only a fallback for projects without an exact

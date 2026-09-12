@@ -150,7 +150,7 @@ def _sbom_generator():
 
 def _material_reference(dependency):
     uri = urlsplit(dependency["uri"])
-    pairs = parse_qsl(uri.query, strict_parsing=True)
+    pairs = parse_qsl(uri.query, strict_parsing=True) if uri.query else []
     qualifiers = dict(pairs)
     digest = dependency["digest"]
     W.require(uri.scheme == "pkg" and not uri.netloc and not uri.fragment
