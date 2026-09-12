@@ -54,6 +54,8 @@ def _rectangles(scene):
         return [(72, 487, 1776, 486)]
     if layout == "cameras":
         return [(160, 348, 1600, 632)]
+    if layout == "screen":
+        return [(72, 294, 1776, 680)]
     if layout == "split":
         return [(72, 455, 1136, 520), (1232, 455, 616, 520)]
     if layout == "comparison":
@@ -95,6 +97,8 @@ def _base(scene, index, total):
 def _headlines(draw, scene):
     feature = scene["layout"] in {"feature", "reason"}
     title_y, size = (256, 73) if feature else (175, 98)
+    if scene["layout"] == "screen":
+        size = 68
     available = 630 if feature else 1776
     while any(draw.textlength(line, font=_font(size, 700)) > available for line in scene["title"]):
         size -= 1
@@ -105,6 +109,8 @@ def _headlines(draw, scene):
     subtitle_y = 469 if feature else 414
     if scene["layout"] == "cameras":
         subtitle_y = 292
+    if scene["layout"] == "screen":
+        subtitle_y = 252
     _paragraph(draw, (72, subtitle_y), scene["subtitle"], 27,
                606 if feature else 1650)
 

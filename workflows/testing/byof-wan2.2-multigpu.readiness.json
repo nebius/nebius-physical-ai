@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "382c9bcefa514397dbad29d0d1cf39050f45d310fc3473b78c9bd9c8997a389f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec succeeded; 121 frames, 50 steps, and seed 42 resolve to the real BYOF generation stage.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-wan2.2-multigpu.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-wan2.2-multigpu.yaml --run-id wan22-generation-controls --var frames=121 --var steps=50 --var seed=42 --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Worker-shell tests prove exact integer handoff and rejection before runtime fetch. Rerun tests fully decode longer video and reject request/output count mismatch.",
+      "evidence": [
+        "npa/tests/workflows/test_wan_generation_controls.py: 31 passed",
+        "npa/tests/workflows/test_wan_rerun.py: 48 passed"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Set bucket to owned writable project storage; the checked-in bucket is a placeholder.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Public model and tokenizer use pinned runtime-fetch revisions; worker network reachability has not been checked for this revision.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Operator project/storage configuration and optional Hugging Face credentials must be checked for the selected runtime.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The spec retains the existing tool://wan2-2 resolution and immutable source pin; no target image pull was performed during this code change.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The existing GPU and runtime gates are retained. The new longer-generation path has not been executed on a GPU during this authoring check.",
+      "evidence": []
+    }
+  }
+}

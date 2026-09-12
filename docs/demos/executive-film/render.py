@@ -19,6 +19,7 @@ from film_cache import (
     _hash,
     _render_lock,
 )
+from film_player import _write_player
 from film_profiles import (
     _PROFILES,
     _audio_inputs,
@@ -73,10 +74,11 @@ def _validate_storyboard(storyboard):
         raise ValueError("Scene durations must be positive whole seconds")
 
 
-def _validate(storyboard, assets):
+def _validate(storyboard, assets, scene_id=None):
     if sum(scene["duration"] for scene in storyboard["scenes"]) != 120:
         raise ValueError("The full storyboard must last exactly 120 seconds")
-    required = {role for scene in storyboard["scenes"] for role in scene["assets"]}
+    selected, _ = _selection(storyboard, scene_id)
+    required = {role for _, scene in selected for role in scene["assets"]}
     if required - assets.keys():
         raise ValueError(f"Missing asset roles: {sorted(required - assets.keys())}")
     for role in sorted(required):
@@ -323,6 +325,7 @@ def _assemble(args, storyboard, assets, parts, audio, selected, offset, staging)
     recipe = staging / "render-storyboard.json"
     recipe.write_text(json.dumps(snapshot, indent=2) + "\n")
     _evidence(target, snapshot, assets, staging, recipe)
+    _write_player(staging)
     _assert_sources_unchanged()
 
 
@@ -336,7 +339,8 @@ def _assembly_inputs(args, parts, audio, offset, selected, environment, storyboa
 def _publish(directory, destination):
     destination.mkdir(parents=True, exist_ok=True)
     names = ["workbench-executive-film.mp4", "workbench-executive-film.srt", "poster.png",
-             "narration.wav", "original-score.wav", "render-storyboard.json", "render-manifest.json"]
+             "narration.wav", "original-score.wav", "render-storyboard.json", "render-manifest.json",
+             "watch.html"]
     for name in names:
         source, target = directory / name, destination / name
         if target.is_file() and _hash(source) == _hash(target):
@@ -379,9 +383,10 @@ def _main():
     storyboard = json.loads(args.storyboard.read_text())
     _validate_storyboard(storyboard)
     assets = _load_assets(args.assets)
-    _validate(storyboard, assets)
+    required = _validate(storyboard, assets, args.scene)
+    assets = {role: assets[role] for role in sorted(required)}
     if args.check:
-        print("All storyboard assets verified")
+        print("Selected scene assets verified" if args.scene else "All storyboard assets verified")
         return
     environment = _environment()
     if args.plan:

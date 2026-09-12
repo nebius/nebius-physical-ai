@@ -19,6 +19,9 @@ metadata:
 config:
   bucket: example-bucket
   prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
+  frames: 17
+  steps: 8
+  seed: 42
 
   repo_url: "https://github.com/Wan-Video/Wan2.2.git"
   repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
@@ -33,6 +36,9 @@ config:
     set -euo pipefail
     # User-provided prompt crosses the shell boundary only as base64 data.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
+    export WAN22_FRAMES_B64="{{config.frames|base64}}"
+    export WAN22_STEPS_B64="{{config.steps|base64}}"
+    export WAN22_SEED_B64="{{config.seed|base64}}"
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
@@ -61,6 +67,30 @@ config:
     # The wrapper replaces this with one deterministic filename per rank before
     # process-group initialization so the logs can enter verified RRD lineage.
     export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_multigpu_nccl_unbound.%p.log"
+    # Reject invalid generation controls before fetching CUDA or model bytes.
+    /opt/wan-base/bin/python - <<'PY_GENERATION'
+    import base64
+    import json
+    import os
+    import re
+    from pathlib import Path
+
+    generation = {}
+    for name in ("frames", "steps", "seed"):
+        value = base64.b64decode(
+            os.environ[f"WAN22_{name.upper()}_B64"], validate=True
+        ).decode("utf-8")
+        if not re.fullmatch(r"[0-9]+", value):
+            raise SystemExit(f"Wan {name} must be a non-negative integer")
+        generation[name] = int(value)
+    if generation["frames"] < 5 or (generation["frames"] - 1) % 4:
+        raise SystemExit("Wan frames must be 4n+1 and at least 5")
+    if generation["steps"] < 1:
+        raise SystemExit("Wan steps must be a positive integer")
+    request_path = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "wan2_2_generation_request.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    request_path.write_text(json.dumps(generation, sort_keys=True) + "\n", encoding="utf-8")
+    PY_GENERATION
     wan-runtime ensure
     OUT_DIR="${NPA_SMOKE_OUTPUT_DIR}"
     CHECKPOINT_FILE="${OUT_DIR}/checkpoint_dir.txt"
@@ -415,6 +445,12 @@ config:
         return result
 
     dist.destroy_process_group = instrumented_destroy
+    generation = json.loads((out_dir / "wan2_2_generation_request.json").read_text())
+    sys.argv.extend([
+        "--frame_num", str(generation["frames"]),
+        "--sample_steps", str(generation["steps"]),
+        "--base_seed", str(generation["seed"]),
+    ])
     runpy.run_path("/opt/byof/generate.py", run_name="__main__")
     PY
 
@@ -429,7 +465,6 @@ config:
       --ckpt_dir "${CHECKPOINT_DIR}" \
       --dit_fsdp --t5_fsdp --ulysses_size 4 \
       --prompt "${WAN22_PROMPT}" \
-      --frame_num 17 --sample_steps 8 --base_seed 42 \
       --save_file "${OUT_DIR}/${WAN22_OUTPUT_NAME}"
 
     /opt/byof/.venv/bin/python - <<'PY'
@@ -454,6 +489,7 @@ config:
 
     out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     video = out / os.environ["WAN22_OUTPUT_NAME"]
+    generation = json.loads((out / "wan2_2_generation_request.json").read_text())
     topology = json.loads((out / "wan2_2_multigpu_topology.json").read_text(encoding="utf-8"))
     expected = int(os.environ["WAN22_EXPECTED_WORLD_SIZE"])
     if topology["world_size"] != expected or len(topology["rank_evidence"]) != expected:
@@ -511,7 +547,7 @@ config:
         frames.append(frame)
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
     capture.release()
-    if len(frames) != 17 or fps <= 0:
+    if len(frames) != generation["frames"] or fps <= 0:
         raise SystemExit(f"decoded video gate failed: frames={len(frames)}, fps={fps}")
     shapes = {tuple(frame.shape) for frame in frames}
     if shapes != {(704, 1280, 3)}:
@@ -562,7 +598,7 @@ config:
             "backend": "nccl", "fsdp": topology["fsdp"], "ulysses": topology["ulysses"],
             "topology_filename": "wan2_2_multigpu_topology.json",
         },
-        "generation": {"prompt": os.environ["WAN22_PROMPT"], "seed": 42, "width": 1280, "height": 704, "frames": 17, "fps": 24.0, "steps": 8},
+        "generation": {"prompt": os.environ["WAN22_PROMPT"], "seed": generation["seed"], "width": 1280, "height": 704, "frames": generation["frames"], "fps": 24.0, "steps": generation["steps"]},
         "observed": {"width": 1280, "height": 704, "channels": 3, "frame_count": len(frames), "fps": fps, "codec": ffprobe, "max_spatial_std": spatial_std, "pixel_range": pixel_range, "mean_temporal_abs_delta": temporal_delta},
         "output": {"filename": video.name, "size_bytes": size, "sha256": digest},
         "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_build_api_version": topology["rank_evidence"][0]["nccl_build_api_version"], "nccl_loaded_version": "2.29.7"},

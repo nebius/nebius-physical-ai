@@ -44,9 +44,11 @@ rechecks the closure report. This proves the strongest honest pre-overlay
 boundary; the real single- and multi-GPU workflows prove the full import and
 inference path only after runtime provisioning.
 
-The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
-size and 24 fps with eight sampling steps. The shorter duration and sampling
-count make this a capability smoke; they are not a production-quality claim.
+The default hard gate generates 17 frames at the official TI2V-5B 1280×704
+spatial size and 24 fps with eight sampling steps and seed 42. The shorter
+duration and sampling count make this a capability smoke; they are not a
+production-quality claim. Both workflows expose `frames`, `steps`, and `seed`
+through the standard workflow `--var` overrides for longer generations.
 
 ## Workflow surfaces
 
@@ -78,6 +80,44 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 The default declaration is text-to-video. The single-GPU smoke also has an
 honest optional image input, but image-to-video remains deferred until its own
 live input/output evidence is accepted.
+
+## Generate a longer clip
+
+After configuring your project, storage, and the workflow's GPU target, submit
+a 121-frame clip (about 5.04 seconds at 24 fps) with 50 sampling steps:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit \
+  workflows/testing/byof-wan2.2.yaml \
+  --run-id wan22-longer-clip \
+  --var bucket="${NPA_CHECKPOINT_BUCKET#s3://}" \
+  --var frames=121 --var steps=50 --var seed=42 \
+  --var 'prompt=A cinematic wide shot of a mobile robot moving through a sunlit warehouse.'
+```
+
+Use `byof-wan2.2-multigpu.yaml` for the existing four-B200 route. The same
+controls reach the pinned upstream launcher. Set a new run ID for each output;
+the verified artifact publication preserves existing objects.
+
+| Control | Default | Accepted values |
+| --- | --- | --- |
+| `frames` | `17` | integer at least 5, in the upstream `4n+1` form |
+| `steps` | `8` | positive integer |
+| `seed` | `42` | non-negative integer; negative random-seed selection is disabled for reproducibility |
+
+Config values cross the worker shell boundary as base64 data. The CPU-only
+preflight validates them before `wan-runtime ensure` or any model fetch and
+saves the exact integers in `wan2_2_generation_request.json`. Inference consumes
+that request, and the primary artifact records the requested count, steps, and
+seed. Ambient `WAN22_FRAMES`, `WAN22_STEPS`, and `WAN22_SEED` no longer override
+the workflow config. Resolution remains 1280×704 at 24 fps. Longer clips and
+more sampling steps require more GPU memory and computation; choose them for
+your output needs and inspect the result before using it.
+
+Rerun validation checks every decoded frame against the requested count. It
+retains the exact video-byte identity, image/runtime, spatial, temporal, and
+distributed evidence gates; a longer declared request cannot pass with a
+truncated output.
 
 ## GPU and runtime gates
 
@@ -254,3 +294,9 @@ npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 The two live GPU cases retain explicit operator gates. Their always-on portions
 validate and plan the exact checked-in workflows. Successful future live runs
 must also publish and verify the named RRD and manifest.
+
+The gated live tests also accept `NPA_BYOF_WAN22_LIVE_FRAMES`,
+`NPA_BYOF_WAN22_LIVE_STEPS`, and `NPA_BYOF_WAN22_LIVE_SEED`, defaulting to the
+workflow's 17/8/42 settings. Set them to 121/50/42 to exercise the longer request
+through generation, artifact readback, full MP4 decoding, and verified Rerun
+publication. These overrides do not enable the existing live-test gates.

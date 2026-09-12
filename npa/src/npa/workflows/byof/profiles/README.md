@@ -12,6 +12,23 @@ Its `workbench.byof.repo` toolRef runs `npa workbench byof run`, which passes on
 these files through `--yaml {{config.resource_profile_yaml}}`. Authoring a BYOF pipeline
 means editing the spec; picking a *pod shape* means picking a profile here.
 
+When the standard workflow engine has already allocated a worker, a
+`prebuilt` / `solution-smoke` stage executes its capability command directly in
+that worker. The workflow's `resources` determine the image and GPU allocation;
+the host resource profile does not launch a second job. The worker requires its
+actual digest-pinned image and baked repository/ref metadata to match the
+request. It uploads the real outputs, logs, and a summary with artifact hashes
+before running any mandatory solution postprocessor. Failed commands and
+missing required artifacts upload diagnostics and fail the stage. Wan still
+requires verified RRD publication before completion.
+
+Worker detection uses the renderer's `NPA_WORKFLOW_RUN_ID`,
+`NPA_WORKFLOW_STATE`, and `NPA_TASK_IMAGE` environment. Operators do not set these
+manually. The outer run ID and the instrumented worker run ID can differ; both
+are retained in the output summary. Building images or launching other BYOF
+workloads remains an operator-host operation and is rejected inside an
+allocated workflow worker.
+
 | Profile | Workload | Shape |
 | --- | --- | --- |
 | `isaac-lab-rl-train.yaml` | `rl-train` (default) | Kubernetes `L40S:1` |

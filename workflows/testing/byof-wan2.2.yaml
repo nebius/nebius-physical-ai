@@ -21,6 +21,9 @@ metadata:
 config:
   bucket: example-bucket
   prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
+  frames: 17
+  steps: 8
+  seed: 42
   # Non-empty input selects image-to-video and therefore MUST be paired with
   # capability_name=wan2.2_ti2v_5b_image_to_video and
   # smoke_artifact_name=wan2_2_ti2v_5b_image_to_video.json. The smoke fails
@@ -46,6 +49,9 @@ config:
     # User-provided text crosses the shell boundary only as base64 data. The
     # Python consumers decode it without evaluating it as shell syntax.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
+    export WAN22_FRAMES_B64="{{config.frames|base64}}"
+    export WAN22_STEPS_B64="{{config.steps|base64}}"
+    export WAN22_SEED_B64="{{config.seed|base64}}"
     export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
     if ! printenv WAN22_CACHE_DIR >/dev/null; then
       export WAN22_CACHE_DIR=/workspace/model-cache/wan2.2
@@ -69,6 +75,30 @@ config:
     except WanInputContractError as exc:
         raise SystemExit(str(exc)) from exc
     PY
+    # Reject invalid generation controls before fetching CUDA or model bytes.
+    /opt/wan-base/bin/python - <<'PY_GENERATION'
+    import base64
+    import json
+    import os
+    import re
+    from pathlib import Path
+
+    generation = {}
+    for name in ("frames", "steps", "seed"):
+        value = base64.b64decode(
+            os.environ[f"WAN22_{name.upper()}_B64"], validate=True
+        ).decode("utf-8")
+        if not re.fullmatch(r"[0-9]+", value):
+            raise SystemExit(f"Wan {name} must be a non-negative integer")
+        generation[name] = int(value)
+    if generation["frames"] < 5 or (generation["frames"] - 1) % 4:
+        raise SystemExit("Wan frames must be 4n+1 and at least 5")
+    if generation["steps"] < 1:
+        raise SystemExit("Wan steps must be a positive integer")
+    request_path = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "wan2_2_generation_request.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    request_path.write_text(json.dumps(generation, sort_keys=True) + "\n", encoding="utf-8")
+    PY_GENERATION
     wan-runtime ensure
     /opt/byof/.venv/bin/python - <<'PY'
     from __future__ import annotations
@@ -328,19 +358,13 @@ config:
     task = selected_contract.task
     capability = selected_contract.capability_name
     artifact_name = selected_contract.artifact_name
-    # 1280x704 is the official TI2V-5B 720P CLI size. Frame count and sampling
-    # steps are intentionally reduced for a capability smoke, but the spatial
-    # claim is not weakened to an undocumented resolution.
-    requested_width = int(os.environ.get("WAN22_WIDTH", "1280"))
-    requested_height = int(os.environ.get("WAN22_HEIGHT", "704"))
-    requested_frames = int(os.environ.get("WAN22_FRAMES", "17"))
-    requested_steps = int(os.environ.get("WAN22_STEPS", "8"))
+    # Preserve the official spatial size while allowing longer generations.
+    generation = json.loads((out_dir / "wan2_2_generation_request.json").read_text())
+    requested_width, requested_height = 1280, 704
+    requested_frames = generation["frames"]
+    requested_steps = generation["steps"]
     requested_fps = 24.0
-    seed = int(os.environ.get("WAN22_SEED", "42"))
-    if requested_frames < 5 or (requested_frames - 1) % 4:
-        raise ValueError("WAN22_FRAMES must be 4n+1 and at least 5")
-    if requested_width % 32 or requested_height % 32:
-        raise ValueError("WAN22_WIDTH and WAN22_HEIGHT must be divisible by 32")
+    seed = generation["seed"]
 
     cfg = copy.deepcopy(WAN_CONFIGS["ti2v-5B"])
     cfg.t5_tokenizer = str(tokenizer_dir)
@@ -403,7 +427,7 @@ config:
         )
     if len(decoded) != requested_frames:
         raise SystemExit(f"generated MP4 decoded {len(decoded)} frames, expected {requested_frames}")
-    if observed_fps <= 0:
+    if abs(observed_fps - requested_fps) > 0.01:
         raise SystemExit(f"generated MP4 reported invalid fps: {observed_fps}")
     output_size = output_path.stat().st_size
     if output_size < 4096:

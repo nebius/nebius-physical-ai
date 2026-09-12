@@ -141,6 +141,17 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
 SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
 YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
 
+For a standard `npa.workflow` submit, use `base_profile: prebuilt` with
+`workload: solution-smoke` and a digest-pinned image in the workflow resources.
+The command runs inside that allocated worker; it must not invoke another
+SkyPilot launch. Workbench checks the actual `NPA_TASK_IMAGE` and the image's
+`npa_source_metadata.json`, runs the real capability, uploads its outputs and
+failure diagnostics, and completes any registered postprocessor (including
+Wan's mandatory verified RRD). Worker markers are injected automatically.
+The outer run ID and lower-level worker run ID are separate provenance fields.
+Image builds and other host-orchestrated BYOF workloads must run from the
+operator entrypoint above, before workflow submission.
+
 Workloads:
 
 | Workload | Base profile | SkyPilot YAML (rtxpro) |

@@ -33,6 +33,7 @@ from npa.workflows.wan_rerun import MULTI_GPU_LAYOUT
 from .npa_workflow_live_helpers import live_bucket
 from .test_byof_wan22_live_e2e import (
     _decode_mp4,
+    _live_generation_controls,
     _parse_last_json_blob,
     _read_s3_json,
     _s3_client,
@@ -65,10 +66,14 @@ def _spec_config() -> dict[str, object]:
     return config
 
 
-def _planned_byof_args(run_id: str) -> dict[str, str | bool]:
+def _planned_byof_args(
+    run_id: str, generation: dict[str, int] | None = None
+) -> dict[str, str | bool]:
     from npa.orchestration.npa_workflow import build_plan, load_spec
 
-    steps = build_plan(load_spec(WAN_SPEC), run_id=run_id).to_dict().get("steps") or []
+    spec = load_spec(WAN_SPEC)
+    spec.config.update(generation or {})
+    steps = build_plan(spec, run_id=run_id).to_dict().get("steps") or []
     assert len(steps) == 1, steps
     argv = [str(part) for part in (steps[0].get("argv") or [])]
     assert argv[:4] == ["npa", "workbench", "byof", "run"], argv
@@ -153,7 +158,8 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     tmp_path: Path,
 ) -> None:
     config = _spec_config()
-    planned = _planned_byof_args("wan22-multigpu-live-plan")
+    controls = _live_generation_controls(config)
+    planned = _planned_byof_args("wan22-multigpu-live-plan", controls)
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
     reuse_image = os.environ.get("NPA_BYOF_WAN22_MULTIGPU_REUSE_IMAGE", "").strip()
@@ -274,6 +280,8 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     )
     assert artifact["model"]["weights_baked"] is False
     assert artifact["generation"]["prompt"] == config["prompt"]
+    for key, value in controls.items():
+        assert artifact["generation"][key] == value
     assert set(artifact["capabilities_exercised"]) == EXPECTED_CAPABILITIES
     assert artifact["deferred"] == []
     distributed = artifact["distributed"]
@@ -350,7 +358,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     stream = _decode_mp4(video_path)
     assert int(stream["width"]) == 1280
     assert int(stream["height"]) == 704
-    assert int(stream["nb_read_frames"]) == 17
+    assert int(stream["nb_read_frames"]) == controls["frames"]
     observed = artifact["observed"]
     assert observed["codec"] == "h264"
     assert float(observed["fps"]) > 0
@@ -364,7 +372,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
         layout=MULTI_GPU_LAYOUT,
         run_id=run_id,
         video_path=video_path,
-        expected_frame_count=17,
+        expected_frame_count=controls["frames"],
         expected_fps=float(observed["fps"]),
         expected_rank_count=4,
         tmp_path=tmp_path,

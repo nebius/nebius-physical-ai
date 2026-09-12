@@ -57,6 +57,25 @@ def test_relative_assets_are_resolved_against_manifest_location(film, tmp_path, 
     assert film._load_assets(manifest)["source"]["path"] == str(source)
 
 
+def test_scene_preview_can_verify_its_media_before_other_shots_arrive(film, tmp_path, monkeypatch):
+    source = tmp_path / "review.png"
+    Image.new("RGB", (64, 40)).save(source)
+    assets = {"review": {"path": str(source), "kind": "image", "sha256": film._hash(source)}}
+    story = {"scenes": [
+        {"id": "review", "duration": 10, "assets": ["review"]},
+        {"id": "generation", "duration": 110, "assets": ["pending_gpu_output"]},
+    ]}
+    monkeypatch.setattr(film, "_probe", lambda path: {
+        "streams": [{"codec_type": "video", "width": 64, "height": 40}],
+    })
+    assert film._validate(story, assets, "review") == {"review"}
+    with pytest.raises(ValueError, match="Missing asset roles.*pending_gpu_output"):
+        film._validate(story, assets)
+    source.write_bytes(b"changed review media")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        film._validate(story, assets, "review")
+
+
 def test_crop_outside_source_is_rejected(film, tmp_path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (64, 40)).save(source)
@@ -94,10 +113,14 @@ def test_preview_panels_stay_even_and_inside_the_frame(film):
 
 
 def test_one_scene_keeps_its_full_film_audio_offset(film):
-    story = json.loads((film._ROOT / "storyboard.json").read_text())
-    selected, offset = film._selection(story, "07-robotics")
-    assert offset == 62
-    assert selected[0][0] == 6
+    story = {"scenes": [
+        {"id": "opening", "duration": 12},
+        {"id": "generation", "duration": 20},
+        {"id": "robotics", "duration": 10},
+    ]}
+    selected, offset = film._selection(story, "robotics")
+    assert offset == 32
+    assert selected[0][0] == 2
     assert selected[0][1]["duration"] == 10
     with pytest.raises(ValueError, match="Unknown scene"):
         film._selection(story, "nonexistent")

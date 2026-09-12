@@ -19,33 +19,37 @@
         "cosmos_showcase"
       ],
       "labels": [
-        "COSMOS3 SUPER · GENERATED VIDEO"
+        "COSMOS3 SUPER \u00b7 GENERATED VIDEO"
       ],
       "narration": "The next era of AI moves beyond the screen. Into factories, robots, and the world around us."
     },
     {
-      "id": "02-data",
-      "duration": 10,
-      "layout": "feature",
-      "eyebrow": "THE OPPORTUNITY",
+      "id": "02-open",
+      "duration": 8,
+      "layout": "triptych",
+      "eyebrow": "BUILT FOR CHOICE",
       "title": [
-        "The real world.",
-        "More possibilities."
+        "Open tools.",
+        "Connected workflows."
       ],
-      "subtitle": "Turn valuable captures into new experiments.",
+      "subtitle": "Bring your toolchain. Build on Nebius.",
       "assets": [
-        "demonstration"
+        "robot",
+        "wan",
+        "driving"
       ],
       "labels": [
-        "GR00T WORKFLOW · SOURCE DEMONSTRATION"
+        "ROBOCASA",
+        "WAN 2.2",
+        "ALPAMAYO"
       ],
-      "narration": "Physical intelligence needs real scenes and changing conditions. Workbench connects the building blocks, from data to experiments."
+      "narration": "Open tools. Leading models. One place to turn experiments into evidence. This is Workbench."
     },
     {
       "id": "03-cosmos",
-      "duration": 12,
+      "duration": 10,
       "layout": "comparison",
-      "eyebrow": "01 / GENERATE · NVIDIA COSMOS",
+      "eyebrow": "GENERATE \u00b7 NVIDIA COSMOS",
       "title": [
         "One source.",
         "New conditions."
@@ -57,53 +61,88 @@
       ],
       "labels": [
         "SOURCE VIDEO",
-        "COSMOS3 NANO · AUGMENTED"
+        "COSMOS3 NANO \u00b7 AUGMENTED"
       ],
-      "narration": "Start with source video. Use NVIDIA Cosmos to explore new appearances and conditions. Then inspect what changed, and what your task needs to preserve."
+      "narration": "Use NVIDIA Cosmos to generate new conditions from source video. Inspect what changes, and what your task needs to preserve."
     },
     {
-      "id": "04-conditions",
+      "id": "04-wan",
       "duration": 10,
       "layout": "cinematic",
-      "eyebrow": "SYNTHETIC DATA GENERATION",
+      "eyebrow": "GENERATE \u00b7 ALIBABA WAN 2.2",
       "title": [
-        "Expand what",
-        "you can test."
+        "More models.",
+        "More possibilities."
       ],
-      "subtitle": "A repeatable workflow for the next experiment.",
+      "subtitle": "Open video generation, running on Nebius GPUs.",
       "assets": [
-        "cosmos_showcase"
+        "wan"
       ],
       "labels": [
-        "COSMOS GENERATED VIDEO"
+        "WAN 2.2 \u00b7 GENERATED VIDEO"
       ],
-      "narration": "Make generation repeatable. Keep inputs, prompts, and outputs connected, so teams can compare experiments and build on what they learn."
+      "narration": "Expand your options with Wan. Turn a prompt into video, with the model, seed, and generation settings recorded for the next experiment."
     },
     {
       "id": "05-curate",
-      "duration": 10,
-      "layout": "review",
-      "eyebrow": "02 / EVALUATE & CURATE",
+      "duration": 12,
+      "layout": "screen",
+      "eyebrow": "CURATE \u00b7 VOXEL51 FIFTYONE",
       "title": [
-        "Make quality",
-        "visible."
+        "Make data quality visible."
       ],
-      "subtitle": "Cosmos Evaluator · Cosmos Curator · FiftyOne",
+      "subtitle": "Inspect candidates. Compare results. Choose what moves forward.",
       "assets": [
-        "source",
-        "cosmos_a"
+        "fiftyone"
       ],
       "labels": [
-        "SOURCE EVIDENCE",
-        "GENERATED CANDIDATE"
+        "FIFTYONE \u00b7 SAVED WORKBENCH REVIEW DATA"
       ],
-      "narration": "Evaluate candidates. Inspect failure cases. Curate the data. Keep the evidence alongside every result, so quality decisions stay visible."
+      "narration": "Bring candidates into FiftyOne. Review the visual results and their evaluation evidence together. Make the decision about what moves forward explicit, and inspectable."
     },
     {
-      "id": "06-reconstruct",
+      "id": "06-robotics",
+      "duration": 10,
+      "layout": "feature",
+      "eyebrow": "SIMULATE \u00b7 ROBOCASA",
+      "title": [
+        "Build skills",
+        "in simulation."
+      ],
+      "subtitle": "Kitchen environments. Simulation data. Repeatable experiments.",
+      "assets": [
+        "robot"
+      ],
+      "labels": [
+        "ROBOCASA \u00b7 NATIVE SIMULATION ROLLOUT"
+      ],
+      "narration": "With RoboCasa, collect rollouts in simulated kitchens. Explore manipulation tasks and create structured data for the next policy experiment."
+    },
+    {
+      "id": "07-lerobot",
       "duration": 12,
+      "layout": "comparison",
+      "eyebrow": "TRAIN & EVALUATE \u00b7 HUGGING FACE LEROBOT",
+      "title": [
+        "From simulation",
+        "to policy experiments."
+      ],
+      "subtitle": "Train ACT policies. Inspect held-out rollouts.",
+      "assets": [
+        "robot_training",
+        "robot_eval"
+      ],
+      "labels": [
+        "SIMULATION TRAINING DATA",
+        "ACT POLICY \u00b7 HELD-OUT EVALUATION"
+      ],
+      "narration": "Train ACT policies with LeRobot. Inspect held-out rollouts. Keep the checkpoint, training data, and evaluation evidence available for each iteration."
+    },
+    {
+      "id": "08-reconstruct",
+      "duration": 10,
       "layout": "split",
-      "eyebrow": "03 / RECONSTRUCT · NVIDIA NUREC",
+      "eyebrow": "RECONSTRUCT \u00b7 NVIDIA NUREC",
       "title": [
         "Capture once.",
         "Explore in 3D."
@@ -117,48 +156,13 @@
         "RENDERED NOVEL VIEW",
         "RECONSTRUCTED DISTANCE"
       ],
-      "narration": "Neural reconstruction turns captured scenes into renderable worlds. Explore new camera viewpoints, and inspect the geometry behind the view."
-    },
-    {
-      "id": "07-robotics",
-      "duration": 10,
-      "layout": "feature",
-      "eyebrow": "04 / SIMULATE & LEARN",
-      "title": [
-        "Build the next",
-        "robot capability."
-      ],
-      "subtitle": "Simulation, demonstration data, and policy workflows.",
-      "assets": [
-        "robot"
-      ],
-      "labels": [
-        "ROBOCASA · SIMULATION ROLLOUT"
-      ],
-      "narration": "Connect simulation, demonstrations, and policy workflows. Give teams composable training and evaluation tools, with results they can use again."
-    },
-    {
-      "id": "08-driving",
-      "duration": 10,
-      "layout": "cameras",
-      "eyebrow": "05 / DRIVING INTELLIGENCE · NVIDIA ALPAMAYO",
-      "title": [
-        "Onto the road."
-      ],
-      "subtitle": "Multiple cameras. One driving context.",
-      "assets": [
-        "driving"
-      ],
-      "labels": [
-        "SAVED INFERENCE · CAMERA INPUTS"
-      ],
-      "narration": "For driving research, NVIDIA Alpamayo connects camera inputs with driving reasoning and a prediction of the vehicle’s future motion."
+      "narration": "Neural reconstruction turns captured scenes into renderable worlds. Explore new camera viewpoints and inspect the geometry behind the view."
     },
     {
       "id": "09-alpamayo",
       "duration": 12,
       "layout": "reason",
-      "eyebrow": "ALPAMAYO 2 SUPER",
+      "eyebrow": "DRIVING INTELLIGENCE \u00b7 NVIDIA ALPAMAYO",
       "title": [
         "See. Reason.",
         "Predict motion."
@@ -168,52 +172,51 @@
         "driving_front"
       ],
       "labels": [
-        "SAVED PREDICTION · PROJECTED CAMERA VIEW"
+        "SAVED PREDICTION \u00b7 PROJECTED CAMERA VIEW"
       ],
-      "quote": "Nudge left to avoid the cones on the right side.",
-      "narration": "Here, an actual saved result identifies cones beside the vehicle and predicts a path through the scene. The camera projection makes that model output visible to a reviewer."
+      "narration": "Alpamayo connects camera inputs with driving reasoning and predicted motion. Here, a saved result identifies cones and predicts a path through the scene.",
+      "quote": "Nudge left to avoid the cones on the right side."
     },
     {
-      "id": "10-evidence",
+      "id": "10-rerun",
       "duration": 10,
-      "layout": "evidence",
-      "eyebrow": "FROM OUTPUT TO EVIDENCE",
+      "layout": "screen",
+      "eyebrow": "INSPECT \u00b7 RERUN",
       "title": [
-        "Every prediction.",
-        "An inspectable result."
+        "Keep the evidence in view."
       ],
-      "subtitle": "Predicted motion and recorded ground truth.",
+      "subtitle": "Video, generation settings, and verified run artifacts.",
       "assets": [
-        "trajectory"
+        "rerun"
       ],
       "labels": [
-        "ACTUAL SAVED TRAJECTORY FIGURE"
+        "RERUN \u00b7 VERIFIED WAN RECORDING"
       ],
-      "narration": "Compare predictions with recorded ground truth. Inspect the rationale and provenance. Research outputs become evidence for your next engineering decision."
+      "narration": "Inspect outputs in Rerun. Bring video and run evidence into the same view, and trace each result back to its generation settings."
     },
     {
       "id": "11-workbench",
-      "duration": 8,
+      "duration": 10,
       "layout": "pipeline",
-      "eyebrow": "ONE CONNECTED PLATFORM",
+      "eyebrow": "ORCHESTRATE \u00b7 SKYPILOT ON NEBIUS",
       "title": [
-        "Your workflow.",
+        "Your toolchain.",
         "One Workbench."
       ],
-      "subtitle": "NVIDIA technologies · SkyPilot orchestration · Nebius cloud",
+      "subtitle": "Open-source tools and NVIDIA models, connected through NPA.",
       "assets": [
-        "source",
-        "cosmos_a",
-        "reconstruction",
-        "robot"
+        "wan",
+        "robot",
+        "fiftyone",
+        "driving_front"
       ],
       "labels": [
-        "CAPTURE",
         "GENERATE",
-        "RECONSTRUCT",
-        "LEARN"
+        "SIMULATE",
+        "CURATE",
+        "INFER"
       ],
-      "narration": "One Workbench. GPU infrastructure. Traceable artifacts. Connected workflows. More room for your team to build."
+      "narration": "SkyPilot runs the GPU work. Workbench connects your tools and artifacts on Nebius."
     },
     {
       "id": "12-close",
@@ -227,12 +230,12 @@
       "subtitle": "Start with a workflow. Build toward your next capability.",
       "assets": [
         "robot",
-        "reconstruction",
+        "wan",
         "driving"
       ],
       "labels": [
         "ROBOTICS",
-        "WORLD MODELS",
+        "GENERATION",
         "AUTONOMY"
       ],
       "narration": "From synthetic data to intelligent action. Nebius Physical AI Workbench. Build intelligence that moves."
