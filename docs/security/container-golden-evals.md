@@ -29,11 +29,12 @@ The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
 and checks shell syntax. It does not execute GPU workloads.
 
 Gymnasium-Robotics appears in the machine-readable manifest as an internal
-Phase A pre-registration record with `needs-image-update`. This records the
-future real MuJoCo/EGL gate without registering a supported image. Its
-Dockerfile deliberately refuses before network access while reciprocal-source
-and package locks are incomplete; no golden evaluation, image, or public
-availability is claimed.
+pre-registration record with `needs-image-update`. This records the future real
+MuJoCo/EGL gate without registering a supported image. The neutral candidate
+must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
+or populated cache; its Dockerfile refuses before package network access while
+the bootstrap package/corresponding-source locks are incomplete. No golden
+evaluation, image, or public availability is claimed.
 
 ## CLI
 

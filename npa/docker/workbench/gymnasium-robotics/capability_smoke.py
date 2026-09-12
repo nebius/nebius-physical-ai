@@ -1,7 +1,8 @@
 """Exact Gymnasium-Robotics Shadow Hand MuJoCo/EGL capability gate.
 
-This script is packaged for a future authorized image transaction. Phase A
-does not execute it and its presence is not capability evidence.
+This script is packaged in the neutral bootstrap image but executes only with
+a complete, hash-verified operator-owned runtime cache. Its presence, runtime
+acquisition, import, or environment registration alone is not capability proof.
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ def _canonical_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-def _source_evidence() -> tuple[Path, dict[str, Any], dict[str, Any]]:
+def _source_evidence() -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
     package_root = Path(gymnasium_robotics.__file__).resolve().parent
     source_root = package_root.parent
     locks = Path("/opt/npa/gymnasium-robotics")
@@ -123,8 +124,26 @@ def _source_evidence() -> tuple[Path, dict[str, Any], dict[str, Any]]:
             "installed Gymnasium-Robotics source is not the reviewed pin"
         )
     if source_lock["status"] != "complete":
-        raise RuntimeError("image source lock was not completed")
-    return source_root, source_lock, asset_lock
+        raise RuntimeError("runtime source lock was not completed")
+    runtime_root_value = os.environ.get("NPA_GYMNASIUM_RUNTIME_ROOT", "")
+    if not runtime_root_value:
+        raise RuntimeError("operator runtime-cache root was not recorded")
+    runtime_root = Path(runtime_root_value).resolve()
+    if runtime_root not in package_root.parents:
+        raise RuntimeError("Gymnasium-Robotics was not imported from the runtime cache")
+    receipt_path = runtime_root / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if (
+        receipt.get("source_commit") != EXPECTED_SOURCE
+        or receipt.get("mujoco_version") != "3.12.0"
+        or receipt.get("artifact_sha256", {}).get("gymnasium-robotics-source")
+        != component["archive_sha256"]
+        or receipt.get("artifact_sha256", {}).get("mujoco-3.12.0-cp312-linux-x86_64")
+        != EXPECTED_MUJOCO_WHEEL
+    ):
+        raise RuntimeError("operator runtime-cache receipt changed")
+    receipt["receipt_sha256"] = _sha256(receipt_path)
+    return source_root, source_lock, asset_lock, receipt
 
 
 def _render(env: gym.Env, hashes: list[str], shapes: list[list[int]]) -> float:
@@ -231,7 +250,7 @@ def main() -> None:
         or os.environ.get("PYOPENGL_PLATFORM") != "egl"
     ):
         raise RuntimeError("MuJoCo and PyOpenGL must use EGL")
-    source_root, source_lock, asset_lock = _source_evidence()
+    source_root, source_lock, asset_lock, runtime_receipt = _source_evidence()
     expected = _digest_from_reference(os.environ.get("BYOF_IMAGE", ""), "BYOF_IMAGE")
     observed = _digest_from_reference(
         os.environ.get("NPA_BYOF_POD_IMAGE_ID", ""), "pod imageID"
@@ -391,6 +410,7 @@ def main() -> None:
             "pod_observed_image_digest": observed,
             "gpu_count": 1,
             "gpus": [gpu],
+            "cache_receipt": runtime_receipt,
             "exit_status": 0,
         },
     }

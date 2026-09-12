@@ -1,7 +1,7 @@
 {
-  "schema": "npa.gymnasium-robotics.apt-runtime-lock.v1",
-  "status": "phase-a-incomplete",
-  "reason": "The immutable Ubuntu snapshot binary/source closure requires a separately authorized resolver transaction.",
+  "schema": "npa.gymnasium-robotics.neutral-bootstrap-apt-lock.v2",
+  "status": "incomplete",
+  "reason": "The immutable Ubuntu snapshot binary/source closure for neutral bootstrap prerequisites requires a separately authorized resolver transaction.",
   "base": {
     "config_digest": "sha256:b2b7ea366714195a1e1c5b2b578ece85c0b3920381a8654d038d9684f009613c",
     "image": "ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
@@ -15,11 +15,6 @@
   },
   "requested_runtime_packages": [
     "ca-certificates",
-    "libegl1",
-    "libgl1",
-    "libgles2",
-    "libglvnd0",
-    "libglx0",
     "openssh-server",
     "python3.12",
     "python3.12-venv",
@@ -27,5 +22,11 @@
     "sudo"
   ],
   "resolved_binary_packages": [],
-  "resolved_source_packages": []
+  "resolved_source_packages": [],
+  "excluded_from_candidate_layers": [
+    "shadow-assets-and-upstream-solution",
+    "mujoco-and-python-runtime",
+    "cuda-and-vendor-runtime",
+    "runtime-cache-and-run-outputs"
+  ]
 }

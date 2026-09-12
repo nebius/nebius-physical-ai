@@ -25,55 +25,55 @@ def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
-def test_phase_a_uses_only_the_unbuilt_prebuilt_candidate() -> None:
+def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
     config = _workflow()["config"]
     assert config["repo_ref"] == SOURCE_COMMIT
     assert config["repo_auth"] == "none"
     assert config["base_profile"] == "prebuilt"
     assert (
         config["base_image"]
-        == "registry.example.invalid/gymnasium-robotics:phase-a-unbuilt"
+        == "registry.example.invalid/gymnasium-robotics:neutral-unbuilt"
     )
     assert config["build_command"] == ""
     assert config["smoke_command"].endswith(
-        "exec /opt/venv/bin/python -I -B /opt/npa/gymnasium-robotics/capability_smoke.py\n"
+        "exec /usr/local/bin/npa-gymnasium-entrypoint run-smoke\n"
     )
     assert config["capability_name"] == ENV_ID
     assert config["smoke_artifact_name"] == "gymnasium-robotics-smoke.json"
 
 
-def test_phase_a_lock_gate_refuses_before_any_fetch() -> None:
+def test_neutral_image_lock_gate_refuses_before_any_package_fetch() -> None:
     completed = subprocess.run(
-        [str(IMAGE_ROOT / "build.sh"), "verify-locks"],
+        [str(IMAGE_ROOT / "build.sh"), "verify-bootstrap-locks"],
         text=True,
         capture_output=True,
         check=False,
     )
     assert completed.returncode != 0
-    assert "Phase A packaging refusal" in completed.stderr
+    assert "refusal before network access" in completed.stderr
     text = (IMAGE_ROOT / "build.sh").read_text(encoding="utf-8")
     assert not any(
-        command in text
-        for command in ("curl ", "wget ", "git clone", "pip install", "apt-get")
+        command in text for command in ("curl ", "wget ", "git clone", "pip install")
     )
 
 
-def test_source_runtime_and_reciprocal_evidence_stay_incomplete() -> None:
+def test_runtime_and_neutral_baked_closures_stay_incomplete() -> None:
     source = json.loads((IMAGE_ROOT / "source-lock.json").read_text())
     apt = json.loads((IMAGE_ROOT / "apt-runtime.lock.json").read_text())
     corresponding = json.loads(
         (IMAGE_ROOT / "corresponding-source.lock.json").read_text()
     )
-    assert {source["status"], apt["status"], corresponding["status"]} == {
-        "phase-a-incomplete"
-    }
-    assert source["components"]["farama_gymnasium_robotics"]["commit"] == SOURCE_COMMIT
-    assert source["components"]["mujoco"]["version"] == "3.12.0"
-    assert source["components"]["shadow_sr_common"]["preferred_form_sha256"] is None
+    assert {source["status"], apt["status"], corresponding["status"]} == {"incomplete"}
+    assert source["source_commit"] == SOURCE_COMMIT
+    assert source["mujoco_version"] == "3.12.0"
+    assert source["components"]["shadow_sr_common"]["preferred_form_complete"] is False
     assert apt["resolved_binary_packages"] == apt["resolved_source_packages"] == []
-    assert any(
-        item.get("transformation_manifest_sha256") is None
-        for item in corresponding["deliveries"]
+    assert corresponding["scope"] == "candidate-image-layers-only"
+    assert corresponding["runtime_fetched_material_excluded"]
+    assert source["requirements_lock_sha256"] is None
+    assert (
+        source["resolved_python_artifact_count"]
+        < source["expected_python_distribution_count"]
     )
 
 
@@ -134,6 +134,9 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "B200" not in WORKFLOW.read_text(encoding="utf-8")
     assert "B200" not in profile
     assert "/opt/npa/gymnasium-robotics/verify_image.py" in profile
+    assert "/opt/npa/gymnasium-robotics/runtime-bootstrap.py" in profile
+    assert "NPA_GYMNASIUM_RUNTIME_CACHE" in profile
+    assert "current/runtime/bin/python" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
 
@@ -151,10 +154,15 @@ def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:
     assert "historical" in readiness["prerequisites"]["source_image"]["reason"].lower()
 
 
-def test_no_gated_payload_or_consent_proxy_is_part_of_phase_a() -> None:
+def test_no_gated_payload_or_consent_proxy_is_part_of_neutral_design() -> None:
     text = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (WORKFLOW, SMOKE, IMAGE_ROOT / "Dockerfile")
+        for path in (
+            WORKFLOW,
+            SMOKE,
+            IMAGE_ROOT / "Dockerfile",
+            IMAGE_ROOT / "runtime-bootstrap.py",
+        )
     )
     lowered = text.lower()
     for forbidden in (
@@ -177,16 +185,16 @@ def test_live_gate_still_requires_both_explicit_environment_gates() -> None:
     assert "NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE" in source
 
 
-def test_documentation_keeps_phase_a_and_historical_evidence_separate() -> None:
+def test_documentation_keeps_neutral_and_historical_evidence_separate() -> None:
     text = (ROOT / "docs/workbench/byof-gymnasium-robotics.md").read_text(
         encoding="utf-8"
     )
     for token in (
-        "Phase A",
+        "neutral bootstrap",
         "pre-registration quarantine",
         "historical",
         "corresponding source",
-        "No model, dataset, gated asset, or terms acceptance",
+        "No model, external dataset, gated artifact, or terms-acceptance flag",
         "RTX PRO 6000 Blackwell",
     ):
         assert token in text

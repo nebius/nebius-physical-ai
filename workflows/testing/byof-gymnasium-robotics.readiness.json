@@ -1,43 +1,43 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "4b0c65816de0f7fe4bd85c5823879662c65429c1b60e2f56ab188f329306a584",
+  "workflow_sha256": "e98e33aba7e38adef95ff61a0f03ff47b063155ab436048757376279855e23c8",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The Phase A workflow validates and plans as one prebuilt BYOF state with an intentionally non-resolving placeholder and no build command; this is static planning evidence only.",
+      "reason": "The neutral-bootstrap workflow validates and plans as one prebuilt BYOF state with an intentionally non-resolving placeholder and no build command; this is static planning evidence only.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-gymnasium-robotics.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-phase-a-review --json"
+        "npa workbench workflow plan-spec workflows/testing/byof-gymnasium-robotics.yaml --run-id gymnasium-robotics-neutral-review --json"
       ]
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The fixed in-image hard-gate script preserves the registered Shadow Hand, MuJoCo contact/touch/orientation, EGL, RTX, and digest checks, but no redesigned image exists and no current-head capability run is claimed.",
+      "reason": "The neutral entrypoint preserves the genuine runtime-cached Shadow Hand/MuJoCo contact, touch, orientation, EGL, RTX, and digest hard gate, but no redesigned image exists and no current-head capability run is claimed.",
       "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "Phase A authorizes no storage transaction; future exact-digest qualification must independently prove atomic write/read/delete under a run-owned prefix.",
+      "reason": "Repository-only redesign authorizes no storage transaction; future exact-digest qualification must independently prove atomic write/read/delete under a run-owned prefix.",
       "evidence": []
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "Reviewed source and asset identities are recorded, but the exact Shadow preferred-form/transformation delivery and reciprocal Ubuntu/Python source closure are incomplete.",
+      "reason": "Reviewed source/runtime identities are recorded, but the complete Python wheel graph is absent and Shadow preferred-form, transformation, use, and derivative questions remain unresolved. Runtime acquisition therefore refuses before network access.",
       "evidence": [
         "npa/docker/workbench/gymnasium-robotics/source-lock.json",
         "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
       ]
     },
     "credentials": {
-      "status": "not_applicable",
-      "reason": "No model, dataset, gated asset, or terms credential is part of the capability, and Phase A performs no build, pull, push, or cloud operation.",
+      "status": "unverified",
+      "reason": "Runtime artifacts are credential-free and have no consent proxy. A future exact-digest run must separately preflight registry and output-storage credentials without treating them as upstream rights.",
       "evidence": []
     },
     "source_image": {
       "status": "blocked",
-      "reason": "No Phase A image has been built. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
+      "reason": "No neutral-bootstrap image has been built. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
       "evidence": [
         "npa/docker/workbench/gymnasium-robotics/REDISTRIBUTION.md"
       ]

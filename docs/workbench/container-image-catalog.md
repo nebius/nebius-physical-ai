@@ -20,10 +20,10 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The Gymnasium-Robotics registry candidate is intentionally built ad hoc into a
-task-private registry and executed only by immutable digest. It has no public
-image row, is not eligible for promotion through this catalog, and does not
-change any public-release, packaging, mapped-tool, or quarantine count below.
+The Gymnasium-Robotics public candidate is a proposed neutral bootstrap with no
+upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
+cache in its layers. It remains unbuilt and pre-registration quarantined, has
+no public image row, and does not change public-release or mapped-tool counts.
 
 The combined public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-17**. All **34 current release tags**
@@ -51,7 +51,8 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
+The current source inventory, including the Gymnasium-Robotics neutral-bootstrap
+candidate, has **43 packaging entries** (41 redistribution-eligible
 and two restricted) and **43 mapped tools**: 37 public-release members, two
 restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
 `robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
@@ -59,10 +60,11 @@ they do not constitute acceptance of the quarantined images.
 
 Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
 It is deliberately absent from the mapped-tool count, supported versions,
-public build matrix, release table, and compatibility charts. Its Phase A
-Dockerfile is expected to refuse before network access until exact reciprocal
-source and package closure exists; no image, scan, anonymous pull, or current
-GPU capability is claimed.
+public build matrix, release table, and compatibility charts. Its Dockerfile
+refuses before package network access until the exact neutral-bootstrap package
+and corresponding-source closure exists. Runtime fetching later changes
+delivery only, not use, derivative, output, or service rights. No image, scan,
+anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact

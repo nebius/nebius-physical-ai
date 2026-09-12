@@ -55,7 +55,7 @@ def _pod(*, image_id: str) -> dict[str, object]:
                         "limits": {"nvidia.com/gpu": "1"},
                     },
                 }
-            ]
+            ],
         },
         "status": {
             "phase": "Running",
@@ -84,8 +84,8 @@ def _profile_receipt_validator() -> str:
         if document is not None
     ]
     run = str(documents[1]["run"])
-    marker = "/opt/venv/bin/python - <<'PY'\n"
-    return run.split(marker, 1)[1].split("\nPY\n", 1)[0]
+    marker = 'export NPA_BYOF_POD_IMAGE_ID="$("${RUNTIME_PYTHON}" -I - <<\'PY\'\n'
+    return run.split(marker, 1)[1].split('\nPY\n)"', 1)[0]
 
 
 def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
@@ -582,7 +582,9 @@ def test_success_cleanup_escalates_to_active_sky_down(
 
 
 def test_success_cleanup_precedes_runner_log_decoding() -> None:
-    source = inspect.getsource(live.test_live_gymnasium_robotics_exact_digest_capability)
+    source = inspect.getsource(
+        live.test_live_gymnasium_robotics_exact_digest_capability
+    )
     cleanup = source.index("_cleanup_gymnasium_run_after_success(")
     stdout_decode = source.index("stdout_path.read_text(")
     stderr_decode = source.index("stderr_path.read_text(")

@@ -671,6 +671,12 @@ def _assert_gymnasium_runtime(
     assert "RTX PRO 6000" in gpu["name"] and "Blackwell" in gpu["name"]
     assert gpu["architecture"] == "Blackwell"
     assert gpu["compute_capability"] == "12.0"
+    cache = runtime["cache_receipt"]
+    assert cache["status"] == "ready"
+    assert cache["source_commit"] == ("4d1ebecbc6436806cfbc0e42ebc36f594d05844e")
+    assert cache["mujoco_version"] == "3.12.0"
+    assert len(cache["manifest_sha256"]) == 64
+    assert len(cache["receipt_sha256"]) == 64
 
 
 def _assert_gymnasium_artifact_envelope(
@@ -1061,7 +1067,7 @@ def _gymnasium_pod_image_receipt(
             "--container",
             str(receipt["container_name"]),
             "--",
-            "/opt/venv/bin/python",
+            "/usr/bin/python3",
             "-c",
             writer,
             in_pod_path,
