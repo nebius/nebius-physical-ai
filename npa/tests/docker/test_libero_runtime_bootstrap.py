@@ -227,7 +227,11 @@ def _install_fake_materializers(
     monkeypatch.setattr(module, "_fetch_source", fetch_source)
     monkeypatch.setattr(module, "_install_runtime", install_runtime)
     monkeypatch.setattr(module, "_fetch_inputs", fetch_inputs)
-    monkeypatch.setattr(module, "_verify_governing_terms", lambda _manifest: "6" * 64)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda manifest: module._governing_terms_identity(manifest),
+    )
 
 
 def test_missing_decision_refuses_before_network_or_cache_mutation(
@@ -368,6 +372,23 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
         path.is_symlink() or path.stat().st_mode & 0o222 == 0
         for path in (final, *final.rglob("*"))
     )
+
+
+def test_verified_warm_cache_reuse_performs_no_network_fetch(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+
+    def reject_network(_manifest) -> str:
+        raise AssertionError("warm cache reuse must not resolve the network")
+
+    monkeypatch.setattr(module, "_verify_governing_terms", reject_network)
+
+    warm = module.ensure(args)
+
+    assert warm["warm_reuse"] is True
 
 
 @pytest.mark.parametrize(
