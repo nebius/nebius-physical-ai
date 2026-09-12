@@ -67,7 +67,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # workflow needs them. The final user stays non-root; the sudoers grant below is
 # scoped to that bootstrap. The CUDA devel base's Nsight EFA metrics helper is
 # unused by generation and contains a vulnerable Go TLS stdlib; remove the
-# executable instead of exempting the scanner finding.
+# executable instead of exempting the scanner finding. Reinstalling
+# linux-libc-dev from the refreshed Ubuntu index updates the stale copy inherited
+# from the CUDA devel base; inference/JIT compatibility keeps those headers in
+# place, so removing the package is not an equivalent fix.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -75,6 +78,7 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        linux-libc-dev \
         openssh-server \
         rsync \
         sudo \

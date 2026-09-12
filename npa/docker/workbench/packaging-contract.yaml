@@ -336,7 +336,8 @@ images:
       the immutable 1.2.2-cu130, r2, and unpublished r3/r4 images remain rollback
       provenance. The r6 image removes imageio-ffmpeg's redundant wheel-bundled
       executable, uses the attributed distro FFmpeg instead, removes the unused
-      vulnerable Nsight EFA metrics helper inherited from the CUDA base, and keeps a
+      vulnerable Nsight EFA metrics helper inherited from the CUDA base, refreshes
+      the inherited linux-libc-dev package to the current security build, and keeps a
       no-argv SkyPilot worker pod alive until bootstrap execs its setup, and
       publishes auditable source-motion-preserving PAIDF composites beside the
       unmodified Cosmos outputs. Bakes

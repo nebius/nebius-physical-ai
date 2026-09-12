@@ -41,7 +41,7 @@ Two compatibility rules govern every cell:
 | Image | Tag measured | Torch / CUDA | Measured SASS set | Covers `sm_100`? |
 | --- | --- | --- | --- | --- |
 | `npa-base` | `cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
-| `npa-lerobot` | `…-0.5.1-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
+| `npa-lerobot` | default `…-0.5.1-…-20260803T034152Z`; optional `0.6.0-d6-extras-20260912` | 2.9.0+cu130 (default); 2.11.0+cu130 (0.6.0) | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` (`compute_120` PTX also measured for the default) | yes |
 | `npa-lerobot-policy` | `0.1.1` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
@@ -76,7 +76,7 @@ likewise predates its current coherent release.
 | --- | --- | --- | --- | --- | --- |
 | `npa-base` | supported | **verified** [22] | **verified** [23] | **verified** [20] | **verified** [21] |
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
-| `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39] | **verified** [40] |
+| `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39], optional 0.6.0 [68] | **verified** [40] |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |
@@ -214,6 +214,7 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 65 | 2026-08-26 | `npa-cosmos3-ray-serve:dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (`linux/amd64` manifest `sha256:6e42f553a0d1…`) | NVIDIA B200 (`sm_100`) | exact public digest loaded Cosmos3-Nano with guardrails, accepted one two-sample request through upstream `OmniModelDeployment` / `@ray.serve.batch`, returned structured outputs, downloaded and hash-checked generated media, and persisted request/response/provenance/media to S3 | PASS; capability `(10, 0)`, zero restarts, two structured outputs, two decoded images, five durable objects; artifact SHA-256 prefixes `3a91a993e19e…`, `8838f93a8831…` |
 | 66 | 2026-08-26 | same exact Cosmos3 Ray Serve digest | NVIDIA RTX PRO 6000 (`sm_120`) | independent guarded two-sample native Ray Serve batch with the same integrity and durable-provenance gates | PASS; capability `(12, 0)`, zero restarts, two structured outputs, two decoded images, five durable objects; artifact SHA-256 prefixes `357ca45a4121…`, `4345aac2743c…` |
 | 67 | 2026-09-06 | `npa-cosmos3-nano-video:dev-826b1730f64c1fae2fb6a4280c312f280b6648ad` (operator-private index `sha256:f78b7a0cc8d32b8a201eec8702510244d6996ae949bbc3373bde9daad7766e97`) | NVIDIA B200 (`sm_100`) | sixteen one-GPU BF16 TP=1 diffusion replicas; one complete 30-second 480p clip followed by eight concurrent complete clips | PASS; nine 720-frame videos, 36 fully decoded MP4s, eight distinct replicas and eight overlapping diffusion requests; [measured latency, memory and seam review](../../npa/deploy/cosmos3-nano-video/README.md#measured-b200-acceptance) |
+| 68 | 2026-09-12 | optional `npa-lerobot:0.6.0-d6-extras-20260912` (`sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643`) | NVIDIA B200 (`sm_100`) | exact accepted bytes through the checked-in Blackwell validator, then real construction and CUDA placement of a 272,708-parameter LeRobot 0.6.0 `DiffusionPolicy` | PASS; torch 2.11.0+cu130, native `sm_100` SASS/capability coverage, system FFmpeg, and 6/6 environment checks |
 
 ## Measured failures and negative controls
 
@@ -238,6 +239,7 @@ Other dated measurements above remain tied to the tags they actually ran.
 
 | Image and accepted digest | Hardware | Recorded capability result | Source of evidence |
 | --- | --- | --- | --- |
+| optional `npa-lerobot:0.6.0-d6-extras-20260912`, `sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643` | one B200 | checked-in Blackwell validator plus real 272,708-parameter DiffusionPolicy construction on CUDA; 6/6 checks | `npa/docker/workbench/blackwell-dc-images.json` and `lerobot_version_manifest.json` |
 | `npa-cosmos3:1.2.2-cu130-r6`, `sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d` | one RTX PRO 6000 | 2026-09-01 guarded Cosmos3-Nano text-to-image generation; 50 UniPC steps, 960×960 JPEG, 180,732 bytes | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-groot:0.1.0`, `sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b` | one RTX PRO 6000 | 2026-09-01 GR00T-N1.7-3B eager inference on the DROID sample; 24 steps, 0.204 s/step, 3/3 checks | `npa/docker/workbench/blackwell-dc-images.json` |
 | `npa-ltx2:2.5-rtfetch-20260817`, `sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b` | one RTX PRO 6000 | text-to-video and independent H.264 decode; 1536×1024, 121 frames, 1,994,625 bytes | `npa/src/npa/deploy/ltx2_image_manifest.json` |

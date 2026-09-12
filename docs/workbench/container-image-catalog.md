@@ -51,11 +51,14 @@ quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts co
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
 
-LeRobot 0.6.0 remains selectable package support without an accepted public
-image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
-`404 MANIFEST_UNKNOWN` in the separate optional-variant check; use a validated
-operator image for that version. It is not a missing member of the current
-public release plan.
+LeRobot 0.6.0 is selectable package support with an accepted optional public
+image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
+digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
+compatibility alias for those same bytes. The rebuilt image passed the standard
+publication gates plus the checked-in Blackwell validator and real
+`DiffusionPolicy` construction on B200. This optional version does not replace
+0.5.1 as the current default or add a second `lerobot` row to the default public
+release plan.
 
 ## Pending NCore conversion image
 

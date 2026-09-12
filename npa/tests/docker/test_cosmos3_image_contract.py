@@ -119,6 +119,14 @@ def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
     assert "VideoContentSafetyFilter" in verifier
 
 
+def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:
+    instructions = _dockerfile_instructions()
+
+    assert "linux-libc-dev" in instructions
+    assert "plugins/efa_metrics/nic_sampler" in instructions
+    assert "-delete" in instructions
+
+
 def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
     instructions = _dockerfile_instructions()
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")

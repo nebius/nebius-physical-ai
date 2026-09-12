@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -55,6 +57,36 @@ def test_060_requests_the_extras_its_policies_gate_on() -> None:
     spec = lerobot_pip_spec("0.6.0")
     assert "diffusion" in spec, "--policy.type=diffusion needs lerobot[diffusion]"
     assert "smolvla" in spec, "--policy.type=smolvla needs lerobot[smolvla]"
+
+
+def test_every_supported_version_resolves_to_immutable_image_evidence() -> None:
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (root / "npa/src/npa/deploy/lerobot_version_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    for version in manifest["supported_versions"]:
+        entry = manifest["versions"][version]
+        assert entry["image_tag"] != version
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["image_digest"])
+
+
+def test_060_resolves_to_the_validated_d6_image() -> None:
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (root / "npa/src/npa/deploy/lerobot_version_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    entry = manifest["versions"]["0.6.0"]
+
+    assert entry["image_tag"] == "0.6.0-d6-extras-20260912"
+    assert entry["image_digest"] == (
+        "sha256:8d513f8558253fc484808a1e53a63a5"
+        "da5a0c280ff973c4e590dd3e04b228643"
+    )
 
 
 def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
