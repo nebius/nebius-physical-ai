@@ -27,6 +27,7 @@ from typing import Any
 SCHEMA = "npa.libero.runtime-manifest.v1"
 DECISION_SCHEMA = "npa.libero.runtime-use-decision.v1"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
+INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
     "c8e621ddf7a2db6ed67f92f8f8c23e3fb3ccd1f48d0736248f56e063af435a1d"
 )
@@ -355,6 +356,7 @@ def _run(command: list[str], *, cwd: Path | None = None) -> None:
         cwd=cwd,
         check=True,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        stdout=sys.stderr,
     )
 
 
@@ -493,11 +495,76 @@ def _validate_task_inputs(root: Path, manifest: dict[str, Any]) -> None:
             )
 
 
+def _inventory_entries(root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    excluded = {".complete.json", ".content-inventory.json"}
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if relative in excluded:
+            continue
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            entries.append(
+                {"path": relative, "type": "symlink", "target": os.readlink(path)}
+            )
+        elif stat.S_ISDIR(info.st_mode):
+            entries.append({"path": relative, "type": "directory"})
+        elif stat.S_ISREG(info.st_mode):
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "file",
+                    "size_bytes": info.st_size,
+                    "sha256": _sha256(path),
+                }
+            )
+        else:
+            raise BootstrapRefusal(
+                f"runtime cache contains unsupported filesystem entry: {relative}"
+            )
+    return entries
+
+
+def _write_content_inventory(root: Path) -> tuple[str, int]:
+    entries = _inventory_entries(root)
+    path = root / ".content-inventory.json"
+    path.write_text(
+        json.dumps(
+            {"schema": INVENTORY_SCHEMA, "entries": entries}, sort_keys=True
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(path, 0o600)
+    return _sha256(path), len(entries)
+
+
+def _seal_cache_tree(root: Path) -> None:
+    paths = sorted(
+        (root, *root.rglob("*")),
+        key=lambda item: len(item.relative_to(root).parts),
+        reverse=True,
+    )
+    for path in paths:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            continue
+        os.chmod(path, stat.S_IMODE(info.st_mode) & ~0o222)
+
+
+def _validate_read_only_tree(root: Path) -> None:
+    for path in (root, *root.rglob("*")):
+        info = path.lstat()
+        if not stat.S_ISLNK(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o222:
+            raise BootstrapRefusal("existing runtime cache is writable")
+
+
 def _complete_record(
     root: Path, manifest: dict[str, Any], manifest_sha256: str, decision_sha256: str
 ) -> dict[str, Any]:
     source = manifest["source"]
     demonstration = manifest["demonstration"]
+    inventory_sha256, inventory_entry_count = _write_content_inventory(root)
     record = {
         "schema": COMPLETE_SCHEMA,
         "solution": "libero",
@@ -515,6 +582,8 @@ def _complete_record(
         "render_assets_present": False,
         "git_objects_present": False,
         "cache_uploaded": False,
+        "content_inventory_sha256": inventory_sha256,
+        "content_inventory_entry_count": inventory_entry_count,
     }
     complete = root / ".complete.json"
     complete.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
@@ -528,12 +597,33 @@ def _validate_complete(
     manifest_sha256: str,
     decision_sha256: str,
 ) -> dict[str, Any]:
+    _validate_read_only_tree(root)
     record = _load_json(root / ".complete.json")
     expected = _complete_record_values(manifest, manifest_sha256, decision_sha256)
-    if record != expected:
+    dynamic_keys = {"content_inventory_sha256", "content_inventory_entry_count"}
+    if set(record) != set(expected) | dynamic_keys or any(
+        record.get(key) != value for key, value in expected.items()
+    ):
         raise BootstrapRefusal(
             "existing runtime cache completion record does not match"
         )
+    inventory_path = root / ".content-inventory.json"
+    if (
+        not inventory_path.is_file()
+        or inventory_path.is_symlink()
+        or not _is_hex(record["content_inventory_sha256"], 64)
+        or _sha256(inventory_path) != record["content_inventory_sha256"]
+    ):
+        raise BootstrapRefusal("existing runtime cache inventory is invalid")
+    inventory = _load_json(inventory_path)
+    entries = inventory.get("entries")
+    if (
+        inventory.get("schema") != INVENTORY_SCHEMA
+        or not isinstance(entries, list)
+        or record["content_inventory_entry_count"] != len(entries)
+        or entries != _inventory_entries(root)
+    ):
+        raise BootstrapRefusal("existing runtime cache content differs from inventory")
     if (root / "source" / "libero" / "libero" / "assets").exists() or (
         root / "source" / ".git"
     ).exists():
@@ -624,6 +714,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 record = _complete_record(
                     partial, manifest, manifest_sha256, decision_sha256
                 )
+                _seal_cache_tree(partial)
                 partial.replace(final)
             except Exception:
                 shutil.rmtree(partial, ignore_errors=True)
