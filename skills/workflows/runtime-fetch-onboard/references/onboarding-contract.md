@@ -25,14 +25,15 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Runtime cache | `<provider/artifact/revision/format key>` | `<inherits artifact terms>` | `runtime only` | `<empty-image/reuse proof>` |
 | Outputs | `<artifact types>` | `<applicable terms>` | `external output` | `<fail-closed downstream gate, or note only when no automated consumer exists>` |
 
-## Runtime delivery
+## Runtime or operator-build delivery
 
 | Field | Required value |
 | --- | --- |
 | Upstream endpoint/provider | `<provider, no signed URL>` |
 | Immutable revision/digest | `<full value>` |
 | Expected files/checksums | `<manifest path>` |
-| Authorization source | `<runtime secret name or anonymous>` |
+| Authorization source | `<runtime secret name, operator-owned build-time credential source, or anonymous>` |
+| Credential phase | `runtime`, `build-only`, or `none` |
 | Acceptance mechanism | `<vendor entitlement, exact product mechanism, or none>` |
 | Cache tier | `node-local ephemeral` or `shared durable PVC/object storage` |
 | Cache owner/access policy | `<operator/tenant isolation and authorized consumers; default ephemeral if unknown>` |
@@ -50,7 +51,7 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Empty image/cache and byte-level payload scan | `<scanner and image digest>` | `<pass/fail>` |
 | SBOM, vulnerability, license, and secret scans | `<artifacts>` | `<pass/fail>` |
 | Private staging digest before public publication | `<registry digest>` | `<pass/fail>` |
-| Exact runtime fetch and checksum verification | `<non-secret manifest>` | `<pass/fail>` |
+| Exact delivery and checksum verification | `<non-secret runtime-fetch manifest or trusted-build input and private-image receipt>` | `<pass/fail>` |
 | Real capability on target hardware | `<run evidence>` | `<pass/fail>` |
 | Restart/cache reuse and concurrent-population safety | `<test evidence>` | `<pass/fail>` |
 | Workflow validate/plan and declared artifacts | `<commands>` | `<pass/fail>` |

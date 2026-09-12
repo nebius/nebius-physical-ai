@@ -64,7 +64,9 @@ def test_skill_keeps_restricted_bytes_and_secrets_out_of_images() -> None:
         "a token normally proves access only",
         "demonstrably records acceptance",
         "do not require a credential for a genuinely public, anonymous artifact",
+        "genuinely anonymous artifacts need no secret reference",
         "do not invent a generic `accept_terms=yes` variable",
+        "do not add an npa-side eula or terms-acceptance boolean",
         "operator-owned, access-restricted cache",
         "default to node-local ephemeral caching",
         "mount a completed durable cache read-only",
@@ -118,11 +120,26 @@ def test_copyable_contract_covers_all_artifact_boundaries_and_results() -> None:
         "applicable refusal before network",
         "not applicable only for anonymous access with no documented acceptance gate",
         "private staging digest before public publication",
-        "exact runtime fetch and checksum verification",
         "accepted:",
         "deferred:",
         "rejected:",
         "human/vendor decision required:",
+        "operator-owned build-time credential source",
+        "credential phase",
+        "exact delivery and checksum verification",
+    ):
+        assert phrase in text, phrase
+
+
+def test_skill_separates_runtime_fetch_from_operator_build_credentials() -> None:
+    text = _normalized(SKILL)
+    for phrase in (
+        "for either runtime-fetch shape",
+        "for the build-your-own shape",
+        "builds directly into an operator-controlled private registry",
+        "do not claim first-run fetch",
+        "trusted operator build's secret mechanism",
+        "build-only credentials never appear in the workflow",
     ):
         assert phrase in text, phrase
 

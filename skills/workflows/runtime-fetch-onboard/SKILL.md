@@ -51,19 +51,31 @@ discarding unrelated capabilities that can be packaged and proven safely.
    separately, with official terms links and exact immutable identities.
 2. Select one of three shapes: weights/data runtime fetch, whole-source/SDK
    runtime fetch, or build-your-own into an operator-controlled registry.
-3. Build from a digest-pinned redistributable base. Bake only the downloader,
-   launcher, verified open dependencies, notices, and failure checks. Run as a
-   non-root user and leave artifact/cache directories empty.
-4. Fetch from the upstream provider on first run. Pin the repository revision
-   and the expected file set or digest; download to a unique temporary path,
-   verify it, then atomically publish a ready marker into the selected cache.
-5. Pass tokens and secret acceptance material only through NPA runtime secret
-   plumbing. Follow the documented product policy for non-secret acceptance
-   controls: for example, the Isaac default and explicit opt-out may appear in
-   profiles or YAML where the canonical Isaac policy requires it. Never put
-   credentials, secret acceptance material, signed URLs, restricted bytes, or
-   populated caches in Docker arguments, layers, image config, YAML, source
-   metadata, logs, output manifests, or PR text.
+3. For either runtime-fetch shape, build from a digest-pinned redistributable
+   base. Bake only the downloader, launcher, verified open dependencies,
+   notices, and failure checks. Run as a non-root user and leave artifact/cache
+   directories empty. For the build-your-own shape, instead provide a
+   digest-pinned recipe: the operator obtains the restricted base or build
+   input under its own authorization and builds directly into an
+   operator-controlled private registry. Never publish that derived image
+   unless its redistribution rights are independently verified.
+4. For either runtime-fetch shape, fetch from the upstream provider on first
+   run. Pin the repository revision and the expected file set or digest;
+   download to a unique temporary path, verify it, then atomically publish a
+   ready marker into the selected cache. For build-your-own, verify the exact
+   restricted input and resulting private image during the trusted build; do
+   not claim first-run fetch or copy build credentials into the image.
+5. When the artifact's exact access or product-acceptance policy requires a
+   token or secret acceptance material at runtime, pass it only through NPA
+   runtime secret plumbing. When build-your-own requires credentials, pass
+   them only through the trusted operator build's secret mechanism and ensure
+   they are absent from the resulting image. Genuinely anonymous artifacts
+   need no secret reference. Follow the documented product policy for
+   non-secret acceptance controls: for example, the Isaac default and explicit
+   opt-out may appear in profiles or YAML where the canonical Isaac policy
+   requires it. Never put credentials, secret acceptance material, signed
+   URLs, restricted bytes, or populated caches in Docker arguments, layers,
+   image config, YAML, source metadata, logs, output manifests, or PR text.
 6. Prefer upstream-verifiable entitlement such as a gated-repository token or
    vendor license key. A token normally proves access only; treat it as terms
    acceptance only when the provider's gate demonstrably records acceptance of
@@ -71,7 +83,9 @@ discarding unrelated capabilities that can be packaged and proven safely.
    public, anonymous artifact; still pin and verify its immutable identity. Do
    not invent a generic `ACCEPT_TERMS=YES` variable. Where repository product
    policy requires explicit operator acceptance, fail before network access
-   until that exact scoped mechanism is satisfied.
+   until that exact scoped mechanism is satisfied. For gated Hugging Face
+   artifacts, the operator's token and the upstream repository permission are
+   the access gate; do not add an NPA-side EULA or terms-acceptance boolean.
 7. Use the repository model-cache surface for durable reuse. Key cache identity
    by provider, artifact, revision/digest, and format. Gated or
    non-redistributable bytes require an operator-owned, access-restricted cache
@@ -130,8 +144,10 @@ downstream consumer exists.
 - Runtime downloader/bootstrap with immutable identity and safe caching.
 - Negative refusal tests, built-image absence scan, and positive real-workload
   evidence.
-- NPA workflow YAML with runtime secret references, declared input/output
-  artifacts, compatible GPU resources, and no embedded restricted bytes.
+- NPA workflow YAML with runtime secret references only when the artifact's
+  exact access or product-acceptance policy requires them, declared
+  input/output artifacts, compatible GPU resources, and no embedded restricted
+  bytes. Build-only credentials never appear in the workflow.
 - Operator guide listing official terms/access steps, cache behavior, cleanup,
   accepted capabilities, and accurately deferred claims.
 
