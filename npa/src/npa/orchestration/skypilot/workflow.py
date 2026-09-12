@@ -955,6 +955,10 @@ def submit_workflow(
         generated_config_path = prepared.config_path
         sky_executable = prepared.sky_executable
         owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
+        from npa.execution_preflight import (
+            LIBERO_PROFILE_NAME,
+            LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+        )
 
         cmd = [
             sky_executable,
@@ -971,7 +975,17 @@ def submit_workflow(
         ]
         if infra:
             cmd[-1:-1] = ["--infra", infra]
-        for secret_name in secret_envs or ():
+        selected_secret_envs = list(secret_envs or ())
+        if any(
+            document.get("name") == LIBERO_PROFILE_NAME
+            and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
+            for document in docs
+        ):
+            # This is mandatory even for direct SDK callers.  The preflight has
+            # removed these values from prepared YAML, so omitting ``--secret``
+            # must never silently launch a credentialless or inline-secret task.
+            selected_secret_envs.extend(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+        for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)

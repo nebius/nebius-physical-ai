@@ -646,8 +646,9 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
 ):
     from npa.execution_preflight import preflight_skypilot_submission
 
-    _, report, _ = preflight_skypilot_submission(
-        [libero_task("npa-byof-libero-payload")],
+    document = libero_task("npa-byof-libero-payload")
+    _, report, injected = preflight_skypilot_submission(
+        [document],
         project="unit",
         infra="k8s/unit-context",
         global_config=libero_controller_config(),
@@ -655,6 +656,31 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
 
     assert report["execution_readiness"] == "pass"
     assert provider.s3.calls
+    assert injected["AWS_ACCESS_KEY_ID"] == "yaml-access"
+    assert injected["AWS_SECRET_ACCESS_KEY"] == "yaml-secret"
+    assert "AWS_ACCESS_KEY_ID" not in document["envs"]
+    assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
+
+
+def test_libero_preflight_rejects_inline_pod_storage_credentials(
+    provider, configured
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"] = [
+        {
+            "name": "payload",
+            "env": [{"name": "AWS_ACCESS_KEY_ID", "value": "yaml-access"}],
+        }
+    ]
+    with pytest.raises(ExecutionPreflightError, match="inline storage credentials"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
 
 
 @pytest.mark.parametrize("missing_signal", ["profile", "solution"])

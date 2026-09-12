@@ -674,6 +674,13 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     assert binding["rbac_spec_sha256"] == acceptance["infrastructure"][
         "rbac_spec_sha256"
     ]
+    for key in (
+        "controller_service_account_uid_sha256",
+        "controller_role_uid_sha256",
+        "controller_role_binding_uid_sha256",
+        "controller_rbac_spec_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", binding[key])
 
     s3 = s3_client_for_project(e2e_project, allow_host_creds=True)
     prefix = f"oss-solutions/libero/{run_id}/"

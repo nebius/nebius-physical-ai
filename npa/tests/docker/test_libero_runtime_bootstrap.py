@@ -258,11 +258,15 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     module = _load_module()
     for name in module.STORAGE_SECRET_ENV_NAMES:
         monkeypatch.setenv(name, f"secret-{name}")
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_B64", "decision-secret")
+    monkeypatch.setenv("HF_TOKEN", "provider-secret")
     monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-runtime-environment")
 
     environment = module._runtime_execution_environment(Path("/proc/self/fd/7"))
 
     assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
+    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
+    assert "HF_TOKEN" not in environment
     assert environment["NPA_BYOF_RUN_ID"] == "libero-runtime-environment"
     assert environment["LIBERO_RUNTIME_ROOT"] == "/proc/self/fd/7"
 
@@ -1152,7 +1156,12 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
             "/opt/npa/libero/runtime-bootstrap.py",
             "execute",
         ]
-        assert "env" not in kwargs
+        environment = kwargs["env"]
+        assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
+        assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
+        assert "HF_TOKEN" not in environment
+        assert environment["NPA_BYOF_RUN_ID"] == "libero-lock-test-0001"
+        assert environment["HOME"] == "/nonexistent"
         return Completed()
 
     lock_path = Path(args.cache_root) / ".bootstrap.lock"

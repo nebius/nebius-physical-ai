@@ -330,7 +330,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert 'git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD' in text
     assert '"npa/src/npa/deploy/libero_image_manifest.json"' in text
     assert "libero_publication_lineage_values" in text
-    assert 'crane tag "$LIBERO_ACCEPTED_CANDIDATE_IMAGE"' in text
+    assert 'crane tag "$exact" "dev-$DEVELOPMENT_SHA"' in text
     assert 'test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"' in text
     assert "Revalidate accepted LIBERO repository and OCI lineage" in text
     assert "LIBERO_ACCEPTED_ATTESTATION_LAYERS" in text
@@ -362,4 +362,17 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert final_inventory < visibility_change
     assert "libero-public-package-versions.json" in text
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
-    assert "Deleting the whole still-private package removes" in text
+    assert "Retained the unchanged private accepted LIBERO graph" in text
+    assert "Deleted the complete exact failed public LIBERO OCI graph" in text
+    assert 'gh api --method DELETE "$package_api"' in text
+    assert "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" in text
+    for immutable_action in (
+        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+        "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+        "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+        "imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e",
+        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+        "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a",
+        "actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34",
+    ):
+        assert immutable_action in text

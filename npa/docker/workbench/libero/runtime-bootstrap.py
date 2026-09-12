@@ -143,6 +143,48 @@ RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES = frozenset(
         "TZ",
     }
 )
+RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
+    {
+        "BYOF_CAPABILITY_NAME",
+        "BYOF_IMAGE",
+        "BYOF_REPO_ROOT",
+        "BYOF_SMOKE_ARTIFACT_NAME",
+        "BYOF_SMOKE_COMMAND",
+        "BYOF_SOLUTION_NAME",
+        "CUDA_VISIBLE_DEVICES",
+        "HOSTNAME",
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LD_LIBRARY_PATH",
+        "NPA_BYOF_RUN_ID",
+        "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID",
+        "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
+        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
+        "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256",
+        "NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256",
+        "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256",
+        "NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256",
+        "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256",
+        "NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256",
+        "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256",
+        "NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256",
+        "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256",
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        "NPA_SMOKE_OUTPUT_DIR",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "NVIDIA_VISIBLE_DEVICES",
+        "PATH",
+        "TZ",
+    }
+)
 OUTPUT_SIZE_LIMITS = {
     "libero-bc-rnn-smoke.pth": 256 * 1024 * 1024,
     "libero-smoke.json": 8 * 1024 * 1024,
@@ -1361,8 +1403,9 @@ def _runtime_execution_environment(stable_root: Path) -> dict[str, str]:
         **{
             name: value
             for name, value in os.environ.items()
-            if name not in STORAGE_SECRET_ENV_NAMES
+            if name in RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES
         },
+        "HOME": "/nonexistent",
         "LIBERO_RUNTIME_ROOT": str(stable_root),
     }
 
@@ -1818,6 +1861,7 @@ def execute_and_upload() -> int:
                             "execute",
                         ],
                         check=False,
+                        env=_runtime_execution_environment(final),
                         stdout=stdout,
                         stderr=stderr,
                     )

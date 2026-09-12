@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -76,6 +76,8 @@ LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
+LIBERO_CONTROLLER_ROLE = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role"
+LIBERO_CONTROLLER_ROLE_BINDING = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role-binding"
 LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
 LIBERO_RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -407,6 +409,8 @@ class LiberoAccessState:
     service_account_uid: str
     role_uid: str
     role_binding_uid: str
+    execution_kubeconfig: Path | None = None
+    execution_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -474,6 +478,87 @@ def _libero_namespaced_inventory(
         )
     inventory["clusterrolebindings"] = []
     return inventory
+
+
+def _libero_controller_rbac_evidence(
+    kubeconfig: Path, context: str, namespace: str
+) -> dict[str, str]:
+    """Verify SkyPilot's generated engine identity after managed launch.
+
+    SkyPilot 0.12.2 needs a wildcard Role to manage workload objects, but that
+    authority must remain confined to the exact run namespace.  The fetched
+    payload never receives this account: it keeps the independent pods/get-only
+    identity verified above.
+    """
+
+    account = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "serviceaccount",
+        SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    )
+    role = _libero_resource(
+        kubeconfig, context, namespace, "role", LIBERO_CONTROLLER_ROLE
+    )
+    binding = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "rolebinding",
+        LIBERO_CONTROLLER_ROLE_BINDING,
+    )
+    rules = [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}]
+    subjects = [{"kind": "ServiceAccount", "name": SKYPILOT_ENGINE_SERVICE_ACCOUNT}]
+    role_ref = {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": LIBERO_CONTROLLER_ROLE,
+    }
+    if role.get("rules") != rules:
+        raise RuntimeError(
+            "LIBERO SkyPilot controller Role differs from the reviewed namespace-only contract"
+        )
+    if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
+        raise RuntimeError(
+            "LIBERO SkyPilot controller RoleBinding differs from the reviewed contract"
+        )
+    cluster_bindings = _kubectl_json(
+        ["--context", context, "get", "clusterrolebindings"],
+        purpose="LIBERO controller ClusterRoleBinding inventory",
+        kubeconfig=kubeconfig,
+    )
+    items = cluster_bindings.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("LIBERO controller ClusterRoleBinding inventory is invalid")
+    if any(
+        isinstance(item, dict)
+        and any(
+            isinstance(subject, dict)
+            and subject.get("kind") == "ServiceAccount"
+            and subject.get("name") == SKYPILOT_ENGINE_SERVICE_ACCOUNT
+            and subject.get("namespace") == namespace
+            for subject in item.get("subjects") or []
+        )
+        for item in items
+    ):
+        raise RuntimeError(
+            "LIBERO SkyPilot controller may not receive a ClusterRoleBinding"
+        )
+    return {
+        "controller_service_account_uid_sha256": hashlib.sha256(
+            account["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "controller_role_uid_sha256": hashlib.sha256(
+            role["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "controller_role_binding_uid_sha256": hashlib.sha256(
+            binding["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "controller_rbac_spec_sha256": _sha256_json(
+            {"rules": rules, "subjects": subjects, "roleRef": role_ref}
+        ),
+    }
 
 
 def _libero_rbac_evidence(
@@ -668,6 +753,11 @@ def _bind_libero_runtime_contract(
         )
     evidence, access_state = _libero_rbac_evidence(
         payload_kubeconfig, payload_context, namespace, run_id
+    )
+    access_state = replace(
+        access_state,
+        execution_kubeconfig=execution_kubeconfig,
+        execution_context=execution_context,
     )
     evidence["cluster_identity_sha256"] = payload_cluster_sha256
     evidence["allowed_node_sha256"] = hashlib.sha256(allowed_node.encode()).hexdigest()
@@ -1668,6 +1758,21 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 )
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
+                if libero_binding is not None:
+                    execution_kubeconfig = (
+                        libero_binding.access_state.execution_kubeconfig
+                    )
+                    if execution_kubeconfig is None:
+                        raise RuntimeError(
+                            "LIBERO execution kubeconfig is unavailable for controller RBAC verification"
+                        )
+                    libero_binding.evidence.update(
+                        _libero_controller_rbac_evidence(
+                            execution_kubeconfig,
+                            libero_binding.access_state.execution_context,
+                            libero_binding.access_state.namespace,
+                        )
+                    )
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
                     not is_libero

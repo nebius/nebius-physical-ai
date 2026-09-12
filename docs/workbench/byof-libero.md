@@ -15,6 +15,13 @@ explicit accepted `npa-libero@sha256:…` candidate, a manager-issued runtime-us
 decision, and independent build-lineage evidence. There is no published LIBERO
 tag or digest and the public image table remains unchanged.
 
+An accepted record is not repository-self-attested. Its canonical JSON bytes
+must carry an Ed25519 signature from the manager-held private key, verified
+against `NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64` supplied by repository
+access control for publication or by the owner-only operator environment for
+qualification. The private signing key is never stored in this repository,
+workflow inputs, task YAML, or runtime cache.
+
 ## Six independent boundaries
 
 | Boundary | Phase A contract |
@@ -137,8 +144,9 @@ always passes `--no-direct-launch` for LIBERO. `run_byof_container_verify.py`
 submits through the managed scheduler, requires its nonempty scheduler job ID,
 and polls that ID—not the human run name. Absence remains a failure.
 
-The decision and output-storage authorization bytes travel only through the
-scheduler's redacted secret channel, never ordinary rendered workflow state.
+The decision, complete short-lived storage credential triplet, and output-storage
+authorization bytes travel only through the scheduler's redacted secret channel,
+never ordinary rendered workflow state or persisted prepared YAML.
 The storage authorization is hash-bound by the checked-in infrastructure bundle,
 binds the exact run prefix and policy receipt, and requires short-lived session
 credentials. Storage secrets are removed from the fetched-code subprocess; only
@@ -154,8 +162,11 @@ SkyPilot controller remains on its engine-required account. Before a future run,
 the exact run-labelled namespace must be empty of Pods and Secrets and contain
 only `default` plus the reviewed payload ServiceAccount, core `pods/get`-only
 Role, and exact RoleBinding. This makes the sole readable Pod the subsequently
-created run Pod. Every namespace/object UID, inventory, and permission is bound
-to the checked-in acceptance record. The payload reads its own Pod and bound JWT and records
+created run Pod. After managed launch, the host also verifies SkyPilot's generated
+engine ServiceAccount, namespace-only Role, and exact RoleBinding and rejects any
+ClusterRoleBinding for that identity before accepting success. Every
+namespace/object UID, inventory, and payload permission is bound to the checked-in
+acceptance record. The payload reads its own Pod and bound JWT and records
 the actual service account, Pod UID, node, and `containerStatuses.imageID`.
 
 The execution and payload-proof kubeconfig contexts remain distinct but must

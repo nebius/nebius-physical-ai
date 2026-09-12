@@ -68,6 +68,10 @@ concurrency:
 jobs:
   resolve:
     runs-on: ubuntu-latest
+    env:
+      # Public verification material comes from repository access control; the
+      # manager-held signing key never enters this workflow or repository.
+      NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
     outputs:
       target: ${{ steps.plan.outputs.target }}
       development_sha: ${{ steps.plan.outputs.development_sha }}
@@ -77,10 +81,22 @@ jobs:
       cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: ${{ inputs.tool != 'libero' && !contains(inputs.build_development_tools, 'libero') && !contains(inputs.cleanup_development_tools, 'libero') }}
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         with:
           fetch-depth: 0
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: ${{ inputs.tool != 'libero' && !contains(inputs.build_development_tools, 'libero') && !contains(inputs.cleanup_development_tools, 'libero') }}
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         with:
           python-version: "3.11"
 
@@ -317,6 +333,7 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
       LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ matrix.libero_private_image_inventory_sha256 }}
       LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}
       LIBERO_ACCEPTED_CANDIDATE_IMAGE: ${{ matrix.libero_accepted_candidate_image }}
@@ -335,13 +352,25 @@ jobs:
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: matrix.tool != 'libero'
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: matrix.tool == 'libero'
         with:
           fetch-depth: 0
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: matrix.tool != 'libero'
         with:
           # Both complete-byte paths require the verified CPython 3.12 wheel.
           python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: matrix.tool == 'libero'
+        with:
+          python-version: "3.12"
 
       - name: Install NPA validation environment
         run: |
@@ -502,8 +531,16 @@ jobs:
           fi
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: matrix.tool != 'libero'
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: matrix.tool == 'libero'
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool != 'libero'
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool == 'libero'
 
       - name: Fetch immutable LIBERO base provenance metadata
         if: matrix.tool == 'libero'
@@ -529,6 +566,15 @@ jobs:
       # intentionally invalid placeholder credential; no registry write occurs
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
+        if: matrix.tool != 'libero'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate immutable LIBERO base pulls
+        if: matrix.tool == 'libero'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -860,6 +906,14 @@ jobs:
           # Original logs and raw receipts stay on the runner and are not public artifacts.
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool != 'libero'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -896,11 +950,13 @@ jobs:
           set -euo pipefail
           if [ "$TOOL" = libero ]; then
             # Publish the already accepted OCI index. Its embedded, byte-bound
-            # provenance/SBOM graph remains identical to manager acceptance.
-            crane tag "$LIBERO_ACCEPTED_CANDIDATE_IMAGE" "dev-$DEVELOPMENT_SHA"
-            digest="$(crane digest "$IMAGE")"
+            # provenance/SBOM graph remains identical to manager acceptance. Do
+            # not add the public tag yet: every fallible byte and graph gate runs
+            # against the immutable digest first, leaving a failed private gate
+            # with the accepted untagged graph completely unchanged.
+            digest="$(crane digest "$LIBERO_ACCEPTED_CANDIDATE_IMAGE")"
             test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"
-            test "$(crane digest --platform linux/amd64 "$IMAGE")" = \
+            test "$(crane digest --platform linux/amd64 "$LIBERO_ACCEPTED_CANDIDATE_IMAGE")" = \
               "$LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST"
           else
             docker push "$IMAGE"
@@ -918,8 +974,7 @@ jobs:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           # LIBERO preserves its separately accepted embedded OCI graph. Its
-          # workflow attestation is recorded by GitHub but is not another GHCR
-          # package version or publication authority.
+          # immutable-action workflow attestation is not another GHCR version.
           push-to-registry: ${{ matrix.tool != 'libero' }}
 
       - name: Attest exact pushed digest SBOM
@@ -995,7 +1050,11 @@ jobs:
           trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
-          test "$(crane digest "$IMAGE")" = "$DIGEST"
+          if [ "$TOOL" = libero ]; then
+            test "$(crane digest "$exact")" = "$DIGEST"
+          else
+            test "$(crane digest "$IMAGE")" = "$DIGEST"
+          fi
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
           # Bind the remote digest back to the exact local image whose complete
           # filesystem tar was scanned before publication. Pulling immediately after
@@ -1117,20 +1176,15 @@ jobs:
             versions="$RUNNER_TEMP/libero-final-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
             jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
-              --arg tag "dev-$DEVELOPMENT_SHA" \
               --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
               ([.[].name] | sort) == $expected and
               ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[];
-                if .name == $root
-                then (.metadata.container.tags // []) == [$tag]
-                else (.metadata.container.tags // []) == []
-                end)
+              all(.[]; (.metadata.container.tags // []) == [])
             ' "$versions" >/dev/null
 
             root_manifest="$RUNNER_TEMP/libero-final-index.json"
-            crane manifest "$IMAGE" > "$root_manifest"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            crane manifest "$exact" > "$root_manifest"
+            test "$(crane digest "$exact")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
             jq -e --arg runtime "$LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST" \
               --arg attestation "$LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST" '
               .mediaType == "application/vnd.oci.image.index.v1+json" and
@@ -1180,15 +1234,19 @@ jobs:
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$post_versions"
             test "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$versions")" = \
               "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$post_versions")"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            test "$(crane digest "$exact")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
           fi
           anonymous_config="$(mktemp -d)"
+          anonymous_reference="$IMAGE"
+          if [ "$TOOL" = libero ]; then
+            anonymous_reference="$exact"
+          fi
           anonymous_attempt=1
           while true; do
             anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
-            if anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE" \
+            if anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$anonymous_reference" \
               2>"$anonymous_log")" && \
-              DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+              DOCKER_CONFIG="$anonymous_config" crane manifest "$anonymous_reference" \
                 >/dev/null 2>>"$anonymous_log"; then
               break
             fi
@@ -1201,6 +1259,28 @@ jobs:
             sleep 5
           done
           test "$anonymous_digest" = "$DIGEST"
+          if [ "$TOOL" = libero ]; then
+            # Tagging is the final registry mutation. If it partially succeeds,
+            # the failure cleanup deletes the whole previously verified public
+            # package graph, including every untagged platform/referrer version.
+            crane tag "$exact" "dev-$DEVELOPMENT_SHA"
+            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            tagged_versions="$RUNNER_TEMP/libero-tagged-package-versions.json"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$tagged_versions"
+            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+              --arg tag "dev-$DEVELOPMENT_SHA" \
+              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              ([.[].name] | sort) == $expected and
+              all(.[];
+                if .name == $root
+                then (.metadata.container.tags // []) == [$tag]
+                else (.metadata.container.tags // []) == []
+                end)
+            ' "$tagged_versions" >/dev/null
+            test "$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE")" = \
+              "$LIBERO_ACCEPTED_OCI_DIGEST"
+            DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
+          fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
@@ -1215,8 +1295,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool != 'libero'
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool == 'libero'
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool != 'libero'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1276,8 +1368,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool != 'libero'
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: matrix.tool == 'libero'
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool != 'libero'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1288,6 +1392,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
+          TOOL: ${{ matrix.tool }}
+          LIBERO_ACCEPTED_OCI_DIGEST: ${{ matrix.libero_accepted_oci_digest }}
+          LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_accepted_package_version_digests }}
+          LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
           path="${IMAGE#ghcr.io/}"
@@ -1300,6 +1408,48 @@ jobs:
           versions="$(mktemp)"
           if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
             echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$TOOL" = libero ]; then
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+              "$LIBERO_PACKAGE_WRITER_REPOSITORY"
+            test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
+            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+              --arg tag "$tag" \
+              --arg visibility "$visibility" \
+              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              ([.[].name] | sort) == $expected and
+              ([.[] | select(.name == $root)] | length) == 1 and
+              all(.[];
+                if $visibility == "private"
+                then (.metadata.container.tags // []) == []
+                elif .name == $root
+                then ((.metadata.container.tags // []) == [] or (.metadata.container.tags // []) == [$tag])
+                else (.metadata.container.tags // []) == []
+                end)
+            ' "$versions" >/dev/null
+            if [ "$visibility" = private ]; then
+              echo "Retained the unchanged private accepted LIBERO graph; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            test "$visibility" = public || {
+              echo "::error::Unsupported failed LIBERO package visibility: $visibility"
+              exit 1
+            }
+            # Visibility is package-wide. Delete the complete, exact accepted
+            # graph so no untagged platform or attestation digest remains public.
+            gh api --method DELETE "$package_api"
+            response="$(mktemp)"
+            if gh api -i "$package_api" >"$response" 2>&1; then
+              echo "::error::Failed LIBERO package still exists after deletion"
+              exit 1
+            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+              echo "::error::Failed LIBERO package absence is unverified"
+              exit 1
+            fi
+            echo "Deleted the complete exact failed public LIBERO OCI graph." >> "$GITHUB_STEP_SUMMARY"
+            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
@@ -1356,10 +1506,22 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: inputs.tool != 'libero'
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: inputs.tool == 'libero'
         with:
           fetch-depth: 0
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: inputs.tool != 'libero'
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: inputs.tool == 'libero'
         with:
           python-version: "3.11"
 
@@ -1369,8 +1531,20 @@ jobs:
           npa/.venv/bin/pip install -e npa
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: inputs.tool != 'libero'
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        if: inputs.tool == 'libero'
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: inputs.tool != 'libero'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: inputs.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
