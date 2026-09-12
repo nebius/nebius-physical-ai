@@ -107,6 +107,25 @@ def check_diffusion_policy() -> CheckResult:
         return CheckResult("construct DiffusionPolicy", False, _format_exception(exc))
 
 
+def check_imageio_uses_system_ffmpeg() -> CheckResult:
+    """Prove video helpers use the distro FFmpeg, not a wheel-bundled binary."""
+
+    try:
+        import imageio_ffmpeg
+
+        executable = imageio_ffmpeg.get_ffmpeg_exe()
+        if executable != "/usr/bin/ffmpeg":
+            return CheckResult(
+                "imageio system FFmpeg",
+                False,
+                f"expected /usr/bin/ffmpeg; found: {executable}",
+            )
+        version = imageio_ffmpeg.get_ffmpeg_version()
+        return CheckResult("imageio system FFmpeg", True, f"version: {version}")
+    except Exception as exc:
+        return CheckResult("imageio system FFmpeg", False, _format_exception(exc))
+
+
 def _check_command_help(command: str) -> CheckResult:
     path = shutil.which(command)
     if path is None:
@@ -157,6 +176,7 @@ def main() -> int:
         check_import_lerobot,
         check_act_config,
         check_diffusion_policy,
+        check_imageio_uses_system_ffmpeg,
         check_lerobot_train_help,
         check_lerobot_eval_help,
     ]
