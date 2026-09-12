@@ -62,7 +62,8 @@ a new registry audit or acceptance of the quarantined images.
 
 Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
 It is deliberately absent from the mapped-tool count, supported versions,
-public build matrix, release table, and compatibility charts. Its Dockerfile
+public build matrix, and release table. It appears in the GPU compatibility
+matrix only as a quarantined pre-registration/no-image row. Its Dockerfile
 refuses before package network access until the exact neutral-bootstrap package
 and corresponding-source closure exists. Runtime fetching later changes
 delivery only, not use, derivative, output, or service rights. No image, scan,
