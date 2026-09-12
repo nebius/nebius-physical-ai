@@ -105,12 +105,15 @@ def _is_official_robotwin_repository(value: str) -> bool:
         candidate = text if "://" in text else f"//{text}"
         try:
             parsed = urlsplit(candidate)
-            port = parsed.port
+            # Parse the port only to reject malformed authorities.  Repository
+            # identity is the normalized GitHub host/path pair: an explicit
+            # scheme-default port (or any other port spelling accepted by a Git
+            # transport) must not turn the official repository into a generic
+            # BYOF request that skips this solution's authorization boundary.
+            parsed.port
         except ValueError:
             return False
         host = (parsed.hostname or "").lower().rstrip(".")
-        if port not in (None, 443):
-            return False
         path = parsed.path
     if host not in {"github.com", "www.github.com"}:
         return False
@@ -238,6 +241,7 @@ class RobotwinSubmitContext:
     layer: str = "outer"
     private_values: tuple[str, ...] = field(default=(), repr=False)
     private_environment: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    rendered_private_values: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
@@ -628,6 +632,52 @@ def _validate_destination(values: Mapping[str, str], raw: bytes) -> str:
     if re.fullmatch(r"robotwin-[A-Za-z0-9_.-]{1,80}", run_id) is None:
         raise _refusal("run-id-invalid", raw)
     return f"{values['output_root'].rstrip('/')}/{run_id}/npa_byof_summary.json"
+
+
+def validate_control_plane_source(
+    authorization: RobotwinAuthorization,
+    *,
+    source_uri: str,
+    source_origin: str,
+    local_fingerprint: str,
+    source_staging_requested: bool = False,
+) -> str:
+    """Require a separate, immutable, explicitly supplied NPA source prefix.
+
+    RoboTwin's manager context authorizes exactly one workload-output
+    destination.  It does not authorize source staging into that bucket, and a
+    normal submit must not create or persist a source-stage destination.  The
+    operator therefore pre-stages the current NPA tree through the existing
+    control-plane mechanism and passes its content-addressed URI only in the
+    submitting process environment.
+    """
+
+    if source_staging_requested:
+        raise _refusal("control-plane-source-staging-forbidden")
+    value = str(source_uri or "").strip()
+    if source_origin != "environment" or not value:
+        raise _refusal("control-plane-source-explicit-uri-required")
+    if re.fullmatch(r"[0-9a-f]{64}", local_fingerprint) is None:
+        raise _refusal("control-plane-source-fingerprint-invalid")
+    parsed = urlparse(value)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(part in {".", ".."} for part in path_parts)
+        or not path_parts
+        or path_parts[-1] != local_fingerprint
+    ):
+        raise _refusal("control-plane-source-not-immutable")
+    if parsed.netloc == authorization.bucket:
+        raise _refusal("control-plane-source-output-bucket-reuse")
+    if any(private and private in value for private in authorization.redactions):
+        raise _refusal("control-plane-source-private-coordinate")
+    return value
 
 
 def validate_context_bytes(
@@ -1312,10 +1362,20 @@ def validate_confidential_submit_bridge(
         if not _recognize_rendered_contract(documents):
             raise _refusal("submit-bridge-contract-mismatch", authorization.raw_context)
         transport = extra_env.get(TRANSPORT_CONTEXT_ENV)
+        task_environment = (
+            documents[1].get("envs")
+            if len(documents) == 2 and isinstance(documents[1], Mapping)
+            else None
+        )
         layer_valid = (
             TRANSPORT_CONTEXT_ENV in secret_envs
             and transport == context.transport_value
             and transport == encode_transport(authorization)
+            and len(context.rendered_private_values) == 1
+            and isinstance(task_environment, Mapping)
+            and task_environment.get("NPA_SRC_S3_URI")
+            == context.rendered_private_values[0]
+            and context.rendered_private_values[0] in context.private_values
         )
     elif context.layer == "inner":
         if not _recognize_inner_rendered_contract(documents):

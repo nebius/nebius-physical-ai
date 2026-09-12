@@ -860,6 +860,7 @@ def _strip_confidential_task_context(
     *,
     summary_uri: str = "",
     secret_placeholders: Mapping[str, str] | None = None,
+    allowed_rendered_values: Sequence[str] = (),
 ) -> None:
     """Remove preflight-only context injection before persisting task YAML."""
 
@@ -887,7 +888,20 @@ def _strip_confidential_task_context(
             if environment.get("NPA_EXECUTION_OUTPUTS") != expected:
                 raise ValueError("confidential output binding changed during preflight")
             environment.pop("NPA_EXECUTION_OUTPUTS")
+    allowed = tuple(value for value in allowed_rendered_values if value)
+    observed = [
+        environment.get("NPA_SRC_S3_URI")
+        for document in documents
+        if isinstance((environment := document.get("envs")), dict)
+        and environment.get("NPA_SRC_S3_URI") in allowed
+    ]
     rendered = yaml.safe_dump_all(documents, sort_keys=False)
+    if sorted(observed) != sorted(allowed) or any(
+        rendered.count(value) != 1 for value in allowed
+    ):
+        raise ValueError("confidential source binding changed during preflight")
+    for value in allowed:
+        rendered = rendered.replace(value, "<control-plane-source>")
     if any(private and private in rendered for private in redactions):
         raise ValueError("confidential Kubernetes value reached prepared task YAML")
 
@@ -1260,6 +1274,8 @@ def submit_workflow(
                 "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
                 "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
                 "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+                "NPA_SRC_S3_URI",
+                "NPA_E2E_NPA_SRC_S3_URI",
             ):
                 control_env.pop(name, None)
             control_env["KUBECONFIG"] = env["KUBECONFIG"]
@@ -1337,13 +1353,19 @@ def submit_workflow(
                     if robotwin_submit_context.layer == "inner"
                     else None
                 ),
+                allowed_rendered_values=robotwin_submit_context.rendered_private_values,
             )
         # Native preflight pins the exact project/region in this per-submit
         # configuration; persist the verified version before any controller.
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
         _chmod_owner_only(generated_config_path)
-        prepared_yaml.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+        prepared_yaml.write_text(
+            yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(prepared_yaml)
+        if robotwin_authorization is not None:
+            env.pop("NPA_SRC_S3_URI", None)
+            env.pop("NPA_E2E_NPA_SRC_S3_URI", None)
 
         cmd = [
             sky_executable,

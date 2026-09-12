@@ -1060,7 +1060,7 @@ def submit_cmd(
 
         try:
             prepared_identity = prepare_run(
-                project=project,
+                project="" if robotwin_submit_context is not None else project,
                 workflow_identity=workflow_identity,
                 resume_run=resume_run,
                 new_run_id=run_id,
@@ -1369,13 +1369,18 @@ def submit_cmd(
             _fail(f"cannot resolve the workflow's source requirement: {exc}")
             return
         bucket_for_source = str(
-            robotwin_submit_context.authorization.bucket
-            if robotwin_submit_context is not None
-            else s3_bucket or spec_config.get("bucket", "") or ""
+            s3_bucket or spec_config.get("bucket", "") or ""
         ).strip()
-        existing_source_uri, source_origin = _resolve_submit_src_s3_uri_with_origin(
-            project
-        )
+        if robotwin_submit_context is not None:
+            existing_source_uri = (
+                os.environ.get("NPA_SRC_S3_URI", "")
+                or os.environ.get("NPA_E2E_NPA_SRC_S3_URI", "")
+            ).strip()
+            source_origin = "environment" if existing_source_uri else "default"
+        else:
+            existing_source_uri, source_origin = _resolve_submit_src_s3_uri_with_origin(
+                project
+            )
         if (
             requires_npa_source
             and existing_source_uri
@@ -1386,12 +1391,6 @@ def submit_cmd(
                 "no source or run state was written."
             )
             return
-        if existing_source_uri:
-            # The renderer has a process/config resolver without a project
-            # parameter. Pin the explicitly selected project's URI for this
-            # invocation so a non-default project cannot inherit another
-            # project's source prefix.
-            os.environ["NPA_SRC_S3_URI"] = existing_source_uri
         local_source_fingerprint = ""
         if requires_npa_source or stage_src is True:
             try:
@@ -1400,6 +1399,48 @@ def submit_cmd(
                 if stage_src is not False and not existing_source_uri:
                     _fail(f"npa source staging is not feasible: {exc}")
                     return
+        if robotwin_submit_context is not None and requires_npa_source:
+            from npa.orchestration.npa_workflow.robotwin_preflight import (
+                validate_control_plane_source,
+            )
+
+            try:
+                existing_source_uri = validate_control_plane_source(
+                    robotwin_submit_context.authorization,
+                    source_uri=existing_source_uri,
+                    source_origin=source_origin,
+                    local_fingerprint=local_source_fingerprint,
+                    source_staging_requested=stage_src is True,
+                )
+            except Exception as exc:
+                _fail(str(exc))
+                return
+            robotwin_submit_context = replace(
+                robotwin_submit_context,
+                private_values=tuple(
+                    dict.fromkeys(
+                        (*robotwin_submit_context.private_values, existing_source_uri)
+                    )
+                ),
+                rendered_private_values=(existing_source_uri,),
+            )
+            _SUBMIT_PRIVATE_REDACTIONS.set(
+                tuple(
+                    dict.fromkeys(
+                        (
+                            *robotwin_submit_context.authorization.redactions,
+                            robotwin_submit_context.transport_value,
+                            *robotwin_submit_context.private_values,
+                        )
+                    )
+                )
+            )
+        if existing_source_uri:
+            # The renderer has a process/config resolver without a project
+            # parameter. Pin the explicitly selected project's verified URI for
+            # this invocation so a non-default project cannot inherit another
+            # project's source prefix.
+            os.environ["NPA_SRC_S3_URI"] = existing_source_uri
         existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
         persisted_source_is_stale = bool(
             requires_npa_source
@@ -1409,7 +1450,8 @@ def submit_cmd(
             and existing_fingerprint != local_source_fingerprint
         )
         auto_stage_source = (
-            stage_src is None
+            robotwin_submit_context is None
+            and stage_src is None
             and requires_npa_source
             and (not existing_source_uri or persisted_source_is_stale)
         )
@@ -1752,7 +1794,7 @@ def submit_cmd(
                 _fail(str(exc))
                 return
 
-        if not plan_only:
+        if not plan_only and robotwin_submit_context is None:
             # Establish the exact run and current-schema no-launch evidence
             # before PAIDF input/source staging mutates storage. Infrastructure
             # is already resolved and placement-checked above. Status can
@@ -1902,11 +1944,7 @@ def submit_cmd(
         if stage_source_planned and not plan_only:
             staged_uri = _stage_npa_src_for_submit(
                 spec_config,
-                s3_bucket=(
-                    robotwin_submit_context.authorization.bucket
-                    if robotwin_submit_context is not None
-                    else s3_bucket
-                ),
+                s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
                 credential_values=extra_env,
                 project=project,
@@ -2371,7 +2409,11 @@ def submit_cmd(
         )
 
         launch_identity = logical_launch_identity(
-            ledger_project,
+            (
+                "robotwin-confidential"
+                if robotwin_submit_context is not None
+                else ledger_project
+            ),
             resolved_run_id,
             "single-wave",
             "attempt-1",
@@ -2379,7 +2421,7 @@ def submit_cmd(
         )
 
         def _record_transaction(payload: dict[str, object]) -> None:
-            if prepared_npa is None:
+            if prepared_npa is None or robotwin_submit_context is not None:
                 return
             from npa.orchestration.npa_workflow.submission_state import (
                 update_submission_state,
@@ -2421,6 +2463,8 @@ def submit_cmd(
                     robotwin_submit_context=robotwin_submit_context,
                 )
 
+            if robotwin_submit_context is not None:
+                return submit()
             if current_operation() is not None:
                 return submit()
             alias = str(project or default_project_name()).strip() or "default"
@@ -2467,7 +2511,7 @@ def submit_cmd(
                 operation.commit()
                 return submitted
 
-        if prepared_npa is not None:
+        if prepared_npa is not None and robotwin_submit_context is None:
             from npa.orchestration.npa_workflow.submission_state import (
                 submission_lock,
                 update_submission_state,
