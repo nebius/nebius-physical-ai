@@ -35,6 +35,7 @@ import zipfile
 
 MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-fetch-lock.v2"
 RECEIPT_SCHEMA = "npa.gymnasium-robotics.runtime-cache-receipt.v1"
+TREE_MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-tree-manifest.v1"
 EXPECTED_SOURCE_COMMIT = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO_VERSION = "3.12.0"
 EXPECTED_DECISION_SHA256 = (
@@ -52,6 +53,7 @@ REQUIREMENT = re.compile(
 )
 MAX_ARTIFACTS = 256
 MAX_ARCHIVE_MEMBERS = 100_000
+MAX_RUNTIME_ENTRIES = 200_000
 RIGHTS_BOUNDARY = (
     "Runtime fetch changes delivery only; it does not grant or resolve use, "
     "derivative-work, output, or hosted-service rights."
@@ -477,12 +479,10 @@ def _validate_wheel(path: Path, *, max_unpacked_bytes: int) -> None:
             infos = archive.infolist()
             if not infos:
                 _refuse(f"wheel is empty: {path.name}")
-            if (
-                len(infos) > MAX_ARCHIVE_MEMBERS
-                or sum(item.file_size for item in infos) > max_unpacked_bytes
-            ):
+            if len(infos) > MAX_ARCHIVE_MEMBERS:
                 _refuse(f"wheel exceeds its expansion limit: {path.name}")
             folded: set[str] = set()
+            expanded = 0
             for info in infos:
                 name = _safe_relative(info.filename, field=f"wheel {path.name} member")
                 key = name.casefold()
@@ -494,9 +494,14 @@ def _validate_wheel(path: Path, *, max_unpacked_bytes: int) -> None:
                 mode = info.external_attr >> 16
                 if stat.S_ISLNK(mode):
                     _refuse(f"wheel contains a symbolic link: {path.name}")
-            if archive.testzip() is not None:
-                _refuse(f"wheel CRC validation failed: {path.name}")
-    except (OSError, zipfile.BadZipFile) as error:
+                if info.is_dir():
+                    continue
+                with archive.open(info) as member:
+                    while chunk := member.read(1024 * 1024):
+                        expanded += len(chunk)
+                        if expanded > max_unpacked_bytes:
+                            _refuse(f"wheel exceeds its expansion limit: {path.name}")
+    except (OSError, RuntimeError, zipfile.BadZipFile) as error:
         _refuse(f"wheel is malformed: {path.name}: {error}")
 
 
@@ -564,25 +569,186 @@ def _exclusive_lock(cache_root: Path) -> Iterator[None]:
         yield
 
 
+def _read_owned_control(path: Path) -> bytes:
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"runtime cache control file is unsafe or unavailable: {error}")
+    with os.fdopen(descriptor, "rb") as stream:
+        observed = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(observed.st_mode)
+            or before.st_dev != observed.st_dev
+            or before.st_ino != observed.st_ino
+            or observed.st_uid != os.geteuid()
+            or stat.S_IMODE(observed.st_mode) & 0o222
+        ):
+            _refuse("runtime cache control file is not sealed and operator-owned")
+        return stream.read()
+
+
+def _write_control(path: Path, content: bytes) -> None:
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"runtime cache control file cannot be created safely: {error}")
+    with os.fdopen(descriptor, "wb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _refuse("runtime cache control file is not operator-owned")
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+        os.fchmod(stream.fileno(), 0o400)
+
+
+def _seal_runtime_tree(root: Path) -> None:
+    paths = sorted(root.rglob("*"), key=lambda path: len(path.parts), reverse=True)
+    for path in paths:
+        metadata = path.lstat()
+        if metadata.st_uid != os.geteuid() or metadata.st_gid != os.getegid():
+            _refuse("runtime cache contains an unowned entry")
+        if stat.S_ISLNK(metadata.st_mode):
+            _refuse("runtime cache contains a symbolic link")
+        if stat.S_ISREG(metadata.st_mode):
+            if path.parent == root and path.name in {
+                "receipt.json",
+                "tree-manifest.json",
+            }:
+                path.chmod(0o600)
+            else:
+                path.chmod(0o500 if metadata.st_mode & 0o111 else 0o400)
+        elif stat.S_ISDIR(metadata.st_mode):
+            path.chmod(0o500)
+        else:
+            _refuse("runtime cache contains a special file")
+
+
+def _discard_stage(stage: Path) -> None:
+    if not stage.exists():
+        return
+    for path in sorted(stage.rglob("*"), key=lambda item: len(item.parts)):
+        with contextlib.suppress(OSError):
+            if path.is_dir() and not path.is_symlink():
+                path.chmod(0o700)
+            elif not path.is_symlink():
+                path.chmod(0o600)
+    with contextlib.suppress(OSError):
+        stage.chmod(0o700)
+    shutil.rmtree(stage, ignore_errors=True)
+
+
+def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    pending: list[tuple[Path, str]] = [(root, "")]
+    excluded = {"receipt.json", "tree-manifest.json"}
+    while pending:
+        directory, prefix = pending.pop()
+        try:
+            children = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as error:
+            _refuse(f"runtime cache tree cannot be traversed safely: {error}")
+        for child in children:
+            relative = f"{prefix}/{child.name}".lstrip("/")
+            if not prefix and child.name in excluded:
+                continue
+            try:
+                metadata = child.stat(follow_symlinks=False)
+            except OSError as error:
+                _refuse(f"runtime cache entry cannot be inspected: {error}")
+            if metadata.st_uid != os.geteuid() or metadata.st_gid != os.getegid():
+                _refuse(f"runtime cache entry is unowned: {relative}")
+            mode = stat.S_IMODE(metadata.st_mode)
+            if mode & 0o222:
+                _refuse(f"runtime cache entry is writable: {relative}")
+            if stat.S_ISDIR(metadata.st_mode):
+                entries.append({"path": relative, "kind": "directory", "mode": mode})
+                pending.append((Path(child.path), relative))
+            elif stat.S_ISREG(metadata.st_mode):
+                try:
+                    descriptor = os.open(child.path, os.O_RDONLY | os.O_NOFOLLOW)
+                except OSError as error:
+                    _refuse(f"runtime cache file cannot be opened safely: {error}")
+                with os.fdopen(descriptor, "rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (
+                        opened.st_dev != metadata.st_dev
+                        or opened.st_ino != metadata.st_ino
+                        or not stat.S_ISREG(opened.st_mode)
+                    ):
+                        _refuse(f"runtime cache file changed during validation: {relative}")
+                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                entries.append(
+                    {
+                        "path": relative,
+                        "kind": "regular",
+                        "mode": mode,
+                        "size_bytes": metadata.st_size,
+                        "sha256": digest,
+                    }
+                )
+            else:
+                _refuse(f"runtime cache entry has an unsupported type: {relative}")
+            if len(entries) > MAX_RUNTIME_ENTRIES:
+                _refuse("runtime cache entry count exceeds its validation bound")
+    return sorted(entries, key=lambda entry: str(entry["path"]))
+
+
 def _validated_existing(target: Path, runtime_lock: RuntimeLock) -> dict[str, object]:
     metadata = target.lstat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+        or stat.S_IMODE(metadata.st_mode) & 0o222
     ):
-        _refuse("existing runtime cache version is not an operator-owned directory")
+        _refuse("existing runtime cache version is not sealed and operator-owned")
     try:
-        receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        receipt_raw = _read_owned_control(target / "receipt.json")
+        tree_raw = _read_owned_control(target / "tree-manifest.json")
+        receipt = json.loads(receipt_raw)
+        tree = json.loads(tree_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         _refuse(f"existing runtime cache is incomplete or malformed: {error}")
+    expected_receipt_keys = {
+        "schema",
+        "status",
+        "manifest_sha256",
+        "requirements_lock_sha256",
+        "source_commit",
+        "mujoco_version",
+        "artifact_sha256",
+        "rights_boundary",
+        "tree_manifest_sha256",
+    }
+    expected_artifacts = {
+        item.name: item.sha256 for item in runtime_lock.artifacts
+    }
     if (
-        receipt.get("schema") != RECEIPT_SCHEMA
+        set(receipt) != expected_receipt_keys
+        or receipt.get("schema") != RECEIPT_SCHEMA
+        or receipt.get("status") != "ready"
         or receipt.get("manifest_sha256") != runtime_lock.digest
+        or receipt.get("requirements_lock_sha256")
+        != runtime_lock.requirements_sha256
         or receipt.get("source_commit") != EXPECTED_SOURCE_COMMIT
         or receipt.get("mujoco_version") != EXPECTED_MUJOCO_VERSION
+        or receipt.get("artifact_sha256") != expected_artifacts
+        or receipt.get("rights_boundary") != RIGHTS_BOUNDARY
+        or receipt.get("tree_manifest_sha256")
+        != hashlib.sha256(tree_raw).hexdigest()
     ):
         _refuse("existing runtime cache receipt does not match the pinned runtime")
+    if (
+        not isinstance(tree, dict)
+        or set(tree) != {"schema", "entries"}
+        or tree.get("schema") != TREE_MANIFEST_SCHEMA
+        or tree.get("entries") != _runtime_tree_entries(target)
+    ):
+        _refuse("existing runtime cache tree differs from its sealed manifest")
     python = target / "runtime/bin/python"
     if not python.is_file() or not os.access(python, os.X_OK):
         _refuse("existing runtime cache has no executable Python runtime")
@@ -645,6 +811,19 @@ def prepare(
                 python = stage / "runtime/bin/python"
                 if not python.is_file() or not os.access(python, os.X_OK):
                     _refuse("offline installer produced no executable Python runtime")
+                tree_path = stage / "tree-manifest.json"
+                receipt_path = stage / "receipt.json"
+                tree_path.touch(mode=0o600, exist_ok=False)
+                receipt_path.touch(mode=0o600, exist_ok=False)
+                _seal_runtime_tree(stage)
+                tree = {
+                    "schema": TREE_MANIFEST_SCHEMA,
+                    "entries": _runtime_tree_entries(stage),
+                }
+                tree_raw = (
+                    json.dumps(tree, separators=(",", ":"), sort_keys=True) + "\n"
+                ).encode()
+                _write_control(tree_path, tree_raw)
                 receipt = {
                     "schema": RECEIPT_SCHEMA,
                     "status": "ready",
@@ -656,16 +835,16 @@ def prepare(
                         item.name: item.sha256 for item in runtime_lock.artifacts
                     },
                     "rights_boundary": RIGHTS_BOUNDARY,
+                    "tree_manifest_sha256": hashlib.sha256(tree_raw).hexdigest(),
                 }
-                receipt_path = stage / "receipt.json"
-                receipt_path.write_text(
-                    json.dumps(receipt, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
+                _write_control(
+                    receipt_path,
+                    (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(),
                 )
-                receipt_path.chmod(0o400)
                 os.replace(stage, target)
+                target.chmod(0o500)
             except BaseException:
-                shutil.rmtree(stage, ignore_errors=True)
+                _discard_stage(stage)
                 raise
         link = cache_root / "current"
         temporary_link = cache_root / f".current-{os.getpid()}"

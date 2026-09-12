@@ -200,6 +200,19 @@ def test_verified_runtime_is_atomically_published_and_reused(tmp_path: Path) -> 
     assert list((cache / ".staging").iterdir()) == []
     assert cache.stat().st_uid == os.geteuid()
     assert cache.stat().st_mode & 0o077 == 0
+    assert target.stat().st_mode & 0o222 == 0
+    tree_raw = (target / "tree-manifest.json").read_bytes()
+    tree = json.loads(tree_raw)
+    assert tree["schema"] == BOOTSTRAP.TREE_MANIFEST_SCHEMA
+    tree_paths = {entry["path"] for entry in tree["entries"]}
+    assert {
+        "runtime/bin/python",
+        "source/pyproject.toml",
+        "wheelhouse/fixture.whl",
+    } <= tree_paths
+    assert all(entry["mode"] & 0o222 == 0 for entry in tree["entries"])
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["tree_manifest_sha256"] == hashlib.sha256(tree_raw).hexdigest()
     assert len(calls) == 2
 
     second_calls: list[str] = []
@@ -212,6 +225,73 @@ def test_verified_runtime_is_atomically_published_and_reused(tmp_path: Path) -> 
     )
     assert second["cache_reused"] is True
     assert second_calls == []
+
+
+@pytest.mark.parametrize("mutation", ["content", "extra", "symlink", "receipt"])
+def test_cache_reuse_refuses_any_unsealed_or_unmanifested_tree(
+    tmp_path: Path, mutation: str
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    first = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        cache,
+        opener=_opener(content, []),
+        installer=_installer,
+    )
+    target = Path(str(first["runtime_root"]))
+    if mutation == "content":
+        candidate = target / "source/pyproject.toml"
+        candidate.chmod(0o600)
+        candidate.write_text("changed\n", encoding="utf-8")
+        candidate.chmod(0o400)
+    elif mutation == "extra":
+        target.chmod(0o700)
+        candidate = target / "extra.bin"
+        candidate.write_bytes(b"unexpected")
+        candidate.chmod(0o400)
+        target.chmod(0o500)
+    elif mutation == "symlink":
+        target.chmod(0o700)
+        (target / "escape").symlink_to("/etc/passwd")
+        target.chmod(0o500)
+    else:
+        candidate = target / "receipt.json"
+        receipt = json.loads(candidate.read_text())
+        receipt["status"] = "changed"
+        candidate.chmod(0o600)
+        candidate.write_text(json.dumps(receipt), encoding="utf-8")
+        candidate.chmod(0o400)
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="runtime cache"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener({}, []),
+            installer=lambda *_: pytest.fail("a mismatched cache must not reinstall"),
+        )
+
+
+def test_unsafe_installer_tree_is_removed_before_publication(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+
+    def unsafe_installer(stage: Path, locked_requirements: Path) -> None:
+        _installer(stage, locked_requirements)
+        (stage / "source/escape").symlink_to("/etc/passwd")
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="symbolic link"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, []),
+            installer=unsafe_installer,
+        )
+    assert not (cache / "current").exists()
+    assert list((cache / "versions").iterdir()) == []
+    assert list((cache / ".staging").iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -387,6 +467,22 @@ def test_malformed_wheel_refuses_before_install_or_publish(tmp_path: Path) -> No
             tmp_path / "cache",
             opener=_opener(content, []),
             installer=lambda *_: pytest.fail("malformed wheel reached installer"),
+        )
+    assert not (tmp_path / "cache/current").exists()
+
+
+def test_wheel_stream_expansion_limit_refuses_before_install(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["artifacts"][1]["max_unpacked_bytes"] = 1
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="expansion limit"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            tmp_path / "cache",
+            opener=_opener(content, []),
+            installer=lambda *_: pytest.fail("oversized wheel reached installer"),
         )
     assert not (tmp_path / "cache/current").exists()
 

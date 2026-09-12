@@ -131,6 +131,11 @@ EXPECTED_BASE = {
     # not the registry's compressed layer digest.
     "uncompressed_layer_digest": None,
 }
+# These externally reviewed anchors close every candidate-added byte. The
+# config binds history/runtime metadata and the ordered diff IDs; the diff IDs
+# bind every raw layer. They stay unset until an authorized build transaction.
+EXPECTED_IMAGE_CONFIG_SHA256: str | None = None
+EXPECTED_ORDERED_LAYER_DIFF_IDS: tuple[str, ...] | None = None
 # Neutral files are trusted only after their exact bytes are independently
 # reviewed and pinned here. Repository implementation leaves the built-image
 # trust roots unset, so a local status edit cannot turn the scanner green.
@@ -798,6 +803,27 @@ def _locked_python_distributions(raw: bytes) -> dict[str, str]:
     return distributions
 
 
+def _reviewed_image_graph(config_digest: str, layer_diff_ids: list[str]) -> None:
+    if not isinstance(EXPECTED_IMAGE_CONFIG_SHA256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", EXPECTED_IMAGE_CONFIG_SHA256
+    ):
+        raise ValueError("reviewed neutral image config digest is not configured")
+    expected_layers = EXPECTED_ORDERED_LAYER_DIFF_IDS
+    if (
+        not isinstance(expected_layers, tuple)
+        or not expected_layers
+        or any(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+            for digest in expected_layers
+        )
+    ):
+        raise ValueError("reviewed neutral ordered layer graph is not configured")
+    if config_digest != EXPECTED_IMAGE_CONFIG_SHA256:
+        raise ValueError("reviewed neutral image config bytes changed")
+    if layer_diff_ids != list(expected_layers):
+        raise ValueError("reviewed neutral ordered layer bytes changed")
+
+
 def _neutral_candidate(
     rootfs: dict[str, bytes],
     layer_diff_ids: list[str],
@@ -984,6 +1010,7 @@ def scan(path: Path) -> dict[str, Any]:
         raise ValueError(
             "image config rootfs diff IDs do not match ordered layer bytes"
         )
+    _reviewed_image_graph(config_digest, layer_diff_ids)
     missing = sorted(REQUIRED - rootfs.keys())
     if missing:
         raise ValueError(f"required image files absent: {missing}")
