@@ -185,6 +185,13 @@ decodes the complete file with FFmpeg's error-exit mode. Encoder/library
 versions can change the resulting bytes; archive the output manifest and
 environment alongside each delivery.
 
+The logo uses the unmodified color artwork from the [official Nebius media
+kit](https://nebius.com/media-kit), scaled proportionally. Its original PNG and
+SVG, source archive URL, hashes, and trademark notice are in [brand/](brand/).
+The PNG participates in scene cache identity and the render's source-change
+check. Output manifests record the logo and its source receipt hashes. The
+closing call to action points to `github.com/nebius/nebius-physical-ai`.
+
 ## Editorial provenance
 
 This is a capabilities montage assembled from **separate recorded runs**. It

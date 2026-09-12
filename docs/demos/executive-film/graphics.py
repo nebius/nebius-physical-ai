@@ -67,9 +67,16 @@ def _rectangles(scene):
     raise ValueError(f"Unknown scene layout: {layout}")
 
 
-def _branding(draw, index, total):
+@lru_cache(maxsize=1)
+def _logo():
+    with Image.open(_ROOT / "brand/nebius-logo.png") as source:
+        return source.convert("RGBA").resize((200, 55), Image.Resampling.LANCZOS)
+
+
+def _branding(image, index, total):
+    draw = ImageDraw.Draw(image)
     draw.line((72, 96, 1848, 96), fill=(48, 59, 61, 255), width=1)
-    _text(draw, (72, 36), "nebius", 39, _WHITE, 800)
+    image.alpha_composite(_logo(), (72, 25))
     _text(draw, (1500, 51), "PHYSICAL AI WORKBENCH", 18, _MUTED, 700)
     _text(draw, (72, 1018), "INTELLIGENCE THAT MOVES", 17, _MUTED, 600)
     _text(draw, (1718, 1018), f"{index + 1:02d} / {total:02d}", 17, _MUTED)
@@ -90,7 +97,7 @@ def _base(scene, index, total):
             draw.line((x, 0, x, _HEIGHT), fill=(8, 13, 18, opacity))
         draw.rectangle((0, 0, 1920, 105), fill=(8, 13, 18, 220))
         draw.rectangle((0, 990, 1920, 1080), fill=(8, 13, 18, 220))
-    _branding(draw, index, total)
+    _branding(image, index, total)
     return image
 
 
@@ -146,7 +153,7 @@ def _details(draw, scene):
         _text(draw, (420, 949), "SKYPILOT WORKFLOWS", 21, _WHITE, 700)
         _text(draw, (1030, 949), "TRACEABLE ARTIFACTS", 21, _WHITE, 700)
     if layout == "close":
-        _text(draw, (72, 953), "nebius.com/solutions/physical-ai-and-robotics", 24, _WHITE, 600)
+        _text(draw, (72, 953), "github.com/nebius/nebius-physical-ai", 24, _WHITE, 600)
 
 
 def _draw_overlay(scene, index, total, path):

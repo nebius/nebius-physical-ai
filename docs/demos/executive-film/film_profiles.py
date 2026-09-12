@@ -28,7 +28,8 @@ def _scene_inputs(scene, index, total, assets, profile, environment):
         "assets": {role: {key: value for key, value in assets[role].items() if key != "path"}
                    for role in scene["assets"]},
         "code": {name: _hash(_ROOT / name) for name in
-                 ["render.py", "graphics.py", "film_profiles.py", "fonts/Manrope.ttf"]},
+                 ["render.py", "graphics.py", "film_profiles.py", "fonts/Manrope.ttf",
+                  "brand/nebius-logo.png"]},
     }
 
 

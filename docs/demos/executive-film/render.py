@@ -36,7 +36,8 @@ _ROOT = Path(__file__).parent
 
 def _source_hashes():
     return {str(path.relative_to(_ROOT)): _hash(path)
-            for path in [*_ROOT.glob("*.py"), _ROOT / "fonts/Manrope.ttf"]}
+            for path in [*_ROOT.glob("*.py"), _ROOT / "fonts/Manrope.ttf",
+                         _ROOT / "brand/nebius-logo.png", _ROOT / "brand/source.json"]}
 
 
 _LOADED_SOURCES = _source_hashes()
@@ -229,6 +230,9 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                 "frames": int(video["nb_frames"]), "width": video["width"], "height": video["height"],
                 "fps": video["r_frame_rate"], "sha256": _hash(target),
                 "font_sha256": _hash(_ROOT / "fonts/Manrope.ttf"),
+                "branding": {"logo_sha256": _hash(_ROOT / "brand/nebius-logo.png"),
+                             "source_manifest_sha256": _hash(_ROOT / "brand/source.json"),
+                             "source_page": "https://nebius.com/media-kit"},
                 "storyboard_sha256": _hash(storyboard_path),
                 "selected_scenes": [scene["id"] for scene in storyboard["scenes"]],
                 "renderer_sha256": {name: digest for name, digest in _LOADED_SOURCES.items() if name.endswith(".py")},
