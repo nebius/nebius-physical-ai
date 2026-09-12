@@ -231,7 +231,15 @@ def scan_git_diff(
     """Scan a Git diff range and report redacted locations."""
 
     result = subprocess.run(
-        ["git", "diff", "--unified=0", "--no-ext-diff", "--no-textconv", diff_range],
+        [
+            "git",
+            "diff",
+            "--unified=0",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--end-of-options",
+            diff_range,
+        ],
         cwd=repo_root,
         check=True,
         stdout=subprocess.PIPE,
@@ -292,6 +300,7 @@ def _diff_has_post_image(
             "--no-ext-diff",
             "--no-textconv",
             "-z",
+            "--end-of-options",
             diff_range,
             "--",
             repository_path,

@@ -521,6 +521,30 @@ def test_robomimic_diff_requires_exact_canonical_post_image(
     assert hits[0].repository_path is None
 
 
+def test_robomimic_diff_range_cannot_inject_git_options(tmp_path: Path) -> None:
+    repo = _robomimic_source_repo(tmp_path)
+    _commit_fixture(repo, "Canonical lock")
+    diff_output = tmp_path / "injected-diff"
+    raw_output = tmp_path / "injected-raw"
+
+    with pytest.raises(subprocess.CalledProcessError):
+        confidentiality.scan_git_diff(
+            repo,
+            f"--output={diff_output}",
+            compile_denylist(ROBOMIMIC_ATTRIBUTION_PATTERN),
+        )
+    with pytest.raises(subprocess.CalledProcessError):
+        confidentiality._diff_has_post_image(
+            repo,
+            f"--output={raw_output}",
+            ROBOMIMIC_PATH,
+            ROBOMIMIC_LOCK.read_bytes(),
+        )
+
+    assert not diff_output.exists()
+    assert not raw_output.exists()
+
+
 def _synthetic_debian_source_proof(
     *, version: str = "0.11.7-2"
 ) -> tuple[bytes, bytes]:
@@ -699,4 +723,50 @@ def test_robomimic_invalid_openpgp_signature_fails_closed(
     )
 
     with pytest.raises(ValueError, match="signature verification failed"):
+        robomimic_attribution._verify_openpgp_signature(proof)
+
+
+def test_robomimic_openpgp_commands_have_bounded_timeouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = _robomimic_proof_directory(tmp_path)
+    monkeypatch.setattr(
+        robomimic_attribution.shutil, "which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        robomimic_attribution, "_proof_payload", lambda *_args: b"key"
+    )
+    timeouts: list[int] = []
+
+    def completed(*_args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        timeouts.append(int(kwargs["timeout"]))
+        output = b"keyring" if kwargs.get("stdout") == subprocess.PIPE else b""
+        return subprocess.CompletedProcess([], 0, output, b"")
+
+    monkeypatch.setattr(robomimic_attribution.subprocess, "run", completed)
+    robomimic_attribution._verify_openpgp_signature(proof)
+
+    assert timeouts == [
+        robomimic_attribution._OPENPGP_TIMEOUT_SECONDS,
+        robomimic_attribution._OPENPGP_TIMEOUT_SECONDS,
+        robomimic_attribution._OPENPGP_TIMEOUT_SECONDS,
+    ]
+
+
+def test_robomimic_openpgp_timeout_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = _robomimic_proof_directory(tmp_path)
+    monkeypatch.setattr(
+        robomimic_attribution.shutil, "which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        robomimic_attribution, "_proof_payload", lambda *_args: b"key"
+    )
+
+    def timed_out(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise subprocess.TimeoutExpired("gpg", 30)
+
+    monkeypatch.setattr(robomimic_attribution.subprocess, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired):
         robomimic_attribution._verify_openpgp_signature(proof)
