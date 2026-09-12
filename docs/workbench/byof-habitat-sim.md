@@ -91,8 +91,10 @@ hashes. It also hashes the embedded runtime locks, notices, and smoke module;
 reconciles installed apt and Python distributions to those locks; binds every
 regular file and link under `/opt/venv` into an operator-reviewed exact
 installed-file inventory; requires exactly one wheel `RECORD` beside every
-installed distribution's metadata and rejects unbound `RECORD` entries; checks
-every projected source byte against its immutable inventory; binds native venv ELF
+installed distribution's metadata, verifies every hashed `RECORD` entry, and
+accepts pip's hashless generated-bytecode rows only when the target exists and
+the complete venv inventory independently binds it; checks every projected
+source byte against its immutable inventory; binds native venv ELF
 files to wheel `RECORD` hashes; parses every ELF `DT_NEEDED`, `DT_RPATH`, and
 `DT_RUNPATH` entry, records the loader-order search path, and refuses unresolved
 or multiply compatible same-architecture targets; and requires the OCI revision

@@ -495,11 +495,12 @@ def test_python_venv_inventory_rejects_record_rewrite_and_unrecorded_bytes(
     assert "python_venv_inventory_lock_mismatch" in _codes(rewritten_report)
 
     unrecorded = _required_entries()
+    unrecorded_baseline = _verify(tmp_path, [unrecorded])
     unrecorded.append(file(path, changed))
     unrecorded_report = _verify(
         tmp_path,
         [unrecorded],
-        expected_python_venv_inventory_sha256=baseline[
+        expected_python_venv_inventory_sha256=unrecorded_baseline[
             "python_venv_inventory_sha256"
         ],
     )
@@ -518,7 +519,6 @@ def test_python_distribution_record_population_and_unhashed_entries_are_closed(
         _verify(tmp_path, [missing_record])
     )
 
-    path = "opt/venv/lib/python3.10/site-packages/fixture/runtime.py"
     record_path = (
         "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
     )
@@ -535,8 +535,47 @@ def test_python_distribution_record_population_and_unhashed_entries_are_closed(
             "fixture-1.0.dist-info/RECORD,,\n"
         ).encode(),
     )
-    unhashed.append(file(path, b"not record-bound\n"))
     assert "python_record_entry_unbound" in _codes(_verify(tmp_path, [unhashed]))
+
+
+def test_hashless_generated_bytecode_is_bound_by_the_exact_venv_inventory(
+    tmp_path,
+) -> None:
+    bytecode = b"\x42\x0d\x0d\x0a deterministic fixture bytecode"
+    changed = b"\x42\x0d\x0d\x0a changed fixture bytecode"
+    path = (
+        "opt/venv/lib/python3.10/site-packages/fixture/__pycache__/"
+        "runtime.cpython-310.pyc"
+    )
+    record_path = (
+        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
+    )
+    native = _elf64(soname="native.so")
+    entries = _required_entries()
+    record_index = next(
+        index for index, row in enumerate(entries) if row[0] == record_path
+    )
+    entries[record_index] = file(
+        record_path,
+        (
+            f"fixture/native.so,{_record_hash(native)},{len(native)}\n"
+            "fixture/__pycache__/runtime.cpython-310.pyc,,\n"
+            "fixture-1.0.dist-info/RECORD,,\n"
+        ).encode(),
+    )
+    entries.append(file(path, bytecode))
+    baseline = _verify(tmp_path, [entries])
+    assert baseline["valid"] is True
+
+    entries[-1] = file(path, changed)
+    report = _verify(
+        tmp_path,
+        [entries],
+        expected_python_venv_inventory_sha256=baseline[
+            "python_venv_inventory_sha256"
+        ],
+    )
+    assert "python_venv_inventory_lock_mismatch" in _codes(report)
 
 
 def test_every_installed_package_requires_copyright_bytes(tmp_path) -> None:
