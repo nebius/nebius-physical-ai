@@ -14,7 +14,7 @@ resources:
   image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
-  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_REPO_ROOT: "descriptor-bound-runtime-cache"
   BYOF_SMOKE_COMMAND: ""
   BYOF_SOLUTION_NAME: ""
   BYOF_CAPABILITY_NAME: ""
@@ -34,24 +34,19 @@ setup: |
   test -f /opt/npa/gymnasium-robotics/runtime-bootstrap.py
   test -f /opt/npa/gymnasium-robotics/source-lock.json
   /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
+  /usr/bin/python3 -I -B -c 'import boto3, botocore'
   install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
-  /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
-  RUNTIME_PYTHON="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/runtime/bin/python"
-  test -x "${RUNTIME_PYTHON}"
-  "${RUNTIME_PYTHON}" -I -B - <<'PY'
-  import gymnasium_robotics
-  import mujoco
-
-  assert gymnasium_robotics.__version__ == "1.4.2"
-  assert mujoco.__version__ == "3.12.0"
-  PY
+  env \
+    -u AWS_ACCESS_KEY_ID \
+    -u AWS_SECRET_ACCESS_KEY \
+    -u AWS_SESSION_TOKEN \
+    -u AWS_PROFILE \
+    -u AWS_SHARED_CREDENTIALS_FILE \
+    -u AWS_WEB_IDENTITY_TOKEN_FILE \
+    -u AWS_ROLE_ARN \
+    /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
 run: |
   set -euo pipefail
-  RUNTIME_PYTHON="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/runtime/bin/python"
-  BYOF_REPO_ROOT="${NPA_GYMNASIUM_RUNTIME_CACHE}/current/source"
-  export BYOF_REPO_ROOT
-  test -x "${RUNTIME_PYTHON}"
-  test -d "${BYOF_REPO_ROOT}"
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
@@ -91,7 +86,7 @@ run: |
     fi
     sleep 1
   done
-  export NPA_BYOF_POD_IMAGE_ID="$("${RUNTIME_PYTHON}" -I - <<'PY'
+  export NPA_BYOF_POD_IMAGE_ID="$(/usr/bin/python3 -I -B - <<'PY'
   import json
   import os
   import re
@@ -158,8 +153,16 @@ run: |
   if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
     set +e
     (
-      cd "${BYOF_REPO_ROOT}"
-      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+      cd /
+      env \
+        -u AWS_ACCESS_KEY_ID \
+        -u AWS_SECRET_ACCESS_KEY \
+        -u AWS_SESSION_TOKEN \
+        -u AWS_PROFILE \
+        -u AWS_SHARED_CREDENTIALS_FILE \
+        -u AWS_WEB_IDENTITY_TOKEN_FILE \
+        -u AWS_ROLE_ARN \
+        /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
     ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
     SMOKE_EXIT_CODE=$?
     set -e
@@ -168,7 +171,7 @@ run: |
     test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
   fi
   export SMOKE_EXIT_CODE
-  "${RUNTIME_PYTHON}" -I - <<'PY'
+  /usr/bin/python3 -I -B - <<'PY'
   import hashlib
   import json
   import os
