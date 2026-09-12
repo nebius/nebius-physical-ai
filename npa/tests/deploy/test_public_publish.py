@@ -301,7 +301,9 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
+        {"openpi", "curobo", "ncore", "libero"}
+    )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3-ray-serve",
         "cosmos3-serving",
@@ -345,6 +347,17 @@ def test_public_set_includes_the_oss_tools() -> None:
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
         - images.PUBLICATION_QUARANTINE_TOOLS
+    )
+
+
+def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() -> None:
+    assert is_publicly_redistributable("libero") is True
+    assert "libero" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "libero" in images.PUBLICATION_QUARANTINE_TOOLS
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
+    assert "libero" not in {item.tool for item in plan}
+    assert images.SUPPORTED_TOOL_VERSIONS["libero"] == (
+        "public-neutral-bootstrap-unbuilt"
     )
 
 

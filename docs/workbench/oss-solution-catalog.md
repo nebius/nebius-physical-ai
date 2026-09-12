@@ -31,7 +31,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
-| LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending** | Requires one STRICT-bound B200 run of the immutable private image: eight upstream BC-RNN/AdamW steps on the exact official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
+| LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; public-neutral candidate quarantined/unbuilt** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/AdamW steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
@@ -67,7 +67,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 ### LIBERO
 
-Pinned source: `Lifelong-Robot-Learning/LIBERO`
+Pinned runtime source: `Lifelong-Robot-Learning/LIBERO`
 `8f1084e3132a39270c3a13ebe37270a43ece2a01` (MIT). The narrow admission
 candidate runtime-fetches one official `libero_spatial` demonstration from
 `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`
@@ -79,6 +79,11 @@ Task conditioning runtime-fetches the independently pinned Apache-2.0
 `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e`
 files and runs the pinned upstream LIBERO `AutoTokenizer`/`AutoModel`
 `pooler_output` path. Neither those model bytes nor the demonstration is baked.
+The public-neutral candidate also bakes no LIBERO, robomimic, MuJoCo, PyTorch,
+CUDA/NVIDIA runtime, task/render asset, populated cache, checkpoint, credential,
+or output byte. It remains unbuilt, absent from the release manifest and public
+image table, and quarantined until byte, provenance, anonymous-pull, and live
+acceptance. Historical private r15 bytes are old-head evidence only.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
@@ -87,9 +92,12 @@ files and runs the pinned upstream LIBERO `AutoTokenizer`/`AutoModel`
 | `libero_trajectory_disjoint_heldout_split` | qualification pending | Deterministic 40-train / 10-held-out trajectory split; no trajectory may appear in both partitions |
 | `libero_spatial_bc_rnn_train_reload_heldout` | hard gate, qualification pending | Upstream BERT task conditioning plus `Sequential.observe` + `BCRNNPolicy` + AdamW for eight nonzero optimizer steps, strict upstream checkpoint reload, held-out NLL, and finite reloaded 7-DoF action predictions on exactly one B200 (`sm_100`) |
 
-The private build retains the hash-bound BDDL and initial states but deletes the
-unused render-asset tree. The official demonstration is fetched into a
-run-scoped cache outside the artifact directory and is never baked. Acceptance
+An authorized runtime sparse-fetch retains the hash-bound BDDL and initial
+states but never fetches the unused render-asset tree. The official
+demonstration is fetched into a manifest-addressed cache outside the artifact
+directory and is never baked or uploaded. A missing or mismatched manager-issued
+use decision refuses before cache or network mutation; runtime fetch is delivery,
+not permission. Acceptance
 requires the Pod-observed immutable image digest in `libero-smoke.json`; imports,
 BDDL parsing, dataset inventory, or zero-step training do not pass. Rendered
 closed-loop sweeps, all 130 tasks, lifelong-algorithm comparison, and physical

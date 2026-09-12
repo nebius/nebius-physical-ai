@@ -694,18 +694,25 @@ def test_libero_b200_qualification_report() -> None:
     assert build["render_assets_removed_path"] == "libero/libero/assets"
     assert build["git_objects_present_in_final_filesystem"] is False
     assert build["independent_oci_layer_scan_required_before_live_use"] is True
-    assert build["source_metadata"]["source_prune_path"] == "libero/libero/assets"
-    assert build["source_metadata"]["git_objects_removed"] is True
-    assert build["base_image_digest"] == (
-        "sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+    runtime_metadata = build["runtime_metadata"]
+    assert runtime_metadata["schema"] == "npa.libero.runtime-cache.v1"
+    assert runtime_metadata["source_revision"] == source["revision"]
+    assert runtime_metadata["runtime_artifact_count"] == 122
+    assert runtime_metadata["render_assets_present"] is False
+    assert runtime_metadata["git_objects_present"] is False
+    assert runtime_metadata["cache_uploaded"] is False
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", build["independently_observed_build_metadata_sha256"]
     )
-    assert build["base_image_reference"] == (
-        "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@"
-        + build["base_image_digest"]
+    assert build["base_image_digest"] == (
+        "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
+    )
+    assert build["base_rootfs_material_digest"] == (
+        "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
     )
     assert build["base_image_digest_pinned"] is True
     assert build["base_image_provenance"] == (
-        "generated_build_metadata_and_oci_config_labels"
+        "independent_buildx_metadata_and_published_SLSA_material"
     )
     assert report["boundaries"]["cache_uploaded"] is False
     assert report["boundaries"]["rendering_invoked"] is False

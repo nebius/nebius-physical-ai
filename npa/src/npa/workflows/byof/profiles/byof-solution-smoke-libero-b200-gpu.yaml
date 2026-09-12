@@ -1,5 +1,6 @@
-# LIBERO one-task BC-RNN train/reload/held-out qualification on one B200. The
-# reviewed demonstration is fetched and SHA-256 verified only at run time.
+# Headless, state-based LIBERO one-task BC-RNN qualification. The candidate
+# image is neutral: every LIBERO/runtime/data/model byte is fetched only after
+# the manager-issued decision is verified and remains in the non-root cache.
 name: byof-solution-smoke-libero-b200-gpu
 execution: serial
 ---
@@ -10,7 +11,7 @@ resources:
   cpus: 16+
   memory: 96+
   disk_size: 100
-  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+  image_id: "docker:<explicit-npa-libero-candidate>@sha256:<digest>"
   kubernetes:
     pod_config:
       spec:
@@ -18,11 +19,15 @@ resources:
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
-  BYOF_SMOKE_COMMAND: ""
-  BYOF_SOLUTION_NAME: ""
-  BYOF_CAPABILITY_NAME: ""
-  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_SMOKE_COMMAND: "/opt/npa/libero/smoke.sh"
+  BYOF_SOLUTION_NAME: "libero"
+  BYOF_CAPABILITY_NAME: "libero_spatial_bc_rnn_train_reload_heldout"
+  BYOF_SMOKE_ARTIFACT_NAME: "libero-smoke.json"
   BYOF_IMAGE: ""
+  LIBERO_RUNTIME_ROOT: "/workspace/.cache/npa/libero/current"
+  NPA_LIBERO_RUNTIME_USE_DECISION_B64: ""
+  NPA_LIBERO_RUNTIME_USE_DECISION_SHA256: ""
+  NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256: ""
   NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256: ""
   NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256: ""
   NPA_LIBERO_EXPECTED_NAMESPACE_SHA256: ""
@@ -37,48 +42,51 @@ setup: |
   set -euo pipefail
   test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
   /usr/local/sbin/npa-skypilot-bootstrap-guard verify
-  test -d "${BYOF_REPO_ROOT}"
-  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
-  test -f "${BYOF_REPO_ROOT}/npa_build_metadata.json"
+  test "$(id -u)" = 1000
+  test "$(id -un)" = ubuntu
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}"
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  decision_dir="/workspace/.cache/npa/libero-decisions/${NPA_BYOF_RUN_ID}"
+  install -d -m 0700 "${decision_dir}"
+  decision="${decision_dir}/runtime-use-decision.json"
+  printf '%s' "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}" | base64 -d > "${decision}.partial"
+  chmod 0600 "${decision}.partial"
+  test "$(sha256sum "${decision}.partial" | cut -d ' ' -f 1)" = \
+    "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  mv "${decision}.partial" "${decision}"
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  install -d -m 0700 "${output_dir}"
+  /opt/npa/libero/runtime-bootstrap.py ensure \
+    --manifest /opt/npa/libero/runtime-manifest.json \
+    --cache-root /workspace/.cache/npa/libero \
+    --decision "${decision}" \
+    --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
+    --output-dir "${output_dir}"
+  test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
+  test -d "${BYOF_REPO_ROOT}/libero/lifelong"
   test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
   test ! -e "${BYOF_REPO_ROOT}/.git"
-  test -x /usr/local/bin/npa-libero-sm100-probe
-  test -x /opt/venv/bin/python
-  /opt/venv/bin/python - <<'PY'
-  import boto3
-  import h5py
-  import torch
-  import libero
-  PY
 run: |
   set -euo pipefail
-  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
-  mkdir -p "${OUTPUT_DIR}"
-  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
-  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
-  cp "${BYOF_REPO_ROOT}/npa_build_metadata.json" "${OUTPUT_DIR}/npa_build_metadata.json"
-  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
-  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
-  SMOKE_EXIT_CODE=0
-  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
-    set +e
-    (
-      cd "${BYOF_REPO_ROOT}"
-      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
-    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
-    SMOKE_EXIT_CODE=$?
-    set -e
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
+  cp "${LIBERO_RUNTIME_ROOT}/.complete.json" "${output_dir}/npa_runtime_metadata.json"
+  nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
+  smoke_exit_code=0
+  set +e
+  /opt/npa/libero/smoke.sh \
+    > "${output_dir}/solution_smoke_stdout.log" \
+    2> "${output_dir}/solution_smoke_stderr.log"
+  smoke_exit_code=$?
+  set -e
+  if [ ! -f "${output_dir}/${BYOF_SMOKE_ARTIFACT_NAME}" ]; then
+    printf '%s\n' "missing required smoke artifact: ${BYOF_SMOKE_ARTIFACT_NAME}" \
+      >> "${output_dir}/solution_smoke_stderr.log"
+    smoke_exit_code=1
   fi
-  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] \
-      && [ ! -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}" ]; then
-    echo "missing required smoke artifact: ${BYOF_SMOKE_ARTIFACT_NAME}" \
-      >> "${OUTPUT_DIR}/solution_smoke_stderr.log"
-    if [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
-      SMOKE_EXIT_CODE=1
-    fi
-  fi
-  export SMOKE_EXIT_CODE
-  /opt/venv/bin/python <<'PY'
+  export SMOKE_EXIT_CODE="${smoke_exit_code}"
+  "${LIBERO_RUNTIME_ROOT}/venv/bin/python" <<'PY'
   import json
   import os
   import time
@@ -90,69 +98,56 @@ run: |
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
-  metadata = json.loads(
-      (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(encoding="utf-8")
-  )
-  smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+  smoke_exit_code = int(os.environ["SMOKE_EXIT_CODE"])
   summary = {
       "status": "success" if smoke_exit_code == 0 else "failed",
       "tool": "byof",
       "workload": "solution-smoke-libero-b200",
       "run_id": run_id,
-      "image": os.environ.get("BYOF_IMAGE", ""),
-      "repo_root": os.environ["BYOF_REPO_ROOT"],
-      "metadata": metadata,
-      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
-      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
-      "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+      "image": os.environ["BYOF_IMAGE"],
+      "solution_name": os.environ["BYOF_SOLUTION_NAME"],
+      "capability_name": os.environ["BYOF_CAPABILITY_NAME"],
+      "smoke_artifact_name": os.environ["BYOF_SMOKE_ARTIFACT_NAME"],
       "smoke_exit_code": smoke_exit_code,
+      "runtime_cache_uploaded": False,
+      "rendering_invoked": False,
       "created_unix": round(time.time(), 3),
   }
   (root / "npa_byof_summary.json").write_text(
-      json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+      json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
   )
-  print(json.dumps(summary, indent=2), flush=True)
-
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
-  if parsed.scheme == "s3" and parsed.netloc:
-      endpoint = (
-          os.environ.get("AWS_ENDPOINT_URL")
-          or os.environ.get("NEBIUS_S3_ENDPOINT")
-          or ""
-      ).strip() or None
-      client_kwargs = {
-          "endpoint_url": endpoint,
-          "config": Config(s3={"addressing_style": "path"}),
-          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
-      }
-      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
-      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
-      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
-      if access_key and secret_key:
-          client_kwargs["aws_access_key_id"] = access_key
-          client_kwargs["aws_secret_access_key"] = secret_key
-          if session_token:
-              client_kwargs["aws_session_token"] = session_token
-      s3 = boto3.client("s3", **client_kwargs)
-      prefix = parsed.path.lstrip("/")
-      uploaded = 0
-      for path in root.rglob("*"):
-          if path.is_file():
-              key = prefix + str(path.relative_to(root))
-              s3.put_object(
-                  Bucket=parsed.netloc,
-                  Key=key,
-                  Body=path.read_bytes(),
-                  IfNoneMatch="*",
-              )
-              uploaded += 1
-              print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
-      summary_key = prefix + "npa_byof_summary.json"
-      s3.head_object(Bucket=parsed.netloc, Key=summary_key)
-      print(f"verified s3://{parsed.netloc}/{summary_key}", flush=True)
-      print(f"uploaded_file_count={uploaded}", flush=True)
+  if parsed.scheme != "s3" or not parsed.netloc:
+      raise RuntimeError("LIBERO output prefix is not an S3 URI")
+  endpoint = (
+      os.environ.get("AWS_ENDPOINT_URL")
+      or os.environ.get("NEBIUS_S3_ENDPOINT")
+      or ""
+  ).strip() or None
+  client_kwargs = {
+      "endpoint_url": endpoint,
+      "config": Config(s3={"addressing_style": "path"}),
+      "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+  }
+  access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+  secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+  session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+  if access_key and secret_key:
+      client_kwargs["aws_access_key_id"] = access_key
+      client_kwargs["aws_secret_access_key"] = secret_key
+      if session_token:
+          client_kwargs["aws_session_token"] = session_token
+  client = boto3.client("s3", **client_kwargs)
+  prefix = parsed.path.lstrip("/")
+  for path in root.rglob("*"):
+      if path.is_file():
+          client.put_object(
+              Bucket=parsed.netloc,
+              Key=prefix + str(path.relative_to(root)),
+              Body=path.read_bytes(),
+              IfNoneMatch="*",
+          )
+  client.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
   PY
-  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
-    exit "${SMOKE_EXIT_CODE}"
-  fi
+  exit "${smoke_exit_code}"

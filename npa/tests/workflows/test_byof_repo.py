@@ -33,8 +33,31 @@ LIBERO_YAML_PATH = (
 LIBERO_WORKFLOW_PATH = ROOT / "workflows" / "testing" / "byof-libero.yaml"
 
 
-def _libero_contract_args() -> list[str]:
+def _libero_contract_args(tmp_path: Path) -> list[str]:
     config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
+    runtime_manifest = (
+        ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-manifest.json"
+    )
+    decision = {
+        "schema": "npa.libero.runtime-use-decision.v1",
+        "solution": "libero",
+        "decision": "authorized",
+        "runtime_fetch_authorized": True,
+        "runtime_manifest_sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
+        "source_revision": config["repo_ref"],
+        "authorized_boundaries": [
+            "demonstration",
+            "language_model",
+            "runtime_packages",
+            "source",
+            "task_inputs",
+        ],
+        "manager_receipt_sha256": "sha256:" + "2" * 64,
+    }
+    decision_path = tmp_path / "libero-runtime-use-decision.json"
+    decision_path.write_text(json.dumps(decision, sort_keys=True) + "\n", encoding="utf-8")
+    decision_path.chmod(0o600)
+    decision_sha256 = hashlib.sha256(decision_path.read_bytes()).hexdigest()
     return [
         "--repo-url", config["repo_url"],
         "--repo-ref", config["repo_ref"],
@@ -53,6 +76,11 @@ def _libero_contract_args() -> list[str]:
         "--iterations", str(config["iterations"]),
         "--num-envs", str(config["num_envs"]),
         "--num-demos", str(config["num_demos"]),
+        "--libero-acceptance-candidate-image",
+        "registry.example/project/npa-libero@sha256:" + "1" * 64,
+        "--libero-runtime-use-decision-file", str(decision_path),
+        "--libero-runtime-use-decision-sha256", decision_sha256,
+        "--libero-build-metadata-sha256", "3" * 64,
     ]
 
 
@@ -734,7 +762,7 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
 
 
 def test_main_forces_libero_solution_smoke_through_managed_scheduler(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
     seen: dict[str, object] = {}
@@ -772,7 +800,7 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             "--run-id",
             "libero-managed-route",
             "--skip-push",
-            *_libero_contract_args(),
+            *_libero_contract_args(tmp_path),
         ]
     )
 
@@ -869,7 +897,7 @@ def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
     ],
 )
 def test_main_binds_exact_libero_inputs_before_registry_or_build(
-    monkeypatch, capsys, flag, value, message
+    monkeypatch, capsys, tmp_path, flag, value, message
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -877,7 +905,11 @@ def test_main_binds_exact_libero_inputs_before_registry_or_build(
         "resolve_container_registry",
         lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
     )
-    arguments = ["--run-id", "libero-contract-refusal", *_libero_contract_args()]
+    arguments = [
+        "--run-id",
+        "libero-contract-refusal",
+        *_libero_contract_args(tmp_path),
+    ]
     index = arguments.index(flag)
     arguments[index + 1] = value
 
@@ -898,7 +930,11 @@ def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
     )
     profile = tmp_path / "byof-solution-smoke-libero-b200-gpu.yaml"
     profile.write_text("resources: {}\n", encoding="utf-8")
-    arguments = ["--run-id", "libero-profile-refusal", *_libero_contract_args()]
+    arguments = [
+        "--run-id",
+        "libero-profile-refusal",
+        *_libero_contract_args(tmp_path),
+    ]
     index = arguments.index("--yaml")
     arguments[index + 1] = str(profile)
 
@@ -909,7 +945,7 @@ def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
 
 
 def test_main_refuses_libero_skip_run_before_registry_or_build(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -923,7 +959,7 @@ def test_main_refuses_libero_skip_run_before_registry_or_build(
             "--run-id",
             "libero-skip-run-refusal",
             "--skip-run",
-            *_libero_contract_args(),
+            *_libero_contract_args(tmp_path),
         ]
     ) == 1
     result = json.loads(capsys.readouterr().out)

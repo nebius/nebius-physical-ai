@@ -75,6 +75,7 @@ CONTAINER_IMAGE_NAMES = {
     "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
+    "libero": "npa-libero",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -92,6 +93,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-evaluator",
         "content-agents",
         "ncore",
+        "libero",
         "fiftyone",
         "groot",
         "isaac-lab",
@@ -146,7 +148,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore", "libero"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -259,6 +263,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
+    "libero": "public-neutral-bootstrap-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

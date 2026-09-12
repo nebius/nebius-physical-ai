@@ -1,68 +1,75 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "414226a1f1543ec02854eacc512432faf381dcd599173c220383eaa3d601dae3",
-  "resource_profile_sha256": "61b9380b03c2896cf3bcd6814c5427ca70522ad2650a1fae26ea13fda3402dbb",
+  "solution": "libero",
+  "status": "quarantined_unbuilt_unvalidated",
+  "workflow_sha256": "b493c8cc00ce141fec3833a5f787450da49d3b3d67e0755d59b6cc6dcb44d45f",
+  "resource_profile_sha256": "b3fbd68a600f6ff9d21657930f6711da0111f71a1cbea908b0d48d2b64880a7c",
+  "input_sha256": {
+    "workflow": "b493c8cc00ce141fec3833a5f787450da49d3b3d67e0755d59b6cc6dcb44d45f",
+    "resource_profile": "b3fbd68a600f6ff9d21657930f6711da0111f71a1cbea908b0d48d2b64880a7c",
+    "runtime_manifest": "cc3556e776aeaca5c73e27be3bdcfea24b97848493eb1eae2883e662fd741c76",
+    "runtime_bootstrap": "81b5cb964a5f16a8b38f43f0b54bb08f59f1e2e4901c12ae429e0d4645980979",
+    "smoke": "1ac8e9db8e9b4bd9f1cf301620af5cfdf74581bc0424953f0aeac6d50439240d",
+    "image_manifest": "25bf6a85ccc98dd85daca710eea98bd3e6bdffed8fa74c89d9e9a06fecbc1681"
+  },
+  "public_image_digest": "",
+  "anonymous_pull_verified": false,
+  "live_validated": false,
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The saved workflow passed schema validation and produced a one-step workbench.byof.repo plan on September 11, 2026. The LIBERO runner additionally requires the explicit LIBERO identity and an owner-private isolated SkyPilot state directory resolved once for provider check, submit, poll, cancel, teardown, and API stop; it treats verified scheduler absence as a terminal failure and cancels and drains the exact scheduler ID before cluster teardown. It also refuses an absent or ambiguous owner-only allowed-node binding. Neither validation command launched infrastructure.",
+      "reason": "The quarantined saved workflow passed schema validation and produced a single managed workbench.byof.repo plan without executing it.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id <owner-run-id> --json",
-        "owner-only namespace-binding prelaunch receipt"
+        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id libero-phase-a-plan --json"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused static tests verify that the rendered BYOF operation is designed to pin one official LIBERO-Spatial demonstration, remove unused third-party render assets and Git objects in the source clone layer, require final-filesystem absence plus an independent pre-live OCI layer-byte scan, runtime-fetch and hash-verify upstream-equivalent BERT task conditioning, invoke upstream Sequential.observe with BCRNNPolicy for nonzero steps, reload a checkpoint, evaluate trajectory-disjoint held-out data, bind actual payload Pod/RBAC/allowed-node evidence, require one B200, and never invoke rendering. Static structure is not byte-scan or execution evidence; both remain separate gates.",
+      "reason": "Static contract tests bind the managed scheduler ID, Pod-observed payload service account, immutable upstream task and BERT conditioning inputs, runtime-only payload boundary, independent build provenance inputs, real BC-RNN training/reload/held-out artifact contract, and headless B200 requirement. This does not establish live execution.",
       "evidence": [
-        "npa/.venv/bin/python -m pytest -q npa/tests/workflows/test_byof_libero.py (8 passed)",
-        "docs/workbench/byof-libero.md#acceptance-artifact"
+        "npa/tests/workflows/test_byof_libero.py",
+        "npa/tests/workflows/test_byof_container_verify.py",
+        "npa/tests/docker/test_libero_runtime_bootstrap.py"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "verified",
-      "reason": "The owner-only runtime context assigns a private bucket and unique output prefix, and its storage probes are recorded. The checked-in example-bucket remains intentionally non-runnable.",
-      "evidence": [
-        "owner-only runtime-context storage validation"
-      ]
+      "status": "unverified",
+      "reason": "The checked-in bucket is a placeholder and Phase A did not create or probe storage.",
+      "evidence": []
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The exact 508,779,600-byte official demonstration downloaded from the immutable Hugging Face revision and matched SHA-256 ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead locally. Its HDF5 inventory contains the expected 50 demonstrations and 5,068 samples for the selected BDDL task. The workflow also pins the Apache-2.0 bert-base-cased revision and exact file hashes required by the pinned upstream LIBERO task-conditioning source.",
+      "status": "blocked",
+      "reason": "The image contains only immutable metadata. The exact LIBERO source, GPU runtime, demonstration, task inputs, and BERT model must be fetched at run time after the manager decision gate; Phase A intentionally fetched none of those bytes.",
       "evidence": [
-        "owner-only upstream-evidence.json",
-        "docs/workbench/byof-libero.md#immutable-inputs-and-licensing"
+        "npa/docker/workbench/libero/runtime-manifest.json",
+        "npa/docker/workbench/libero/REDISTRIBUTION.md"
       ]
     },
     "credentials": {
       "status": "blocked",
-      "reason": "The owner-only runtime context and separate pull-secret ledger entry prove the private-registry, Kubernetes, and S3 credential boundaries, and the public LIBERO source, BERT task model, and dataset require no acceptance token. Launch remains blocked until the manager creates and receipts the isolated namespace's deterministic LIBERO payload ServiceAccount, pods/get-only Role, and exact RoleBinding. The payload preflight uses a distinct mode-private namespace-bound kubeconfig, rejects RBAC drift and any mismatch from owner-receipted UID/namespace/cluster/specification hashes, and refuses SkyPilot's default/engine account while the manager global controller config remains explicitly on the engine-required account.",
+      "reason": "Live use requires a manager-issued mode-private decision bound to the exact runtime manifest plus operator-owned registry, Kubernetes, and storage access. No repository value stands in for that decision.",
       "evidence": [
-        "owner-only runtime-context validation",
-        "owner-only pull-secret receipt",
-        "owner-only payload-RBAC manifest and receipt schema",
-        "docs/workbench/byof-libero.md#before-spending-gpu-time"
+        "npa/docker/workbench/libero/runtime-bootstrap.py",
+        "docs/workbench/byof-libero.md"
       ]
     },
     "source_image": {
       "status": "blocked",
-      "reason": "The current BYOF generator adds the complete verified SkyPilot bootstrap package set plus APT-bypass and process-tree deadline guards and records the immutable base reference/digest in generated build metadata and OCI labels. The old r15 private image is bound to an earlier head and retained only as historical private-stage evidence, never repaired-head or live-qualified evidence. A newly built immutable private digest must pass complete OCI byte/provenance, scanner, pullability, and pod-observed identity gates before another live attempt.",
+      "reason": "The neutral image is unbuilt, has no accepted OCI digest or anonymous-pull proof, and remains in publication quarantine. A future trusted build must pass the dedicated complete-byte, SBOM, provenance, security, and license gates.",
       "evidence": [
-        "focused Python 3.12 bootstrap-guard regression tests",
-        "owner-only prior-attempt failure and cleanup receipts",
-        "docs/workbench/byof-libero.md#before-spending-gpu-time"
+        "npa/src/npa/deploy/libero_image_manifest.json",
+        "npa/scripts/scan_image_libero_payload.py"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Prior owner-only evidence verified a STRICT one-B200 reservation, exact node UID/provider group, and child-specific namespace-bound kubeconfig, but all volatile facts must be freshly revalidated and launch is paused for manager authorization. Live acceptance still requires managed scheduler-ID polling, one exact allowed node, actual payload Pod/service-account/RBAC binding, exactly one observed B200 with sm_100, and a matching Kubernetes Pod imageID.",
+      "reason": "Phase A performed no workload submission or GPU use. Live acceptance still requires the exact public digest, managed scheduler path, non-default payload identity, Pod-observed digest equality, one B200 with sm_100, and the genuine named artifact.",
       "evidence": [
-        "owner-only namespace-binding prelaunch receipt",
-        "owner-only payload-RBAC manifest and receipt schema",
-        "docs/workbench/byof-libero.md#acceptance-artifact"
+        "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+        "docs/workbench/byof-libero.md"
       ]
     }
   }

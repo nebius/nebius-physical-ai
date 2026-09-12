@@ -902,13 +902,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         plan_only=True,
         plan_only_justification=(
-            "the separately authorized one-B200 LIBERO execution owns the immutable "
-            "private-image qualification; this matrix does not perform it"
+            "LIBERO's public-neutral candidate remains quarantined and unbuilt; a "
+            "separately authorized exact-digest one-B200 gate owns qualification"
         ),
         notes=(
-            "Official LIBERO-Spatial BC-RNN train/reload/heldout qualification; "
-            "test_byof_onboarding_live_e2e.py validates an operator-selected report "
-            "but does not itself submit or prove live infrastructure execution."
+            "Managed prebuilt LIBERO-Spatial BC-RNN train/reload/heldout path with "
+            "manifest-bound runtime fetch; this matrix neither builds nor submits it, "
+            "and the report validator never proves infrastructure execution by itself."
         ),
     ),
     SubmitLiveCase(

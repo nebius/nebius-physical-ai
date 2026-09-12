@@ -198,7 +198,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -214,6 +214,9 @@ jobs:
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
+            npa/tests/docker/test_libero_runtime_bootstrap.py \
+            npa/tests/docker/test_libero_image_contract.py \
+            npa/tests/docker/test_libero_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
@@ -326,6 +329,25 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
+      - name: Fetch immutable LIBERO base provenance metadata
+        if: matrix.tool == 'libero'
+        run: |
+          set -euo pipefail
+          # Metadata only: this fetches Docker Official Images' published in-toto
+          # provenance blob, not an image layer or a runtime payload.
+          crane blob \
+            index.docker.io/library/python@sha256:0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b \
+            > "$RUNNER_TEMP/libero-base-provenance.intoto.json"
+          echo \
+            '0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b  '"$RUNNER_TEMP/libero-base-provenance.intoto.json" | \
+            sha256sum --check --strict
+          crane blob \
+            index.docker.io/library/python@sha256:b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb \
+            > "$RUNNER_TEMP/libero-base-sbom.intoto.json"
+          echo \
+            'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
+            sha256sum --check --strict
+
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
       # intentionally invalid placeholder credential; no registry write occurs
@@ -364,10 +386,20 @@ jobs:
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
+          metadata_args=()
+          if [[ "$TOOL" == libero ]]; then
+            metadata_args+=(
+              --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
+              --provenance=mode=max
+              --sbom=true
+            )
+            export BUILDX_METADATA_PROVENANCE=max
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
+            "${metadata_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
@@ -403,9 +435,10 @@ jobs:
           forbidden = ("OMNI_KIT_ACCEPT_EULA=YES", "ISAACSIM_ACCEPT_EULA=YES")
           if any(value in serialized for value in forbidden):
               raise SystemExit("cached EULA acceptance found in OCI config")
-          history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
-          if any(value in history for value in forbidden):
-              raise SystemExit("cached EULA acceptance found in layer history")
+          if tool != "libero":
+              history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
+              if any(value in history for value in forbidden):
+                  raise SystemExit("cached EULA acceptance found in layer history")
           PY
           # The loaded runtime image remains in Docker's image store. BuildKit's
           # disposable construction cache can be larger than the image itself and
@@ -416,6 +449,13 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = libero ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -673,6 +713,13 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+          fi
+          if [ "$TOOL" = libero ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
