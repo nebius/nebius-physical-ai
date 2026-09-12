@@ -109,12 +109,130 @@ run: |
   import json
   import os
   import re
+  import stat
   import time
   from pathlib import Path
   from urllib.parse import urlparse
 
   import boto3
   from botocore.config import Config
+
+  MAX_OUTPUT_FILE_BYTES = 1024 * 1024 * 1024
+  MAX_OUTPUT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+  OUTPUT_READ_CHUNK_BYTES = 1024 * 1024
+
+
+  class ExactLengthReader:
+      """Expose no more than one opened output file's preflighted byte count."""
+
+      def __init__(self, handle, length):
+          self._handle = handle
+          self._length = length
+          self._position = 0
+
+      def read(self, amount=-1):
+          remaining = self._length - self._position
+          if remaining == 0 or amount == 0:
+              return b""
+          requested = (
+              OUTPUT_READ_CHUNK_BYTES if amount is None or amount < 0 else amount
+          )
+          chunk = self._handle.read(min(requested, remaining, OUTPUT_READ_CHUNK_BYTES))
+          if not chunk:
+              raise RuntimeError("output file shrank during upload")
+          self._position += len(chunk)
+          return chunk
+
+      def seek(self, offset, whence=os.SEEK_SET):
+          if whence == os.SEEK_SET:
+              target = offset
+          elif whence == os.SEEK_CUR:
+              target = self._position + offset
+          elif whence == os.SEEK_END:
+              target = self._length + offset
+          else:
+              raise ValueError("invalid output stream seek mode")
+          if target < 0 or target > self._length:
+              raise OSError("output stream seek exceeds declared length")
+          self._handle.seek(target)
+          self._position = target
+          return target
+
+      def tell(self):
+          return self._position
+
+      def seekable(self):
+          return True
+
+      def readable(self):
+          return True
+
+      def assert_complete_and_unchanged(self):
+          if self._position != self._length:
+              raise RuntimeError("output upload did not consume its declared bytes")
+          if os.fstat(self._handle.fileno()).st_size != self._length:
+              raise RuntimeError("output file size changed during upload")
+          self._handle.seek(self._length)
+          if self._handle.read(1):
+              raise RuntimeError("output file grew during upload")
+
+
+  def checked_output_files(root):
+      """Return regular outputs after enforcing per-file and aggregate bounds."""
+
+      checked = []
+      total_bytes = 0
+      for path in sorted(root.rglob("*")):
+          details = path.lstat()
+          if stat.S_ISLNK(details.st_mode):
+              raise RuntimeError(f"output symlink is forbidden: {path}")
+          if stat.S_ISDIR(details.st_mode):
+              continue
+          if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+              raise RuntimeError(f"output must be one regular unlinked file: {path}")
+          try:
+              path.resolve().relative_to(root)
+          except ValueError as exc:
+              raise RuntimeError(f"output path escapes its mounted root: {path}") from exc
+          if path.suffix.lower() in {".hdf5", ".download"}:
+              raise RuntimeError(f"runtime input must not be uploaded as output: {path}")
+          if details.st_size > MAX_OUTPUT_FILE_BYTES:
+              raise RuntimeError(f"output exceeds the per-file byte limit: {path}")
+          total_bytes += details.st_size
+          if total_bytes > MAX_OUTPUT_TOTAL_BYTES:
+              raise RuntimeError("outputs exceed the aggregate byte limit")
+          checked.append((path, details.st_size, details.st_dev, details.st_ino))
+      return checked
+
+
+  def upload_outputs(s3, bucket, prefix, root):
+      """Stream preflighted outputs without overwriting an existing object."""
+
+      checked = checked_output_files(root)
+      for path, size, device, inode in checked:
+          key = prefix + str(path.relative_to(root))
+          flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+          descriptor = os.open(path, flags)
+          with os.fdopen(descriptor, "rb") as handle:
+              opened = os.fstat(handle.fileno())
+              if (
+                  not stat.S_ISREG(opened.st_mode)
+                  or opened.st_nlink != 1
+                  or opened.st_size != size
+                  or opened.st_dev != device
+                  or opened.st_ino != inode
+              ):
+                  raise RuntimeError(f"output identity changed before upload: {path}")
+              body = ExactLengthReader(handle, size)
+              s3.put_object(
+                  Bucket=bucket,
+                  Key=key,
+                  Body=body,
+                  ContentLength=size,
+                  IfNoneMatch="*",
+              )
+              body.assert_complete_and_unchanged()
+      return len(checked)
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
@@ -208,20 +326,7 @@ run: |
           client_kwargs["aws_session_token"] = session_token
   s3 = boto3.client("s3", **client_kwargs)
   prefix = parsed.path.lstrip("/")
-  uploaded = 0
-  for path in root.rglob("*"):
-      if path.is_symlink():
-          raise RuntimeError(f"output symlink is forbidden: {path}")
-      if path.is_file():
-          try:
-              path.resolve().relative_to(root)
-          except ValueError as exc:
-              raise RuntimeError(f"output path escapes its mounted root: {path}") from exc
-          if path.suffix.lower() in {".hdf5", ".download"}:
-              raise RuntimeError(f"runtime input must not be uploaded as output: {path}")
-          key = prefix + str(path.relative_to(root))
-          s3.put_object(Bucket=parsed.netloc, Key=key, Body=path.read_bytes(), IfNoneMatch="*")
-          uploaded += 1
+  uploaded = upload_outputs(s3, parsed.netloc, prefix, root)
   s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
   if smoke_exit_code == 0:
       s3.head_object(Bucket=parsed.netloc, Key=prefix + smoke_artifact_name)

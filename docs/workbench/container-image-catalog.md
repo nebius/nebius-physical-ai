@@ -46,12 +46,12 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory has **38 packaging entries** (35
+redistribution-eligible, two restricted, and one unvalidated neutral candidate)
+and **39 mapped tools**: 32 public-release members, two restricted tools, and five
+quarantined tools (`curobo`, `ncore`, `openpi`, `robocasa`, and `robomimic`). These
+counts come from `packaging-contract.yaml` and `npa.deploy.images`; they do not
+constitute a new registry audit or acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -312,7 +312,9 @@ historical evidence.
   transaction authorization. No accepted digest, built-byte scan, SBOM,
   provenance, private B200 result, anonymous pull proof, or public availability
   is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
-  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine.
+  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine. Its packaging
+  class is `unvalidated`, so the source design does not prematurely assert public
+  redistribution eligibility before an exact selected-byte licence review.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,

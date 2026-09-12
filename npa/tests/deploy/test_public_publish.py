@@ -304,6 +304,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
     assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"robomimic"})
+    assert not is_publicly_redistributable("robomimic")
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "cosmos3",
         "cosmos3-ray-serve",
@@ -627,6 +628,21 @@ def test_selector_matches_packaging_contract_classification() -> None:
             # A future non-canonical restricted image must map to a
             # restricted canonical tool
             assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
+
+
+def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
+    """A neutral proposal is not public before its exact-byte license closure."""
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract_unvalidated = {
+        name
+        for name, entry in contract["images"].items()
+        if entry.get("redistribution") == "unvalidated"
+    }
+    assert contract_unvalidated == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    assert all(
+        not is_publicly_redistributable(tool) for tool in contract_unvalidated
+    )
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----

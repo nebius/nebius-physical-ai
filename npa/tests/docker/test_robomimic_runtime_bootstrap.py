@@ -471,6 +471,52 @@ def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> N
             path.chmod(0o755)
 
 
+def test_runtime_snapshot_rejects_source_growth_after_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    destination = tmp_path / "private" / "active-runtime"
+    source_interpreter = runtime_root / "payload" / "bin" / "python"
+    original_copy = verifier._copy_bounded_regular_file
+    source_mutated = False
+
+    def grow_declared_file(
+        source: Path,
+        target: Path,
+        *,
+        expected_size: int | None,
+        expected_sha256: str | None,
+        maximum_size: int | None = None,
+    ) -> None:
+        nonlocal source_mutated
+        if source == source_interpreter and not source_mutated:
+            source_mutated = True
+            with source.open("ab") as handle:
+                handle.write(b"unexpected-growth")
+        original_copy(
+            source,
+            target,
+            expected_size=expected_size,
+            expected_sha256=expected_sha256,
+            maximum_size=maximum_size,
+        )
+
+    monkeypatch.setattr(verifier, "_copy_bounded_regular_file", grow_declared_file)
+    with pytest.raises(verifier.VerificationError, match="source size changed"):
+        verifier.materialize_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            destination=destination,
+            require_source_read_only=False,
+        )
+
+    assert source_mutated is True
+    assert not destination.exists()
+    assert destination.parent.is_dir()
+    assert list(destination.parent.iterdir()) == []
+
+
 def test_runtime_snapshot_never_overwrites_an_existing_destination(
     tmp_path: Path,
 ) -> None:
