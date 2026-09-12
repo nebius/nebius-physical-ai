@@ -4,7 +4,11 @@
 
 Install `npa`, connect a Nebius project, and choose a GPU workload. Each linked
 workload guide takes you through setup, execution, and inspecting its outputs.
-For guided terminal work, use the [coding-agent prompts](workbench/agent-first-run.md).
+Workbench is designed to be the control plane for a coding agent with terminal
+access to this checkout. For guided terminal work, paste the
+[setup prompt](workbench/agent-first-run.md#set-up-workbench) or go directly to
+the [Cosmos 3 workflow prompt](workbench/agent-first-run.md#run-cosmos-3-generation).
+The commands below are the corresponding manual path.
 
 ## 1. Platform overview
 

@@ -1,12 +1,22 @@
-# Use Workbench with a coding agent
+# Use Workbench with your coding agent
 
 [Workbench docs](README.md)
 
-Use your existing coding agent with terminal access to this checkout. Install
-`npa` and the Nebius CLI using the [quickstart](../quickstart.md). Describe the
-task you want to complete, then select individual tools or compose a workflow.
-The [self-hosted browser agent](../agent.md)
-is optional and requires a separate deployment.
+Workbench is the control plane between your coding agent and physical-AI
+workloads on Nebius. Use Codex, Claude Code, or another agent with terminal
+access to this checkout; NPA does not require or select a particular reasoning
+system. Your agent operates the same checked, auditable `npa` surfaces available
+to a human: configure, preflight, plan, provision, submit, monitor, and inspect.
+
+Install `npa` and the Nebius CLI using the [quickstart](../quickstart.md), then
+paste one of the prompts below. The [self-hosted browser agent](../agent.md) is
+optional and requires a separate deployment.
+
+| Goal | Prompt |
+| --- | --- |
+| Prepare a project for any supported task | [Set up Workbench](#set-up-workbench) |
+| Generate an image with the supported Cosmos 3 workflow | [Run Cosmos 3 generation](#run-cosmos-3-generation) |
+| Augment and curate a source video | [Run PAIDF with Cosmos 3](#run-paidf-with-cosmos-3) |
 
 ## Choose tools for your task
 
@@ -17,10 +27,13 @@ Existing examples are starting points; available tools and their contracts
 determine what you can run or combine. If the task needs an unsupported
 capability, have the agent explain the gap.
 
-The setup prompt below applies to the task you choose. The PAIDF + Cosmos 3
-prompt later in this guide is a worked video-augmentation example.
+The setup prompt below applies to the task you choose. The two Cosmos prompts
+are complete runs: standalone generation is the shorter first workflow, while
+PAIDF is a longer source-video augmentation and curation pipeline.
 
-## Configure the project and model access
+<a id="set-up-workbench"></a>
+
+## Set up Workbench
 
 Supply the project values and any credentials needed by your selected tools
 through the agent's **private environment**. Keep token values out of chat.
@@ -49,14 +62,15 @@ First-time storage setup needs **admin permission on the target project**.
 IAM group with a bucket-scoped `storage.object-editor` permit. Tenant-wide admin
 permission and tenant-wide project listing are not required.
 
-Then give your agent this prompt:
+Describe the task you want to run, then give your agent this prompt:
 
 ```text
-Set up Nebius Physical AI Workbench for the task I described. If I have not
-given you a task, ask what I want to accomplish before choosing tools. Read
-AGENTS.md and skills/index.yaml, then inspect the relevant guides and command
-help. Select tools or a workflow that fit my inputs and intended output. Explain
-their requirements and any unsupported parts of the task.
+Set up Nebius Physical AI Workbench for the task I described. If the intended
+result or input is unclear, ask me one concise question before choosing tools.
+Read AGENTS.md and skills/index.yaml, then follow the relevant repository skills,
+workload guide, and current command help. Select a supported tool or workflow
+that directly produces my intended result. State its inputs, output artifacts,
+model access, infrastructure, and any unsupported part of my request.
 
 Use project values and the credentials required by the selected tools from
 the private process environment. Never print secret values, put them in command
@@ -66,23 +80,22 @@ the process environment; inspect only allowlisted names and report present or
 missing. Do not read credential files except through npa's credential APIs.
 Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
 
-Install or verify npa and the host prerequisites for the selected runtime.
-Managed deployments need Terraform; SkyPilot Kubernetes on Debian/Ubuntu also
-needs socat. Configure the known tenant, project, and region non-interactively
-when the task uses a Nebius project. Persist supported environment credentials
-with npa configure --save-env-credentials. Use --no-provision for provider-free
-setup. If the task needs S3, explain the storage it needs before using explicit
---provision to create or reuse writable project storage. First confirm that the
-active identity can manage the project-scoped IAM objects that secure it.
+Install or verify npa, the Nebius CLI, and the host prerequisites for the
+selected runtime. Configure known project values non-interactively; ask only for
+required non-secret values you cannot resolve. Persist supported environment
+credentials with npa configure --save-env-credentials. If the task needs S3,
+explain the required storage before using explicit --provision to create or
+reuse it, and first confirm that the active identity has the required project
+permissions.
 
 Inspect npa configure --show. Run credential preflight checks for the selected
 services, including --checks nebius before cloud provisioning. Use npa workbench
 health access for the selected capabilities and their required model assets.
 
-Do not bypass a failed gate or provision GPU resources yet. If Hugging Face
-access is missing, give me the exact model-page links, wait for me to accept the
-terms, and rerun the check. Finish setup when the selected task's prerequisites
-pass, then guide me into running it.
+Do not bypass a failed gate or provision GPU resources during setup. If model
+access needs human approval, show me the exact official pages and wait; never
+accept terms for me. Finish with a concise readiness report: what passed, what
+is still blocked, the planned workload and resources, and the next command.
 ```
 
 For project creation, federation or SSO profiles, non-interactive setup, and
@@ -97,9 +110,66 @@ use its documented command and runtime requirements. Check the resulting
 artifacts against your intended output and follow the applicable recovery and
 cleanup instructions.
 
+<a id="run-cosmos-3-generation"></a>
+
+## First workflow: Cosmos 3 generation
+
+This prompt runs the checked-in
+[`workflows/testing/cosmos3-generate.yaml`](../../workflows/testing/cosmos3-generate.yaml)
+workflow on a compatible Nebius GPU. Its default is Cosmos3-Nano text-to-image
+on one H100, producing `vision.jpg` and `generate.json` in S3. The default
+guardrails require gated Hugging Face access even though the main checkpoint is
+public. Paste this prompt after making project values and `HF_TOKEN` available
+to the agent through its private environment:
+
+```text
+Run my first Nebius Physical AI Workbench workflow:
+workflows/testing/cosmos3-generate.yaml. Follow AGENTS.md, skills/index.yaml,
+the relevant Cosmos 3 and workflow-operation skills, and
+docs/workbench/cosmos3-generate.md. Use the current local checkout and its npa
+installation. Use the configured project, writable bucket, and credentials.
+First install or verify npa, the Nebius CLI, and the host tools required by the
+maintained Workbench setup guide.
+
+Never print secret values, put them in command arguments or YAML, or dump the
+process environment. Inspect only the allowlisted names needed for this run and
+report each as present or missing. Resolve credentials through npa's supported
+configuration APIs. Keep project, cluster, bucket, registry, and artifact
+identifiers out of chat and committed files.
+
+Inspect npa configure --show. Run the Nebius, selected-project S3, and Cosmos 3
+model-access gates before provisioning. If access is pending, show me the exact
+official model pages and wait for me to accept the terms; never accept them for
+me. Rerun the gate after I finish. Do not disable guardrails or bypass a failed
+check.
+
+Validate and plan the checked-in spec using my actual bucket. Explain the
+expected vision.jpg and generate.json output plus the requested CPU, memory,
+and GPU before provisioning. Preview provision-if-absent, then create only
+missing resources through npa. Bootstrap and verify the isolated SkyPilot
+runtime, discover the accelerator name exposed by the selected cluster, and
+reconcile the workflow resource request if necessary. Revalidate the plan and
+preflight the exact workflow images.
+
+Submit the workflow with --runtime and forward secrets only by name with
+--secret-env. Stay with the run until it reaches a terminal state. On failure,
+use npa workbench workflow status, logs, and artifacts to diagnose the recorded
+stage; keep log output bounded and resume safely when supported instead of
+launching an unrelated run. On success, verify that the generated media is
+non-empty, inspect generate.json, and show me the media in an available agent
+viewer. Finish with the run outcome, artifact types, and any still-running
+resources. Do not destroy shared infrastructure; offer the documented
+cancel-before-destroy cleanup path.
+```
+
+Do not treat a valid plan or accepted submission as completion: the prompt ends
+with inspected artifacts or a concrete external blocker. The
+[Cosmos 3 generation guide](cosmos3-generate.md) is the command-level source of
+truth for the workflow, outputs, access checks, and current limitations.
+
 <a id="run-paidf-with-cosmos-3"></a>
 
-## Worked example: PAIDF with Cosmos 3
+## Advanced workflow: PAIDF with Cosmos 3
 
 Use the same agent from input selection through output inspection. For the
 Physical AI Data Factory with real source-video-conditioned Cosmos 3, attach a
