@@ -28,7 +28,7 @@ SCHEMA = "npa.libero.runtime-manifest.v1"
 DECISION_SCHEMA = "npa.libero.runtime-use-decision.v1"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "cc3556e776aeaca5c73e27be3bdcfea24b97848493eb1eae2883e662fd741c76"
+    "c8e621ddf7a2db6ed67f92f8f8c23e3fb3ccd1f48d0736248f56e063af435a1d"
 )
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
