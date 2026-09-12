@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -211,3 +212,33 @@ def test_explicit_opt_out_is_auditable_but_never_called_effective(
     assert state["requested"] is False
     assert state["effective"] is False
     assert state["status"] == "explicit_opt_out"
+
+
+def test_guardrail_cache_is_an_nltk_root_before_upstream_import(
+    monkeypatch, tmp_path
+) -> None:
+    cache = tmp_path / "hf-cache"
+    previous = tmp_path / "existing-nltk-data"
+    observed = {}
+    _reset(monkeypatch, tmp_path)
+    monkeypatch.setenv("HF_HOME", str(cache))
+    monkeypatch.setenv("NLTK_DATA", str(previous))
+
+    class NativeModule:
+        @staticmethod
+        def main():
+            return None
+
+    def import_native(module_name):
+        observed["module"] = module_name
+        observed["nltk_data"] = os.environ["NLTK_DATA"]
+        return NativeModule
+
+    monkeypatch.setattr(guarded.importlib, "import_module", import_native)
+    monkeypatch.setattr(guarded, "_install_fail_closed_guardrails", lambda: None)
+
+    guarded.main()
+
+    roots = observed["nltk_data"].split(os.pathsep)
+    assert observed["module"] == guarded.DEFAULT_INFERENCE_MODULE
+    assert roots == [str(cache.resolve()), str(previous)]

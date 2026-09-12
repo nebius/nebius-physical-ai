@@ -454,3 +454,25 @@ warns). The warning stays silent when the workaround is active. See
 `docs/workbench/cosmos3-access-preflight.md`.
 
 Category for follow-up: dependencies.
+
+## Cosmos3 Guardrails Requested But Not Effective
+
+Symptom: generation reports `guardrail execution could not be proven` or
+`guardrails were requested but were not effective`, and no generated artifact
+is published.
+
+Root cause: the pinned upstream media preset contains no safety models and
+would otherwise return safe; upstream Qwen3Guard also converts an internal
+model exception into a safe tuple, while the video safety filter can skip a
+failed sampled-frame classifier call. NPA instruments the real upstream model
+calls, restores the shipped media filter only for the empty preset, and rejects
+all of those ineffective states.
+
+Current behavior: read the machine-readable `guardrail_state` receipt for the
+requested, discovered, evaluated, per-model evaluation detail, effective,
+status, and sanitized failure category. Do not retry by disabling guardrails.
+Repair model access/runtime health and rerun. `--no-guardrails` is the only
+supported opt-out and is explicitly recorded as an ineffective opt-out, never
+as a guarded pass.
+
+Category for follow-up: safety/runtime integrity.

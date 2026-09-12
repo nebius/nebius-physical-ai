@@ -44,7 +44,19 @@ still fails mid-download until they separately accept
 `nvidia/Cosmos-Guardrail1`, and the reverse is also true. Both paths can skip
 the guardrail download entirely: pass `--no-guardrails` to
 `npa workbench cosmos3 generate` per run, or to `vllm serve` at server launch
-on the vLLM-Omni path.
+on the vLLM-Omni path. On the NPA generation path that opt-out is explicit in
+the result as `requested: false`, `status: explicit_opt_out`, and
+`effective: false`.
+
+Credential readiness is only the download gate. A requested NPA generation is
+accepted only after the runtime receipt proves that prompt and generated-media
+safety models were both discovered and evaluated. The pinned upstream preset
+ships an empty generated-media model list, so NPA restores its shipped
+`VideoContentSafetyFilter`; missing models, invalid results, internal
+Qwen3Guard errors, and failed sampled-frame classifier calls all fail closed.
+Inspect `guardrail_state.discovered`, `evaluated`, `evaluation_details`,
+`status`, and `effective` in `generate.json` rather than treating the legacy
+top-level `guardrails` request flag as proof of execution.
 
 ## The authenticated 401-vs-403 diagnostic
 

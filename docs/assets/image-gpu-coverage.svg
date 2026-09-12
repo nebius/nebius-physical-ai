@@ -216,7 +216,7 @@
 <rect x="582" y="378" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="659" y="395" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
-<g><title>npa-lerobot on B200 sm_100: verified</title>
+<g><title>npa-lerobot on B200 sm_100: verified, optional 0.6.0</title>
 <rect x="740" y="378" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="817" y="395" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
@@ -693,5 +693,5 @@
 <text x="16" y="1112" font-size="11.5" fill="#59636e">verified = current-release run &#183; supported = compatible toolchain, no run &#183; historical = earlier release or predecessor</text>
 <text x="16" y="1129" font-size="11.5" fill="#59636e">blocked = upstream/physical limit &#183; not routed = launcher exclusion &#183; unverified = current release lacks cell evidence. Hover for detail.</text>
 <text x="16" y="1146" font-size="11.5" fill="#59636e">Rendering needs RT cores (L40S or RTX PRO 6000). Current public runtimes are linux/amd64, so aarch64 gpu-gb300 is uncovered.</text>
-<text x="16" y="1167" font-size="10.5" fill="#818b98">Rendered 2026-09-11 by npa/scripts/render_gpu_coverage_chart.py</text>
+<text x="16" y="1167" font-size="10.5" fill="#818b98">Rendered 2026-09-12 by npa/scripts/render_gpu_coverage_chart.py</text>
 </svg>

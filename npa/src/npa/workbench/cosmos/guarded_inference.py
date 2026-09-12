@@ -52,6 +52,26 @@ def _new_state(requested: bool | None = None) -> dict[str, Any]:
 _STATE = _new_state()
 
 
+def _authorize_guardrail_cache_root() -> None:
+    """Let NLTK read Blocklist data from the configured model cache.
+
+    NLTK 3.10's path traversal hardening only permits data below roots that
+    were present in ``NLTK_DATA`` when NLTK was imported. Cosmos-Guardrail1
+    stores its Blocklist corpus below ``HF_HOME``, so register that exact
+    operator-configured cache root before importing the upstream framework.
+    """
+
+    hf_home = os.environ.get("HF_HOME", "").strip()
+    if not hf_home:
+        return
+    cache_root = str(Path(hf_home).resolve())
+    existing = [
+        value for value in os.environ.get("NLTK_DATA", "").split(os.pathsep) if value
+    ]
+    if cache_root not in existing:
+        os.environ["NLTK_DATA"] = os.pathsep.join([cache_root, *existing])
+
+
 def _append_unique(target: list[str], values: list[str]) -> None:
     for value in values:
         if value not in target:
@@ -277,6 +297,8 @@ def main() -> None:
     module_name = os.environ.get(INFERENCE_MODULE_ENV, DEFAULT_INFERENCE_MODULE)
     if module_name not in ALLOWED_INFERENCE_MODULES:
         raise RuntimeError(f"unsupported Cosmos 3 inference module: {module_name}")
+    if _STATE["requested"]:
+        _authorize_guardrail_cache_root()
     # Importing the native script performs its required process initialization.
     module = importlib.import_module(module_name)
     try:
