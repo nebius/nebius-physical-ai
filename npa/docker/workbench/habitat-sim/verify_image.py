@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-image-id", required=True)
     parser.add_argument("--expected-source-revision", required=True)
     parser.add_argument("--expected-dpkg-inventory-sha256", required=True)
+    parser.add_argument("--expected-python-venv-inventory-sha256", required=True)
     parser.add_argument("--expected-native-closure-sha256", required=True)
     parser.add_argument("--json", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -42,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
                 archive_hash,
                 args.expected_source_revision,
                 args.expected_dpkg_inventory_sha256,
+                args.expected_python_venv_inventory_sha256,
                 args.expected_native_closure_sha256,
             )
         finally:

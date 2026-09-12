@@ -59,6 +59,7 @@ def bind(
         )
     for key in (
         "expected_dpkg_inventory_sha256",
+        "expected_python_venv_inventory_sha256",
         "expected_native_closure_sha256",
     ):
         W.require(
@@ -68,6 +69,8 @@ def bind(
     W.require(
         verification["dpkg_inventory_sha256"]
         == verification["expected_dpkg_inventory_sha256"]
+        and verification["python_venv_inventory_sha256"]
+        == verification["expected_python_venv_inventory_sha256"]
         and verification["native_elf_closure_sha256"]
         == verification["expected_native_closure_sha256"],
         "habitat_oci_runtime_closure_binding",
@@ -496,22 +499,68 @@ def _record_target(record_path: str, relative: str) -> str:
     return target
 
 
-def _python_findings(
+def _python_venv_inventory(
+    final_paths: dict[str, str],
     final_files: dict[str, dict[str, object]],
+    final_links: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, object]], str]:
+    inventory: list[dict[str, object]] = []
+    for path, kind in sorted(final_paths.items()):
+        if not path.startswith("opt/venv/") or kind == "directory":
+            continue
+        row: dict[str, object] = {"path": path, "kind": kind}
+        if kind == "file":
+            file_row = final_files.get(path)
+            W.require(file_row is not None, "habitat_oci_python_inventory_file")
+            row.update(sha256=file_row["sha256"], size=file_row["size"])
+        elif kind in {"hardlink", "symlink"}:
+            link_row = final_links.get(path)
+            W.require(link_row is not None, "habitat_oci_python_inventory_link")
+            row["target"] = link_row[1]
+        inventory.append(row)
+    serialized = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
+    return inventory, hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _python_findings(
+    final_paths: dict[str, str],
+    final_files: dict[str, dict[str, object]],
+    final_links: dict[str, tuple[str, str]],
     tracked: dict[str, bytes],
     contract: dict[str, object],
-) -> tuple[list[dict[str, object]], int, int, int, set[str]]:
+    expected_inventory_sha256: str,
+) -> tuple[
+    list[dict[str, object]],
+    int,
+    int,
+    int,
+    set[str],
+    list[dict[str, object]],
+    str,
+]:
     findings: list[dict[str, object]] = []
     observed: dict[str, str] = {}
-    records = []
+    metadata_roots: set[str] = set()
+    records: list[tuple[str, bytes]] = []
+    record_roots: set[str] = set()
     for path, payload in tracked.items():
         if path.endswith(".dist-info/METADATA"):
+            root = str(PurePosixPath(path).parent)
+            if root in metadata_roots:
+                findings.append({"code": "python_metadata_population_invalid"})
+            metadata_roots.add(root)
             name, version = _metadata_identity(payload)
             if not name or name in observed:
                 findings.append({"code": "python_distribution_identity_invalid"})
             observed[name] = version
         elif path.endswith(".dist-info/RECORD"):
+            root = str(PurePosixPath(path).parent)
+            if root in record_roots:
+                findings.append({"code": "python_record_population_invalid"})
+            record_roots.add(root)
             records.append((path, payload))
+    if metadata_roots != record_roots:
+        findings.append({"code": "python_record_population_invalid"})
     lock_path = contract["python_runtime_lock_path"].lstrip("/")
     expected = _python_lock(tracked.get(lock_path, b""))
     local = contract["locally_built_python_distribution"]
@@ -527,10 +576,27 @@ def _python_findings(
         for pattern in contract["allowed_missing_python_record_patterns"]
     ]
     for record_path, payload in records:
+        record_entries: set[str] = set()
         for relative, hash_field, size_field in csv.reader(
             io.StringIO(payload.decode("utf-8", errors="strict"))
         ):
+            target = _record_target(record_path, relative)
+            if target in record_entries:
+                findings.append(
+                    {"code": "python_record_entry_duplicate", "path": target}
+                )
+                continue
+            record_entries.add(target)
             if not hash_field:
+                allowed_unhashed = {
+                    record_path,
+                    str(PurePosixPath(record_path).with_name("RECORD.jws")),
+                    str(PurePosixPath(record_path).with_name("RECORD.p7s")),
+                }
+                if size_field or target not in allowed_unhashed:
+                    findings.append(
+                        {"code": "python_record_entry_unbound", "path": target}
+                    )
                 continue
             try:
                 algorithm, encoded = hash_field.split("=", 1)
@@ -540,7 +606,6 @@ def _python_findings(
             except (TypeError, ValueError):
                 findings.append({"code": "python_record_entry_invalid"})
                 continue
-            target = _record_target(record_path, relative)
             actual = final_files.get(target, {})
             if not actual and any(
                 pattern.fullmatch(target) for pattern in missing_patterns
@@ -565,7 +630,20 @@ def _python_findings(
         findings.append({"code": "native_elf_not_bound_to_wheel_record"})
     if allowed_missing != contract["expected_missing_python_record_count"]:
         findings.append({"code": "python_record_allowed_missing_population"})
-    return findings, len(observed), verified, allowed_missing, covered
+    inventory, inventory_sha256 = _python_venv_inventory(
+        final_paths, final_files, final_links
+    )
+    if inventory_sha256 != expected_inventory_sha256:
+        findings.append({"code": "python_venv_inventory_lock_mismatch"})
+    return (
+        findings,
+        len(observed),
+        verified,
+        allowed_missing,
+        covered,
+        inventory,
+        inventory_sha256,
+    )
 
 
 def _elf_strings(
@@ -826,6 +904,7 @@ def _scan_layers(
     layers: list[dict[str, object]],
     contract: dict[str, object],
     expected_dpkg_inventory_sha256: str,
+    expected_python_venv_inventory_sha256: str,
     expected_native_closure_sha256: str,
 ) -> dict[str, object]:
     forbidden = [
@@ -981,8 +1060,21 @@ def _scan_layers(
         expected_dpkg_inventory_sha256,
     )
     findings.extend(dpkg_findings)
-    python_findings, python_count, record_count, allowed_missing_records, covered = (
-        _python_findings(final_files, tracked_files, contract)
+    (
+        python_findings,
+        python_count,
+        record_count,
+        allowed_missing_records,
+        covered,
+        python_venv_inventory,
+        python_venv_inventory_sha,
+    ) = _python_findings(
+        final_paths,
+        final_files,
+        final_links,
+        tracked_files,
+        contract,
+        expected_python_venv_inventory_sha256,
     )
     findings.extend(python_findings)
     native_findings, native_closure_sha, native_closure = _native_findings(
@@ -1011,6 +1103,11 @@ def _scan_layers(
         "python_distribution_count": python_count,
         "python_record_files_verified": record_count,
         "allowed_missing_python_record_files": allowed_missing_records,
+        "python_venv_inventory": python_venv_inventory,
+        "python_venv_inventory_sha256": python_venv_inventory_sha,
+        "expected_python_venv_inventory_sha256": (
+            expected_python_venv_inventory_sha256
+        ),
         "projected_source_file_count": projection_count,
         "native_elf_count": len(elf_payloads),
         "native_elf_closure": native_closure,
@@ -1074,6 +1171,7 @@ def verify(
     archive_sha256: str,
     expected_source_revision: str,
     expected_dpkg_inventory_sha256: str,
+    expected_python_venv_inventory_sha256: str,
     expected_native_closure_sha256: str,
 ) -> dict[str, object]:
     """Verify graph, layer population, payload policy, and final OCI config."""
@@ -1084,6 +1182,7 @@ def verify(
     )
     for value in (
         expected_dpkg_inventory_sha256,
+        expected_python_venv_inventory_sha256,
         expected_native_closure_sha256,
     ):
         W.require(
@@ -1097,6 +1196,7 @@ def verify(
         layers,
         contract,
         expected_dpkg_inventory_sha256,
+        expected_python_venv_inventory_sha256,
         expected_native_closure_sha256,
     )
     config = _config(fd, result["image_config_digest"])
