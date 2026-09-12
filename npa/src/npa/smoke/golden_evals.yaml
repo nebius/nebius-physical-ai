@@ -349,6 +349,9 @@ containers:
         Bakes only the pinned Apache-2.0 Arena source. Isaac Sim/Lab and
         operator policy inputs remain runtime-only. Captured upstream logs are
         produced without cloud/model credentials in the subprocess environment.
+        The golden smoke downloads the pinned upstream Apache-2.0 GR1
+        open-microwave replay fixture, verifies its Git LFS SHA-256, and requires
+        both nonzero behavior and decoded viewport motion.
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh

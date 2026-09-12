@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from npa.cli import agent_actions as A
+from npa.cli.agent_payloads import tool_catalog_payload
 
 
 def _completion(obj: dict) -> dict:
@@ -39,6 +40,18 @@ def test_allowlist_contains_readonly_and_gated_tools():
     # sim2real_submit is the GPU-spending gated tool; status tools are not.
     assert A.requires_confirmation("sim2real_submit")
     assert not A.requires_confirmation("sim_viz_status")
+
+
+def test_agent_tool_catalog_embeds_isaac_arena_capability_surface():
+    catalog = tool_catalog_payload()
+    for tool_ref in (
+        "workbench.isaac_arena.evaluate",
+        "workbench.isaac_arena.evaluate_video",
+    ):
+        arena = catalog[tool_ref]["capabilities"]
+        assert arena["schema"] == "npa.workbench.isaac_arena.capabilities.v1"
+        assert len(arena["environments"]) == 18
+        assert arena["outputs"]["rerun_rrd"] is False
 
 
 def test_readonly_tool_runs_and_produces_final_answer():

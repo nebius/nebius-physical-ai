@@ -8,6 +8,9 @@ DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "Dockerfile
 RUNTIME_REQUIREMENTS = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "runtime-requirements.txt"
 )
+SMOKE_SCRIPT = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "smoke_functional.sh"
+)
 
 
 def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -> None:
@@ -67,3 +70,14 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
 def test_isaac_arena_image_catalog_identity() -> None:
     assert CONTAINER_IMAGE_NAMES["isaac-arena"] == "npa-isaac-arena"
     assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260912"
+
+
+def test_isaac_arena_golden_smoke_uses_hash_pinned_nonzero_replay() -> None:
+    text = SMOKE_SCRIPT.read_text(encoding="utf-8")
+    assert "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50" in text
+    assert "--environment gr1_open_microwave" in text
+    assert "--policy-type replay" in text
+    assert "--input-path" in text
+    assert "--embodiment gr1_pink" in text
+    assert "--record-video" in text
+    assert "zero_action" not in text

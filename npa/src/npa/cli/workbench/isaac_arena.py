@@ -9,7 +9,12 @@ import typer
 
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
-from npa.workbench.isaac_arena import IsaacArenaError, IsaacArenaRequest, evaluate
+from npa.workbench.isaac_arena import (
+    IsaacArenaError,
+    IsaacArenaRequest,
+    capabilities,
+    evaluate,
+)
 
 app = typer.Typer(
     name="isaac-arena",
@@ -21,6 +26,15 @@ app = typer.Typer(
 class OutputFormat(str, Enum):
     json = "json"
     text = "text"
+
+
+@app.command("capabilities")
+@resolve_typer_defaults
+@intent_boundary(OperationIntent.OBSERVE)
+def capabilities_cmd() -> None:
+    """Print the pinned upstream surface and NPA support status as JSON."""
+
+    typer.echo(json.dumps(capabilities(), indent=2, sort_keys=True))
 
 
 @app.command("evaluate")

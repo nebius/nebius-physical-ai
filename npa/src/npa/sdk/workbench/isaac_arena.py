@@ -2,7 +2,17 @@
 
 from typing import Any
 
-from npa.workbench.isaac_arena import IsaacArenaRequest, evaluate as _evaluate
+from npa.workbench.isaac_arena import (
+    IsaacArenaRequest,
+    capabilities as _capabilities,
+    evaluate as _evaluate,
+)
+
+
+def capabilities() -> dict[str, Any]:
+    """Return the pinned upstream surface and honest NPA support status."""
+
+    return _capabilities()
 
 
 def evaluate(
@@ -42,4 +52,4 @@ def evaluate(
     )
 
 
-__all__ = ["IsaacArenaRequest", "evaluate"]
+__all__ = ["IsaacArenaRequest", "capabilities", "evaluate"]

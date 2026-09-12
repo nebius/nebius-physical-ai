@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -12,11 +13,14 @@ from npa.sdk.workbench.isaac_arena import evaluate as sdk_evaluate
 from npa.cli.entry import _is_isaac_arena_request
 from npa.workbench.isaac_arena.runtime import (
     ARTIFACT_SCHEMA,
+    CAPABILITIES_SCHEMA,
     ISAAC_ARENA_REVISION,
     IsaacArenaError,
     IsaacArenaRequest,
     build_evaluation_argv,
+    capabilities,
     evaluate,
+    _probe_mp4,
 )
 
 
@@ -25,6 +29,39 @@ def test_lightweight_console_route_is_exact() -> None:
     assert _is_isaac_arena_request(["workbench", "isaac-arena", "terms"])
     assert not _is_isaac_arena_request(["workbench", "isaac-lab"])
     assert not _is_isaac_arena_request(["isaac-arena", "evaluate"])
+
+
+def test_capabilities_are_complete_and_honest() -> None:
+    payload = capabilities()
+    assert payload["schema"] == CAPABILITIES_SCHEMA
+    assert payload["upstream"]["release_channel"] == "alpha"
+    assert payload["upstream"]["production_supported"] is False
+    assert {item["name"] for item in payload["policy_adapters"]} == {
+        "replay",
+        "rsl_rl",
+        "zero_action",
+    }
+    replay = next(
+        item for item in payload["policy_adapters"] if item["name"] == "replay"
+    )
+    assert {"implemented", "input_required", "live_validated"}.issubset(
+        replay["npa_status"]
+    )
+    assert len(payload["environments"]) == 18
+    assert {
+        "cube_goal_pose",
+        "gr1_open_microwave",
+        "lift_object",
+        "tabletop_sort_cubes",
+    }.issubset({item["name"] for item in payload["environments"]})
+    assert payload["environment_sources"]["graph_specs"]["npa_status"][0] == (
+        "unsupported"
+    )
+    assert payload["outputs"]["rerun_rrd"] is False
+
+    cli = CliRunner().invoke(app, ["workbench", "isaac-arena", "capabilities"])
+    assert cli.exit_code == 0, cli.output
+    assert json.loads(cli.output) == payload
 
 
 def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
@@ -51,6 +88,15 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
     environment_index = configured.index("cube_goal_pose")
     assert environment_index < configured.index("--embodiment")
     assert environment_index < configured.index("--object")
+
+    with pytest.raises(IsaacArenaError, match="no upstream scored task"):
+        evaluate(
+            IsaacArenaRequest(
+                output_path=str(tmp_path),
+                environment="gr1_table_multi_object_no_collision",
+                dry_run=True,
+            )
+        )
 
 
 def test_policy_specific_inputs_are_fail_closed(tmp_path: Path) -> None:
@@ -111,7 +157,33 @@ def _fake_upstream(
     )
     if "--record_viewport_video" in argv:
         (run / "viewport-episode-0.mp4").write_bytes(b"real-video-fixture")
-    return subprocess.CompletedProcess(argv, 0, stdout="Metrics: success_rate=0.0\n")
+    return subprocess.CompletedProcess(
+        argv, 0, stdout="Metrics: {'success_rate': 0.0}\n"
+    )
+
+
+def _fake_moving_upstream(
+    argv: list[str], **kwargs: object
+) -> subprocess.CompletedProcess[str]:
+    _fake_upstream(argv, **kwargs)
+    output_root = Path(argv[argv.index("--output_base_dir") + 1])
+    results = next(output_root.rglob("episode_results_rank0.jsonl"))
+    record = json.loads(results.read_text(encoding="utf-8"))
+    record.update(
+        {
+            "success": True,
+            "progress": {
+                "overall_score": 1.0,
+                "events": [{"step": 40, "predicate_name": "door_open"}],
+            },
+        }
+    )
+    results.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    return subprocess.CompletedProcess(
+        argv,
+        0,
+        stdout="Metrics: {'success_rate': 1.0, 'revolute_joint_moved_rate': 1.0}\n",
+    )
 
 
 @patch(
@@ -147,6 +219,9 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "successes": 0,
         "success_rate": 0.0,
         "mean_episode_length": 300.0,
+        "max_progress_score": 0.0,
+        "progress_event_count": 0,
+        "metrics": {"success_rate": 0.0},
     }
     assert result["gpu"]["compute_capability"] == [10, 0]
     published = tmp_path / "published"
@@ -160,6 +235,145 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         len(entry["sha256"]) == 64 and entry["bytes"] > 0
         for entry in manifest["artifacts"]
     )
+    video = next(
+        entry for entry in manifest["artifacts"] if entry["path"].endswith(".mp4")
+    )
+    assert video["video"]["binding"] == {
+        "run_id": "2026-09-12_01-02-03",
+        "upstream_run_directory": "2026-09-12_01-02-03",
+        "policy_type": "zero_action",
+        "input_sha256": "",
+    }
+
+
+@patch(
+    "npa.workbench.isaac_arena.runtime._input_evidence",
+    return_value={
+        "kind": "replay_hdf5",
+        "bytes": 100,
+        "sha256": "a" * 64,
+        "trajectory": {"meaningful": True},
+    },
+)
+@patch(
+    "npa.workbench.isaac_arena.runtime._probe_mp4",
+    return_value={
+        "codec": "h264",
+        "width": 640,
+        "height": 480,
+        "duration_seconds": 2.0,
+        "motion": {"meaningful": True},
+    },
+)
+@patch(
+    "npa.workbench.isaac_arena.runtime._gpu_info",
+    return_value={
+        "available": True,
+        "device_name": "test-gpu",
+        "compute_capability": [12, 0],
+    },
+)
+def test_replay_binds_nonzero_input_behavior_and_video_to_run(
+    _gpu: object, _probe: object, _input: object, tmp_path: Path
+) -> None:
+    replay = tmp_path / "episode.hdf5"
+    replay.write_bytes(b"fixture")
+    result = evaluate(
+        IsaacArenaRequest(
+            output_path=str(tmp_path / "published"),
+            environment="gr1_open_microwave",
+            policy_type="replay",
+            input_path=str(replay),
+            record_video=True,
+            run_id="arena-moving-run",
+        ),
+        runner=_fake_moving_upstream,
+    )
+    assert result["behavior"]["meaningful"] is True
+    assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0
+    video = next(
+        entry for entry in result["artifacts"] if entry["path"].endswith(".mp4")
+    )
+    assert video["video"]["binding"]["run_id"] == "arena-moving-run"
+    assert video["video"]["binding"]["input_sha256"] == "a" * 64
+
+
+@patch(
+    "npa.workbench.isaac_arena.runtime._input_evidence",
+    return_value={
+        "kind": "replay_hdf5",
+        "bytes": 100,
+        "sha256": "a" * 64,
+        "trajectory": {"meaningful": True},
+    },
+)
+@patch(
+    "npa.workbench.isaac_arena.runtime._gpu_info",
+    return_value={
+        "available": True,
+        "device_name": "test-gpu",
+        "compute_capability": [12, 0],
+    },
+)
+def test_nonzero_policy_rejects_no_output_behavior(
+    _gpu: object, _input: object, tmp_path: Path
+) -> None:
+    replay = tmp_path / "episode.hdf5"
+    replay.write_bytes(b"fixture")
+    with pytest.raises(IsaacArenaError, match="no positive task"):
+        evaluate(
+            IsaacArenaRequest(
+                output_path=str(tmp_path / "published"),
+                environment="gr1_open_microwave",
+                policy_type="replay",
+                input_path=str(replay),
+            ),
+            runner=_fake_upstream,
+        )
+
+
+def _make_test_video(path: Path, source: str) -> None:
+    completed = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            source,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            str(path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+
+
+def test_video_probe_accepts_temporal_motion(tmp_path: Path) -> None:
+    video = tmp_path / "moving.mp4"
+    _make_test_video(video, "testsrc2=size=320x240:rate=10:duration=2")
+    metadata = _probe_mp4(video)
+    assert metadata["codec"] == "h264"
+    assert metadata["frame_count"] == 20
+    assert metadata["motion"]["decoded_samples"] >= 4
+    assert metadata["motion"]["changed_frame_pairs"] >= 2
+    assert metadata["motion"]["meaningful"] is True
+
+
+def test_video_probe_rejects_decodable_static_video(tmp_path: Path) -> None:
+    video = tmp_path / "static.mp4"
+    _make_test_video(video, "color=c=blue:size=320x240:rate=10:duration=2")
+    with pytest.raises(IsaacArenaError, match="decodable but visually static"):
+        _probe_mp4(video)
 
 
 def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:

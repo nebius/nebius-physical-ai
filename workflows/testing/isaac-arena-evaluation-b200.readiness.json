@@ -1,15 +1,15 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "f7748fc3e60de78abcae2a070b5d399dcfdbce2e42db2b3c436c5fa9b9d39128",
+  "workflow_sha256": "7d14bc3fecf669ebd39eb7c6035f966af7e4b219fddf9012e5b623c78bba0e65",
   "planning": {
     "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "task_fidelity": {"status": "verified", "reason": "The four planned states resolve to real Isaac Arena evaluate commands with distinct seeds and output prefixes plus completed-episode and environment arguments.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
+    "task_fidelity": {"status": "verified", "reason": "The four planned states resolve to the real replay adapter with distinct seeds and output prefixes, the GR1 open-microwave environment, gr1_pink embodiment, and operator HDF5 input.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py", "workflows/testing/isaac-arena-evaluation-b200.yaml"]}
   },
   "prerequisites": {
-    "output_storage": {"status": "verified", "reason": "A tenant-matched project credential completed the writable-storage preflight and retained independently readable evaluation and runtime-provenance objects.", "evidence": ["docs/workbench/isaac-arena.md", "npa/docker/workbench/blackwell-dc-images.json"]},
-    "worker_input": {"status": "not_applicable", "reason": "The zero-action evaluation uses the procedural upstream cube_goal_pose environment and no checkpoint input.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "credentials": {"status": "verified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights passed before GPU submission; this baseline requires no model credential.", "evidence": ["docs/workbench/isaac-arena.md"]},
-    "source_image": {"status": "verified", "reason": "The exact public digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/blackwell-dc-images.json"]},
-    "target_runtime": {"status": "verified", "reason": "The exact four-state spec completed seeds 42 through 45 on B200 sm_100. Each real upstream episode ran 1,050 scored steps and retained five independently hash-verified non-video artifacts; the suite retained 20 task artifacts totaling 344,330 bytes.", "evidence": ["npa/docker/workbench/blackwell-dc-images.json", "docs/workbench/image-gpu-compatibility-matrix.md"]}
+    "output_storage": {"status": "unverified", "reason": "The new replay regression must complete the writable-storage preflight and publish independently readable artifacts before this candidate is ready.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "worker_input": {"status": "unverified", "reason": "The workflow now requires an operator-owned copy of the hash-pinned Apache-2.0 upstream replay fixture; worker readability remains a live preflight gate.", "evidence": ["npa/docker/workbench/isaac-arena/smoke_functional.sh", "workflows/testing/isaac-arena-evaluation-b200.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights must be repeated for the rebuilt candidate; no model credential is required.", "evidence": ["docs/workbench/isaac-arena.md"]},
+    "source_image": {"status": "unverified", "reason": "Runtime and smoke contents changed, so the rebuilt exact digest must pass all publication scans and attestations before acceptance.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/isaac-arena/smoke_functional.sh"]},
+    "target_runtime": {"status": "unverified", "reason": "The common state-only path must complete a real B200 replay regression with nonzero behavior and no rendering claim.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]}
   }
 }

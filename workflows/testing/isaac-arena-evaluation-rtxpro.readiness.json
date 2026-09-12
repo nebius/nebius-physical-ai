@@ -1,15 +1,15 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "9065820deb37199a48d606680bb63ba550d8df1d6ab1b8181198c3f71dd86a53",
+  "workflow_sha256": "e79fa3f22e669ac9305fad0af5bbc567b64823dfa780ec77c5782c231199ab3f",
   "planning": {
     "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
-    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real Isaac Arena evaluate command and requires upstream viewport video in addition to scored episode artifacts.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py"]}
+    "task_fidelity": {"status": "verified", "reason": "The planned state resolves to the real replay adapter with the GR1 open-microwave environment, gr1_pink embodiment, operator HDF5 input, and required motion-validated viewport video.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py", "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]}
   },
   "prerequisites": {
-    "output_storage": {"status": "verified", "reason": "A tenant-matched project credential completed the writable-storage preflight and retained independently readable evaluation and runtime-provenance objects.", "evidence": ["docs/workbench/isaac-arena.md", "npa/docker/workbench/blackwell-dc-images.json"]},
-    "worker_input": {"status": "not_applicable", "reason": "The zero-action evaluation uses the procedural upstream cube_goal_pose environment and no checkpoint input.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
-    "credentials": {"status": "verified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights passed before GPU submission; this baseline requires no model credential.", "evidence": ["docs/workbench/isaac-arena.md"]},
-    "source_image": {"status": "verified", "reason": "The exact public digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/blackwell-dc-images.json"]},
-    "target_runtime": {"status": "verified", "reason": "The digest-pinned image completed a real 1,050-step scored episode on RTX PRO 6000 sm_120 and retained hash-verified JSONL, three linked HTML pages, a log, durable runtime provenance, and an independently decoded 1280x720 H.264 viewport MP4.", "evidence": ["npa/docker/workbench/sm120-images.json", "npa/docker/workbench/blackwell-dc-images.json", "docs/workbench/image-gpu-compatibility-matrix.md"]}
+    "output_storage": {"status": "unverified", "reason": "The new replay run must complete the writable-storage preflight and publish independently readable artifacts before this candidate is ready.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "worker_input": {"status": "unverified", "reason": "The workflow now requires an operator-owned copy of the hash-pinned Apache-2.0 upstream replay fixture; worker readability remains a live preflight gate.", "evidence": ["npa/docker/workbench/isaac-arena/smoke_functional.sh", "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]},
+    "credentials": {"status": "unverified", "reason": "Nebius, S3, SkyPilot, image-attestation, and target-pull preflights must be repeated for the rebuilt candidate; no model credential is required.", "evidence": ["docs/workbench/isaac-arena.md"]},
+    "source_image": {"status": "unverified", "reason": "Runtime and smoke contents changed, so the rebuilt exact digest must pass all publication scans and attestations before acceptance.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/isaac-arena/smoke_functional.sh"]},
+    "target_runtime": {"status": "unverified", "reason": "A real RTX PRO 6000 replay evaluation with nonzero behavior and decoded temporal viewport motion is required for this candidate.", "evidence": ["workflows/testing/isaac-arena-evaluation-rtxpro.yaml"]}
   }
 }

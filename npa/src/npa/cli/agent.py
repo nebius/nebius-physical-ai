@@ -886,7 +886,10 @@ def _bootstrap_agent_stack(
             name=None,
         ).ssh
     )
-    catalog_json = json.dumps(_tool_catalog_payload())
+    # This is embedded as a Python literal below, not parsed as JSON at runtime.
+    # ``repr`` keeps JSON-like booleans/nulls valid when capability metadata is
+    # richer than the catalog's original string/list-only payload.
+    catalog_literal = repr(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
     agent_recordings_source = _embedded_agent_recordings_source()
     agent_backend_ship_script = render_shipped_backend_install()
@@ -1078,7 +1081,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 app = FastAPI(title="npa-agent")
 DEPLOYMENT = {deployment_json}
-TOOL_CATALOG = {catalog_json}
+TOOL_CATALOG = {catalog_literal}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")

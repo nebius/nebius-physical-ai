@@ -77,10 +77,10 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     ],
     "isaac-arena": [
         "pinned official Isaac Lab-Arena 0.3.0 policy_runner starts through runtime-fetched Isaac",
-        "cube_goal_pose completes at least one scored zero-action episode on CUDA",
+        "hash-pinned Apache-2.0 GR1 open-microwave replay drives nonzero upstream actions on CUDA",
         "episode JSONL and the upstream static HTML evaluation report are non-empty",
-        "RTX qualification additionally requires a non-empty viewport MP4",
-        "NPA result manifest hashes every retained artifact and reports measured success rate",
+        "RTX qualification rejects a decodable but static viewport MP4 using decoded temporal-motion thresholds",
+        "NPA result manifest binds artifact hashes, task metrics, input hash, and video to the exact run",
     ],
     "leisaac": [
         "real LeIsaac-SO101-PickOrange-v0 environment starts",

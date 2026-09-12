@@ -4,23 +4,23 @@ kind: Workflow
 metadata:
   name: isaac-arena-evaluation-b200
   description: >-
-    Run a four-seed scored Isaac Lab-Arena cube_goal_pose evaluation suite with
-    the real upstream policy runner on B200. Every state completes an episode
-    and records its own JSONL, upstream HTML report, logs, hashes, and aggregate
-    metrics. This state-only path deliberately makes no camera or viewport
-    claim on a GPU with no RT cores.
+    Replay a genuine nonzero GR1 open-microwave trajectory for four seeds with
+    the real upstream policy runner on B200. Every state records its own JSONL,
+    upstream HTML report, logs, input/output hashes, task metrics, and behavior
+    evidence. This state-only path makes no camera or viewport claim on a GPU
+    with no RT cores.
 
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/isaac-arena/b200"
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-42/"
-  input_uri: ""
-  environment: cube_goal_pose
-  policy_type: zero_action
+  input_uri: "s3://{{config.bucket}}/operator-inputs/isaac-arena/gr1-open-microwave.hdf5"
+  environment: gr1_open_microwave
+  policy_type: replay
   num_episodes: "1"
   num_envs: "1"
   seed: "42"
-  embodiment: franka_ik
+  embodiment: gr1_pink
   object: ""
 
 resources:
@@ -34,7 +34,7 @@ initial: evaluate-seed-42
 
 states:
   evaluate-seed-42:
-    description: Complete and score the seed-42 Arena episode without rendering.
+    description: Replay and score seed 42 with nonzero state evidence and no rendering.
     toolRef: workbench.isaac_arena.evaluate
     resources: gpu
     params:
@@ -50,7 +50,7 @@ states:
     next: evaluate-seed-43
 
   evaluate-seed-43:
-    description: Complete and score the seed-43 Arena episode without rendering.
+    description: Replay and score seed 43 with nonzero state evidence and no rendering.
     toolRef: workbench.isaac_arena.evaluate
     resources: gpu
     params:
@@ -66,7 +66,7 @@ states:
     next: evaluate-seed-44
 
   evaluate-seed-44:
-    description: Complete and score the seed-44 Arena episode without rendering.
+    description: Replay and score seed 44 with nonzero state evidence and no rendering.
     toolRef: workbench.isaac_arena.evaluate
     resources: gpu
     params:
@@ -82,7 +82,7 @@ states:
     next: evaluate-seed-45
 
   evaluate-seed-45:
-    description: Complete and score the seed-45 Arena episode without rendering.
+    description: Replay and score seed 45 with nonzero state evidence and no rendering.
     toolRef: workbench.isaac_arena.evaluate
     resources: gpu
     params:

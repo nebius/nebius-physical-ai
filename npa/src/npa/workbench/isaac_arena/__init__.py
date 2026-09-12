@@ -2,18 +2,22 @@
 
 from .runtime import (
     ARTIFACT_SCHEMA,
+    CAPABILITIES_SCHEMA,
     ISAAC_ARENA_REVISION,
     ISAAC_ARENA_VERSION,
     IsaacArenaError,
     IsaacArenaRequest,
+    capabilities,
     evaluate,
 )
 
 __all__ = [
     "ARTIFACT_SCHEMA",
+    "CAPABILITIES_SCHEMA",
     "ISAAC_ARENA_REVISION",
     "ISAAC_ARENA_VERSION",
     "IsaacArenaError",
     "IsaacArenaRequest",
+    "capabilities",
     "evaluate",
 ]

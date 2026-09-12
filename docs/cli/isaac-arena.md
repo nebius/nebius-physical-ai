@@ -12,6 +12,7 @@ Options
 --show-completion  Show completion for the current shell, to copy it or customize the installation.
 --help  Show this message and exit.
 Commands
+capabilities  Print the pinned upstream surface and NPA support status as JSON.
 evaluate  Evaluate a zero, replay, or RSL-RL policy with upstream's runner.
 terms  Describe source and runtime redistribution boundaries.
 ```
@@ -28,6 +29,7 @@ terms  Describe source and runtime redistribution boundaries.
 
 | Command | Description |
 | --- | --- |
+| `capabilities` | Print the pinned upstream surface and NPA support status as JSON. |
 | `evaluate` | Evaluate a zero, replay, or RSL-RL policy with upstream's runner. |
 | `terms` | Describe source and runtime redistribution boundaries. |
 
@@ -35,7 +37,7 @@ terms  Describe source and runtime redistribution boundaries.
 
 ```bash
 npa workbench isaac-arena --help
-npa workbench isaac-arena evaluate --help
+npa workbench isaac-arena capabilities --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `isaac-arena`.
