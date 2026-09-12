@@ -109,6 +109,8 @@ RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
 # build time rather than assumed.
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/verify_env.py /opt/cosmos3/verify_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/security-upgrades-requirements.txt /tmp/cosmos3-security-upgrades.txt
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/common/install_hardened_nltk.sh /opt/npa/install_hardened_nltk.sh
+COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_hardened_nltk.py /opt/npa/verify_hardened_nltk.py
 COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 RUN cd "${COSMOS3_REPO}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv python install \
@@ -120,11 +122,13 @@ RUN cd "${COSMOS3_REPO}" \
        ${COSMOS3_INFERENCE_DEPS} \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
        --no-deps --require-hashes -r /tmp/cosmos3-security-upgrades.txt \
+    && /opt/npa/install_hardened_nltk.sh .venv/bin/python \
     && uv pip check --python .venv/bin/python \
     && rm -f /tmp/cosmos3-security-upgrades.txt \
     && find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
     && test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && .venv/bin/python /opt/npa/verify_hardened_nltk.py \
     && COSMOS_DEVICE=cpu .venv/bin/python /opt/cosmos3/verify_env.py \
     && rm -rf /tmp/uv-cache
 
