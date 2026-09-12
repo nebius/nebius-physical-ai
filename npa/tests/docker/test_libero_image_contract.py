@@ -16,9 +16,13 @@ MANIFEST = IMAGE_ROOT / "runtime-manifest.json"
 REQUIREMENTS = IMAGE_ROOT / "runtime-requirements.txt"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 
-BASE_MANIFEST = "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
+BASE_MANIFEST = (
+    "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
+)
 BASE_ROOTFS = "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
-DEBIAN_ROOTFS_MANIFEST = "b06a30ffb450d8ea59edbe54a1e89ecb9f00571d0440684f6449a09f3b0475ec"
+DEBIAN_ROOTFS_MANIFEST = (
+    "b06a30ffb450d8ea59edbe54a1e89ecb9f00571d0440684f6449a09f3b0475ec"
+)
 
 
 def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
@@ -35,7 +39,7 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "/usr/sbin/sshd" not in text
     assert "NOPASSWD:ALL" not in text.replace(" ", "")
     assert "apt-get upgrade" not in text
-    assert '$1 ~ /^(base|dependency|direct)$/' in text
+    assert "$1 ~ /^(base|dependency|direct)$/" in text
     assert "base|dependency|direct)" in text
     assert "pip install" not in text
     assert "runtime-bootstrap.py ensure" not in text
@@ -52,7 +56,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
 
 def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
     text = LOCK.read_text(encoding="utf-8")
-    lines = [line.split("\t") for line in text.splitlines() if line and not line.startswith("#")]
+    lines = [
+        line.split("\t")
+        for line in text.splitlines()
+        if line and not line.startswith("#")
+    ]
     binary_rows = [row for row in lines if row[0] in {"base", "dependency", "direct"}]
     source_rows = [row for row in lines if row[0] == "source"]
 
@@ -94,9 +102,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
 
     assert manifest["runtime_artifact_count"] == 135
     assert len(manifest["runtime_artifacts"]) == 135
-    versions = {
-        item["name"]: item["version"] for item in manifest["runtime_artifacts"]
-    }
+    versions = {item["name"]: item["version"] for item in manifest["runtime_artifacts"]}
     security_refreshed_versions = {
         "future": "0.18.3",
         "hydra-core": "1.3.4",
@@ -132,7 +138,8 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
     assert "ACCEPT_" not in serialized
     assert "credential" not in serialized.lower()
     assert all(
-        set(item) == {
+        set(item)
+        == {
             "name",
             "version",
             "filename",
@@ -159,12 +166,14 @@ def test_image_manifest_binds_runtime_manifest_requirements_and_terms() -> None:
     path = ROOT / "npa" / "src" / "npa" / "deploy" / "libero_image_manifest.json"
     image_manifest = json.loads(path.read_text(encoding="utf-8"))
 
-    assert image_manifest["runtime_manifest_sha256"] == hashlib.sha256(
-        MANIFEST.read_bytes()
-    ).hexdigest()
-    assert image_manifest["runtime_requirements_sha256"] == hashlib.sha256(
-        REQUIREMENTS.read_bytes()
-    ).hexdigest()
+    assert (
+        image_manifest["runtime_manifest_sha256"]
+        == hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        image_manifest["runtime_requirements_sha256"]
+        == hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+    )
     assert image_manifest["governing_terms_count"] == 7
 
 
@@ -175,11 +184,14 @@ def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert "--metadata-file" in text
+    assert '--build-arg "SOURCE_DATE_EPOCH=$source_epoch"' in text
     assert "docker push" not in text
     assert "docker history" not in text
 
 
-def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenance() -> None:
+def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenance() -> (
+    None
+):
     text = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
 
     assert "matrix.tool == 'libero'" in text
@@ -189,8 +201,21 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb" in text
     assert text.count("npa/scripts/scan_image_libero_payload.py") == 2
     assert text.count("--exported-rootfs") == 2
+    assert text.count("--expected-image-inventory-sha256") == 2
+    assert text.count("--expected-config-digest") == 2
+    assert text.count("--image-inventory-output") == 2
     assert text.count("docker export --output") >= 2
-    assert text.count('--base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json"') == 2
-    assert 'if tool != "libero":\n              history = subprocess.check_output(' in text
+    assert (
+        text.count(
+            '--base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json"'
+        )
+        == 2
+    )
+    assert (
+        'if tool != "libero":\n              history = subprocess.check_output(' in text
+    )
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
+    assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
+    assert "manager-accepted private image inventory is required" in text
+    assert "manager-accepted private config digest is required" in text
