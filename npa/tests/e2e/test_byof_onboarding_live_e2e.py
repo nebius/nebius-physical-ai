@@ -14,7 +14,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import pytest
 import yaml
@@ -345,7 +345,46 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
     assert registry in summary["image"]
 
 
+def _robomimic_storage_endpoint(value: str) -> str:
+    """Accept only a canonical Nebius Object Storage HTTPS origin."""
+
+    candidate = value.strip()
+    try:
+        parsed = urlsplit(candidate)
+        port = parsed.port
+    except ValueError as exc:
+        raise AssertionError("manager-issued S3 endpoint is malformed") from exc
+    host = (parsed.hostname or "").lower()
+    assert parsed.scheme == "https", "manager-issued S3 endpoint must use HTTPS"
+    assert parsed.username is None and parsed.password is None, (
+        "manager-issued S3 endpoint must not contain userinfo"
+    )
+    assert port in {None, 443}, "manager-issued S3 endpoint must use HTTPS port 443"
+    assert parsed.path in {"", "/"} and not parsed.query and not parsed.fragment, (
+        "manager-issued S3 endpoint must be an origin without query or fragment"
+    )
+    assert re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", host), (
+        "manager-issued S3 endpoint is outside the approved storage origin"
+    )
+    canonical = f"https://{host}"
+    assert candidate.rstrip("/") == canonical, (
+        "manager-issued S3 endpoint must use canonical origin form"
+    )
+    return canonical
+
+
 def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
+    endpoint_candidates = {
+        value.strip()
+        for value in (
+            os.environ.get("AWS_ENDPOINT_URL", ""),
+            os.environ.get("NEBIUS_S3_ENDPOINT", ""),
+        )
+        if value.strip()
+    }
+    assert len(endpoint_candidates) == 1, (
+        "one consistent manager-issued S3 endpoint is required"
+    )
     selectors = {
         "project": os.environ.get("NPA_E2E_PROJECT", "").strip(),
         "registry": os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip(),
@@ -360,6 +399,7 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         "runtime_inventory_sha256": os.environ.get(
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
         ).strip(),
+        "storage_endpoint": _robomimic_storage_endpoint(endpoint_candidates.pop()),
     }
     assert selectors["project"] and e2e_project == selectors["project"]
     assert selectors["registry"], "a manager-issued private registry is required"
@@ -877,6 +917,8 @@ def _robomimic_target_env(
     env["KUBECONFIG"] = target.kubeconfig
     env["NPA_BYOF_KUBECONFIG"] = target.kubeconfig
     env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    env["AWS_ENDPOINT_URL"] = selectors["storage_endpoint"]
+    env["NEBIUS_S3_ENDPOINT"] = selectors["storage_endpoint"]
     namespace_readback = subprocess.run(
         [
             *_robomimic_kubectl(selectors),
@@ -1033,12 +1075,13 @@ def _assert_robomimic_runtime(
     assert external_runtime["prepopulated"] is True
     assert external_runtime["read_only"] is True
     assert external_runtime["manager_inventory_digest_matched"] is True
-    assert external_runtime["atomic_execution_snapshot"] is True
+    assert external_runtime["atomic_private_snapshot_published"] is True
     assert external_runtime["snapshot_write_bits_absent"] is True
     assert re.fullmatch(r"[0-9a-f]{64}", external_runtime["lock_sha256"])
-    assert external_runtime["inventory_sha256"] == os.environ[
-        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
-    ]
+    assert (
+        external_runtime["inventory_sha256"]
+        == os.environ["NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"]
+    )
     hardware = artifact["hardware"]
     assert hardware["accelerator_count"] == 1 and "B200" in hardware["model"].upper()
     assert hardware["architecture"] == "sm_100"

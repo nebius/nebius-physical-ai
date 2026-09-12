@@ -21,8 +21,8 @@ SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 SOURCE_LICENSE_SHA256 = (
     "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556"
 )
-BAKED_LOCK_SHA256 = "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
-BAKED_ARTIFACT_COUNT = 34
+BAKED_LOCK_SHA256 = "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
+BAKED_DISTRIBUTION_COUNT = 40
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 
@@ -74,7 +74,7 @@ def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
             pending = []
     if pending:
         raise VerificationError("unterminated baked dependency lock record")
-    if len(records) != BAKED_ARTIFACT_COUNT:
+    if len(records) != BAKED_DISTRIBUTION_COUNT:
         raise VerificationError("baked dependency lock count mismatch")
     packages: dict[str, str] = {}
     pattern = re.compile(
@@ -385,7 +385,7 @@ def _copy_runtime_inventory(
         destination.symlink_to(entry["target"])
 
 
-def _make_snapshot_read_only(snapshot: Path) -> None:
+def _remove_snapshot_write_bits(snapshot: Path) -> None:
     for path in snapshot.rglob("*"):
         if path.is_symlink():
             continue
@@ -428,7 +428,7 @@ def materialize_external_runtime(
             expected_inventory_sha256=expected_inventory_sha256,
             require_read_only_mount=False,
         )
-        _make_snapshot_read_only(staging)
+        _remove_snapshot_write_bits(staging)
         staging.replace(destination)
     except VerificationError:
         shutil.rmtree(staging, ignore_errors=True)
@@ -444,6 +444,7 @@ def materialize_external_runtime(
         "read_only_mount_observed": source_proof["read_only_mount_observed"],
         "source_read_only_mount_observed": source_proof["read_only_mount_observed"],
         "atomic_snapshot_published": True,
+        "snapshot_write_bits_absent": destination.stat().st_mode & 0o222 == 0,
         "snapshot_root": str(destination),
     }
 

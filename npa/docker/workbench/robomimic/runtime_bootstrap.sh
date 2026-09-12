@@ -30,6 +30,8 @@ case "${1:-}" in
       --destination "${snapshot_root}" >/dev/null
     trap - EXIT
     export NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"
+    "${snapshot_root}/payload/bin/python" -c \
+      'from robomimic.config import config_factory; from robomimic.algo import algo_factory; from robomimic.utils.file_utils import policy_from_checkpoint; from diffusers.schedulers.scheduling_ddim import DDIMScheduler; from diffusers.schedulers.scheduling_ddpm import DDPMScheduler; from diffusers.training_utils import EMAModel; assert all((config_factory, algo_factory, policy_from_checkpoint, DDIMScheduler, DDPMScheduler, EMAModel))'
     exec "${snapshot_root}/payload/bin/python" "$@"
     ;;
   assert-refusal)

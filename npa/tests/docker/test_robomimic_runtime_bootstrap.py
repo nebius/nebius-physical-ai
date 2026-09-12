@@ -185,11 +185,20 @@ def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> N
     source_interpreter.write_text("changed after snapshot\n", encoding="utf-8")
 
     assert result["atomic_snapshot_published"] is True
+    assert result["snapshot_write_bits_absent"] is True
     assert result["manager_inventory_digest_matched"] is True
     assert result["snapshot_root"] == str(destination)
     assert snapshot_interpreter.read_text(encoding="utf-8") == "#!/bin/sh\nexit 0\n"
     assert destination.stat().st_mode & 0o222 == 0
+    # This is a point-in-time race-resistance copy, not a read-only security
+    # boundary: its owner can restore write bits. The separately observed
+    # source mount is the authoritative read-only boundary.
     destination.chmod(0o755)
+    snapshot_interpreter.chmod(0o755)
+    snapshot_interpreter.write_text("owner-restored write access\n", encoding="utf-8")
+    assert snapshot_interpreter.read_text(encoding="utf-8") == (
+        "owner-restored write access\n"
+    )
     for path in destination.rglob("*"):
         if path.is_dir() and not path.is_symlink():
             path.chmod(0o755)
@@ -262,4 +271,11 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert "--expected-inventory-sha256" in text
     assert '"${verifier}" snapshot' in text
     assert 'NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"' in text
+    for import_gate in (
+        "from robomimic.config import config_factory",
+        "from robomimic.algo import algo_factory",
+        "from robomimic.utils.file_utils import policy_from_checkpoint",
+        "from diffusers.training_utils import EMAModel",
+    ):
+        assert import_gate in text
     assert 'exec "${snapshot_root}/payload/bin/python"' in text

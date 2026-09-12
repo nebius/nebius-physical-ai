@@ -50,7 +50,7 @@
       "reason": "The neutral Dockerfile and byte scanner are implemented but Phase A authorized neither source fetch nor image build, scan, push, pull, SBOM, provenance, or anonymous availability proof.",
       "evidence": [
         "pinned intended base python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84",
-        "34-entry non-CUDA lock SHA-256 acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e",
+        "40-entry non-CUDA lock SHA-256 65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504",
         "no accepted image digest exists"
       ]
     },

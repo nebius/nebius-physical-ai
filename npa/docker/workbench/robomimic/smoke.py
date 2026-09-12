@@ -27,8 +27,8 @@ DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
 DATASET_PATH = "v1.5/lift/ph/low_dim_v15.hdf5"
 DATASET_SHA256 = "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
 DATASET_BYTES = 21_084_088
-BAKED_LOCK_SHA256 = "acaac4ebd43524088573bca95bf5636ff760a31e8b8af6ed9e6befc0a64bdf3e"
-BAKED_ARTIFACT_COUNT = 34
+BAKED_LOCK_SHA256 = "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
+BAKED_DISTRIBUTION_COUNT = 40
 TRAIN_STEPS = 4
 VALIDATION_STEPS = 2
 CAPABILITIES = [
@@ -45,7 +45,7 @@ def _open_allowed_https(
     *,
     headers: dict[str, str],
     allowed_hosts: tuple[str, ...],
-    allow_subdomains: bool = False,
+    allow_hf_redirects: bool = False,
     context: ssl.SSLContext | None = None,
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
     """Open a tightly scoped HTTPS GET without urllib's multi-scheme opener."""
@@ -53,10 +53,14 @@ def _open_allowed_https(
     for _ in range(6):
         parsed = urllib.parse.urlsplit(current_url)
         hostname = (parsed.hostname or "").lower()
-        allowed = any(
-            hostname == allowed_host
-            or (allow_subdomains and hostname.endswith(f".{allowed_host}"))
-            for allowed_host in allowed_hosts
+        allowed = hostname in allowed_hosts or (
+            allow_hf_redirects
+            and (
+                re.fullmatch(r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co", hostname) is not None
+                or hostname == "cas-bridge.xethub.hf.co"
+                or hostname == "cdn.hf.co"
+                or hostname.endswith(".cdn.hf.co")
+            )
         )
         if (
             parsed.scheme != "https"
@@ -261,13 +265,8 @@ def _download_dataset(
         connection, response = _open_allowed_https(
             url,
             headers={"User-Agent": "npa-robomimic-smoke/1"},
-            allowed_hosts=(
-                "huggingface.co",
-                "hf.co",
-                "amazonaws.com",
-                "cloudfront.net",
-            ),
-            allow_subdomains=True,
+            allowed_hosts=("huggingface.co",),
+            allow_hf_redirects=True,
         )
         try:
             with response, partial.open("xb") as handle:
@@ -323,13 +322,14 @@ def main() -> None:
     ):
         raise RuntimeError("unexpected immutable robomimic source identity")
     baked_lock = component_root / "baked-requirements.lock"
+    baked_lock_bytes = baked_lock.read_bytes()
     if (
         _sha256(baked_lock) != BAKED_LOCK_SHA256
         or sum(
             bool(re.match(rb"^[A-Za-z0-9_.-]+==", line))
-            for line in baked_lock.read_bytes().splitlines()
+            for line in baked_lock_bytes.splitlines()
         )
-        != BAKED_ARTIFACT_COUNT
+        != BAKED_DISTRIBUTION_COUNT
     ):
         raise RuntimeError("neutral baked dependency lock mismatch")
     runtime_lock = component_root / "runtime-requirements.lock"
@@ -342,7 +342,9 @@ def main() -> None:
         or snapshot_parent.stat().st_mode & 0o077
         or runtime_root.stat().st_mode & 0o222
     ):
-        raise RuntimeError("runtime execution snapshot is not private and read-only")
+        raise RuntimeError(
+            "runtime execution snapshot is not private or has write bits"
+        )
     runtime_inventory = json.loads(
         (runtime_root / "inventory.json").read_text(encoding="utf-8")
     )
@@ -529,7 +531,10 @@ def main() -> None:
         },
         "dependency_lock": {
             "sha256": BAKED_LOCK_SHA256,
-            "artifact_count": BAKED_ARTIFACT_COUNT,
+            "distribution_count": BAKED_DISTRIBUTION_COUNT,
+            "accepted_sha256_count": len(
+                re.findall(rb"--hash=sha256:[0-9a-f]{64}", baked_lock_bytes)
+            ),
             "install_contract": "only-binary no-deps require-hashes",
         },
         "external_runtime": {
@@ -539,7 +544,7 @@ def main() -> None:
             "prepopulated": True,
             "manager_inventory_digest_matched": True,
             "read_only": runtime_mount_proof.get("read_only") is True,
-            "atomic_execution_snapshot": True,
+            "atomic_private_snapshot_published": True,
             "snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0,
         },
         "dataset": {

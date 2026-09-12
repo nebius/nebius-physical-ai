@@ -136,7 +136,7 @@ official Lift PH low-dimensional HDF5 at immutable dataset revision
 `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`.
 
 Phase A provides an unbuilt, quarantined neutral bootstrap candidate: pinned
-source and 34 hash-locked non-CUDA dependencies only. CUDA/PyTorch is an
+source and 40 hash-locked non-CUDA dependencies only. CUDA/PyTorch is an
 externally prepared exact-inventory read-only runtime; the official HDF5 is an
 immutable runtime fetch; pretrained weights are unnecessary. No runtime/data
 bytes were fetched, no image was built or published, and no B200 result is

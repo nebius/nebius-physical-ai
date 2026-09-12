@@ -100,6 +100,7 @@ run: |
   python3 <<'PY'
   import json
   import os
+  import re
   import time
   from pathlib import Path
   from urllib.parse import urlparse
@@ -147,11 +148,38 @@ run: |
   parsed = urlparse(output)
   if parsed.scheme != "s3" or not parsed.netloc:
       raise RuntimeError(f"invalid S3 output prefix: {output!r}")
-  endpoint = (
-      os.environ.get("AWS_ENDPOINT_URL")
-      or os.environ.get("NEBIUS_S3_ENDPOINT")
-      or ""
-  ).strip() or None
+  endpoint_candidates = {
+      value.strip()
+      for value in (
+          os.environ.get("AWS_ENDPOINT_URL", ""),
+          os.environ.get("NEBIUS_S3_ENDPOINT", ""),
+      )
+      if value.strip()
+  }
+  if len(endpoint_candidates) != 1:
+      raise RuntimeError("one consistent manager-issued S3 endpoint is required")
+  endpoint = endpoint_candidates.pop()
+  endpoint_parts = urlparse(endpoint)
+  try:
+      endpoint_port = endpoint_parts.port
+  except ValueError as exc:
+      raise RuntimeError("manager-issued S3 endpoint is malformed") from exc
+  endpoint_host = (endpoint_parts.hostname or "").lower()
+  canonical_endpoint = f"https://{endpoint_host}"
+  if (
+      endpoint_parts.scheme != "https"
+      or endpoint_parts.username is not None
+      or endpoint_parts.password is not None
+      or endpoint_port not in {None, 443}
+      or endpoint_parts.path not in {"", "/"}
+      or endpoint_parts.params
+      or endpoint_parts.query
+      or endpoint_parts.fragment
+      or re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", endpoint_host) is None
+      or endpoint.rstrip("/") != canonical_endpoint
+  ):
+      raise RuntimeError("refusing S3 credentials for an unapproved endpoint")
+  endpoint = canonical_endpoint
   client_kwargs = {
       "endpoint_url": endpoint,
       "config": Config(s3={"addressing_style": "path"}),

@@ -208,7 +208,7 @@ images:
       no sshd service is enabled by default, and no credentials are baked.
     redistribution: public
     notes: >-
-      Phase A neutral candidate only: pinned MIT robomimic source and 48
+      Phase A neutral candidate only: pinned MIT robomimic source and 40
       hash-locked non-CUDA Python distributions on a pinned Python base. It
       bakes no torch, torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distribution,
       weight, dataset, runtime cache, credential, or output. The separately
