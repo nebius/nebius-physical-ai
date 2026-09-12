@@ -142,7 +142,8 @@ separate owner-only registry and provider readbacks. Registry evidence must show
 an anonymous 401/403 refusal and authenticated exact-digest pull; known public
 registry hosts and equivalent GHCR spellings are rejected. The STRICT provider
 receipt binds one node-group ID and the exact Kubernetes node name/provider ID;
-the selector reads that node back and requires the completed pod to name it.
+the selector requires a `READY` readback performed no earlier than the live
+transaction start, reads that node back, and requires the completed pod to name it.
 Owner-only JSON is read through mode- and UID-checked no-follow descriptors and
 bound to the same directory entry before and after parsing. The selector also
 requires the pod's declared container image, observed image ID, and receipt to

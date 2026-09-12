@@ -517,7 +517,6 @@ def _validate_traversal(result: dict[str, object], np: object) -> dict[str, obje
 
 def _asset_proof(archive: dict[str, object], records: dict[str, dict[str, object]]):
     return {
-        "schema_version": "npa.habitat-sim.smoke.v1",
         "source": "official Meta Habitat test-scene archive",
         "archive": archive,
         "id": "habitat_test_scenes/skokloster-castle.glb",
@@ -561,6 +560,7 @@ def _proof(
     count = traversal["count"]
     finite = traversal["finite_depth"]
     return {
+        "schema_version": "npa.habitat-sim.smoke.v1",
         "solution": "habitat-sim",
         "capability": CAPABILITY,
         "capabilities_exercised": [

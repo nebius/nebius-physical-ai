@@ -219,7 +219,6 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 
 SUPPORTED_TOOL_VERSIONS = {
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
-    "habitat-sim": "0.3.3-public-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -271,6 +270,14 @@ SUPPORTED_TOOL_VERSIONS = {
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
+}
+
+# Tags for publication-quarantined candidates that are intentionally not part
+# of the installed package's supported release inventory. Keeping these out of
+# ``SUPPORTED_TOOL_VERSIONS`` preserves its exact pyproject mirror while still
+# giving planning and private qualification a fail-closed, visibly unbuilt tag.
+UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
+    "habitat-sim": "0.3.3-public-unbuilt",
 }
 
 
@@ -599,6 +606,8 @@ def supported_tool_version(tool: str) -> str:
             if tool in configured:
                 return str(configured[tool])
             break
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        return UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
