@@ -115,8 +115,13 @@ Its required viewport artifact independently decoded as H.264, 1280×720, and
 expected policy baseline result, while the evaluation capability and artifact
 integrity gates passed.
 
-The live jobs and their run-created controllers were cancelled/removed after
-validation. The pre-existing shared clusters and operator storage were retained.
+The final supported B200 workflow then completed its exact four-state seed sweep.
+All four episodes ran 1,050 scored steps at capability `(10, 0)` and retained
+five independently hash-verified non-video artifacts each: 20 task artifacts /
+344,330 bytes in total. Every live job was terminal or repeat-safely cancelled,
+and an independent pod audit found no run-owned worker. Run-created controllers
+were removed; the pre-existing shared controller, clusters, and operator storage
+were retained.
 
 For exact build, scan, qualification, and cleanup rules, use
 `skills/tools/isaac-arena/SKILL.md`.

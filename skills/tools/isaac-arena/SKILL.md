@@ -80,8 +80,11 @@ Accepted exact-digest evidence comprises independent 1,050-step episodes on
 B200 `(10, 0)` and RTX PRO 6000 `(12, 0)`. B200 retained five task artifacts /
 86,082 bytes with no MP4. RTX retained six / 1,119,004 bytes, including an
 independently decoded 1,024,140-byte H.264 viewport MP4 at 1280×720 for 70.067
-seconds. Consult `npa/docker/workbench/blackwell-dc-images.json` for the
-machine-readable, sanitized record.
+seconds. The supported comprehensive B200 YAML subsequently completed all four
+seed states with 1,050 steps each and 20 independently hash-verified task
+artifacts / 344,330 bytes. Consult
+`npa/docker/workbench/blackwell-dc-images.json` for the machine-readable,
+sanitized record.
 
 ## Build and release
 

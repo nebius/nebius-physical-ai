@@ -539,7 +539,7 @@
       "torch": "2.11.0+cu128 inherited from the exact accepted npa-isaac-lab runtime-fetch base",
       "source_compiled_extensions": [],
       "smoke": "complete one scored cube_goal_pose episode with upstream policy_runner and retain JSONL/report artifacts",
-      "notes": "The exact public development digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates. Independent real zero-action evaluations completed one 1,050-step scored episode on B200 sm_100 and RTX PRO 6000 sm_120. B200 retained JSONL plus three HTML pages without a render claim; RTX additionally retained an independently decoded 1280x720 H.264 viewport MP4. Isaac Sim/Lab remained an operator-authorized runtime fetch. Arena 0.3.0 is upstream alpha, so support is limited to the pinned evaluation contract.",
+      "notes": "The exact public development digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates. Independent real zero-action qualifications completed one 1,050-step scored episode on B200 sm_100 and RTX PRO 6000 sm_120; the supported B200 workflow then completed four independently verified seed episodes with 20 task artifacts. B200 made no render claim; RTX retained an independently decoded 1280x720 H.264 viewport MP4. Isaac Sim/Lab remained an operator-authorized runtime fetch. Arena 0.3.0 is upstream alpha, so support is limited to the pinned evaluation contract.",
       "validated_tag": "dev-22783a16abcd424df540b71e94600d705b317f9b",
       "validated_digest": "sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f",
       "published_tag": "0.3.0-isaaclab3-20260912",
@@ -835,7 +835,7 @@
     "npa-isaac-arena": {
       "built": true,
       "payload_scan": "The exact development digest passed the complete filesystem/layer/history Omniverse and secret scans, vulnerability/license policy, SBOM generation, digest-bound provenance and SBOM attestations, and anonymous registry resolution.",
-      "hardware_run": "The exact accepted digest completed the real upstream policy_runner independently on physical B200 and RTX PRO 6000. Each run produced one scored 1,050-step cube_goal_pose episode, episode JSONL, three linked HTML report pages, an evaluation log, and a hash manifest. The B200 run emitted no video; the RTX run additionally emitted a 1,024,140-byte H.264 viewport MP4 independently decoded as 1280x720 with 70.067 seconds duration. Zero-action success rate was 0.0 on both and is retained as evaluation data rather than rewritten as a pass.",
+      "hardware_run": "The exact accepted digest completed the real upstream policy_runner independently on physical B200 and RTX PRO 6000. Initial qualifications each produced one scored 1,050-step cube_goal_pose episode, episode JSONL, three linked HTML report pages, an evaluation log, and a hash manifest. The supported B200 workflow subsequently completed its four sequential seed states, each with 1,050 scored steps and five independently hash-verified non-video artifacts, totaling 20 task artifacts / 344,330 bytes. The RTX run additionally emitted a 1,024,140-byte H.264 viewport MP4 independently decoded as 1280x720 with 70.067 seconds duration. Zero-action success rate was 0.0 throughout and is retained as evaluation data rather than rewritten as a pass.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
