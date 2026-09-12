@@ -791,10 +791,17 @@ def walk_tar(reader, sink, scope, file_handler):
 
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
-    if verification.get("schema_version") == "npa.ncore.oci-verification.v1":
-        from . import ncore_verification as N
-        result = N.inspect(fd, length, expected_id)
-        N.bind(result, verification, expected_id)
+    schema = verification.get("schema_version")
+    if schema in {
+        "npa.ncore.oci-verification.v1",
+        "npa.habitat-sim.oci-verification.v1",
+    }:
+        if schema == "npa.ncore.oci-verification.v1":
+            from . import ncore_verification as verifier
+        else:
+            from . import habitat_sim_verification as verifier
+        result = verifier.inspect(fd, length, expected_id)
+        verifier.bind(result, verification, expected_id)
         return result["layers"]
     os.lseek(fd, 0, os.SEEK_SET)
     with os.fdopen(os.dup(fd), "rb") as file, tarfile.open(fileobj=file, mode="r:") as archive:
@@ -925,8 +932,16 @@ def verification_archive_digest(verification):
     """Keep product verifier identities distinct; neither is a scanner bypass."""
     require(verification.get("valid") is True, "verification_did_not_pass")
     schema = verification.get("schema_version")
-    require(schema in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"), "verification_schema")
-    return verification["archive_sha256" if schema == "npa.ncore.oci-verification.v1" else "docker_save_sha256"]
+    require(schema in (
+        "npa.curobo.image-verification.v1",
+        "npa.ncore.oci-verification.v1",
+        "npa.habitat-sim.oci-verification.v1",
+    ), "verification_schema")
+    return verification[
+        "archive_sha256"
+        if schema != "npa.curobo.image-verification.v1"
+        else "docker_save_sha256"
+    ]
 
 
 def _scan(authorization, directory, detector_type=Detector, *, record_observer=None):
@@ -967,10 +982,19 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
               "expected_image_id": authorization["expected_image_id"], "private_literals_configured": literal_binding is not None,
               "private_literal_count": len(values), "literal_matching_policy": policy, "layers": []}
     try:
-        if verification["schema_version"] == "npa.ncore.oci-verification.v1":
-            from . import ncore_verification as N
-            result = N.inspect(fd, initial.st_size, authorization["expected_image_id"])
-            N.bind(result, verification, authorization["expected_image_id"])
+        schema = verification["schema_version"]
+        if schema in {
+            "npa.ncore.oci-verification.v1",
+            "npa.habitat-sim.oci-verification.v1",
+        }:
+            if schema == "npa.ncore.oci-verification.v1":
+                from . import ncore_verification as verifier
+            else:
+                from . import habitat_sim_verification as verifier
+            result = verifier.inspect(
+                fd, initial.st_size, authorization["expected_image_id"]
+            )
+            verifier.bind(result, verification, authorization["expected_image_id"])
             layers = result["layers"]
             report["oci_graph"] = result["receipt"]
         else:

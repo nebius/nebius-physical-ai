@@ -1,0 +1,289 @@
+{
+  "schema_version": "npa.habitat-sim.source-manifest.v1",
+  "expected_projection": {
+    "file_count": 7909,
+    "inventory_sha256": "00b3daad92208771e8a42f520e8340483ef2928bb46dbd2a13a428905200ba8f"
+  },
+  "source": {
+    "repository": "https://github.com/facebookresearch/habitat-sim",
+    "revision": "57ee4941dc4765240f0f91f70b2c97a919bf9038",
+    "archive_url": "https://codeload.github.com/facebookresearch/habitat-sim/tar.gz/57ee4941dc4765240f0f91f70b2c97a919bf9038",
+    "archive_bytes": 56855335,
+    "archive_sha256": "b299374b38ef8a0f434f17115e79380a645d47eea6dec8ac78645d13a17e3935",
+    "license": "MIT",
+    "license_path": "LICENSE",
+    "license_bytes": 1092,
+    "license_sha256": "2d4c3d00d67067461412a2d9a2f3f8b7b9cda62b3db501e4b6844ccf35c949aa",
+  "final_projection": [
+    "LICENSE",
+    "MANIFEST.in",
+    "README.md",
+      "pyproject.toml",
+      "setup.py",
+      "src/CMakeLists.txt",
+      "src/cmake",
+      "src/deps",
+      "src/esp",
+      "src/shaders",
+      "src/utils",
+      "src_python",
+      "data/default.physics_config.json"
+    ]
+  },
+  "dependencies": [
+    {
+      "name": "assimp",
+      "repository": "https://github.com/assimp/assimp",
+      "revision": "c8dafe0d2887242285c0080c6cbbea8c1f1c8094",
+      "archive_url": "https://codeload.github.com/assimp/assimp/tar.gz/c8dafe0d2887242285c0080c6cbbea8c1f1c8094",
+      "archive_bytes": 49614639,
+      "archive_sha256": "80cb705a1cc5cf1ef782a1a9e7f0d48bd814495eb7f02b15f152c4ee871949d2",
+      "target": "src/deps/assimp",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "147874443d242b4e2bae97036e26ec9d6b37f706174c1bd5ecfcc8c1294cef51"
+    },
+    {
+      "name": "bullet3",
+      "repository": "https://github.com/bulletphysics/bullet3",
+      "revision": "2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5",
+      "archive_url": "https://codeload.github.com/bulletphysics/bullet3/tar.gz/2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5",
+      "archive_bytes": 139813655,
+      "archive_sha256": "f7c486f10b9f645d0577249d02855e076e8368babaa3d31ced6095e7162baee9",
+      "target": "src/deps/bullet3",
+      "license": "Zlib",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "885cd516a8420acb7c3e0b1a7119913b686495001ae564e3229740460e8cff59"
+    },
+    {
+      "name": "corrade",
+      "repository": "https://github.com/mosra/corrade",
+      "revision": "451284cddcdc91300a59a194a11728e8124cb664",
+      "archive_url": "https://codeload.github.com/mosra/corrade/tar.gz/451284cddcdc91300a59a194a11728e8124cb664",
+      "archive_bytes": 1474100,
+      "archive_sha256": "c3bc5842811b27a62a3430d2899c07c067fc5a3d7fc34693e21d7e4ee63395ca",
+      "target": "src/deps/corrade",
+      "license": "MIT",
+      "license_path": "COPYING",
+      "license_sha256": "3b46c95f040b7a3e02f080751e5374ea3a40695b25999758761ccbd9d472a46d",
+      "excluded_archive_links": [
+        ".circleci/config.yml",
+        "src/Corrade/Utility/Test/PathTestFilesSymlink/dir-symlink",
+        "src/Corrade/Utility/Test/PathTestFilesSymlink/file-symlink"
+      ]
+    },
+    {
+      "name": "magnum",
+      "repository": "https://github.com/mosra/magnum",
+      "revision": "70b0d76fcbb5d6d0fe43b3119446b0045fef64e5",
+      "archive_url": "https://codeload.github.com/mosra/magnum/tar.gz/70b0d76fcbb5d6d0fe43b3119446b0045fef64e5",
+      "archive_bytes": 6091358,
+      "archive_sha256": "5bd060f95f263a21df3dc62ca01c256d025dde0e84d66d245d64d93fc353c3c4",
+      "target": "src/deps/magnum",
+      "license": "MIT",
+      "license_path": "COPYING",
+      "license_sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7",
+      "excluded_archive_links": [".circleci/config.yml", "doc/snippets/libvulkan.cpp"]
+    },
+    {
+      "name": "magnum-bindings",
+      "repository": "https://github.com/mosra/magnum-bindings",
+      "revision": "45811bb52e749677d5bc43d62b384ec546ed93bc",
+      "archive_url": "https://codeload.github.com/mosra/magnum-bindings/tar.gz/45811bb52e749677d5bc43d62b384ec546ed93bc",
+      "archive_bytes": 489876,
+      "archive_sha256": "7b801811615ea574489bc2c2e6aa169395766ad4a92b20ba6d219b2b8b305de8",
+      "target": "src/deps/magnum-bindings",
+      "license": "MIT",
+      "license_path": "COPYING",
+      "license_sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7",
+      "excluded_archive_links": [".circleci/config.yml"]
+    },
+    {
+      "name": "magnum-integration",
+      "repository": "https://github.com/mosra/magnum-integration",
+      "revision": "6fca807891f05203fe5003275116b9854e918d87",
+      "archive_url": "https://codeload.github.com/mosra/magnum-integration/tar.gz/6fca807891f05203fe5003275116b9854e918d87",
+      "archive_bytes": 411950,
+      "archive_sha256": "02647f924a5a45e1582c7a4753387efa0c26d0862ce099bc4a8bda8f95d6e8f0",
+      "target": "src/deps/magnum-integration",
+      "license": "MIT",
+      "license_path": "COPYING",
+      "license_sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7",
+      "excluded_archive_links": [".circleci/config.yml"]
+    },
+    {
+      "name": "magnum-plugins",
+      "repository": "https://github.com/mosra/magnum-plugins",
+      "revision": "393b7cb0c098a261a79dbba3230520e008b414a0",
+      "archive_url": "https://codeload.github.com/mosra/magnum-plugins/tar.gz/393b7cb0c098a261a79dbba3230520e008b414a0",
+      "archive_bytes": 4066354,
+      "archive_sha256": "3fa155ea936fc292b6fdc058d647aa2df06a89e1e293140d84bc116f25874dd7",
+      "target": "src/deps/magnum-plugins",
+      "license": "MIT",
+      "license_path": "COPYING",
+      "license_sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7",
+      "excluded_archive_links": [".circleci/config.yml"]
+    },
+    {
+      "name": "openexr",
+      "repository": "https://github.com/AcademySoftwareFoundation/openexr",
+      "revision": "68d9e1e17620cef00e59b43fa42c97fbcf90e72b",
+      "archive_url": "https://codeload.github.com/AcademySoftwareFoundation/openexr/tar.gz/68d9e1e17620cef00e59b43fa42c97fbcf90e72b",
+      "archive_bytes": 20540209,
+      "archive_sha256": "db0a6cdd0dcf49bf59afe35e0e4544dc5f1e0a5ca14335def174812dbd2fa030",
+      "target": "src/deps/openexr",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE.md",
+      "license_sha256": "1004bbac632fc4db96fc26ae79b6e2ceaf6f0e0910335545b0d9e9a267a8e24e"
+    },
+    {
+      "name": "pybind11",
+      "repository": "https://github.com/pybind/pybind11",
+      "revision": "a2e59f0e7065404b44dfe92a28aca47ba1378dc4",
+      "archive_url": "https://codeload.github.com/pybind/pybind11/tar.gz/a2e59f0e7065404b44dfe92a28aca47ba1378dc4",
+      "archive_bytes": 801302,
+      "archive_sha256": "1da0a5c38950e4f49329e9de10c59b2527840a1b963113f1c53b455971cd6aef",
+      "target": "src/deps/pybind11",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb"
+    },
+    {
+      "name": "rapidjson",
+      "repository": "https://github.com/Tencent/rapidjson",
+      "revision": "73063f5002612c6bf64fe24f851cd5cc0d83eef9",
+      "archive_url": "https://codeload.github.com/Tencent/rapidjson/tar.gz/73063f5002612c6bf64fe24f851cd5cc0d83eef9",
+      "archive_bytes": 1054419,
+      "archive_sha256": "896eb817fb2bc62a0a84ca65fac3e3c385b410e6dbf70d69c411e25776663e39",
+      "target": "src/deps/rapidjson",
+      "license": "MIT",
+      "license_path": "license.txt",
+      "license_sha256": "a140e5d46fe734a1c78f1a3c3ef207871dd75648be71fdda8e309b23ab8b1f32"
+    },
+    {
+      "name": "recastnavigation",
+      "repository": "https://github.com/recastnavigation/recastnavigation",
+      "revision": "6dc1667f580357e8a2154c28b7867bea7e8ad3a7",
+      "archive_url": "https://codeload.github.com/recastnavigation/recastnavigation/tar.gz/6dc1667f580357e8a2154c28b7867bea7e8ad3a7",
+      "archive_bytes": 1280923,
+      "archive_sha256": "f565cc91b85df95a656cfc672e41c02e8aa44ba2363905aa8277ce20ea87491d",
+      "target": "src/deps/recastnavigation",
+      "license": "Zlib",
+      "license_path": "License.txt",
+      "license_sha256": "ffad87821cce7cfd3be00b63ffadd01b04e83a4c6a0bcc68f06362ffd42d705e"
+    },
+    {
+      "name": "tinyobjloader",
+      "repository": "https://github.com/syoyo/tinyobjloader",
+      "revision": "e52dfdbecdf8893b161a65e508bc009746fa6042",
+      "archive_url": "https://codeload.github.com/syoyo/tinyobjloader/tar.gz/e52dfdbecdf8893b161a65e508bc009746fa6042",
+      "archive_bytes": 943817,
+      "archive_sha256": "704dac8444b668206ce42dbef8299db12103ae30f934a651278c5a2531cbbda8",
+      "target": "src/deps/tinyobjloader",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "bd091988e6a48690919a6c38b53752ecea7d206040dd0496df6c3314a63947fa"
+    },
+    {
+      "name": "zstd",
+      "repository": "https://github.com/facebook/zstd",
+      "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "archive_url": "https://codeload.github.com/facebook/zstd/tar.gz/f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "archive_bytes": 2453329,
+      "archive_sha256": "4b0bd1f0cfb25e61b9103c35f27395530ff5b4c0d2513a00fd745849e85ea52c",
+      "target": "src/deps/zstd",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
+      "excluded_archive_links": [
+        "tests/cli-tests/bin/unzstd",
+        "tests/cli-tests/bin/zstdcat"
+      ]
+    }
+  ],
+  "dependency_projection": {
+    "assimp": ["CMakeLists.txt", "LICENSE", "assimp.pc.in", "cmake-modules", "code", "contrib", "include", "revision.h.in"],
+    "bullet3": ["BulletConfig.cmake.in", "CMakeLists.txt", "LICENSE.txt", "UseBullet.cmake", "VERSION", "bullet.pc.cmake", "src"],
+    "corrade": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
+    "magnum": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
+    "magnum-bindings": ["CMakeLists.txt", "COPYING", "modules", "src"],
+    "magnum-integration": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
+    "magnum-plugins": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
+    "openexr": ["CMakeLists.txt", "LICENSE.md", "PATENTS", "cmake", "share", "src"],
+    "pybind11": ["CMakeLists.txt", "LICENSE", "include", "tools"],
+    "rapidjson": ["CMakeLists.txt", "CMakeModules", "RapidJSON.pc.in", "RapidJSONConfig.cmake.in", "RapidJSONConfigVersion.cmake.in", "include", "license.txt"],
+    "recastnavigation": ["CMakeLists.txt", "Detour", "DetourCrowd", "DetourTileCache", "License.txt", "Recast", "recastnavigation-config.cmake.in", "recastnavigation.pc.in", "version.h.in"],
+    "tinyobjloader": ["CMakeLists.txt", "LICENSE", "tiny_obj_loader.cc", "tiny_obj_loader.h", "tinyobjloader-config.cmake.in", "tinyobjloader.pc.in"],
+    "zstd": ["COPYING", "LICENSE", "Makefile", "build", "lib"]
+  },
+  "internal_vendored": [
+    {
+      "name": "atomic_wait",
+      "root": "src/deps/atomic_wait",
+      "files": [
+        {"path": "atomic_wait.cpp", "sha256": "b6629129a3c89f63c9f9abde890fef5ee728da22b4328aed5e0e2db72906c3fc"},
+        {"path": "atomic_wait.h", "sha256": "6ff1617c9d9325064cf2200e51415cd42d4a0307b9e992665a6ef2ad86583095"}
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "tinyxml2",
+      "root": "src/deps/tinyxml2",
+      "files": [
+        {"path": "CMakeLists.txt", "sha256": "1b8f7c577c2f869abb9b5cf670ab92d20d9a998594cf2bc438ac5feec39813c8"},
+        {"path": "tinyxml2.cpp", "sha256": "f6d6b5f0f634a1e1b901e710835c8fb91d3c0f859a348d18ee4ea48792ba36c7"},
+        {"path": "tinyxml2.h", "sha256": "86d3fbe7983f41fb89ff22fdca425322ae3a609ff03acd551449587d204e1b24"}
+      ],
+      "license": "Zlib"
+    },
+    {
+      "name": "basis-universal-transcoder",
+      "root": "src/deps/basis-universal/transcoder",
+      "files": [
+        {"path": "basisu.h", "sha256": "46f5904ddb70d3e552c391f302793715057394a5c4103f59eb37bfd2ae4165c9"},
+        {"path": "basisu_containers.h", "sha256": "be0bf660e7619ce4a09b59b7b68a107484c32e669acc059cda06b25a668fc1a2"},
+        {"path": "basisu_containers_impl.h", "sha256": "7d87af383dffc11da0c8c6a5f1d5f5e2777ad861e4ce2c7cd8d4f9464518a981"},
+        {"path": "basisu_file_headers.h", "sha256": "f0706e3c261bbcbaab4fde4286306ae7a6f1bfe18c1238a387f28615abfcf885"},
+        {"path": "basisu_global_selector_cb.h", "sha256": "e0df4a35e469b89f127c63d56c70e90413fd15ba0f4fa81cf3f60fc4b63b4e72"},
+        {"path": "basisu_global_selector_palette.h", "sha256": "5e7b872607192b2124b837573293a09fff60b82dc5fd14daa2ab008453886633"},
+        {"path": "basisu_transcoder.cpp", "sha256": "d7e15a7f293ec4f9bcb3e1ccc3bb2fca4797de96534a8fc0853eda68ddabdf31"},
+        {"path": "basisu_transcoder.h", "sha256": "8c21b4f180764c56cc62ebce746d3db1f592717e90ef53c4a652b43c4a3f36ef"},
+        {"path": "basisu_transcoder_internal.h", "sha256": "bbf786128adb5b86a7288bb23bc9a6fb8b8cb5409695c87bb6a6336d2582a2ca"},
+        {"path": "basisu_transcoder_tables_astc.inc", "sha256": "7dd41c648d3ed8e7d511eb4af865669c4dd50b8ecead62a68fca471138c46e1a"},
+        {"path": "basisu_transcoder_tables_astc_0_255.inc", "sha256": "f41acb498be64349c48600e965664f4bec1161781169e3ec3411827c490ef4f8"},
+        {"path": "basisu_transcoder_tables_atc_55.inc", "sha256": "4a510a20bffc3738d85d41e44633d44145931aa5734affb390c7836ec8b5dabb"},
+        {"path": "basisu_transcoder_tables_atc_56.inc", "sha256": "94714b54f0c13c2f3ba5481fbfb40b974892048d59ab68419b369222f0a68075"},
+        {"path": "basisu_transcoder_tables_bc7_m5_alpha.inc", "sha256": "4d713b839594f429d95f329d60f8ad495e932619111b5dfddffb688e3634b495"},
+        {"path": "basisu_transcoder_tables_bc7_m5_color.inc", "sha256": "e6f63d3ebce0ac84d801ec54614b6a4eeda3be3e994f3abbfc732377cfe5a531"},
+        {"path": "basisu_transcoder_tables_dxt1_5.inc", "sha256": "301dead99bbffa60c906dc4f89b8fb2b4976c30dbe7aa1b261d550b2107f89de"},
+        {"path": "basisu_transcoder_tables_dxt1_6.inc", "sha256": "ab1974899976f555e4bfb47b37195ad4466e2c72b7bccb3439ff9032fed0de19"},
+        {"path": "basisu_transcoder_tables_pvrtc2_45.inc", "sha256": "780711642098a91239ee37b3f9110469ee1c7da8dd9e440a43c7ba70f992ff9d"},
+        {"path": "basisu_transcoder_tables_pvrtc2_alpha_33.inc", "sha256": "250d389235c0213757266441f72aee37cbe138a3c2a3f58b590ed53d6fb746fa"},
+        {"path": "basisu_transcoder_uastc.h", "sha256": "b8f30c06d20016f30b7506103b08855798f379bd0406fef74011c06ceac90b47"}
+      ],
+      "license": "Apache-2.0"
+    }
+  ],
+  "excluded_gitlinks": [
+    {
+      "name": "rlr-audio-propagation",
+      "revision": "4fd446b4abb5c71fb7a232a083bbddd65f25fc6f",
+      "reason": "audio is disabled and the dependency is CC-BY-NC"
+    },
+    {
+      "name": "glfw",
+      "reason": "GUI viewers are disabled"
+    }
+  ],
+  "forbidden_paths": [
+    ".git",
+    "data/scene_datasets",
+    "data/versioned_data",
+    "docs",
+    "examples",
+    "tests",
+    "src/deps/rlr-audio-propagation",
+    "src/deps/glfw",
+    "src/deps/rapidjson/bin/jsonchecker"
+  ]
+}

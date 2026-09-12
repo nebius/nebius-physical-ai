@@ -4,8 +4,9 @@
 different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
-* ``SUPPORTED_TOOL_VERSIONS`` — a tag ending ``-unbuilt``, so a tag that has
-  never been produced cannot be mistaken for one that has;
+* the supported or quarantined-candidate version inventory — a tag ending
+  ``-unbuilt``, so a tag that has never been produced cannot be mistaken for
+  one that has;
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
@@ -25,6 +26,7 @@ import yaml
 from npa.deploy.images import (
     PUBLICATION_QUARANTINE_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
 )
@@ -39,6 +41,11 @@ PENDING_BUILD = "pending-build"
 #: publication - the byte evidence is only half of what publication claims.
 PENDING_GPU = "pending-gpu"
 UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
+
+
+def _declared_versions() -> dict[str, str]:
+    assert set(SUPPORTED_TOOL_VERSIONS).isdisjoint(UNBUILT_CANDIDATE_TOOL_VERSIONS)
+    return SUPPORTED_TOOL_VERSIONS | UNBUILT_CANDIDATE_TOOL_VERSIONS
 
 
 def _blackwell_images() -> dict[str, dict[str, object]]:
@@ -60,9 +67,10 @@ def _image_name(tool: str) -> str:
 def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
     blackwell = _blackwell_images()
     containers = _golden_eval_containers()
+    versions = _declared_versions()
 
     for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS):
-        version = str(SUPPORTED_TOOL_VERSIONS.get(tool, ""))
+        version = str(versions.get(tool, ""))
         assert version.endswith(UNBUILT_TAG_SUFFIX), (
             f"{tool} is unvalidated for publication but its tag {version!r} does "
             f"not end in {UNBUILT_TAG_SUFFIX}; a tag that reads as a release is "
@@ -97,7 +105,7 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
     stale = sorted(
         tool
-        for tool, version in SUPPORTED_TOOL_VERSIONS.items()
+        for tool, version in _declared_versions().items()
         if str(version).endswith(UNBUILT_TAG_SUFFIX)
         and tool not in UNVALIDATED_PUBLICATION_TOOLS
     )

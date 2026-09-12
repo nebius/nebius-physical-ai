@@ -18,6 +18,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
+| Habitat-Sim (**public-eligible image; unbuilt/quarantined**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
@@ -32,6 +33,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
+| Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **unbuilt; pending exact-digest live qualification** | Static public-byte closure and workflow only. Private-stage and any later trusted public rebuild each require their own complete scans and exactly one STRICT-bound RTX PRO 6000 Blackwell run. |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
@@ -64,6 +66,35 @@ unique and must be tested with its own upstream-named capabilities.
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted historical evidence** | same prior run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
 
 ## Native Capabilities Per Container
+
+### Habitat-Sim
+
+Pinned MIT source:
+`facebookresearch/habitat-sim@57ee4941dc4765240f0f91f70b2c97a919bf9038`.
+Upstream warns that beyond v0.3.4, Meta internal teams do not officially
+maintain releases or provide active development. This is a public-eligible but
+unbuilt and publication-quarantined candidate, not a published NPA image or an
+accepted live capability.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `skokloster_castle_rgb_depth_bullet_traversal` | pending live qualification | Upstream `Simulator`, `make_cfg`, pathfinder, greedy follower, RGB/depth sensors, and saved observations on the exact Skokloster scene |
+| `headless_nvidia_egl_rgb_depth_render` | pending live qualification | Headless NVIDIA OpenGL strings plus NVIDIA EGL libraries loaded into the renderer process |
+| `bullet_physics_world_step` | pending live qualification | Bullet-enabled build and advancing world time through `Simulator.step(dt=1/60)` |
+| `greedy_geodesic_agent_traversal` | pending live qualification | Navmesh path, upstream follower action sequence, and nonzero start-to-end displacement |
+
+The hard gate fetches the official Meta test-scene archive referenced by the
+pinned Habitat-Sim tree, verifies its 94,590,970-byte SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+extracts only the exact hash-pinned `skokloster-castle.glb` and `.navmesh`, and
+deletes the archive. The dedicated build uses an immutable Ubuntu package snapshot
+and a 35-wheel, hash-locked Python closure, and preserves package inventories
+with the result. Habitat's pinned README and the original asset identify the
+demo as CC BY 4.0; the proof carries attribution, license/original links, and
+modification provenance. Matterport3D, HM3D, Replica, other proprietary or gated
+datasets, semantic annotations, and distributed Habitat-Lab training are
+deferred. The renderer targets exactly one RTX PRO 6000 Blackwell and never B200. See
+[`byof-habitat-sim.md`](byof-habitat-sim.md).
 
 ### ManiSkill
 

@@ -31,6 +31,7 @@ from npa.workbench.model_cache import (
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",

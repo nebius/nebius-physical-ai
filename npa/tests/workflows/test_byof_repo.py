@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -22,6 +23,22 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _run_scoped_build(module, *, cwd: Path, trusted_repo: Path, command: str, env):
+    return subprocess.run(
+        [
+            "/bin/sh",
+            "-eu",
+            "-c",
+            module._scoped_build_command_script(repo_mount=str(trusted_repo)),
+        ],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "BYOF_BUILD_COMMAND": command},
+    )
 
 
 def _accepted_wan_base_args(module) -> list[str]:
@@ -208,6 +225,10 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
+    assert module.BYOF_CA_BOOTSTRAP_PATH not in dockerfile
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 not in dockerfile
+    assert "npa-ca-bootstrap" not in dockerfile
+    assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in dockerfile
     assert seen["redactions"] == (token, repo_url, repo_ref)
     summary = json.loads(output)
     assert summary["repo_url"] == "<private-repository>"
@@ -1095,6 +1116,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 ) -> None:
     module = _load_module()
     build_args: list[str] = []
+    dockerfiles: list[str] = []
 
     monkeypatch.setattr(
         module,
@@ -1105,6 +1127,9 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
+            dockerfiles.append(
+                (Path(cmd[-1]) / "Dockerfile").read_text(encoding="utf-8")
+            )
         if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
             return subprocess.CompletedProcess(
                 cmd,
@@ -1125,6 +1150,8 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
             "main",
             "--base-profile",
             "ubuntu",
+            "--apt-snapshot",
+            "20260903T121500Z",
             "--build-command",
             "python3 -m pip install -e .",
             "--skip-run",
@@ -1133,12 +1160,18 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_APT_SNAPSHOT=20260903T121500Z" for part in build_args)
+    assert len(dockerfiles) == 1
+    assert module._snapshot_ca_bootstrap_url("20260903T121500Z") in dockerfiles[0]
+    assert "FROM ${BYOF_BASE_IMAGE} AS npa-ca-bootstrap" in dockerfiles[0]
+    assert "target=/tmp/npa-ca-certificates.deb,readonly" in dockerfiles[0]
     assert any(
         part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
     )
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
+    assert output["apt_snapshot"] == "20260903T121500Z"
     assert output["build_command"] == "python3 -m pip install -e ."
     assert output["build"] == {
         "digest": "sha256:" + "b" * 64,
@@ -1149,6 +1182,18 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
         ),
     }
     assert output["image"] == output["build"]["runtime_image"]
+
+
+def test_main_rejects_malformed_apt_snapshot_before_build(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("build ran with malformed apt snapshot"),
+    )
+
+    with pytest.raises(ValueError, match="YYYYMMDDTHHMMSSZ"):
+        module.main(["--apt-snapshot", "latest", "--skip-run"])
 
 
 def test_resolve_pushed_image_digest_fails_closed_without_digest(monkeypatch) -> None:
@@ -1169,6 +1214,10 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
+    assert "BYOF_APT_SNAPSHOT" in text
+    assert "snapshot.ubuntu.com/ubuntu/" in text
+    assert 'case "${suite}" in jammy|noble)' in text
+    assert '"Suites: ${suite} ${suite}-updates ${suite}-security"' in text
     assert "BYOF_BUILD_COMMAND" in text
     assert "npa.byof.build.v1" in text
     assert "build_command_executed" in text
@@ -1193,6 +1242,284 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+
+
+def test_dockerfile_scopes_root_build_git_trust_to_byof_repo() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    build_run = text.index("RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]")
+    runtime_user = text.index("USER ubuntu", build_run)
+
+    assert text.rindex("USER root", 0, build_run) < build_run < runtime_user
+    assert text.count("GIT_CONFIG_COUNT=1") == 1
+    assert text.count("GIT_CONFIG_KEY_0=safe.directory") == 1
+    assert text.count("GIT_CONFIG_VALUE_0=/opt/byof") == 1
+    assert "safe.directory=*" not in text
+    assert "git config --global" not in text
+    assert "git config --system" not in text
+    assert ".gitconfig" not in text
+    assert "sudo -u" not in text[build_run:runtime_user]
+
+
+def test_scoped_build_git_trust_propagates_and_rejects_other_repo(tmp_path) -> None:
+    module = _load_module()
+    trusted_repo = tmp_path / "trusted"
+    unrelated_repo = tmp_path / "unrelated"
+    inherited_repo = tmp_path / "inherited"
+    private_home = tmp_path / "home"
+    global_config = tmp_path / "global.gitconfig"
+    system_config = tmp_path / "system.gitconfig"
+    private_home.mkdir()
+    for repo in (trusted_repo, unrelated_repo, inherited_repo):
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            str(global_config),
+            "--add",
+            "safe.directory",
+            str(inherited_repo),
+        ],
+        check=True,
+    )
+
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": str(system_config),
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+        "HOME": str(private_home),
+        "NPA_TEST_CALLER_UID": str(os.getuid()),
+        "NPA_TEST_TRUSTED_REPO": str(trusted_repo),
+        "NPA_TEST_UNRELATED_REPO": str(unrelated_repo),
+    }
+    trusted = _run_scoped_build(
+        module,
+        cwd=trusted_repo,
+        trusted_repo=trusted_repo,
+        env=environment,
+        command=(
+            'test "$(id -u)" = "${NPA_TEST_CALLER_UID}" && '
+            'git config --get-all safe.directory | '
+            'grep -Fqx -- "${NPA_TEST_TRUSTED_REPO}" && '
+            "git submodule update --init"
+        ),
+    )
+    unrelated = _run_scoped_build(
+        module,
+        cwd=trusted_repo,
+        trusted_repo=trusted_repo,
+        env=environment,
+        command='git -C "${NPA_TEST_UNRELATED_REPO}" status --short',
+    )
+
+    assert trusted.returncode == 0, trusted.stderr
+    assert unrelated.returncode != 0
+    assert "dubious ownership" in unrelated.stderr
+    assert not (private_home / ".gitconfig").exists()
+    assert not system_config.exists()
+    assert global_config.read_text().splitlines() == [
+        "[safe]",
+        f"\tdirectory = {inherited_repo}",
+    ]
+
+
+def test_dockerfile_bootstraps_only_pinned_ca_bytes_before_https_packages() -> None:
+    module = _load_module()
+    snapshot = "20260903T121500Z"
+    text = module._dockerfile_text(apt_snapshot=snapshot)
+    pinned_add = (
+        f"ADD --checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256} "
+        f"{module._snapshot_ca_bootstrap_url(snapshot)} "
+        "/npa-ca-certificates.deb"
+    )
+    read_only_mount = (
+        "RUN --mount=type=bind,from=npa-ca-bootstrap,"
+        "source=/npa-ca-certificates.deb,"
+        "target=/tmp/npa-ca-certificates.deb,readonly"
+    )
+    ca_extract = "dpkg-deb -x /tmp/npa-ca-certificates.deb /;"
+    ca_bundle = (
+        "find /usr/share/ca-certificates -type f -name '*.crt' -exec cat '{}' +"
+    )
+    https_source = (
+        '"URIs: https://snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"'
+    )
+    remaining_packages = (
+        "apt-get install -y --no-install-recommends \\\n"
+        "      ca-certificates git python3 python3-pip sudo rsync"
+    )
+
+    assert text.index(pinned_add) < text.index(ca_extract)
+    assert text.index(pinned_add) < text.index(read_only_mount)
+    assert text.index(read_only_mount) < text.index(ca_extract)
+    assert text.index(ca_extract) < text.index(ca_bundle)
+    assert text.index(ca_bundle) < text.index(https_source)
+    assert text.index(https_source) < text.index(remaining_packages)
+    bootstrap = text[text.index(ca_extract) : text.index(https_source)]
+    assert all(
+        package not in bootstrap
+        for package in ("git ", "python3", "sudo", "rsync", "openssh-server")
+    )
+
+
+def test_dockerfile_bootstrap_has_immutable_official_ubuntu_binding() -> None:
+    module = _load_module()
+    snapshot = "20260903T121500Z"
+    text = module._dockerfile_text(apt_snapshot=snapshot)
+    snapshot_path = "snapshot.ubuntu.com/ubuntu/${BYOF_APT_SNAPSHOT}/"
+
+    assert text.count(snapshot_path) == 2
+    assert module._snapshot_ca_bootstrap_url(snapshot).startswith(
+        f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
+    )
+    assert f'test "${{BYOF_APT_SNAPSHOT}}" = "{snapshot}"' in text
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 == (
+        "6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245"
+    )
+    assert f"--checksum=sha256:{module.BYOF_CA_BOOTSTRAP_SHA256}" in text
+    assert "snapshot.ubuntu.com/ubuntu/latest" not in text
+    assert 'case "${BYOF_APT_SNAPSHOT}" in (*[!0-9TZ]*) exit 64' in text
+
+
+def test_dockerfile_checks_snapshot_perl_family_before_package_install() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
+
+    apt_update = text.index("apt-get update")
+    https_check = text.index("! grep -F 'URIs: http://'")
+    compatibility = text.index("installed_perl_base=")
+    apt_install = text.index("apt-get install -y")
+
+    assert apt_update < https_check < compatibility < apt_install
+    assert "snapshot_perl_candidate=" in text
+    assert "snapshot_perl_base_candidate=" in text
+    assert "base/snapshot Perl family mismatch" in text
+    assert "exit 66" in text
+    assert "5.34.0-3ubuntu1" not in module._snapshot_perl_compatibility_script()
+
+
+def test_snapshot_perl_family_check_accepts_match_and_refuses_mismatch(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    dpkg_query = tmp_path / "dpkg-query"
+    apt_cache = tmp_path / "apt-cache"
+    dpkg_query.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"${NPA_TEST_INSTALLED_PERL_BASE}\"\n",
+        encoding="utf-8",
+    )
+    apt_cache.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  perl) value=\"${NPA_TEST_PERL_CANDIDATE}\" ;;\n"
+        "  perl-base) value=\"${NPA_TEST_PERL_BASE_CANDIDATE}\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        "printf '  Candidate: %s\\n' \"$value\"\n",
+        encoding="utf-8",
+    )
+    dpkg_query.chmod(0o700)
+    apt_cache.chmod(0o700)
+    base_env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "NPA_TEST_INSTALLED_PERL_BASE": "5.34.0-3ubuntu1.8",
+        "NPA_TEST_PERL_BASE_CANDIDATE": "5.34.0-3ubuntu1.8",
+    }
+
+    compatible = subprocess.run(
+        ["/bin/sh", "-eu", "-c", module._snapshot_perl_compatibility_script()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**base_env, "NPA_TEST_PERL_CANDIDATE": "5.34.0-3ubuntu1.8"},
+    )
+    incompatible = subprocess.run(
+        ["/bin/sh", "-eu", "-c", module._snapshot_perl_compatibility_script()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **base_env,
+            "NPA_TEST_PERL_CANDIDATE": "5.34.0-3ubuntu1.7",
+            "NPA_TEST_PERL_BASE_CANDIDATE": "5.34.0-3ubuntu1.7",
+        },
+    )
+
+    assert compatible.returncode == 0
+    assert compatible.stderr == ""
+    assert incompatible.returncode == 66
+    assert "base/snapshot Perl family mismatch" in incompatible.stderr
+
+
+def test_dockerfile_https_bootstrap_enforces_ubuntu_archive_signature() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
+    snapshot_source = text[
+        text.index("'Types: deb'") : text.index(
+            "> /etc/apt/sources.list.d/npa-snapshot.sources"
+        )
+    ]
+
+    assert "test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg" in text
+    assert (
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
+        in snapshot_source
+    )
+    assert "--allow-unauthenticated" not in text
+    assert "AllowInsecureRepositories" not in text
+    assert "Trusted: yes" not in text
+
+
+def test_dockerfile_leaves_no_insecure_snapshot_transport_configuration() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
+    https_verification = (
+        'grep -Fx "URIs: https://snapshot.ubuntu.com/ubuntu/'
+        '${BYOF_APT_SNAPSHOT}/"'
+    )
+    http_refusal = "! grep -F 'URIs: http://'"
+
+    assert text.index(https_verification) < text.index(http_refusal)
+    assert text.index(http_refusal) < text.index("apt-get install -y")
+    assert "URIs: http://snapshot.ubuntu.com" not in text
+    assert "Acquire::https::Verify-Peer" not in text
+    assert "Acquire::https::Verify-Host" not in text
+    assert "Acquire::AllowInsecureRepositories" not in text
+
+
+def test_dockerfile_does_not_copy_bootstrap_archive_into_final_layers() -> None:
+    module = _load_module()
+    text = module._dockerfile_text(apt_snapshot="20260903T121500Z")
+    add = text.index("ADD --checksum=sha256:")
+    final_stage = text.index("FROM ${BYOF_BASE_IMAGE}", add)
+    mount = text.index("RUN --mount=type=bind,from=npa-ca-bootstrap", final_stage)
+    extract = text.index("dpkg-deb -x /tmp/npa-ca-certificates.deb /")
+    apt_update = text.index("apt-get update", extract)
+
+    assert add < final_stage < mount < extract < apt_update
+    assert "COPY --from=npa-ca-bootstrap" not in text
+    assert "ADD --checksum=sha256:" not in text[final_stage:]
+    assert "test -s /etc/ssl/certs/ca-certificates.crt" in text
+
+
+def test_dockerfile_without_snapshot_omits_ca_bootstrap_dependency() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+
+    assert module.BYOF_CA_BOOTSTRAP_PATH not in text
+    assert module.BYOF_CA_BOOTSTRAP_SHA256 not in text
+    assert "npa-ca-bootstrap" not in text
+    assert "ADD --checksum=sha256:" not in text
+    assert "source=/npa-ca-certificates.deb" not in text
+    assert "target=/tmp/npa-ca-certificates.deb" not in text
+    assert "dpkg-deb -x /tmp/npa-ca-certificates.deb" not in text
+    assert "find /usr/share/ca-certificates" not in text
+    assert "snapshot_perl_candidate" not in text
+    assert "base/snapshot Perl family mismatch" not in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

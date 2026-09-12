@@ -46,12 +46,13 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory, including the pending NCore and Habitat-Sim
+integrations, has **38 packaging entries** (36 redistribution-eligible and two
+restricted) and **39 mapped tools**: 32 public-release members, two restricted
+tools, and five quarantined tools (`curobo`, `habitat-sim`, `ncore`, `openpi`,
+and `robocasa`). These counts come from `packaging-contract.yaml` and
+`npa.deploy.images`; they do not constitute a new registry audit or acceptance
+of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -300,8 +301,17 @@ And no published image has a recorded L40S capability run; those cells are
 supported, blocked, not routed, unverified, or CPU-only rather than verified or
 historical evidence.
 
-## Intentionally not published as separate images
+## Not in the public image table
 
+- **`npa-habitat-sim`** is an unbuilt, publication-quarantined public-eligibility
+  candidate, not a public-image row. Its dedicated recipe contains the pinned
+  MIT source projection and hash-locked redistributable closure, while the CC BY
+  Skokloster scene remains an exact runtime fetch. It is present in the packaging
+  and image-name inventories but remains in `UNVALIDATED_PUBLICATION_TOOLS`.
+  No digest, anonymous pull, accepted capability result, or release is claimed.
+  A later trusted full-SHA public rebuild is a new digest and must repeat complete
+  scans and the real one-RTX gate before this table can list it. See
+  [`byof-habitat-sim.md`](byof-habitat-sim.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

@@ -87,6 +87,7 @@ def build_byof_argv(
     repo_token_env: str = "",
     base_profile: str = "ubuntu",
     base_image: str = "",
+    apt_snapshot: str = "",
     workload: str = "container-verify",
     build_command: str = "",
     smoke_command: str = "",
@@ -142,6 +143,8 @@ def build_byof_argv(
         argv.extend(["--repo-token-env", repo_token_env])
     if base_image:
         argv.extend(["--base-image", base_image])
+    if apt_snapshot:
+        argv.extend(["--apt-snapshot", apt_snapshot])
     if build_command:
         argv.extend(["--build-command", build_command])
     if smoke_command:
@@ -206,6 +209,11 @@ def run_cmd(
     ),
     base_image: str = typer.Option(
         "", "--base-image", help="Explicit base image override."
+    ),
+    apt_snapshot: str = typer.Option(
+        "",
+        "--apt-snapshot",
+        help="Optional Ubuntu package snapshot timestamp (YYYYMMDDTHHMMSSZ).",
     ),
     workload: Workload = typer.Option(
         Workload.container_verify,
@@ -291,6 +299,7 @@ def run_cmd(
         repo_token_env=repo_token_env,
         base_profile=base_profile.value,
         base_image=base_image,
+        apt_snapshot=apt_snapshot,
         workload=workload.value,
         build_command=build_command,
         smoke_command=smoke_command,

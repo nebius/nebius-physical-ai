@@ -81,6 +81,8 @@ _BYOF_REPO_ARGV = [
     "{{config.base_profile}}",
     "--base-image",
     "{{config.base_image}}",
+    "--apt-snapshot",
+    "{{config.apt_snapshot}}",
     "--build-command",
     "{{config.build_command}}",
     "--workload",
@@ -116,6 +118,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "apt_snapshot": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
@@ -136,7 +139,23 @@ _CONTENT_AGENTS_PIPELINE = [
     "npa.workflows.content_agents",
 ]
 
+_HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.habitat_sim.smoke": ToolEntry(
+        name="workflow.habitat_sim.smoke",
+        description=(
+            "Render the pinned official Skokloster scene with RGB, depth, Bullet, "
+            "and real navigation on one RTX PRO 6000 Blackwell."
+        ),
+        argv_template=[
+            *_HABITAT_SIM_SMOKE,
+            "--output-dir",
+            "{{config.output_dir}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+        ],
+    ),
     "workbench.curobo.prepare": ToolEntry(
         name="workbench.curobo.prepare",
         description="cuRobo V2 prepare with verified artifact handoffs.",

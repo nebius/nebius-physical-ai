@@ -1,0 +1,96 @@
+{
+  "schema_version": "npa.habitat-sim.runtime-payload.v1",
+  "required_base_diff_ids": [
+    "sha256:ea16cace89338c84eb6bcb91a7efdfcae6838fff359efe951858227436486c34"
+  ],
+  "required_final_paths": [
+    "/opt/venv",
+    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py",
+    "/var/lib/dpkg/status",
+    "/usr/src/habitat-sim/LICENSE",
+    "/usr/src/habitat-sim/data/default.physics_config.json",
+    "/usr/share/doc/npa-habitat-sim/source-manifest.json",
+    "/usr/share/doc/npa-habitat-sim/source-projection.json",
+    "/usr/share/doc/npa-habitat-sim/licenses.json",
+    "/usr/share/doc/npa-habitat-sim/apt-build.lock",
+    "/usr/share/doc/npa-habitat-sim/apt-runtime.lock",
+    "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock",
+    "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md"
+  ],
+  "required_final_file_sha256": {
+    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "1b1d7af997f35ba1ff2f4db39507ff11ac4306b6fcfc74a32385c9fde8bc5120",
+    "/usr/share/doc/npa-habitat-sim/source-manifest.json": "44918d8afc1241183e2b5d2f763dd48aec705f6da847be3f65d79c6fa9e5e743",
+    "/usr/share/doc/npa-habitat-sim/licenses.json": "dd528ce0b4489e9c92f077e8d4222332a7c00f27701acfdbfd0369d96359770f",
+    "/usr/share/doc/npa-habitat-sim/apt-build.lock": "c88925cf63d383581266c0ed7a16f71890f5404cc66d8c7f556c8d0914d788c4",
+    "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "4bb99869a74cf5cedf359d173b72e5c0ec2dea6530b7191af136844dd651fcb7",
+    "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": "82c97b7345a5044f4867efcabefa62f79391b675d92773816c59b29f98bb6548",
+    "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": "4a9df04b64c91d017686b2974fbe173c1d51e700817a90222cc3deb81547a370",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7.orig.tar.gz": "4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7.orig.tar.gz.asc": "8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz": "05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811",
+    "/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/rsync_3.2.7-0ubuntu0.22.04.7.dsc": "5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d"
+  },
+  "source_projection": {
+    "manifest_path": "/usr/share/doc/npa-habitat-sim/source-manifest.json",
+    "inventory_path": "/usr/share/doc/npa-habitat-sim/source-projection.json",
+    "source_root": "/usr/src/habitat-sim"
+  },
+  "apt_runtime_lock_path": "/usr/share/doc/npa-habitat-sim/apt-runtime.lock",
+  "python_runtime_lock_path": "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock",
+  "locally_built_python_distribution": {
+    "name": "habitat-sim",
+    "version": "0.3.3"
+  },
+  "bootstrap_python_distributions": {
+    "pip": "22.0.2",
+    "setuptools": "59.6.0"
+  },
+  "allowed_missing_python_record_patterns": [
+    "^opt/venv/lib/python3\\.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-[^/]+$"
+  ],
+  "expected_missing_python_record_count": 1,
+  "required_labels": {
+    "npa.tool": "habitat-sim",
+    "npa.version": "0.3.3-public-unbuilt",
+    "org.opencontainers.image.licenses": "MIT",
+    "org.nebius.npa.upstream-revision": "57ee4941dc4765240f0f91f70b2c97a919bf9038",
+    "org.nebius.npa.publication-status": "quarantined-unbuilt"
+  },
+  "forbidden_path_patterns": [
+    "(^|/)\\.git(/|$)",
+    "(^|/)(hm3d|matterport|replica|gibson)(/|$)",
+    "(^|/)scene_datasets(/|$)",
+    "(^|/)habitat-test-scenes\\.zip$",
+    "(^|/)(ca-certificates|openssl|libssl3)[^/]*\\.deb$",
+    "(^|/)ffmpeg-[^/]+$",
+    "(^|/)libnvidia[^/]*",
+    "(^|/)usr/local/cuda(/|$)",
+    "(^|/)root/\\.docker(/|$)",
+    "(^|/)ssh_host_.*_key$"
+  ],
+  "forbidden_nondirectory_path_patterns": [
+    "(^|/)(wheelhouse|apt/lists|apt/archives)(/|$)",
+    "(^|/)(weights?|checkpoints?|outputs?|cache)(/|$)"
+  ],
+  "forbidden_content_sha256": [
+    "1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06",
+    "b14e29e17f5e31d86a1002eefd77b7d345b265006481739ae480a847e6623f56",
+    "1a9a5bd123af8001f0ea2c5c8d326cb3fd39808ca771fc766856af8f0772391d"
+  ],
+  "forbidden_packages": [
+    "build-essential",
+    "cmake",
+    "git",
+    "libegl1-mesa-dev",
+    "libgl1-mesa-dev",
+    "libglvnd-dev",
+    "libglm-dev",
+    "libjpeg-dev",
+    "mesa-utils",
+    "ninja",
+    "pkg-config",
+    "python3-dev",
+    "python3-pip",
+    "scikit-build-core"
+  ]
+}

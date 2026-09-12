@@ -38,6 +38,7 @@ PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "openpi": "npa-openpi",
+    "habitat-sim": "npa-habitat-sim",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
@@ -94,6 +95,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "fiftyone",
         "groot",
+        "habitat-sim",
         "isaac-lab",
         "rerun-viewer",
         "sim2real-control",
@@ -146,7 +148,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "habitat-sim", "ncore"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -266,6 +270,14 @@ SUPPORTED_TOOL_VERSIONS = {
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
+}
+
+# Tags for publication-quarantined candidates that are intentionally not part
+# of the installed package's supported release inventory. Keeping these out of
+# ``SUPPORTED_TOOL_VERSIONS`` preserves its exact pyproject mirror while still
+# giving planning and private qualification a fail-closed, visibly unbuilt tag.
+UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
+    "habitat-sim": "0.3.3-public-unbuilt",
 }
 
 
@@ -590,7 +602,12 @@ def supported_tool_version(tool: str) -> str:
         if pyproject.is_file():
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
-            return str(data["tool"]["npa"]["supported-tools"][tool])
+            configured = data["tool"]["npa"]["supported-tools"]
+            if tool in configured:
+                return str(configured[tool])
+            break
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        return UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
@@ -854,6 +871,10 @@ def build_and_push_command(image: str) -> str:
     image_name = repository.rsplit(":", 1)[0] if ":" in repository else repository
     tool = tool_for_image_name(image_name)
     if not tool:
+        return ""
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        # Quarantined candidates require their dedicated, reviewed build and
+        # byte-scan transaction; never suggest the generic push shortcut.
         return ""
     if tool == "ncore":
         # The generic recipe omits the mandatory source revision and would build
