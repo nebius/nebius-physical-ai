@@ -88,19 +88,25 @@ reads every regular byte in every ordered layer, checks whiteouts, enforces fina
 `USER ubuntu`, labels, entrypoint, required payloads, and refuses known scene,
 source-archive, cache, credential, CUDA/NVIDIA, FFmpeg, and gated-data paths or
 hashes. It also hashes the embedded runtime locks, notices, and smoke module;
-reconciles installed apt and Python distributions to those locks; checks every
-projected source byte against its immutable inventory; binds native venv ELF
+reconciles installed apt and Python distributions to those locks; binds every
+regular file and link under `/opt/venv` into an operator-reviewed exact
+installed-file inventory; requires exactly one wheel `RECORD` beside every
+installed distribution's metadata and rejects unbound `RECORD` entries; checks
+every projected source byte against its immutable inventory; binds native venv ELF
 files to wheel `RECORD` hashes; parses every ELF `DT_NEEDED`, `DT_RPATH`, and
 `DT_RUNPATH` entry, records the loader-order search path, and refuses unresolved
 or multiply compatible same-architecture targets; and requires the OCI revision
 label to equal the reviewed full Git SHA. The verifier also binds the selected Ubuntu
 base diff ID and requires operator-reviewed SHA-256 values for the complete dpkg
-inventory and native closure. The dpkg inventory includes every installed
-binary version, architecture, source package/version, exact dpkg `.list`
+inventory, Python venv installed-file inventory, and native closure. The dpkg
+inventory includes every installed binary version, architecture, source
+package/version, exact dpkg `.list`
 path/hash, and resolved copyright path/hash. A missing or duplicate package
-file list fails closed. The native inventory includes every ELF hash, owner, architecture,
-SONAME, and resolved `DT_NEEDED` edge. Its first fail-closed scan may expose
-those two public inventories for review, but cannot pass until both expected
+file list fails closed. The Python inventory includes every installed venv file
+path, size, SHA-256, and link target, independently of in-image metadata. The
+native inventory includes every ELF hash, owner, architecture, SONAME, and
+resolved `DT_NEEDED` edge. Its first fail-closed scan may expose
+those three public inventories for review, but cannot pass until all expected
 hashes are supplied explicitly. The independent complete-byte scanner, Trivy, SBOM,
 provenance, license, secret, vulnerability, native-library, and exact payload
 checks remain mandatory on actual candidate bytes.
