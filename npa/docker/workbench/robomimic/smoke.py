@@ -584,7 +584,6 @@ def main() -> None:
         "exit_status": 0,
         "deferred": [
             "public_image_acceptance",
-            "cuda_cudnn_runtime_use_authorization",
             "image_policy_sweeps",
             "simulator_rollouts",
             "full_algorithm_matrix",
