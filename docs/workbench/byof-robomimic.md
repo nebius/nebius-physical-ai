@@ -111,8 +111,12 @@ The first option is not currently closed. CUDA and cuDNN licenses identify some
 redistributable runtime components, but that does not prove every byte in the
 PyTorch/NVIDIA wheels is redistributable, excludes developer/static/header
 payloads, satisfies notices/pass-through duties, or authorizes anonymous
-distribution and downstream service use. The runner therefore retains an
-unconditional Phase A refusal even when ordinary target selectors are present.
+distribution and downstream service use. The runner therefore retains a Phase A
+refusal for the exact registered source revision and for every recognized
+robomimic label, repository, image, capability, and smoke identity. Generic BYOF
+remains an operator-controlled arbitrary-source facility, not a content-aware
+license firewall; it must never be used to relabel equivalent bytes around this
+decision.
 
 Official sources for the later human/vendor decision include the NVIDIA CUDA
 Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch

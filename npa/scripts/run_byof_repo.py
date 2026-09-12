@@ -56,6 +56,7 @@ ROBOMIMIC_BUILD_COMMAND_SHA256 = (
 ROBOMIMIC_SMOKE_COMMAND_SHA256 = (
     "edc22a2c6efe3fa66b505f7ec3868245277089e0506c43bca503b988b9a15b05"
 )
+ROBOMIMIC_RUN_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 ROBOMIMIC_PROFILE = (
     SCRIPT_DIR.parent
     / "src"
@@ -117,7 +118,7 @@ def _normalize_optional(value: str) -> str:
 
 
 def _is_robomimic_request(args: argparse.Namespace) -> bool:
-    """Recognize the registered robomimic gate even if its display label changes."""
+    """Recognize the exact registered robomimic candidate despite renamed labels."""
 
     repo = args.repo_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].lower()
     image_refs = (args.base_image, args.image)
@@ -138,6 +139,7 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
     return (
         args.solution_name.strip().lower() == "robomimic"
         or repo == "robomimic"
+        or args.repo_ref.strip().lower() == ROBOMIMIC_REPO_REF
         or image_signaled
         or args.capability_name.strip() == "lift_ph_lowdim_checkpoint_reload_action"
         or args.smoke_artifact_name.strip() == "robomimic-smoke.json"
@@ -148,6 +150,14 @@ def _is_robomimic_request(args: argparse.Namespace) -> bool:
 def _robomimic_observer_name(run_id: str) -> str:
     digest = hashlib.sha256(run_id.encode()).hexdigest()[:12]
     return f"npa-robomimic-{digest}"
+
+
+def _require_robomimic_safe_run_id(run_id: str) -> None:
+    if ROBOMIMIC_RUN_ID_RE.fullmatch(run_id) is None:
+        raise ValueError(
+            "robomimic run ID must be a 1-63 character alphanumeric "
+            "and hyphen slug"
+        )
 
 
 def _robomimic_expected_profile(
@@ -263,7 +273,7 @@ def _require_robomimic_immutable_inputs(
         raise ValueError("robomimic public source requires repo-auth=none")
     if args.skip_run or args.skip_push or not args.cleanup:
         raise ValueError("robomimic forbids skip-push, skip-run, and no-cleanup")
-    if not args.skip_build and _normalize_optional(args.base_profile) != "prebuilt":
+    if not args.skip_build:
         raise ValueError(
             "robomimic requires skip-build with the exact manager-published candidate digest"
         )
@@ -299,6 +309,7 @@ def _require_robomimic_manager_context(
 
     if not _is_robomimic_request(args):
         return
+    _require_robomimic_safe_run_id(args.run_id)
     selectors = {
         "NPA_E2E_PROJECT": os.environ.get("NPA_E2E_PROJECT", "").strip(),
         "NPA_BYOF_ROBOMIMIC_REGISTRY": os.environ.get(

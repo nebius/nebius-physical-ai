@@ -43,6 +43,8 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
             "opt/robomimic/robomimic/models/obs_nets.py": b"class ObservationNet:\n    pass\n",
             "opt/robomimic-deps/transformers/models/auto/configuration_auto.py": b"\n",
             "opt/robomimic-deps/diffusers/models/transformers/transformer_2d.py": b"\n",
+            "opt/robomimic-deps/numpy/lib/tests/data/python3.npy": b"fixture",
+            "opt/robomimic-deps/numpy/core/tests/data/py3-objarr.npz": b"fixture",
         },
     )
     assert scanner.scan(layer, {"history": [{"created_by": "COPY source"}]}) == []
@@ -71,6 +73,8 @@ def test_clean_neutral_layer_passes(tmp_path: Path) -> None:
         ("opt/robomimic-deps/model.onnx", "checkpoint_or_weight"),
         ("opt/robomimic-deps/policy.msgpack", "checkpoint_or_weight"),
         ("opt/robomimic-deps/weights.npz", "checkpoint_or_weight"),
+        ("opt/robomimic-deps/models/policy-array.npy", "checkpoint_or_weight"),
+        ("opt/robomimic-deps/checkpoint.npz", "checkpoint_or_weight"),
         ("root/.docker/config.json", "credential_file"),
     ],
 )
@@ -130,3 +134,13 @@ def test_deleted_later_payload_still_fails_layer_scan(tmp_path: Path) -> None:
 def test_forbidden_build_history_is_detected(tmp_path: Path, history: str) -> None:
     layer = _tar(tmp_path / "empty.tar", {"neutral": b"ok"})
     assert scanner.scan(layer, {"history": [{"created_by": history}]})
+
+
+def test_oci_config_env_rejects_invented_acceptance_proxy(tmp_path: Path) -> None:
+    layer = _tar(tmp_path / "empty.tar", {"neutral": b"ok"})
+    findings = scanner.scan(
+        layer,
+        {"config": {"Env": ["NPA_ROBOMIMIC_ACCEPT_EULA=YES"]}},
+    )
+
+    assert {finding.kind for finding in findings} == {"invented_acceptance_proxy"}

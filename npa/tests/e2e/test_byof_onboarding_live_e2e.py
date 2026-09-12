@@ -963,6 +963,8 @@ def _invoke_robomimic_gate(
     run_id = os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID") or (
         f"robomimic-live-{secrets.token_hex(8)}"
     )
+    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
+        raise RuntimeError("robomimic run ID is not a safe output slug")
     with tempfile.TemporaryDirectory(prefix="npa-robomimic-profile-") as temp_dir:
         service_account = _robomimic_observer_name(run_id)
         profile_yaml = _materialize_robomimic_attested_profile(
@@ -1136,7 +1138,6 @@ def test_live_robomimic_b200_train_reload_gate(e2e_project: str | None) -> None:
     _assert_robomimic_runtime(artifact, summary_image, run_id)
     assert set(artifact["deferred"]) == {
         "public_image_acceptance",
-        "cuda_cudnn_runtime_use_authorization",
         "image_policy_sweeps",
         "simulator_rollouts",
         "full_algorithm_matrix",

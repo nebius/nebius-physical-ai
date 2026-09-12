@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -119,6 +121,26 @@ def test_runtime_inventory_fails_closed(tmp_path: Path, mutation: str) -> None:
     else:
         (runtime_root / "payload" / "extra").write_text("undeclared")
     with pytest.raises(verifier.VerificationError):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=False,
+        )
+
+
+@pytest.mark.parametrize("sibling", ["wheelhouse", "cache", "run-output.json"])
+def test_runtime_inventory_rejects_undeclared_top_level_objects(
+    tmp_path: Path, sibling: str
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    extra = runtime_root / sibling
+    if "." in sibling:
+        extra.write_text("undeclared", encoding="utf-8")
+    else:
+        extra.mkdir()
+
+    with pytest.raises(verifier.VerificationError, match="undeclared object"):
         verifier.verify_external_runtime(
             runtime_root=runtime_root,
             runtime_lock_path=lock_path,
@@ -245,7 +267,7 @@ def test_symlink_cannot_escape_payload_into_uninventoried_runtime_file(
     marker["inventory_sha256"] = _sha(inventory_path)
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
 
-    with pytest.raises(verifier.VerificationError, match="escapes runtime payload"):
+    with pytest.raises(verifier.VerificationError, match="undeclared object"):
         verifier.verify_external_runtime(
             runtime_root=runtime_root,
             runtime_lock_path=lock_path,
@@ -279,3 +301,26 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     ):
         assert import_gate in text
     assert 'exec "${snapshot_root}/payload/bin/python"' in text
+
+
+def test_shipped_assert_refusal_reaches_missing_ready_marker(tmp_path: Path) -> None:
+    source = (IMAGE_ROOT / "runtime_bootstrap.sh").read_text(encoding="utf-8")
+    source = source.replace(
+        'readonly verifier="/opt/npa/robomimic/verify_image.py"',
+        f'readonly verifier="{IMAGE_ROOT / "verify_image.py"}"',
+    ).replace(
+        'readonly runtime_lock="/opt/npa/robomimic/runtime-requirements.lock"',
+        f'readonly runtime_lock="{IMAGE_ROOT / "runtime-requirements.lock"}"',
+    ).replace("/usr/local/bin/python3", sys.executable)
+    script = tmp_path / "runtime_bootstrap.sh"
+    script.write_text(source, encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(script), "assert-refusal"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": ""},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NPA_ROBOMIMIC_RUNTIME_REFUSAL_OK"

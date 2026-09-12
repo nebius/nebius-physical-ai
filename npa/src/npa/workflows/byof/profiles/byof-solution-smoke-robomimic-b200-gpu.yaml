@@ -67,6 +67,10 @@ envs:
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
   set -euo pipefail
+  if [[ ! "${NPA_BYOF_RUN_ID}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+    echo "robomimic run ID is not a safe output slug" >&2
+    exit 64
+  fi
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
   test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/.ready.json"
@@ -77,6 +81,10 @@ setup: |
   PY
 run: |
   set -euo pipefail
+  if [[ ! "${NPA_BYOF_RUN_ID}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+    echo "robomimic run ID is not a safe output slug" >&2
+    exit 64
+  fi
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
@@ -109,7 +117,12 @@ run: |
   from botocore.config import Config
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
-  root = Path(f"/workspace/byof-runs/{run_id}")
+  if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
+      raise RuntimeError("robomimic run ID is not a safe output slug")
+  output_root = Path("/workspace/byof-runs").resolve()
+  root = (output_root / run_id).resolve()
+  if root.parent != output_root:
+      raise RuntimeError("robomimic output directory escapes its mounted root")
   smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
   smoke_artifact_name = os.environ["BYOF_SMOKE_ARTIFACT_NAME"]
   smoke_artifact_path = root / smoke_artifact_name
@@ -197,7 +210,13 @@ run: |
   prefix = parsed.path.lstrip("/")
   uploaded = 0
   for path in root.rglob("*"):
+      if path.is_symlink():
+          raise RuntimeError(f"output symlink is forbidden: {path}")
       if path.is_file():
+          try:
+              path.resolve().relative_to(root)
+          except ValueError as exc:
+              raise RuntimeError(f"output path escapes its mounted root: {path}") from exc
           if path.suffix.lower() in {".hdf5", ".download"}:
               raise RuntimeError(f"runtime input must not be uploaded as output: {path}")
           key = prefix + str(path.relative_to(root))

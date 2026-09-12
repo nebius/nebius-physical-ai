@@ -311,7 +311,8 @@ historical evidence.
   use remains deferred pending an authoritative rights decision and manager
   transaction authorization. No accepted digest, built-byte scan, SBOM,
   provenance, private B200 result, anonymous pull proof, or public availability
-  is claimed; `UNVALIDATED_PUBLICATION_TOOLS` mechanically preserves quarantine.
+  is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
+  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,

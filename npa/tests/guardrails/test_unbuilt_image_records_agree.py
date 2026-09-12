@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 from npa.deploy.images import (
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
@@ -108,9 +109,19 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
     )
 
 
+def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"robomimic"})
+    containers = _golden_eval_containers()
+    for tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        assert tool not in SUPPORTED_TOOL_VERSIONS
+        assert containers[tool]["golden_eval"]["status"] != "ready"
+
+
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     assert PUBLICATION_QUARANTINE_TOOLS == (
-        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+        UNVALIDATED_PUBLICATION_TOOLS
+        | VALIDATION_CANDIDATE_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])
