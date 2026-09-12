@@ -1,0 +1,2029 @@
+{
+  "schema": "npa.robomimic.debian-packages.v1",
+  "base_image": "python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84",
+  "platform": "linux/amd64",
+  "snapshot": "20260906T183022Z",
+  "repository_metadata": [
+    {
+      "id": "debian-bookworm-20260906T183022Z",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/dists/bookworm/main/binary-amd64/Packages.xz",
+      "size": 8790396,
+      "sha256": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5"
+    },
+    {
+      "id": "debian-security-bookworm-security-20260906T183022Z",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/dists/bookworm-security/main/binary-amd64/Packages.xz",
+      "size": 336504,
+      "sha256": "610da1862518c2a1f69e459b6b02b579ec328697b4594244765b231b450ccc4e"
+    }
+  ],
+  "roots": [
+    "ca-certificates",
+    "openssh-server",
+    "procps",
+    "rsync",
+    "sudo"
+  ],
+  "dependency_policy": {
+    "fields": [
+      "Pre-Depends",
+      "Depends"
+    ],
+    "install_recommends": false,
+    "package_count": 78,
+    "payload_bytes": 29807672
+  },
+  "license_policy": {
+    "component": "Debian main",
+    "authoritative_terms": "each exact installed package copyright file",
+    "notice_byte_hashes": "required-at-authorized-byte-gate",
+    "source_delivery": "must be closed before public publication"
+  },
+  "sources": [
+    {
+      "id": "debian:acl@2.3.1-3",
+      "name": "acl",
+      "version": "2.3.1-3",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2+",
+        "LGPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/a/acl/acl_2.3.1-3_copyright"
+    },
+    {
+      "id": "debian:adduser@3.134",
+      "name": "adduser",
+      "version": "3.134",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/a/adduser/adduser_3.134_copyright"
+    },
+    {
+      "id": "debian:audit@1:3.0.9-1",
+      "name": "audit",
+      "version": "1:3.0.9-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2",
+        "LGPL-2.1"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/a/audit/audit_3.0.9-1_copyright"
+    },
+    {
+      "id": "debian:bzip2@1.0.8-5",
+      "name": "bzip2",
+      "version": "1.0.8-5",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-variant",
+        "GPL-2"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/b/bzip2/bzip2_1.0.8-5_copyright"
+    },
+    {
+      "id": "debian:ca-certificates@20250419~deb12u1",
+      "name": "ca-certificates",
+      "version": "20250419~deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2.0-or-later",
+        "MPL-2.0"
+      ],
+      "license_reference_url": "https://snapshot.debian.org/package/ca-certificates/20250419~deb12u1/"
+    },
+    {
+      "id": "debian:db5.3@5.3.28+dfsg2-1",
+      "name": "db5.3",
+      "version": "5.3.28+dfsg2-1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "Sleepycat and BSD-3-clause",
+        "Sleepycat",
+        "BSD-3-clause",
+        "Ms-PL",
+        "GPL or Artistic",
+        "X11",
+        "MIT-old",
+        "TCL-like",
+        "BSD-3-clause-fjord",
+        "GPL-3",
+        "zlib",
+        "Artistic or BSD-3-clause",
+        "GPL"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/d/db5.3/db5.3_5.3.28+dfsg2-1_copyright"
+    },
+    {
+      "id": "debian:debconf@1.5.82",
+      "name": "debconf",
+      "version": "1.5.82",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "BSD-2-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/d/debconf/debconf_1.5.82_copyright"
+    },
+    {
+      "id": "debian:dh-runit@2.15.2",
+      "name": "dh-runit",
+      "version": "2.15.2",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-3+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/d/dh-runit/dh-runit_2.15.2_copyright"
+    },
+    {
+      "id": "debian:dpkg@1.21.23",
+      "name": "dpkg",
+      "version": "1.21.23",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2+",
+        "GPL-2",
+        "BSD-2-clause",
+        "public-domain-s-s-d"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/d/dpkg/dpkg_1.21.23_copyright"
+    },
+    {
+      "id": "debian:e2fsprogs@1.47.0-2",
+      "name": "e2fsprogs",
+      "version": "1.47.0-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2",
+        "LGPL-2",
+        "BSD-3-Clause",
+        "Apache-2",
+        "ISC",
+        "GPL or MIT-US-export",
+        "Kazlib",
+        "Latex2e",
+        "GPL-2+ with Texinfo exception"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/e/e2fsprogs/e2fsprogs_1.47.0-2_copyright"
+    },
+    {
+      "id": "debian:gcc-12@12.2.0-14+deb12u1",
+      "name": "gcc-12",
+      "version": "12.2.0-14+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-3.0-or-later WITH GCC-exception-3.1"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/g/gcc-12/gcc-12_12.2.0-14+deb12u1_copyright"
+    },
+    {
+      "id": "debian:gdbm@1.23-3",
+      "name": "gdbm",
+      "version": "1.23-3",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-3+",
+        "GPL-2+",
+        "GFDL-NIV-1.3+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/g/gdbm/gdbm_1.23-3_copyright"
+    },
+    {
+      "id": "debian:glibc@2.36-9+deb12u14",
+      "name": "glibc",
+      "version": "2.36-9+deb12u14",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1-or-later",
+        "BSD-3-Clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/g/glibc/glibc_2.36-9+deb12u14_copyright"
+    },
+    {
+      "id": "debian:init-system-helpers@1.65.2+deb12u1",
+      "name": "init-system-helpers",
+      "version": "1.65.2+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/i/init-system-helpers/init-system-helpers_1.65.2+deb12u1_copyright"
+    },
+    {
+      "id": "debian:keyutils@1.6.3-2",
+      "name": "keyutils",
+      "version": "1.6.3-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2+",
+        "LGPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/k/keyutils/keyutils_1.6.3-2_copyright"
+    },
+    {
+      "id": "debian:krb5@1.20.1-2+deb12u5",
+      "name": "krb5",
+      "version": "1.20.1-2+deb12u5",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "MIT",
+        "BSD-2-Clause",
+        "BSD-3-Clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/k/krb5/krb5_1.20.1-2+deb12u5_copyright"
+    },
+    {
+      "id": "debian:libbsd@0.11.7-2",
+      "name": "libbsd",
+      "version": "0.11.7-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause",
+        "BSD-4-clause-Niels-Provos",
+        "BSD-3-clause-Regents",
+        "BSD-3-clause-Regents and BSD-2-clause-NetBSD",
+        "BSD-3-clause-author",
+        "BSD-3-clause-John-Birrell",
+        "libutil-David-Nugent",
+        "BSD-2-clause-NetBSD",
+        "BSD-2-clause",
+        "BSD-2-clause-verbatim",
+        "BSD-2-clause-author",
+        "ISC",
+        "ISC-Original",
+        "Expat",
+        "public-domain",
+        "Beerware"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libb/libbsd/libbsd_0.11.7-2_copyright"
+    },
+    {
+      "id": "debian:libcap-ng@0.8.3-1",
+      "name": "libcap-ng",
+      "version": "0.8.3-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "GPL-2+",
+        "GPL-3"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libc/libcap-ng/libcap-ng_0.8.3-1_copyright"
+    },
+    {
+      "id": "debian:libcap2@1:2.66-4+deb12u3",
+      "name": "libcap2",
+      "version": "1:2.66-4+deb12u3",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause or GPL-2",
+        "BSD-3-clause or GPL-2+",
+        "BSD-3-clause",
+        "GPL-2",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libc/libcap2/libcap2_2.66-4+deb12u3_copyright"
+    },
+    {
+      "id": "debian:libcbor@0.8.0-2",
+      "name": "libcbor",
+      "version": "0.8.0-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "Expat"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libc/libcbor/libcbor_0.8.0-2_copyright"
+    },
+    {
+      "id": "debian:libedit@3.1-20221030-2",
+      "name": "libedit",
+      "version": "3.1-20221030-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libe/libedit/libedit_3.1-20221030-2_copyright"
+    },
+    {
+      "id": "debian:libfido2@1.12.0-2",
+      "name": "libfido2",
+      "version": "1.12.0-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-2-clause",
+        "ISC",
+        "public-domain",
+        "ISC and BSD-2-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libf/libfido2/libfido2_1.12.0-2_copyright"
+    },
+    {
+      "id": "debian:libfile-find-rule-perl@0.34-4~deb12u1",
+      "name": "libfile-find-rule-perl",
+      "version": "0.34-4~deb12u1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "Artistic or GPL-1+",
+        "Artistic",
+        "GPL-1+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libf/libfile-find-rule-perl/libfile-find-rule-perl_0.34-4~deb12u1_copyright"
+    },
+    {
+      "id": "debian:libgcrypt20@1.10.1-3+deb12u1",
+      "name": "libgcrypt20",
+      "version": "1.10.1-3+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1-or-later"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libg/libgcrypt20/libgcrypt20_1.10.1-3+deb12u1_copyright"
+    },
+    {
+      "id": "debian:libgpg-error@1.46-1",
+      "name": "libgpg-error",
+      "version": "1.46-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "LGPL-2.1+ or BSD-3-clause",
+        "g10-permissive",
+        "GPL-3+",
+        "BSD-3-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libg/libgpg-error/libgpg-error_1.46-1_copyright"
+    },
+    {
+      "id": "debian:libmd@1.0.4-2",
+      "name": "libmd",
+      "version": "1.0.4-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause",
+        "BSD-3-clause-Aaron-D-Gifford",
+        "BSD-2-clause",
+        "BSD-2-clause-NetBSD",
+        "ISC",
+        "Beerware",
+        "public-domain-md4",
+        "public-domain-md5",
+        "public-domain-sha1"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libm/libmd/libmd_1.0.4-2_copyright"
+    },
+    {
+      "id": "debian:libnsl@1.3.0-2",
+      "name": "libnsl",
+      "version": "1.3.0-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "LGPL-2.1",
+        "BSD-3-clause",
+        "permissive-fsf",
+        "permissive-makefile-in",
+        "permissive-autoconf-m4-no-warranty",
+        "GPL-3+-autoconf-exception",
+        "permissive-configure",
+        "GPL-2+-autoconf-exception",
+        "MIT",
+        "GPL-2+-libtool-exception",
+        "permissive-autoconf-m4"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libn/libnsl/libnsl_1.3.0-2_copyright"
+    },
+    {
+      "id": "debian:libnumber-compare-perl@0.03-3",
+      "name": "libnumber-compare-perl",
+      "version": "0.03-3",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "Artistic or GPL-1+",
+        "Artistic",
+        "GPL-1+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libn/libnumber-compare-perl/libnumber-compare-perl_0.03-3_copyright"
+    },
+    {
+      "id": "debian:libselinux@3.4-1",
+      "name": "libselinux",
+      "version": "3.4-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LicenseRef-Public-Domain"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libs/libselinux/libselinux_3.4-1_copyright"
+    },
+    {
+      "id": "debian:libsemanage@3.4-1",
+      "name": "libsemanage",
+      "version": "3.4-1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "LGPL-2.1-or-later"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libs/libsemanage/libsemanage_3.4-1_copyright"
+    },
+    {
+      "id": "debian:libsepol@3.4-2.1",
+      "name": "libsepol",
+      "version": "3.4-2.1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "Zlib",
+        "GPL-2",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libs/libsepol/libsepol_3.4-2.1_copyright"
+    },
+    {
+      "id": "debian:libtext-glob-perl@0.11-3",
+      "name": "libtext-glob-perl",
+      "version": "0.11-3",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "Artistic or GPL-1+",
+        "Artistic",
+        "GPL-1+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libt/libtext-glob-perl/libtext-glob-perl_0.11-3_copyright"
+    },
+    {
+      "id": "debian:libtirpc@1.3.3+ds-1",
+      "name": "libtirpc",
+      "version": "1.3.3+ds-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-Clause",
+        "GPL-2",
+        "__AUTO_PERMISSIVE__",
+        "BSD-2-Clause",
+        "BSD-4-Clause",
+        "LGPL-2.1+",
+        "PERMISSIVE"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libt/libtirpc/libtirpc_1.3.3+ds-1_copyright"
+    },
+    {
+      "id": "debian:libxcrypt@1:4.4.33-2",
+      "name": "libxcrypt",
+      "version": "1:4.4.33-2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1-or-later"
+      ],
+      "license_reference_url": "https://snapshot.debian.org/package/libxcrypt/1%3A4.4.33-2/"
+    },
+    {
+      "id": "debian:libzstd@1.5.4+dfsg2-5",
+      "name": "libzstd",
+      "version": "1.5.4+dfsg2-5",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause or GPL-2",
+        "zlib",
+        "Expat",
+        "GPL-2",
+        "BSD-3-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/libz/libzstd/libzstd_1.5.4+dfsg2-5_copyright"
+    },
+    {
+      "id": "debian:lsb@11.6",
+      "name": "lsb",
+      "version": "11.6",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-2",
+        "BSD-3-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/l/lsb/lsb_11.6_copyright"
+    },
+    {
+      "id": "debian:lz4@1.9.4-1",
+      "name": "lz4",
+      "version": "1.9.4-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-2-clause",
+        "GPL-2+",
+        "GPL-2+ or BSD-2-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/l/lz4/lz4_1.9.4-1_copyright"
+    },
+    {
+      "id": "debian:ncurses@6.4-4",
+      "name": "ncurses",
+      "version": "6.4-4",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "MIT/X11",
+        "X11",
+        "BSD-3-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/n/ncurses/ncurses_6.4-4_copyright"
+    },
+    {
+      "id": "debian:openssh@1:9.2p1-2+deb12u10",
+      "name": "openssh",
+      "version": "1:9.2p1-2+deb12u10",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "OpenSSH",
+        "Mazieres-BSD-style",
+        "public-domain",
+        "BSD-3-clause",
+        "Powell-BSD-style",
+        "Expat-with-advertising-restriction",
+        "BSD-2-clause"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/o/openssh/openssh_9.2p1-2+deb12u10_copyright"
+    },
+    {
+      "id": "debian:openssl@3.0.20-1~deb12u2",
+      "name": "openssl",
+      "version": "3.0.20-1~deb12u2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "Apache-2.0",
+        "Artistic or GPL-1+",
+        "Artistic",
+        "GPL-1+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/o/openssl/openssl_3.0.20-1~deb12u2_copyright"
+    },
+    {
+      "id": "debian:pam@1.5.2-6+deb12u2",
+      "name": "pam",
+      "version": "1.5.2-6+deb12u2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-clause or GPL",
+        "GPL-2",
+        "GPL-2+",
+        "GPL-3",
+        "GPL-3+ with Bison exception",
+        "BSD-tcp_wrappers",
+        "LGPL-2+",
+        "public-domain",
+        "Beerware"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/p/pam/pam_1.5.2-6+deb12u2_copyright"
+    },
+    {
+      "id": "debian:pcre2@10.42-1+deb12u1",
+      "name": "pcre2",
+      "version": "10.42-1+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-3-Clause"
+      ],
+      "license_reference_url": "https://snapshot.debian.org/package/pcre2/10.42-1+deb12u1/"
+    },
+    {
+      "id": "debian:perl@5.36.0-7+deb12u3",
+      "name": "perl",
+      "version": "5.36.0-7+deb12u3",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-1+ or Artistic",
+        "Expat",
+        "REGCOMP, and GPL-1+ or Artistic",
+        "GPL-3+-WITH-BISON-EXCEPTION",
+        "Unicode",
+        "GPL-1+ or Artistic, and Unicode",
+        "BZIP",
+        "ZLIB",
+        "Artistic",
+        "GPL-2+ or Artistic",
+        "Expat or GPL-1+ or Artistic",
+        "RRA-KEEP-THIS-NOTICE",
+        "BSD-3-clause-with-weird-numbering",
+        "CC0-1.0",
+        "TEXT-TABS",
+        "GPL-1+ or Artistic, and BSD-4-clause-POWERDOG",
+        "GPL-1+ or Artistic, and BSD-3-clause-GENERIC",
+        "BSD-3-clause",
+        "SDBM-PUBLIC-DOMAIN",
+        "DONT-CHANGE-THE-GPL",
+        "GPL-1+ or Artistic or Artistic-dist",
+        "Artistic-dist",
+        "Artistic or GPL-1+ or Artistic-dist",
+        "GPL-1+ or Artistic, and Expat",
+        "LGPL-2.1",
+        "GPL-1+",
+        "GPL-2+",
+        "Artistic-2",
+        "BSD-4-clause-POWERDOG",
+        "BSD-3-clause-GENERIC",
+        "REGCOMP",
+        "HSIEH-DERIVATIVE",
+        "HSIEH-BSD"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/p/perl/perl_5.36.0-7+deb12u3_copyright"
+    },
+    {
+      "id": "debian:popt@1.19+dfsg-1",
+      "name": "popt",
+      "version": "1.19+dfsg-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "expat",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/p/popt/popt_1.19+dfsg-1_copyright"
+    },
+    {
+      "id": "debian:procps@2:4.0.2-3",
+      "name": "procps",
+      "version": "2:4.0.2-3",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "LGPL-2.0+",
+        "GPL-2.0+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/p/procps/procps_4.0.2-3_copyright"
+    },
+    {
+      "id": "debian:rsync@3.2.7-1+deb12u6",
+      "name": "rsync",
+      "version": "3.2.7-1+deb12u6",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-3.0-or-later"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/r/rsync/rsync_3.2.7-1+deb12u6_copyright"
+    },
+    {
+      "id": "debian:sensible-utils@0.0.17+nmu1",
+      "name": "sensible-utils",
+      "version": "0.0.17+nmu1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-2+",
+        "All-permissive",
+        "configure",
+        "installsh"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/s/sensible-utils/sensible-utils_0.0.17+nmu1_copyright"
+    },
+    {
+      "id": "debian:shadow@1:4.13+dfsg1-1+deb12u2",
+      "name": "shadow",
+      "version": "1:4.13+dfsg1-1+deb12u2",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "BSD-3-clause",
+        "GPL-1",
+        "GPL-2+",
+        "public-domain"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/s/shadow/shadow_4.13+dfsg1-1+deb12u2_copyright"
+    },
+    {
+      "id": "debian:sudo@1.9.13p3-1+deb12u4",
+      "name": "sudo",
+      "version": "1.9.13p3-1+deb12u4",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "ISC",
+        "other",
+        "public-domain",
+        "BSD-3-Clause",
+        "BSD-2-Clause",
+        "Zlib"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/s/sudo/sudo_1.9.13p3-1+deb12u4_copyright"
+    },
+    {
+      "id": "debian:systemd@252.39-1~deb12u2",
+      "name": "systemd",
+      "version": "252.39-1~deb12u2",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "LGPL-2.1+",
+        "CC0-1.0",
+        "GPL-2 with Linux-syscall-note exception",
+        "Expat",
+        "public-domain",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/s/systemd/systemd_252.39-1~deb12u2_copyright"
+    },
+    {
+      "id": "debian:sysvinit@3.06-4",
+      "name": "sysvinit",
+      "version": "3.06-4",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-2.0+",
+        "GPL-3.0",
+        "GPL-2.0"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/s/sysvinit/sysvinit_3.06-4_copyright"
+    },
+    {
+      "id": "debian:tar@1.34+dfsg-1.2+deb12u1",
+      "name": "tar",
+      "version": "1.34+dfsg-1.2+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "GPL-3+",
+        "GPL-3+ with Bison exception",
+        "LGPL-3+",
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_copyright"
+    },
+    {
+      "id": "debian:tcp-wrappers@7.6.q-32",
+      "name": "tcp-wrappers",
+      "version": "7.6.q-32",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "TCP-wrappers",
+        "BSD-3-clause",
+        "SSH"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/t/tcp-wrappers/tcp-wrappers_7.6.q-32_copyright"
+    },
+    {
+      "id": "debian:ucf@3.0043+nmu1+deb12u1",
+      "name": "ucf",
+      "version": "3.0043+nmu1+deb12u1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-2"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/u/ucf/ucf_3.0043+nmu1+deb12u1_copyright"
+    },
+    {
+      "id": "debian:usrmerge@37~deb12u1",
+      "name": "usrmerge",
+      "version": "37~deb12u1",
+      "license_review": "official-exact-version-copyright",
+      "debian_license_labels": [
+        "GPL-2+"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/u/usrmerge/usrmerge_37~deb12u1_copyright"
+    },
+    {
+      "id": "debian:xxhash@0.8.1-1",
+      "name": "xxhash",
+      "version": "0.8.1-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "BSD-2-clause",
+        "GPL-2"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/x/xxhash/xxhash_0.8.1-1_copyright"
+    },
+    {
+      "id": "debian:xz-utils@5.4.1-1+deb12u1",
+      "name": "xz-utils",
+      "version": "5.4.1-1+deb12u1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "PD",
+        "probably-PD",
+        "GPL-2+",
+        "LGPL-2.1+",
+        "permissive-fsf",
+        "Autoconf",
+        "permissive-nowarranty",
+        "GPL-2",
+        "none",
+        "config-h",
+        "noderivs",
+        "PD-debian"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/x/xz-utils/xz-utils_5.4.1-1+deb12u1_copyright"
+    },
+    {
+      "id": "debian:zlib@1:1.2.13.dfsg-1",
+      "name": "zlib",
+      "version": "1:1.2.13.dfsg-1",
+      "license_review": "existing-exact-version-review",
+      "debian_license_labels": [
+        "Zlib"
+      ],
+      "license_reference_url": "https://metadata.ftp-master.debian.org/changelogs/main/z/zlib/zlib_1.2.13.dfsg-1_copyright"
+    }
+  ],
+  "packages": [
+    {
+      "name": "adduser",
+      "version": "3.134",
+      "architecture": "all",
+      "source": "debian:adduser@3.134",
+      "artifact": "debian/c24fe4eb8e60d8632d72ed104cce7c92cff200847c897dc8ba764b6c47b519e0.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/adduser/adduser_3.134_all.deb",
+      "size": 183272,
+      "sha256": "c24fe4eb8e60d8632d72ed104cce7c92cff200847c897dc8ba764b6c47b519e0",
+      "depends": [
+        "passwd"
+      ],
+      "notice_path": "/usr/share/doc/adduser/copyright"
+    },
+    {
+      "name": "ca-certificates",
+      "version": "20250419~deb12u1",
+      "architecture": "all",
+      "source": "debian:ca-certificates@20250419~deb12u1",
+      "artifact": "debian/62b08a77d985d4253894b1f69aebda5925034ca4e294add364167fad8cb64a44.deb",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/c/ca-certificates/ca-certificates_20250419~deb12u1_all.deb",
+      "size": 161988,
+      "sha256": "62b08a77d985d4253894b1f69aebda5925034ca4e294add364167fad8cb64a44",
+      "depends": [
+        "openssl",
+        "debconf"
+      ],
+      "notice_path": "/usr/share/doc/ca-certificates/copyright"
+    },
+    {
+      "name": "debconf",
+      "version": "1.5.82",
+      "architecture": "all",
+      "source": "debian:debconf@1.5.82",
+      "artifact": "debian/74ab14194a3762b2fc717917dcfda42929ab98e3c59295a063344dc551cd7cc8.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/debconf/debconf_1.5.82_all.deb",
+      "size": 121212,
+      "sha256": "74ab14194a3762b2fc717917dcfda42929ab98e3c59295a063344dc551cd7cc8",
+      "depends": [],
+      "notice_path": "/usr/share/doc/debconf/copyright"
+    },
+    {
+      "name": "dpkg",
+      "version": "1.21.23",
+      "architecture": "amd64",
+      "source": "debian:dpkg@1.21.23",
+      "artifact": "debian/f89e9f8d1a4a50ade44be3ed59a6ec55460fce205d2f8520c5c492137c5b609b.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/dpkg/dpkg_1.21.23_amd64.deb",
+      "size": 1567804,
+      "sha256": "f89e9f8d1a4a50ade44be3ed59a6ec55460fce205d2f8520c5c492137c5b609b",
+      "depends": [
+        "libbz2-1.0",
+        "libc6",
+        "liblzma5",
+        "libmd0",
+        "libselinux1",
+        "libzstd1",
+        "zlib1g",
+        "tar"
+      ],
+      "notice_path": "/usr/share/doc/dpkg/copyright"
+    },
+    {
+      "name": "gcc-12-base",
+      "version": "12.2.0-14+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:gcc-12@12.2.0-14+deb12u1",
+      "artifact": "debian/1896a2aacf4ad681ff5eacc24a5b0ca4d5d9c9b9c9e4b6de5197bc1e116ea619.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/gcc-12-base_12.2.0-14+deb12u1_amd64.deb",
+      "size": 37596,
+      "sha256": "1896a2aacf4ad681ff5eacc24a5b0ca4d5d9c9b9c9e4b6de5197bc1e116ea619",
+      "depends": [],
+      "notice_path": "/usr/share/doc/gcc-12-base/copyright"
+    },
+    {
+      "name": "init-system-helpers",
+      "version": "1.65.2+deb12u1",
+      "architecture": "all",
+      "source": "debian:init-system-helpers@1.65.2+deb12u1",
+      "artifact": "debian/afab482524c64e4e256eb5cab43c1a96dc493ec476d94f19f1a5ec3de5fa0fef.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/i/init-system-helpers/init-system-helpers_1.65.2+deb12u1_all.deb",
+      "size": 39020,
+      "sha256": "afab482524c64e4e256eb5cab43c1a96dc493ec476d94f19f1a5ec3de5fa0fef",
+      "depends": [
+        "usrmerge"
+      ],
+      "notice_path": "/usr/share/doc/init-system-helpers/copyright"
+    },
+    {
+      "name": "libacl1",
+      "version": "2.3.1-3",
+      "architecture": "amd64",
+      "source": "debian:acl@2.3.1-3",
+      "artifact": "debian/8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/acl/libacl1_2.3.1-3_amd64.deb",
+      "size": 31488,
+      "sha256": "8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libacl1/copyright"
+    },
+    {
+      "name": "libaudit-common",
+      "version": "1:3.0.9-1",
+      "architecture": "all",
+      "source": "debian:audit@1:3.0.9-1",
+      "artifact": "debian/17d0341ca6ce604ce59c296780ac2c2a24141a769823c50669af942c025e6591.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/audit/libaudit-common_3.0.9-1_all.deb",
+      "size": 10448,
+      "sha256": "17d0341ca6ce604ce59c296780ac2c2a24141a769823c50669af942c025e6591",
+      "depends": [],
+      "notice_path": "/usr/share/doc/libaudit-common/copyright"
+    },
+    {
+      "name": "libaudit1",
+      "version": "1:3.0.9-1",
+      "architecture": "amd64",
+      "source": "debian:audit@1:3.0.9-1",
+      "artifact": "debian/30954df4b5a7c505661ba8ae5e6ea94f5805e408899fb400783bb166eb5ff306.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/a/audit/libaudit1_3.0.9-1_amd64.deb",
+      "size": 46764,
+      "sha256": "30954df4b5a7c505661ba8ae5e6ea94f5805e408899fb400783bb166eb5ff306",
+      "depends": [
+        "libaudit-common",
+        "libc6",
+        "libcap-ng0"
+      ],
+      "notice_path": "/usr/share/doc/libaudit1/copyright"
+    },
+    {
+      "name": "libbsd0",
+      "version": "0.11.7-2",
+      "architecture": "amd64",
+      "source": "debian:libbsd@0.11.7-2",
+      "artifact": "debian/bb31cc8b40f962a85b2cec970f7f79cc704a1ae4bad24257a822055404b2c60b.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libb/libbsd/libbsd0_0.11.7-2_amd64.deb",
+      "size": 117416,
+      "sha256": "bb31cc8b40f962a85b2cec970f7f79cc704a1ae4bad24257a822055404b2c60b",
+      "depends": [
+        "libc6",
+        "libmd0"
+      ],
+      "notice_path": "/usr/share/doc/libbsd0/copyright"
+    },
+    {
+      "name": "libbz2-1.0",
+      "version": "1.0.8-5+b1",
+      "architecture": "amd64",
+      "source": "debian:bzip2@1.0.8-5",
+      "artifact": "debian/54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_amd64.deb",
+      "size": 47348,
+      "sha256": "54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libbz2-1.0/copyright"
+    },
+    {
+      "name": "libc6",
+      "version": "2.36-9+deb12u14",
+      "architecture": "amd64",
+      "source": "debian:glibc@2.36-9+deb12u14",
+      "artifact": "debian/ba4f88f73dbc3ae9055f3c20f4523bfdbaf1ad13ff95e258924f77d20b4fbedf.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/glibc/libc6_2.36-9+deb12u14_amd64.deb",
+      "size": 2759320,
+      "sha256": "ba4f88f73dbc3ae9055f3c20f4523bfdbaf1ad13ff95e258924f77d20b4fbedf",
+      "depends": [
+        "libgcc-s1"
+      ],
+      "notice_path": "/usr/share/doc/libc6/copyright"
+    },
+    {
+      "name": "libcap-ng0",
+      "version": "0.8.3-1+b3",
+      "architecture": "amd64",
+      "source": "debian:libcap-ng@0.8.3-1",
+      "artifact": "debian/b4b54769c77e4a71c8b33aee4d600ba28a9994a1c6f60d55d4ebe7fc44882e07.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libc/libcap-ng/libcap-ng0_0.8.3-1+b3_amd64.deb",
+      "size": 17068,
+      "sha256": "b4b54769c77e4a71c8b33aee4d600ba28a9994a1c6f60d55d4ebe7fc44882e07",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libcap-ng0/copyright"
+    },
+    {
+      "name": "libcap2",
+      "version": "1:2.66-4+deb12u3+b1",
+      "architecture": "amd64",
+      "source": "debian:libcap2@1:2.66-4+deb12u3",
+      "artifact": "debian/8d684c673e7483802a5c447834b0df6fce006eb3a7109e1be412f5ad425bb24f.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libc/libcap2/libcap2_2.66-4+deb12u3+b1_amd64.deb",
+      "size": 27708,
+      "sha256": "8d684c673e7483802a5c447834b0df6fce006eb3a7109e1be412f5ad425bb24f",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libcap2/copyright"
+    },
+    {
+      "name": "libcbor0.8",
+      "version": "0.8.0-2+b1",
+      "architecture": "amd64",
+      "source": "debian:libcbor@0.8.0-2",
+      "artifact": "debian/8cbd111e1ad1c1357afb18f916c88c7ebb8cc860b8fac04ccc66a9eefe5a53af.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libc/libcbor/libcbor0.8_0.8.0-2+b1_amd64.deb",
+      "size": 27436,
+      "sha256": "8cbd111e1ad1c1357afb18f916c88c7ebb8cc860b8fac04ccc66a9eefe5a53af",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libcbor0.8/copyright"
+    },
+    {
+      "name": "libcom-err2",
+      "version": "1.47.0-2+b2",
+      "architecture": "amd64",
+      "source": "debian:e2fsprogs@1.47.0-2",
+      "artifact": "debian/a2bac7015e78fbc0c504df3e441f3a22292f1d2d77f9ccda760057f3690e22f2.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2+b2_amd64.deb",
+      "size": 20044,
+      "sha256": "a2bac7015e78fbc0c504df3e441f3a22292f1d2d77f9ccda760057f3690e22f2",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libcom-err2/copyright"
+    },
+    {
+      "name": "libcrypt1",
+      "version": "1:4.4.33-2",
+      "architecture": "amd64",
+      "source": "debian:libxcrypt@1:4.4.33-2",
+      "artifact": "debian/f5f60a5cdfd4e4eaa9438ade5078a57741a7a78d659fcb0c701204f523e8bd29.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libx/libxcrypt/libcrypt1_4.4.33-2_amd64.deb",
+      "size": 89464,
+      "sha256": "f5f60a5cdfd4e4eaa9438ade5078a57741a7a78d659fcb0c701204f523e8bd29",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libcrypt1/copyright"
+    },
+    {
+      "name": "libdb5.3",
+      "version": "5.3.28+dfsg2-1",
+      "architecture": "amd64",
+      "source": "debian:db5.3@5.3.28+dfsg2-1",
+      "artifact": "debian/7dc5127b8dd0da80e992ba594954c005ae4359d839a24eb65d0d8129b5235c84.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/db5.3/libdb5.3_5.3.28+dfsg2-1_amd64.deb",
+      "size": 697412,
+      "sha256": "7dc5127b8dd0da80e992ba594954c005ae4359d839a24eb65d0d8129b5235c84",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libdb5.3/copyright"
+    },
+    {
+      "name": "libedit2",
+      "version": "3.1-20221030-2",
+      "architecture": "amd64",
+      "source": "debian:libedit@3.1-20221030-2",
+      "artifact": "debian/1cf14abf2716d3279db12d0657a5737cf70074a1e71d3bdf73206625e3c89ce6.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libe/libedit/libedit2_3.1-20221030-2_amd64.deb",
+      "size": 92992,
+      "sha256": "1cf14abf2716d3279db12d0657a5737cf70074a1e71d3bdf73206625e3c89ce6",
+      "depends": [
+        "libbsd0",
+        "libc6",
+        "libtinfo6"
+      ],
+      "notice_path": "/usr/share/doc/libedit2/copyright"
+    },
+    {
+      "name": "libfido2-1",
+      "version": "1.12.0-2+b1",
+      "architecture": "amd64",
+      "source": "debian:libfido2@1.12.0-2",
+      "artifact": "debian/dba89cd91adcb886ce1972122e55768aa3652cb562a6b26c5983c2d482a30a1e.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libf/libfido2/libfido2-1_1.12.0-2+b1_amd64.deb",
+      "size": 77216,
+      "sha256": "dba89cd91adcb886ce1972122e55768aa3652cb562a6b26c5983c2d482a30a1e",
+      "depends": [
+        "libc6",
+        "libcbor0.8",
+        "libssl3",
+        "libudev1",
+        "zlib1g"
+      ],
+      "notice_path": "/usr/share/doc/libfido2-1/copyright"
+    },
+    {
+      "name": "libfile-find-rule-perl",
+      "version": "0.34-4~deb12u1",
+      "architecture": "all",
+      "source": "debian:libfile-find-rule-perl@0.34-4~deb12u1",
+      "artifact": "debian/d941143c65e47eff192195ed1b8367d3d74e5a0de668fc5ae9d787383ec48c23.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libf/libfile-find-rule-perl/libfile-find-rule-perl_0.34-4~deb12u1_all.deb",
+      "size": 26736,
+      "sha256": "d941143c65e47eff192195ed1b8367d3d74e5a0de668fc5ae9d787383ec48c23",
+      "depends": [
+        "perl",
+        "libnumber-compare-perl",
+        "libtext-glob-perl"
+      ],
+      "notice_path": "/usr/share/doc/libfile-find-rule-perl/copyright"
+    },
+    {
+      "name": "libgcc-s1",
+      "version": "12.2.0-14+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:gcc-12@12.2.0-14+deb12u1",
+      "artifact": "debian/3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb",
+      "size": 49856,
+      "sha256": "3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7",
+      "depends": [
+        "gcc-12-base",
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libgcc-s1/copyright"
+    },
+    {
+      "name": "libgcrypt20",
+      "version": "1.10.1-3+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:libgcrypt20@1.10.1-3+deb12u1",
+      "artifact": "debian/e7a56552139c693904a6f9712234c05fe918353273a7cbdb5e62f423ad71bb97.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libg/libgcrypt20/libgcrypt20_1.10.1-3+deb12u1_amd64.deb",
+      "size": 696204,
+      "sha256": "e7a56552139c693904a6f9712234c05fe918353273a7cbdb5e62f423ad71bb97",
+      "depends": [
+        "libc6",
+        "libgpg-error0"
+      ],
+      "notice_path": "/usr/share/doc/libgcrypt20/copyright"
+    },
+    {
+      "name": "libgdbm-compat4",
+      "version": "1.23-3",
+      "architecture": "amd64",
+      "source": "debian:gdbm@1.23-3",
+      "artifact": "debian/4af36a590b68d415a78d9238b932b6a4579f515ec8a8016597498acff5b515a4.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gdbm/libgdbm-compat4_1.23-3_amd64.deb",
+      "size": 48156,
+      "sha256": "4af36a590b68d415a78d9238b932b6a4579f515ec8a8016597498acff5b515a4",
+      "depends": [
+        "libc6",
+        "libgdbm6"
+      ],
+      "notice_path": "/usr/share/doc/libgdbm-compat4/copyright"
+    },
+    {
+      "name": "libgdbm6",
+      "version": "1.23-3",
+      "architecture": "amd64",
+      "source": "debian:gdbm@1.23-3",
+      "artifact": "debian/95fe4a1336532450e67bd067892f46eaa484139919ea8d067a9ffcbf5a4bf883.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/g/gdbm/libgdbm6_1.23-3_amd64.deb",
+      "size": 72248,
+      "sha256": "95fe4a1336532450e67bd067892f46eaa484139919ea8d067a9ffcbf5a4bf883",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libgdbm6/copyright"
+    },
+    {
+      "name": "libgpg-error0",
+      "version": "1.46-1",
+      "architecture": "amd64",
+      "source": "debian:libgpg-error@1.46-1",
+      "artifact": "debian/89944ee11d7370ce6ef46fc52f094c4a6512eff8943ec4c6ebefeae6360ceada.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libg/libgpg-error/libgpg-error0_1.46-1_amd64.deb",
+      "size": 76888,
+      "sha256": "89944ee11d7370ce6ef46fc52f094c4a6512eff8943ec4c6ebefeae6360ceada",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libgpg-error0/copyright"
+    },
+    {
+      "name": "libgssapi-krb5-2",
+      "version": "1.20.1-2+deb12u5",
+      "architecture": "amd64",
+      "source": "debian:krb5@1.20.1-2+deb12u5",
+      "artifact": "debian/d8b87aea91b956b416c01a28c44ff6228315ae3b73de40acddac3dc5043607d2.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/k/krb5/libgssapi-krb5-2_1.20.1-2+deb12u5_amd64.deb",
+      "size": 135168,
+      "sha256": "d8b87aea91b956b416c01a28c44ff6228315ae3b73de40acddac3dc5043607d2",
+      "depends": [
+        "libc6",
+        "libcom-err2",
+        "libk5crypto3",
+        "libkrb5-3",
+        "libkrb5support0"
+      ],
+      "notice_path": "/usr/share/doc/libgssapi-krb5-2/copyright"
+    },
+    {
+      "name": "libk5crypto3",
+      "version": "1.20.1-2+deb12u5",
+      "architecture": "amd64",
+      "source": "debian:krb5@1.20.1-2+deb12u5",
+      "artifact": "debian/7b6e47d15c5c9cdcd456137533d8308aeba608a54cec73b28bd59bfc4b54cf06.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/k/krb5/libk5crypto3_1.20.1-2+deb12u5_amd64.deb",
+      "size": 79712,
+      "sha256": "7b6e47d15c5c9cdcd456137533d8308aeba608a54cec73b28bd59bfc4b54cf06",
+      "depends": [
+        "libc6",
+        "libkrb5support0"
+      ],
+      "notice_path": "/usr/share/doc/libk5crypto3/copyright"
+    },
+    {
+      "name": "libkeyutils1",
+      "version": "1.6.3-2",
+      "architecture": "amd64",
+      "source": "debian:keyutils@1.6.3-2",
+      "artifact": "debian/cfac89e6a7a54ff3c6a4f843310e25efeddaa771baeae470bd98bd588c373563.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/k/keyutils/libkeyutils1_1.6.3-2_amd64.deb",
+      "size": 8808,
+      "sha256": "cfac89e6a7a54ff3c6a4f843310e25efeddaa771baeae470bd98bd588c373563",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libkeyutils1/copyright"
+    },
+    {
+      "name": "libkrb5-3",
+      "version": "1.20.1-2+deb12u5",
+      "architecture": "amd64",
+      "source": "debian:krb5@1.20.1-2+deb12u5",
+      "artifact": "debian/c90801be09701af221b54dd502a59cb378b7284ff31e480738baca317d2f7653.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/k/krb5/libkrb5-3_1.20.1-2+deb12u5_amd64.deb",
+      "size": 332280,
+      "sha256": "c90801be09701af221b54dd502a59cb378b7284ff31e480738baca317d2f7653",
+      "depends": [
+        "libc6",
+        "libcom-err2",
+        "libk5crypto3",
+        "libkeyutils1",
+        "libkrb5support0",
+        "libssl3"
+      ],
+      "notice_path": "/usr/share/doc/libkrb5-3/copyright"
+    },
+    {
+      "name": "libkrb5support0",
+      "version": "1.20.1-2+deb12u5",
+      "architecture": "amd64",
+      "source": "debian:krb5@1.20.1-2+deb12u5",
+      "artifact": "debian/8b9c05f2d8d461a10d657b118f572af5bf8fd6c8f93dcef81e852c5ab0f428ab.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/k/krb5/libkrb5support0_1.20.1-2+deb12u5_amd64.deb",
+      "size": 33212,
+      "sha256": "8b9c05f2d8d461a10d657b118f572af5bf8fd6c8f93dcef81e852c5ab0f428ab",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libkrb5support0/copyright"
+    },
+    {
+      "name": "liblz4-1",
+      "version": "1.9.4-1",
+      "architecture": "amd64",
+      "source": "debian:lz4@1.9.4-1",
+      "artifact": "debian/64cde86cef1deaf828bd60297839b59710b5cd8dc50efd4f12643caaee9389d3.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lz4/liblz4-1_1.9.4-1_amd64.deb",
+      "size": 62884,
+      "sha256": "64cde86cef1deaf828bd60297839b59710b5cd8dc50efd4f12643caaee9389d3",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/liblz4-1/copyright"
+    },
+    {
+      "name": "liblzma5",
+      "version": "5.4.1-1+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:xz-utils@5.4.1-1+deb12u1",
+      "artifact": "debian/f96d8876b53ec89d76a992bc199679b818cf518225a768954d9451fb556a4eb7.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/x/xz-utils/liblzma5_5.4.1-1+deb12u1_amd64.deb",
+      "size": 205732,
+      "sha256": "f96d8876b53ec89d76a992bc199679b818cf518225a768954d9451fb556a4eb7",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/liblzma5/copyright"
+    },
+    {
+      "name": "libmd0",
+      "version": "1.0.4-2",
+      "architecture": "amd64",
+      "source": "debian:libmd@1.0.4-2",
+      "artifact": "debian/03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libm/libmd/libmd0_1.0.4-2_amd64.deb",
+      "size": 29456,
+      "sha256": "03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libmd0/copyright"
+    },
+    {
+      "name": "libncursesw6",
+      "version": "6.4-4",
+      "architecture": "amd64",
+      "source": "debian:ncurses@6.4-4",
+      "artifact": "debian/98fa7a53dc565a38b65fb70422ad08001bf5361d8fbc74255280c329996a6bec.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/ncurses/libncursesw6_6.4-4_amd64.deb",
+      "size": 133824,
+      "sha256": "98fa7a53dc565a38b65fb70422ad08001bf5361d8fbc74255280c329996a6bec",
+      "depends": [
+        "libtinfo6",
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libncursesw6/copyright"
+    },
+    {
+      "name": "libnsl2",
+      "version": "1.3.0-2",
+      "architecture": "amd64",
+      "source": "debian:libnsl@1.3.0-2",
+      "artifact": "debian/c0d83437fdb016cb289436f49f28a36be44b3e8f1f2498c7e3a095f709c0d6f8.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libn/libnsl/libnsl2_1.3.0-2_amd64.deb",
+      "size": 39480,
+      "sha256": "c0d83437fdb016cb289436f49f28a36be44b3e8f1f2498c7e3a095f709c0d6f8",
+      "depends": [
+        "libc6",
+        "libtirpc3"
+      ],
+      "notice_path": "/usr/share/doc/libnsl2/copyright"
+    },
+    {
+      "name": "libnumber-compare-perl",
+      "version": "0.03-3",
+      "architecture": "all",
+      "source": "debian:libnumber-compare-perl@0.03-3",
+      "artifact": "debian/cf95662e27037d92c582647400bb1ca7a6dfd2eb26eee5b968b23263cd4976dc.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libn/libnumber-compare-perl/libnumber-compare-perl_0.03-3_all.deb",
+      "size": 6332,
+      "sha256": "cf95662e27037d92c582647400bb1ca7a6dfd2eb26eee5b968b23263cd4976dc",
+      "depends": [],
+      "notice_path": "/usr/share/doc/libnumber-compare-perl/copyright"
+    },
+    {
+      "name": "libpam-modules",
+      "version": "1.5.2-6+deb12u2",
+      "architecture": "amd64",
+      "source": "debian:pam@1.5.2-6+deb12u2",
+      "artifact": "debian/19fb4838168e68bc15a5606070f14b1162bb34a3899686913f5d661f1707f483.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/pam/libpam-modules_1.5.2-6+deb12u2_amd64.deb",
+      "size": 291056,
+      "sha256": "19fb4838168e68bc15a5606070f14b1162bb34a3899686913f5d661f1707f483",
+      "depends": [
+        "libaudit1",
+        "libc6",
+        "libcrypt1",
+        "libdb5.3",
+        "libpam0g",
+        "libselinux1",
+        "debconf",
+        "libpam-modules-bin"
+      ],
+      "notice_path": "/usr/share/doc/libpam-modules/copyright"
+    },
+    {
+      "name": "libpam-modules-bin",
+      "version": "1.5.2-6+deb12u2",
+      "architecture": "amd64",
+      "source": "debian:pam@1.5.2-6+deb12u2",
+      "artifact": "debian/e7b1f6c60a51398920c5da792016161a65bf1c7caaa64140dd2099176ed51280.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/pam/libpam-modules-bin_1.5.2-6+deb12u2_amd64.deb",
+      "size": 75676,
+      "sha256": "e7b1f6c60a51398920c5da792016161a65bf1c7caaa64140dd2099176ed51280",
+      "depends": [
+        "libaudit1",
+        "libc6",
+        "libcrypt1",
+        "libpam0g",
+        "libselinux1"
+      ],
+      "notice_path": "/usr/share/doc/libpam-modules-bin/copyright"
+    },
+    {
+      "name": "libpam-runtime",
+      "version": "1.5.2-6+deb12u2",
+      "architecture": "all",
+      "source": "debian:pam@1.5.2-6+deb12u2",
+      "artifact": "debian/7a4f26d54c1e3ee8c68095f9d9013d13dd89a33ff78ef87330d21f21235fc278.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/pam/libpam-runtime_1.5.2-6+deb12u2_all.deb",
+      "size": 160936,
+      "sha256": "7a4f26d54c1e3ee8c68095f9d9013d13dd89a33ff78ef87330d21f21235fc278",
+      "depends": [
+        "debconf",
+        "libpam-modules"
+      ],
+      "notice_path": "/usr/share/doc/libpam-runtime/copyright"
+    },
+    {
+      "name": "libpam0g",
+      "version": "1.5.2-6+deb12u2",
+      "architecture": "amd64",
+      "source": "debian:pam@1.5.2-6+deb12u2",
+      "artifact": "debian/a06f889caf9e97ccf04dedec0905573916bc6ec3366ade2c6ef8900047fd5cc1.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/pam/libpam0g_1.5.2-6+deb12u2_amd64.deb",
+      "size": 92060,
+      "sha256": "a06f889caf9e97ccf04dedec0905573916bc6ec3366ade2c6ef8900047fd5cc1",
+      "depends": [
+        "libaudit1",
+        "libc6",
+        "debconf"
+      ],
+      "notice_path": "/usr/share/doc/libpam0g/copyright"
+    },
+    {
+      "name": "libpcre2-8-0",
+      "version": "10.42-1+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:pcre2@10.42-1+deb12u1",
+      "artifact": "debian/81c5502941118a24d47af69a17b8b0b9548d75cc6d72b3eb3fe01047b46fa10e.deb",
+      "url": "https://snapshot.debian.org/archive/debian-security/20260906T183022Z/pool/updates/main/p/pcre2/libpcre2-8-0_10.42-1+deb12u1_amd64.deb",
+      "size": 261352,
+      "sha256": "81c5502941118a24d47af69a17b8b0b9548d75cc6d72b3eb3fe01047b46fa10e",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libpcre2-8-0/copyright"
+    },
+    {
+      "name": "libperl5.36",
+      "version": "5.36.0-7+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:perl@5.36.0-7+deb12u3",
+      "artifact": "debian/591903643119c7e1735011369287976eccab1d79b1d2f210760e2138d0a3aa46.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/libperl5.36_5.36.0-7+deb12u3_amd64.deb",
+      "size": 4195924,
+      "sha256": "591903643119c7e1735011369287976eccab1d79b1d2f210760e2138d0a3aa46",
+      "depends": [
+        "libbz2-1.0",
+        "libc6",
+        "libcrypt1",
+        "libdb5.3",
+        "libgdbm-compat4",
+        "libgdbm6",
+        "zlib1g",
+        "perl-modules-5.36"
+      ],
+      "notice_path": "/usr/share/doc/libperl5.36/copyright"
+    },
+    {
+      "name": "libpopt0",
+      "version": "1.19+dfsg-1",
+      "architecture": "amd64",
+      "source": "debian:popt@1.19+dfsg-1",
+      "artifact": "debian/6f94b488255acd996254f775c77ff3956557c61f860a3c9caeaf65457554194f.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/popt/libpopt0_1.19+dfsg-1_amd64.deb",
+      "size": 43268,
+      "sha256": "6f94b488255acd996254f775c77ff3956557c61f860a3c9caeaf65457554194f",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libpopt0/copyright"
+    },
+    {
+      "name": "libproc2-0",
+      "version": "2:4.0.2-3",
+      "architecture": "amd64",
+      "source": "debian:procps@2:4.0.2-3",
+      "artifact": "debian/e82ba5d01929eafb8b9954606a3c38b0332a987c2b3432388b4ee7365e54deae.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/procps/libproc2-0_4.0.2-3_amd64.deb",
+      "size": 62804,
+      "sha256": "e82ba5d01929eafb8b9954606a3c38b0332a987c2b3432388b4ee7365e54deae",
+      "depends": [
+        "libc6",
+        "libsystemd0"
+      ],
+      "notice_path": "/usr/share/doc/libproc2-0/copyright"
+    },
+    {
+      "name": "libselinux1",
+      "version": "3.4-1+b6",
+      "architecture": "amd64",
+      "source": "debian:libselinux@3.4-1",
+      "artifact": "debian/2b07f5287b9105f40158b56e4d70cc1652dac56a408f3507b4ab3d061eed425f.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libselinux/libselinux1_3.4-1+b6_amd64.deb",
+      "size": 73720,
+      "sha256": "2b07f5287b9105f40158b56e4d70cc1652dac56a408f3507b4ab3d061eed425f",
+      "depends": [
+        "libc6",
+        "libpcre2-8-0"
+      ],
+      "notice_path": "/usr/share/doc/libselinux1/copyright"
+    },
+    {
+      "name": "libsemanage-common",
+      "version": "3.4-1",
+      "architecture": "all",
+      "source": "debian:libsemanage@3.4-1",
+      "artifact": "debian/835f806c21ae25e39053bd3057051640341b0cf08e1db9746fd82e370d82fa30.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libsemanage/libsemanage-common_3.4-1_all.deb",
+      "size": 21632,
+      "sha256": "835f806c21ae25e39053bd3057051640341b0cf08e1db9746fd82e370d82fa30",
+      "depends": [],
+      "notice_path": "/usr/share/doc/libsemanage-common/copyright"
+    },
+    {
+      "name": "libsemanage2",
+      "version": "3.4-1+b5",
+      "architecture": "amd64",
+      "source": "debian:libsemanage@3.4-1",
+      "artifact": "debian/fd36d0972866adde5a52269a309fcecd76a8e45e557dd0ecd33aa221cabc2a8c.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libsemanage/libsemanage2_3.4-1+b5_amd64.deb",
+      "size": 89884,
+      "sha256": "fd36d0972866adde5a52269a309fcecd76a8e45e557dd0ecd33aa221cabc2a8c",
+      "depends": [
+        "libsemanage-common",
+        "libaudit1",
+        "libbz2-1.0",
+        "libc6",
+        "libselinux1",
+        "libsepol2"
+      ],
+      "notice_path": "/usr/share/doc/libsemanage2/copyright"
+    },
+    {
+      "name": "libsepol2",
+      "version": "3.4-2.1",
+      "architecture": "amd64",
+      "source": "debian:libsepol@3.4-2.1",
+      "artifact": "debian/b998946bb9818a97b387a962826caae33bc7fdcb6d706b2782c0470510be6b48.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libs/libsepol/libsepol2_3.4-2.1_amd64.deb",
+      "size": 275900,
+      "sha256": "b998946bb9818a97b387a962826caae33bc7fdcb6d706b2782c0470510be6b48",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libsepol2/copyright"
+    },
+    {
+      "name": "libssl3",
+      "version": "3.0.20-1~deb12u2",
+      "architecture": "amd64",
+      "source": "debian:openssl@3.0.20-1~deb12u2",
+      "artifact": "debian/89be24b41bff568ee6e7caf5680a3d808e80315ed92e407056ce0fa7a5bda025.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openssl/libssl3_3.0.20-1~deb12u2_amd64.deb",
+      "size": 2036016,
+      "sha256": "89be24b41bff568ee6e7caf5680a3d808e80315ed92e407056ce0fa7a5bda025",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libssl3/copyright"
+    },
+    {
+      "name": "libsystemd0",
+      "version": "252.39-1~deb12u2",
+      "architecture": "amd64",
+      "source": "debian:systemd@252.39-1~deb12u2",
+      "artifact": "debian/013c07514a9e4933b2d5c098018695a6aa42d085dbc483ce2c094a954c8a1b0a.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/systemd/libsystemd0_252.39-1~deb12u2_amd64.deb",
+      "size": 332372,
+      "sha256": "013c07514a9e4933b2d5c098018695a6aa42d085dbc483ce2c094a954c8a1b0a",
+      "depends": [
+        "libc6",
+        "libcap2",
+        "libgcrypt20",
+        "liblz4-1",
+        "liblzma5",
+        "libzstd1"
+      ],
+      "notice_path": "/usr/share/doc/libsystemd0/copyright"
+    },
+    {
+      "name": "libtext-glob-perl",
+      "version": "0.11-3",
+      "architecture": "all",
+      "source": "debian:libtext-glob-perl@0.11-3",
+      "artifact": "debian/b0f1a40c5b26f4e4c83a4f8e1768fcf50ae9aac84b7f807ccb38123b50396f64.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtext-glob-perl/libtext-glob-perl_0.11-3_all.deb",
+      "size": 7676,
+      "sha256": "b0f1a40c5b26f4e4c83a4f8e1768fcf50ae9aac84b7f807ccb38123b50396f64",
+      "depends": [],
+      "notice_path": "/usr/share/doc/libtext-glob-perl/copyright"
+    },
+    {
+      "name": "libtinfo6",
+      "version": "6.4-4",
+      "architecture": "amd64",
+      "source": "debian:ncurses@6.4-4",
+      "artifact": "debian/072d908f38f51090ca28ca5afa3b46b2957dc61fe35094c0b851426859a49a51.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/n/ncurses/libtinfo6_6.4-4_amd64.deb",
+      "size": 331352,
+      "sha256": "072d908f38f51090ca28ca5afa3b46b2957dc61fe35094c0b851426859a49a51",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libtinfo6/copyright"
+    },
+    {
+      "name": "libtirpc-common",
+      "version": "1.3.3+ds-1",
+      "architecture": "all",
+      "source": "debian:libtirpc@1.3.3+ds-1",
+      "artifact": "debian/3e3ef129b4bf61513144236e15e1b4ec57fa5ae3dc8a72137abdbefb7a63af85.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtirpc/libtirpc-common_1.3.3+ds-1_all.deb",
+      "size": 14048,
+      "sha256": "3e3ef129b4bf61513144236e15e1b4ec57fa5ae3dc8a72137abdbefb7a63af85",
+      "depends": [],
+      "notice_path": "/usr/share/doc/libtirpc-common/copyright"
+    },
+    {
+      "name": "libtirpc3",
+      "version": "1.3.3+ds-1",
+      "architecture": "amd64",
+      "source": "debian:libtirpc@1.3.3+ds-1",
+      "artifact": "debian/2a46d5a5e9486da11ffeff5740931740d6deae4f92cd6098df060dc5dff1e1c7.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libt/libtirpc/libtirpc3_1.3.3+ds-1_amd64.deb",
+      "size": 85192,
+      "sha256": "2a46d5a5e9486da11ffeff5740931740d6deae4f92cd6098df060dc5dff1e1c7",
+      "depends": [
+        "libc6",
+        "libgssapi-krb5-2",
+        "libtirpc-common"
+      ],
+      "notice_path": "/usr/share/doc/libtirpc3/copyright"
+    },
+    {
+      "name": "libudev1",
+      "version": "252.39-1~deb12u2",
+      "architecture": "amd64",
+      "source": "debian:systemd@252.39-1~deb12u2",
+      "artifact": "debian/6f7e08f11c4809d2e5998c775f7b423ab5ec2ce0309494b4a2615037052245e2.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/systemd/libudev1_252.39-1~deb12u2_amd64.deb",
+      "size": 108880,
+      "sha256": "6f7e08f11c4809d2e5998c775f7b423ab5ec2ce0309494b4a2615037052245e2",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libudev1/copyright"
+    },
+    {
+      "name": "libwrap0",
+      "version": "7.6.q-32",
+      "architecture": "amd64",
+      "source": "debian:tcp-wrappers@7.6.q-32",
+      "artifact": "debian/cbce2669a3ba4d74cfdc52b14f38014893e23d85a33d109a3422c342eefc55f8.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/t/tcp-wrappers/libwrap0_7.6.q-32_amd64.deb",
+      "size": 54936,
+      "sha256": "cbce2669a3ba4d74cfdc52b14f38014893e23d85a33d109a3422c342eefc55f8",
+      "depends": [
+        "libc6",
+        "libnsl2"
+      ],
+      "notice_path": "/usr/share/doc/libwrap0/copyright"
+    },
+    {
+      "name": "libxxhash0",
+      "version": "0.8.1-1",
+      "architecture": "amd64",
+      "source": "debian:xxhash@0.8.1-1",
+      "artifact": "debian/6c19a5d18c8350744581fbd25d5d29e2b7101053e25aafa4e1ffcc2b505b2f1c.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/x/xxhash/libxxhash0_0.8.1-1_amd64.deb",
+      "size": 27584,
+      "sha256": "6c19a5d18c8350744581fbd25d5d29e2b7101053e25aafa4e1ffcc2b505b2f1c",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libxxhash0/copyright"
+    },
+    {
+      "name": "libzstd1",
+      "version": "1.5.4+dfsg2-5",
+      "architecture": "amd64",
+      "source": "debian:libzstd@1.5.4+dfsg2-5",
+      "artifact": "debian/6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_amd64.deb",
+      "size": 290036,
+      "sha256": "6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/libzstd1/copyright"
+    },
+    {
+      "name": "lsb-base",
+      "version": "11.6",
+      "architecture": "all",
+      "source": "debian:lsb@11.6",
+      "artifact": "debian/f8bedd167280e76636df3a1bc023cd2906d458916c1af4c1d7912c5b971fc642.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/l/lsb/lsb-base_11.6_all.deb",
+      "size": 4584,
+      "sha256": "f8bedd167280e76636df3a1bc023cd2906d458916c1af4c1d7912c5b971fc642",
+      "depends": [
+        "sysvinit-utils"
+      ],
+      "notice_path": "/usr/share/doc/lsb-base/copyright"
+    },
+    {
+      "name": "openssh-client",
+      "version": "1:9.2p1-2+deb12u10",
+      "architecture": "amd64",
+      "source": "debian:openssh@1:9.2p1-2+deb12u10",
+      "artifact": "debian/42c250b8b9110382488c53c066a960bc564ddac2cb9e449f47b6cdbb5fc1cb60.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openssh/openssh-client_9.2p1-2+deb12u10_amd64.deb",
+      "size": 993532,
+      "sha256": "42c250b8b9110382488c53c066a960bc564ddac2cb9e449f47b6cdbb5fc1cb60",
+      "depends": [
+        "adduser",
+        "passwd",
+        "libc6",
+        "libedit2",
+        "libfido2-1",
+        "libgssapi-krb5-2",
+        "libselinux1",
+        "libssl3",
+        "zlib1g"
+      ],
+      "notice_path": "/usr/share/doc/openssh-client/copyright"
+    },
+    {
+      "name": "openssh-server",
+      "version": "1:9.2p1-2+deb12u10",
+      "architecture": "amd64",
+      "source": "debian:openssh@1:9.2p1-2+deb12u10",
+      "artifact": "debian/933cd92a2329f9bf26d22660a834ae18ebdbe8df9c6127e4d9fcb098dac9cf72.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openssh/openssh-server_9.2p1-2+deb12u10_amd64.deb",
+      "size": 456584,
+      "sha256": "933cd92a2329f9bf26d22660a834ae18ebdbe8df9c6127e4d9fcb098dac9cf72",
+      "depends": [
+        "init-system-helpers",
+        "adduser",
+        "libpam-modules",
+        "libpam-runtime",
+        "lsb-base",
+        "openssh-client",
+        "openssh-sftp-server",
+        "procps",
+        "ucf",
+        "debconf",
+        "runit-helper",
+        "libaudit1",
+        "libc6",
+        "libcom-err2",
+        "libcrypt1",
+        "libgssapi-krb5-2",
+        "libkrb5-3",
+        "libpam0g",
+        "libselinux1",
+        "libssl3",
+        "libsystemd0",
+        "libwrap0",
+        "zlib1g"
+      ],
+      "notice_path": "/usr/share/doc/openssh-server/copyright"
+    },
+    {
+      "name": "openssh-sftp-server",
+      "version": "1:9.2p1-2+deb12u10",
+      "architecture": "amd64",
+      "source": "debian:openssh@1:9.2p1-2+deb12u10",
+      "artifact": "debian/18d7ef7873861272b43b764295cbd8c04f439108fc3a4cecb3fe6e095f8ee2a8.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openssh/openssh-sftp-server_9.2p1-2+deb12u10_amd64.deb",
+      "size": 65928,
+      "sha256": "18d7ef7873861272b43b764295cbd8c04f439108fc3a4cecb3fe6e095f8ee2a8",
+      "depends": [
+        "openssh-client",
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/openssh-sftp-server/copyright"
+    },
+    {
+      "name": "openssl",
+      "version": "3.0.20-1~deb12u2",
+      "architecture": "amd64",
+      "source": "debian:openssl@3.0.20-1~deb12u2",
+      "artifact": "debian/4d218561dc838de081de97f54584c4a29e77e26c7ed9fe3440d776d8e6071bf9.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/o/openssl/openssl_3.0.20-1~deb12u2_amd64.deb",
+      "size": 1438712,
+      "sha256": "4d218561dc838de081de97f54584c4a29e77e26c7ed9fe3440d776d8e6071bf9",
+      "depends": [
+        "libc6",
+        "libssl3"
+      ],
+      "notice_path": "/usr/share/doc/openssl/copyright"
+    },
+    {
+      "name": "passwd",
+      "version": "1:4.13+dfsg1-1+deb12u2",
+      "architecture": "amd64",
+      "source": "debian:shadow@1:4.13+dfsg1-1+deb12u2",
+      "artifact": "debian/fb787363372903e03627e53fd483e51dfb6861047a1e02c7d5a5f27d66546d08.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/shadow/passwd_4.13+dfsg1-1+deb12u2_amd64.deb",
+      "size": 972180,
+      "sha256": "fb787363372903e03627e53fd483e51dfb6861047a1e02c7d5a5f27d66546d08",
+      "depends": [
+        "libaudit1",
+        "libc6",
+        "libcrypt1",
+        "libpam0g",
+        "libselinux1",
+        "libsemanage2",
+        "libpam-modules"
+      ],
+      "notice_path": "/usr/share/doc/passwd/copyright"
+    },
+    {
+      "name": "perl",
+      "version": "5.36.0-7+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:perl@5.36.0-7+deb12u3",
+      "artifact": "debian/afa50ec7d9b1a407cd0187dae033644ef13578d4f3792435e0c41b962ffec0c4.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl_5.36.0-7+deb12u3_amd64.deb",
+      "size": 238900,
+      "sha256": "afa50ec7d9b1a407cd0187dae033644ef13578d4f3792435e0c41b962ffec0c4",
+      "depends": [
+        "dpkg",
+        "perl-base",
+        "perl-modules-5.36",
+        "libperl5.36"
+      ],
+      "notice_path": "/usr/share/doc/perl/copyright"
+    },
+    {
+      "name": "perl-base",
+      "version": "5.36.0-7+deb12u3",
+      "architecture": "amd64",
+      "source": "debian:perl@5.36.0-7+deb12u3",
+      "artifact": "debian/8ec874926e211807cde71e1b0a2311d2534ab3539dffcb2c8553633f542efc1a.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl-base_5.36.0-7+deb12u3_amd64.deb",
+      "size": 1607712,
+      "sha256": "8ec874926e211807cde71e1b0a2311d2534ab3539dffcb2c8553633f542efc1a",
+      "depends": [
+        "libc6",
+        "libcrypt1",
+        "dpkg"
+      ],
+      "notice_path": "/usr/share/doc/perl-base/copyright"
+    },
+    {
+      "name": "perl-modules-5.36",
+      "version": "5.36.0-7+deb12u3",
+      "architecture": "all",
+      "source": "debian:perl@5.36.0-7+deb12u3",
+      "artifact": "debian/3d237ccb1ea32727b6573d43c67d78337aa928a81148d36cef54b369a07c240a.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/perl/perl-modules-5.36_5.36.0-7+deb12u3_all.deb",
+      "size": 2815332,
+      "sha256": "3d237ccb1ea32727b6573d43c67d78337aa928a81148d36cef54b369a07c240a",
+      "depends": [
+        "dpkg",
+        "perl-base"
+      ],
+      "notice_path": "/usr/share/doc/perl-modules-5.36/copyright"
+    },
+    {
+      "name": "procps",
+      "version": "2:4.0.2-3",
+      "architecture": "amd64",
+      "source": "debian:procps@2:4.0.2-3",
+      "artifact": "debian/d9d0e75779cb79af869181f17b93c5c263a2b89cac6a0193c436160a4483ddc1.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/p/procps/procps_4.0.2-3_amd64.deb",
+      "size": 708712,
+      "sha256": "d9d0e75779cb79af869181f17b93c5c263a2b89cac6a0193c436160a4483ddc1",
+      "depends": [
+        "libc6",
+        "libncursesw6",
+        "libproc2-0",
+        "libtinfo6",
+        "init-system-helpers"
+      ],
+      "notice_path": "/usr/share/doc/procps/copyright"
+    },
+    {
+      "name": "rsync",
+      "version": "3.2.7-1+deb12u6",
+      "architecture": "amd64",
+      "source": "debian:rsync@3.2.7-1+deb12u6",
+      "artifact": "debian/ce99de6b36cbb62dc614a73463e467f2c1ef509545a9a2b33cab19b50530b672.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/r/rsync/rsync_3.2.7-1+deb12u6_amd64.deb",
+      "size": 424700,
+      "sha256": "ce99de6b36cbb62dc614a73463e467f2c1ef509545a9a2b33cab19b50530b672",
+      "depends": [
+        "init-system-helpers",
+        "lsb-base",
+        "libacl1",
+        "libc6",
+        "liblz4-1",
+        "libpopt0",
+        "libssl3",
+        "libxxhash0",
+        "libzstd1",
+        "zlib1g"
+      ],
+      "notice_path": "/usr/share/doc/rsync/copyright"
+    },
+    {
+      "name": "runit-helper",
+      "version": "2.15.2",
+      "architecture": "all",
+      "source": "debian:dh-runit@2.15.2",
+      "artifact": "debian/fd08121947a1ea340d07e1b523591035419552ac151dfe6e241e8a748e15c36b.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/d/dh-runit/runit-helper_2.15.2_all.deb",
+      "size": 6520,
+      "sha256": "fd08121947a1ea340d07e1b523591035419552ac151dfe6e241e8a748e15c36b",
+      "depends": [],
+      "notice_path": "/usr/share/doc/runit-helper/copyright"
+    },
+    {
+      "name": "sensible-utils",
+      "version": "0.0.17+nmu1",
+      "architecture": "all",
+      "source": "debian:sensible-utils@0.0.17+nmu1",
+      "artifact": "debian/e0e66f783996ec4670ed5041c446160ec671c723d4be47d3bc27af93c2958a76.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/sensible-utils/sensible-utils_0.0.17+nmu1_all.deb",
+      "size": 19020,
+      "sha256": "e0e66f783996ec4670ed5041c446160ec671c723d4be47d3bc27af93c2958a76",
+      "depends": [],
+      "notice_path": "/usr/share/doc/sensible-utils/copyright"
+    },
+    {
+      "name": "sudo",
+      "version": "1.9.13p3-1+deb12u4",
+      "architecture": "amd64",
+      "source": "debian:sudo@1.9.13p3-1+deb12u4",
+      "artifact": "debian/ea9987f92630be504998516e1ed9c821c483131d0576ff35a09d6e7f8deff10f.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/sudo/sudo_1.9.13p3-1+deb12u4_amd64.deb",
+      "size": 1890344,
+      "sha256": "ea9987f92630be504998516e1ed9c821c483131d0576ff35a09d6e7f8deff10f",
+      "depends": [
+        "init-system-helpers",
+        "libaudit1",
+        "libc6",
+        "libpam0g",
+        "libselinux1",
+        "zlib1g",
+        "libpam-modules"
+      ],
+      "notice_path": "/usr/share/doc/sudo/copyright"
+    },
+    {
+      "name": "sysvinit-utils",
+      "version": "3.06-4",
+      "architecture": "amd64",
+      "source": "debian:sysvinit@3.06-4",
+      "artifact": "debian/11790842108768ec52432ea22e7b4f057232813b7c27ef6dfe1aba776a5cb90e.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/s/sysvinit/sysvinit-utils_3.06-4_amd64.deb",
+      "size": 30996,
+      "sha256": "11790842108768ec52432ea22e7b4f057232813b7c27ef6dfe1aba776a5cb90e",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/sysvinit-utils/copyright"
+    },
+    {
+      "name": "tar",
+      "version": "1.34+dfsg-1.2+deb12u1",
+      "architecture": "amd64",
+      "source": "debian:tar@1.34+dfsg-1.2+deb12u1",
+      "artifact": "debian/24fb92e98c2969171f81a8b589263d705f6b1670f95d121cd74c810d4605acc3.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_amd64.deb",
+      "size": 836288,
+      "sha256": "24fb92e98c2969171f81a8b589263d705f6b1670f95d121cd74c810d4605acc3",
+      "depends": [
+        "libacl1",
+        "libc6",
+        "libselinux1"
+      ],
+      "notice_path": "/usr/share/doc/tar/copyright"
+    },
+    {
+      "name": "ucf",
+      "version": "3.0043+nmu1+deb12u1",
+      "architecture": "all",
+      "source": "debian:ucf@3.0043+nmu1+deb12u1",
+      "artifact": "debian/928f2d5d327ef0f8d1b9c03a506134f56564cd2acf3e9f041df3dbdc68b00525.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/ucf/ucf_3.0043+nmu1+deb12u1_all.deb",
+      "size": 55312,
+      "sha256": "928f2d5d327ef0f8d1b9c03a506134f56564cd2acf3e9f041df3dbdc68b00525",
+      "depends": [
+        "debconf",
+        "sensible-utils"
+      ],
+      "notice_path": "/usr/share/doc/ucf/copyright"
+    },
+    {
+      "name": "usrmerge",
+      "version": "37~deb12u1",
+      "architecture": "all",
+      "source": "debian:usrmerge@37~deb12u1",
+      "artifact": "debian/8a25318213244f075b56363408c87a519ed8cef24b270c3d045ef35d695de13a.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/u/usrmerge/usrmerge_37~deb12u1_all.deb",
+      "size": 13336,
+      "sha256": "8a25318213244f075b56363408c87a519ed8cef24b270c3d045ef35d695de13a",
+      "depends": [
+        "perl",
+        "libfile-find-rule-perl"
+      ],
+      "notice_path": "/usr/share/doc/usrmerge/copyright"
+    },
+    {
+      "name": "zlib1g",
+      "version": "1:1.2.13.dfsg-1",
+      "architecture": "amd64",
+      "source": "debian:zlib@1:1.2.13.dfsg-1",
+      "artifact": "debian/d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4.deb",
+      "url": "https://snapshot.debian.org/archive/debian/20260906T183022Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_amd64.deb",
+      "size": 86684,
+      "sha256": "d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4",
+      "depends": [
+        "libc6"
+      ],
+      "notice_path": "/usr/share/doc/zlib1g/copyright"
+    }
+  ]
+}
