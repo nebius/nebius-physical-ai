@@ -2,6 +2,7 @@ FROM python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba
 
 ARG NPA_SOURCE_SHA
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
+ARG SOURCE_DATE_EPOCH
 
 LABEL org.opencontainers.image.title="NPA LIBERO neutral bootstrap" \
       org.opencontainers.image.description="Public neutral bootstrap; LIBERO and GPU/runtime payloads are fetched under an external manager decision" \
@@ -20,6 +21,8 @@ RUN set -eux; \
     test -n "${NPA_SOURCE_SHA}"; \
     test "${#NPA_SOURCE_SHA}" -eq 40; \
     case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -gt 0; \
     printf '%s\n' \
       'Types: deb' \
       "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" \
@@ -47,7 +50,10 @@ RUN set -eux; \
     test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.1.180-1'; \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     rm -rf /var/lib/apt/lists/*; \
-    useradd --uid 1000 --create-home --shell /bin/bash ubuntu; \
+    useradd --no-log-init --uid 1000 --create-home --shell /bin/bash ubuntu; \
+    chage --lastday "$((SOURCE_DATE_EPOCH / 86400))" ubuntu; \
+    rm -rf /var/log/apt/* /var/cache/apt/archives/*; \
+    rm -f /var/log/dpkg.log /var/log/alternatives.log /var/log/lastlog /var/log/faillog /var/cache/ldconfig/aux-cache; \
     install -d -m 0700 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero /workspace/byof-runs; \
     install -d -m 0755 /run/sshd /opt/npa/libero; \
     printf '%s\n' \
