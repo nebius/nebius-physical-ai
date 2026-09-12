@@ -12,8 +12,10 @@ At run time, `runtime-bootstrap.py` requires a complete repository-pinned
 artifact and requirements lock before opening the network. It permits only
 credential-free HTTPS origins, validates the exact final URL, size, and SHA-256,
 rejects unsafe or malformed archives, installs offline into a private staging
-directory, and atomically publishes the completed version into an external
-operator-owned cache. Missing access and incomplete locks are refusals; there
+directory, seals and records every retained runtime path and file hash, and
+atomically publishes the completed read-only version into an external
+operator-owned cache. Every reuse verifies that exact tree. Missing access and
+incomplete locks are refusals; there
 is no terms-acceptance or consent variable.
 
 Runtime fetch changes delivery only. It does not grant or resolve rights to

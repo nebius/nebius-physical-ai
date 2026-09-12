@@ -21,8 +21,9 @@ bypass that refusal.
 At execution time, the bootstrap reads a repository-pinned manifest before any
 fetch, permits only the declared credential-free HTTPS origins, checks exact
 redirect targets, sizes, and SHA-256 digests, safely extracts the upstream
-source, validates wheel archives, installs offline in private staging, and
-atomically publishes a complete version to an external operator-owned cache.
+source, validates wheel archives, installs offline in private staging, seals an
+exact no-follow manifest of every retained path, type, mode, size, and file
+hash, and atomically publishes a complete version to an external operator-owned cache.
 An incomplete lock, missing anonymous access, malformed archive, mismatched
 byte, unsafe cache, or partial existing version is a terminal refusal.
 
@@ -86,7 +87,7 @@ is republished as an output.
 | Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact binary, license, and corresponding-source closure is incomplete. MuJoCo and the Python workload graph are runtime-cache-only. |
 | Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
 | Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded. The assets remain runtime-cache-only; their preferred-form, transformation, use, and derivative questions remain unresolved. |
-| Runtime cache | External, private to the runtime operator, versioned by the exact manifest hash, and atomically published only after full verification. It is neither an image layer nor a rights grant. |
+| Runtime cache | External, private to the runtime operator, versioned by the exact fetch-manifest hash, sealed read-only, and atomically published only after full-tree verification. Every reuse rechecks its exact receipt and path/type/mode/size/file-hash manifest. It is neither an image layer nor a rights grant. |
 | Outputs | Operator-generated factual JSON telemetry and execution logs. RGB frames are transient; only hashes and measurements are durable. No upstream asset byte is republished. |
 
 Runtime fetch changes delivery only. It does not grant or resolve rights to
