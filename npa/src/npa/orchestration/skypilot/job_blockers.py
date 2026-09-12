@@ -321,12 +321,12 @@ def classify_pending_reason(
     detail = str(message or "").lower()
     combined = f"{normalized} {detail}"
     if "unschedul" in combined or "failedscheduling" in combined:
+        # Kubernetes names GPU resources in ordinary capacity shortages too.
+        if any(item in combined for item in ("quota", "capacity", "insufficient")):
+            return "CAPACITY_OR_QUOTA"
         if any(item in combined for item in ("gpu", "accelerator", "nvidia.com/gpu")):
             return "ACCELERATOR_MISMATCH"
-        if any(
-            item in combined
-            for item in ("quota", "capacity", "insufficient", "no nodes")
-        ):
+        if "no nodes" in combined:
             return "CAPACITY_OR_QUOTA"
         if any(item in combined for item in ("persistentvolumeclaim", "pvc", "volume")):
             return "STORAGE_PENDING"

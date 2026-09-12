@@ -24,6 +24,13 @@ names), encoding each accepted claim as a `solution-smoke` with a named JSON
 artifact, and collecting live Nebius validation evidence. See
 `docs/workbench/oss-solution-catalog.md`.
 
+If legal, license, or gated-access restrictions prevent source, SDKs, weights,
+datasets, or assets from being baked into the BYOF image, load
+`skills/workflows/runtime-fetch-onboard/SKILL.md`. Prefer a clean bootstrap
+container plus operator-authorized runtime fetch over rejecting the entire
+solution; keep any use, service, field-of-use, and output restrictions
+fail-closed.
+
 ## Prerequisites
 
 - `~/.npa/config.yaml` — project alias, registry override, `kubernetes` block (`cluster_name`, `gpu_profile`)

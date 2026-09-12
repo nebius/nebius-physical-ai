@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -298,6 +299,9 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     importing the (torch-pulling) policy_container parser.
     """
 
+    from npa.workbench.cosmos.visual_grounding import supported_visual_event
+    from npa.workflows.sim2real.episode_boundaries import temporal_credit_valid
+
     mean_reward = 0.0
     mean_advantage = 0.0
     step_count = 0
@@ -309,14 +313,21 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     rewards: list[float] = []
     advantages: list[float] = []
     error_tags: dict[str, int] = {}
+    visual_step_count = 0
     for signal in signals or []:
         for step in (signal or {}).get("per_step", []) or []:
+            if not temporal_credit_valid(step):
+                continue
             if "reward" in step:
                 rewards.append(float(step["reward"]))
             if step.get("advantage") is not None:
                 advantages.append(float(step["advantage"]))
-            for tag in step.get("error_tags", []) or []:
-                error_tags[str(tag)] = error_tags.get(str(tag), 0) + 1
+            confidence = step.get("confidence")
+            if (supported_visual_event(step) and type(confidence) in (int, float)
+                    and math.isfinite(confidence) and 0 < confidence <= 1):
+                visual_step_count += 1
+                for tag in step.get("error_tags", []) or []:
+                    error_tags[str(tag)] = error_tags.get(str(tag), 0) + 1
     if rewards:
         mean_reward = sum(rewards) / len(rewards)
         step_count = len(rewards)
@@ -344,6 +355,7 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
         "mean_advantage": mean_advantage,
         "step_count": step_count,
         "error_tags": error_tags,
+        "visual_step_count": visual_step_count,
         "reward_variance": reward_variance,
         "mean_absolute_advantage": absolute_advantage_mean,
         "advantage_variance": advantage_variance,
@@ -358,6 +370,7 @@ _PPO_ITERATION_RE = re.compile(r"Learning iteration\s+(\d+)/(\d+)")
 _PPO_METRIC_RE = re.compile(r"^\s*([^:]+):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$")
 _PPO_FIELDS = {
     "Mean action noise std": "action_noise_std",
+    "Mean action std": "action_noise_std",
     "Mean value_function loss": "value_loss",
     # rsl-rl >= 5.0 renamed the console field and dropped the timesteps line.
     "Mean value loss": "value_loss",
@@ -621,7 +634,7 @@ def vlm_reward_overrides(stats: dict[str, Any]) -> dict[str, float]:
     """
 
     mult = {term: 1.0 for term in DEFAULT_REWARD_WEIGHTS}
-    # Low mean VLM reward (range ~[-1,1]) -> broadly boost task terms.
+    # Grounded mean reward (range ~[-1,1]) -> broadly boost task terms.
     mean_reward = float(stats.get("mean_reward", 0.0))
     if mean_reward < 0.0:
         broad = 1.0 + min(0.5, -mean_reward * 0.5)

@@ -254,6 +254,13 @@ declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
 
+For runtime workflows, GPU capacity is checked against each rendered wave at the
+shared SDK submit boundary. Resuming an existing job does not require spare GPU
+capacity or record a new capacity check. Supervisor evidence retains the wave,
+attempt and observation time of a successful submission; adopting a job without
+that local evidence leaves capacity unknown. Every new or retried submission
+must pass the SDK checks again.
+
 Submission binds those checks to one effective execution target. The selected
 NPA project must have saved project, tenant and region identities. The provider's
 exact project and bucket-owner responses must agree before any temporary storage

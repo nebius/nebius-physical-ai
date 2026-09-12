@@ -2154,6 +2154,8 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
             ngc_summary = "NGC key rejected"
         elif ngc_outcome in {
             "entitlement-required",
+            "manifest-401",
+            "manifest-403",
             "tags-401",
             "tags-403",
         }:

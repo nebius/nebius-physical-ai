@@ -1623,6 +1623,16 @@ def render_setup_for_tool(
             raise NpaWorkflowError(
                 "config.baked_npa_import must be a dotted Python module name"
             )
+        evaluator_probe = ""
+        if baked_import == "npa.workflows.sim2real.workflow_stage":
+            from npa.orchestration.npa_workflow.sim2real_evaluator_probe import (
+                render_evaluator_probe,
+            )
+            from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+
+            evaluator_probe = render_evaluator_probe(
+                str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+            )
         return (
             "set -e\n"
             'npa_baked_python="${NPA_BAKED_PYTHON:-}"\n'
@@ -1654,6 +1664,7 @@ def render_setup_for_tool(
             "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
             "    raise SystemExit('baked NPA source attestation does not match workflow source SHA')\n"
+            f"{evaluator_probe}"
             "print('immutable baked NPA runtime verified', actual)\n"
             "PY\n"
             "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"

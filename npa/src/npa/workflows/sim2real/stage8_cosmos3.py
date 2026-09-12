@@ -67,13 +67,13 @@ def run(args: argparse.Namespace) -> None:
         manifest = json.loads(manifest_path.read_text())
         observations = list(manifest.get("camera_observations") or [])
         frames = [manifest_path.parent / str(name) for name in observations]
-        frames = [path for path in frames if path.is_file()]
-        if not frames:
-            frames = sorted(manifest_path.parent.glob("camera-*.png"))
+        if not frames or any(not path.is_file() for path in frames):
+            raise RuntimeError("Stage 8 requires every declared primary rollout frame")
         results.append(
             run_token_factory_rollout_vlm(
                 model_id=args.reason_model,
                 image_paths=frames,
+                frame_metadata=(manifest.get("camera_frame_metadata") or {}).get("primary"),
                 actions=list(manifest.get("actions") or []),
                 task_description=task_description_from_manifest(manifest),
                 rollout_id=str(manifest.get("rollout_id") or manifest_path.parent.name),

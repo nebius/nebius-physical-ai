@@ -74,6 +74,40 @@ def test_operational_skills_link_the_preflight() -> None:
         ), path
 
 
+def test_operator_owned_fetch_policy_is_reusable_and_narrow() -> None:
+    text = " ".join(SKILL.read_text(encoding="utf-8").split()).lower()
+    for phrase in (
+        "## operator-owned runtime fetch",
+        "operator as responsible",
+        "operator's own credential",
+        "operationally sufficient for npa to fetch the exact artifact",
+        "not legal acceptance or proof of compliance",
+        "do not add an npa terms checkbox",
+        "exact operator statement once",
+        "one bounded manager task/run id",
+        "record exactly that",
+        "without another per-image question",
+        "never global or permanent",
+        "provider-, account-, artifact-, and revision-scoped",
+        "eligible for public classification only after verifying redistribution rights",
+        "all `secure-image-build` publication gates",
+        "ready` grants no redistribution rights",
+        "do not duplicate that documented mechanism",
+        "npa makes no conclusion about enforceability",
+    ):
+        assert phrase in text, phrase
+
+    for unsafe in (
+        "the token accepts terms",
+        "token proves compliance",
+        "noncommercial clears every license",
+        "runtime fetch makes use legal",
+        "ready permits redistribution",
+        "one declaration applies globally",
+    ):
+        assert unsafe not in text, unsafe
+
+
 def test_isaac_tool_skills_preserve_default_opt_out_and_internal_plumbing() -> None:
     for tool in ("isaac-lab", "sonic", "groot"):
         path = REPO_ROOT / f"skills/tools/{tool}/SKILL.md"

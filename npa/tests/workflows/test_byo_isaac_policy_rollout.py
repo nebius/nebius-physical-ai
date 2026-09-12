@@ -325,7 +325,7 @@ def test_materialize_uses_declared_policy_capture_cadence(tmp_path, monkeypatch)
                 "scenario": {"scenario_config_digest": digest},
                 "actions": [
                     {
-                        "step": index,
+                        "step": index, "sim_step": index, "episode_boundary": _no_reset_boundary(),
                         "simulator_ground_truth": {
                             "scenario_config_digest": digest
                         },
@@ -374,7 +374,7 @@ def test_materialize_rejects_remote_manifest_path_escape(tmp_path, monkeypatch, 
         "rollouts": [{
             "rollout_id": rollout_id,
             "frames": [frame],
-            "actions": [{"step": 0, "simulator_ground_truth": {"scenario_config_digest": "digest"}}],
+            "actions": [{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary(), "simulator_ground_truth": {"scenario_config_digest": "digest"}}],
         }],
     }
 
@@ -550,3 +550,12 @@ def test_inline_rollout_provenance_reaches_main_component_record(tmp_path, monke
 
     assert result == []
     assert pr._LAST_GPU_PROVENANCE == proof
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0,
+        "reset_events": [], "reset_on_current_step": False,
+        "action_outcome_valid": True, "temporal_credit_valid": True,
+    }

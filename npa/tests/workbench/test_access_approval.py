@@ -366,6 +366,31 @@ def test_ngc_nonempty_bad_credential_is_denied_only_by_provider(
     assert secret not in state_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("outcome", ("manifest-401", "manifest-403"))
+def test_ngc_exact_manifest_denial_is_not_ready(tmp_path: Path, outcome: str) -> None:
+    item = GatedAsset(
+        "nvcr.io/nvidia/nre/nre-ga:26.04",
+        NGC,
+        ("nurec",),
+        True,
+        repo_type="container",
+        revision="26.04",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/nre/containers/nre-ga",
+        terms_revision="v1",
+    )
+    evidence = probe_requirements(
+        [item],
+        hf_token="",
+        ngc_key="operator-key",
+        hf_validator=None,
+        ngc_validator=lambda *_args, **_kwargs: outcome,
+        state_path=tmp_path / "denied.json",
+    )
+
+    assert evidence[0].status == AccessStatus.DENIED
+    assert evidence[0].reason == "artifact_entitlement_denied"
+
+
 def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
     tmp_path: Path,
 ) -> None:

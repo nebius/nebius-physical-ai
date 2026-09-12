@@ -85,15 +85,18 @@ def test_ngc_nonempty_credential_passes_presence_only_offline(credential: str) -
     assert "not verified" in result.summary
 
 
+@pytest.mark.parametrize(
+    "outcome", ["entitlement-required", "manifest-403", "manifest-404"]
+)
 @pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
 def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement(
-    credential: str,
+    credential: str, outcome: str
 ) -> None:
     observed: list[str] = []
 
     def validate(key: str) -> str:
         observed.append(key)
-        return "entitlement-required"
+        return outcome
 
     result = check_ngc(
         _Creds(ngc_api_key=credential), CredentialProbes(ngc_validator=validate)

@@ -83,6 +83,44 @@ def encode_video(
 # ── Statistics ──────────────────────────────────────────────────────────
 
 
+def _compute_video_stats(arrays: list[np.ndarray]) -> dict[str, Any]:
+    """Merge per-frame moments without allocating a float64 copy of the dataset."""
+    if not arrays or arrays[0].ndim != 4:
+        raise ValueError("video statistics require arrays shaped (N, H, W, C)")
+    shape = arrays[0].shape[1:]
+    if not all(shape) or any(array.ndim != 4 or array.shape[1:] != shape for array in arrays):
+        raise ValueError("video statistics require matching nonempty frame shapes")
+    channels = shape[-1]
+    minimum, maximum = np.full(channels, np.inf), np.full(channels, -np.inf)
+    mean, squared_deviations = np.zeros(channels), np.zeros(channels)
+    pixels = frames = 0
+    for array in arrays:
+        for frame in array:
+            frame_pixels = frame.shape[0] * frame.shape[1]
+            frame_mean = frame.mean(axis=(0, 1), dtype=np.float64)
+            delta = frame_mean - mean
+            combined_pixels = pixels + frame_pixels
+            # Parallel variance merge retains small differences between frames.
+            squared_deviations += (
+                frame.var(axis=(0, 1), dtype=np.float64) * frame_pixels
+                + delta * delta * (pixels * frame_pixels / combined_pixels)
+            )
+            mean += delta * (frame_pixels / combined_pixels)
+            minimum = np.minimum(minimum, frame.min(axis=(0, 1)))
+            maximum = np.maximum(maximum, frame.max(axis=(0, 1)))
+            pixels = combined_pixels
+            frames += 1
+    if not frames:
+        raise ValueError("video statistics require at least one frame")
+    values = {
+        "min": minimum / 255.0, "max": maximum / 255.0,
+        "mean": mean / 255.0, "std": np.sqrt(squared_deviations / pixels) / 255.0,
+    }
+    result = {key: value.reshape(channels, 1, 1).tolist() for key, value in values.items()}
+    result["count"] = [frames]
+    return result
+
+
 def _compute_feature_stats(
     arrays: list[np.ndarray],
     is_video: bool = False,
@@ -93,18 +131,7 @@ def _compute_feature_stats(
     computed on normalized [0, 1] float values.
     """
     if is_video:
-        # Flatten all frames into (N, H, W, C), normalize to [0,1]
-        all_frames = np.concatenate(arrays, axis=0).astype(np.float64) / 255.0
-        n, h, w, c = all_frames.shape
-        # Per-channel stats → shape (C, 1, 1)
-        per_channel = all_frames.reshape(-1, c)  # (N*H*W, C)
-        return {
-            "min": [[[float(per_channel[:, ch].min())]] for ch in range(c)],
-            "max": [[[float(per_channel[:, ch].max())]] for ch in range(c)],
-            "mean": [[[float(per_channel[:, ch].mean())]] for ch in range(c)],
-            "std": [[[float(per_channel[:, ch].std())]] for ch in range(c)],
-            "count": [n],
-        }
+        return _compute_video_stats(arrays)
 
     concat = np.concatenate(arrays, axis=0).astype(np.float64)
     if concat.ndim == 1:
