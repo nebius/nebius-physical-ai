@@ -272,9 +272,12 @@ def _download_dataset(
         try:
             with response, partial.open("xb") as handle:
                 for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    next_byte_count = byte_count + len(chunk)
+                    if next_byte_count > DATASET_BYTES:
+                        raise RuntimeError("dataset exceeds its locked byte count")
                     handle.write(chunk)
                     digest.update(chunk)
-                    byte_count += len(chunk)
+                    byte_count = next_byte_count
         finally:
             connection.close()
         if digest.hexdigest() != DATASET_SHA256 or byte_count != DATASET_BYTES:
