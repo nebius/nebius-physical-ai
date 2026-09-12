@@ -26,17 +26,27 @@ case "${1:-}" in
     child_pid=""
     pending_signal=""
     pending_status=""
-    trap '[[ -z "${snapshot_parent}" ]] || rm -rf -- "${snapshot_parent}"' EXIT
+    cleanup_snapshot() {
+      [[ -n "${snapshot_parent}" ]] || return
+      find "${snapshot_parent}" -type d -exec chmod u+w -- {} + 2>/dev/null || true
+      rm -rf -- "${snapshot_parent}"
+    }
+    trap cleanup_snapshot EXIT
     snapshot_parent="$(mktemp -d)"
     snapshot_root="${snapshot_parent}/runtime"
     process_group_running() {
-      local state
-      while IFS= read -r state; do
-        case "${state//[[:space:]]/}" in
-          ""|Z*|X*) ;;
-          *) return 0 ;;
-        esac
-      done < <(ps -o stat= --pgroup "$1" 2>/dev/null)
+      local group state states
+      if ! states="$(ps -e -o pgid=,stat= 2>/dev/null)"; then
+        return 0
+      fi
+      while read -r group state; do
+        if [[ "${group}" == "$1" ]]; then
+          case "${state}" in
+            Z*|X*) ;;
+            *) return 0 ;;
+          esac
+        fi
+      done <<<"${states}"
       return 1
     }
     stop_child() {
@@ -49,7 +59,7 @@ case "${1:-}" in
       kill -s "${signal_name}" -- "-${target_pid}" 2>/dev/null || true
       for ((attempt = 0; attempt < 50; attempt += 1)); do
         process_group_running "${target_pid}" || break
-        sleep 0.1
+        sleep 0.05
       done
       process_group_running "${target_pid}" \
         && kill -s KILL -- "-${target_pid}" 2>/dev/null || true
@@ -120,16 +130,14 @@ case "${1:-}" in
   assert-refusal)
     empty_root="$(mktemp -d)"
     trap 'rm -rf -- "${empty_root}"' EXIT
-    /usr/local/bin/python3 "${verifier}" assert-missing-runtime \
-      --runtime-root "${empty_root}" --runtime-lock "${runtime_lock}" \
-      >"${empty_root}.proof"
+    proof="$(/usr/local/bin/python3 "${verifier}" assert-missing-runtime \
+      --runtime-root "${empty_root}" --runtime-lock "${runtime_lock}")"
     if find "${empty_root}" -mindepth 1 -print -quit | grep -q .; then
       echo "runtime verifier mutated the missing runtime root" >&2
       exit 1
     fi
-    grep -Fq '"refusal_reason": "missing-ready-marker"' "${empty_root}.proof"
-    grep -Fq '"runtime_root_unchanged": true' "${empty_root}.proof"
-    rm -f -- "${empty_root}.proof"
+    grep -Fq '"refusal_reason": "missing-ready-marker"' <<<"${proof}"
+    grep -Fq '"runtime_root_unchanged": true' <<<"${proof}"
     echo "NPA_ROBOMIMIC_RUNTIME_REFUSAL_OK"
     ;;
   *)
