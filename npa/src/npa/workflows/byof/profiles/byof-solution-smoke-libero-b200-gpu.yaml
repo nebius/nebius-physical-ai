@@ -1,0 +1,222 @@
+# Headless, state-based LIBERO one-task BC-RNN qualification. The candidate
+# image is neutral: every LIBERO/runtime/data/model byte is fetched only after
+# the manager-issued decision is verified and remains in the non-root cache.
+name: byof-solution-smoke-libero-b200-gpu
+execution: serial
+---
+name: byof-solution-smoke-libero-b200-gpu
+resources:
+  cloud: kubernetes
+  accelerators: B200:1
+  cpus: 16+
+  memory: 96+
+  disk_size: 100
+  image_id: "docker:<explicit-npa-libero-candidate>@sha256:<digest>"
+  kubernetes:
+    pod_config:
+      spec:
+        serviceAccountName: npa-byof-libero-payload
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: "/opt/npa/libero/smoke.sh"
+  BYOF_SOLUTION_NAME: "libero"
+  BYOF_CAPABILITY_NAME: "libero_spatial_bc_rnn_train_reload_heldout"
+  BYOF_SMOKE_ARTIFACT_NAME: "libero-smoke.json"
+  BYOF_IMAGE: ""
+  LIBERO_RUNTIME_ROOT: "/workspace/.cache/npa/libero/current"
+  NPA_LIBERO_RUNTIME_USE_DECISION_B64: ""
+  NPA_LIBERO_RUNTIME_USE_DECISION_SHA256: ""
+  NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256: ""
+  NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256: ""
+  NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256: ""
+  NPA_LIBERO_EXPECTED_NAMESPACE_SHA256: ""
+  NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256: ""
+  NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256: ""
+  NPA_LIBERO_EXPECTED_ROLE_UID_SHA256: ""
+  NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256: ""
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
+  /usr/local/sbin/npa-skypilot-bootstrap-guard verify
+  test "$(id -u)" = 1000
+  test "$(id -un)" = ubuntu
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}"
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  decision_dir="/workspace/.cache/npa/libero-decisions/${NPA_BYOF_RUN_ID}"
+  install -d -m 0700 "${decision_dir}"
+  decision="${decision_dir}/runtime-use-decision.json"
+  printf '%s' "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}" | base64 -d > "${decision}.partial"
+  chmod 0600 "${decision}.partial"
+  test "$(sha256sum "${decision}.partial" | cut -d ' ' -f 1)" = \
+    "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  mv "${decision}.partial" "${decision}"
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  install -d -m 0700 "${output_dir}"
+  bootstrap_receipt="${output_dir}/npa_runtime_bootstrap.json"
+  if ! /opt/npa/libero/runtime-bootstrap.py ensure \
+    --manifest /opt/npa/libero/runtime-manifest.json \
+    --requirements /opt/npa/libero/runtime-requirements.txt \
+    --cache-root /workspace/.cache/npa/libero \
+    --decision "${decision}" \
+    --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
+    --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
+    rm -f "${bootstrap_receipt}.partial"
+    exit 1
+  fi
+  chmod 0600 "${bootstrap_receipt}.partial"
+  mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
+  test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
+  test -d "${BYOF_REPO_ROOT}/libero/lifelong"
+  test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
+  test ! -e "${BYOF_REPO_ROOT}/.git"
+run: |
+  set -euo pipefail
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
+  cp "${LIBERO_RUNTIME_ROOT}/.complete.json" "${output_dir}/npa_runtime_metadata.json"
+  nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
+  smoke_exit_code=0
+  set +e
+  /opt/npa/libero/smoke.sh \
+    > "${output_dir}/solution_smoke_stdout.log" \
+    2> "${output_dir}/solution_smoke_stderr.log"
+  smoke_exit_code=$?
+  set -e
+  if [ ! -f "${output_dir}/${BYOF_SMOKE_ARTIFACT_NAME}" ]; then
+    printf '%s\n' "missing required smoke artifact: ${BYOF_SMOKE_ARTIFACT_NAME}" \
+      >> "${output_dir}/solution_smoke_stderr.log"
+    smoke_exit_code=1
+  fi
+  export SMOKE_EXIT_CODE="${smoke_exit_code}"
+  "${LIBERO_RUNTIME_ROOT}/venv/bin/python" <<'PY'
+  import json
+  import os
+  import stat
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  smoke_exit_code = int(os.environ["SMOKE_EXIT_CODE"])
+  summary = {
+      "status": "success" if smoke_exit_code == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-libero-b200",
+      "run_id": run_id,
+      "image": os.environ["BYOF_IMAGE"],
+      "solution_name": os.environ["BYOF_SOLUTION_NAME"],
+      "capability_name": os.environ["BYOF_CAPABILITY_NAME"],
+      "smoke_artifact_name": os.environ["BYOF_SMOKE_ARTIFACT_NAME"],
+      "smoke_exit_code": smoke_exit_code,
+      "runtime_cache_uploaded": False,
+      "rendering_invoked": False,
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(
+      json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+  )
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme != "s3" or not parsed.netloc:
+      raise RuntimeError("LIBERO output prefix is not an S3 URI")
+  endpoint = (
+      os.environ.get("AWS_ENDPOINT_URL")
+      or os.environ.get("NEBIUS_S3_ENDPOINT")
+      or ""
+  ).strip() or None
+  client_kwargs = {
+      "endpoint_url": endpoint,
+      "config": Config(s3={"addressing_style": "path"}),
+      "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+  }
+  access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+  secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+  session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+  if access_key and secret_key:
+      client_kwargs["aws_access_key_id"] = access_key
+      client_kwargs["aws_secret_access_key"] = secret_key
+      if session_token:
+          client_kwargs["aws_session_token"] = session_token
+  client = boto3.client("s3", **client_kwargs)
+  prefix = parsed.path.lstrip("/")
+  def open_output_root(path: Path) -> int:
+      if not path.is_absolute() or path == Path("/"):
+          raise RuntimeError("LIBERO output root must be a narrow absolute path")
+      descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+      try:
+          for component in path.parts[1:]:
+              if component in {"", ".", ".."}:
+                  raise RuntimeError("LIBERO output root is not canonical")
+              child = os.open(
+                  component,
+                  os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                  dir_fd=descriptor,
+              )
+              os.close(descriptor)
+              descriptor = child
+          if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+              raise RuntimeError("LIBERO output root is not a real directory")
+          return descriptor
+      except Exception:
+          os.close(descriptor)
+          raise
+
+  def upload_directory(directory_fd: int, relative: Path) -> None:
+      for name in sorted(os.listdir(directory_fd)):
+          if name in {"", ".", ".."} or "/" in name:
+              raise RuntimeError("LIBERO output contains a noncanonical name")
+          info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+          child_relative = relative / name
+          if stat.S_ISLNK(info.st_mode):
+              raise RuntimeError("LIBERO output contains a forbidden symlink")
+          if stat.S_ISDIR(info.st_mode):
+              child_fd = os.open(
+                  name,
+                  os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                  dir_fd=directory_fd,
+              )
+              try:
+                  opened = os.fstat(child_fd)
+                  if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                      raise RuntimeError("LIBERO output directory changed during scan")
+                  upload_directory(child_fd, child_relative)
+              finally:
+                  os.close(child_fd)
+              continue
+          if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+              raise RuntimeError("LIBERO output contains an unsupported file")
+          file_fd = os.open(
+              name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd
+          )
+          with os.fdopen(file_fd, "rb") as stream:
+              opened = os.fstat(stream.fileno())
+              if (
+                  not stat.S_ISREG(opened.st_mode)
+                  or opened.st_nlink != 1
+                  or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+              ):
+                  raise RuntimeError("LIBERO output changed during confinement check")
+              client.put_object(
+                  Bucket=parsed.netloc,
+                  Key=prefix + child_relative.as_posix(),
+                  Body=stream,
+                  IfNoneMatch="*",
+              )
+
+  root_fd = open_output_root(root)
+  try:
+      upload_directory(root_fd, Path())
+  finally:
+      os.close(root_fd)
+  client.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
+  PY
+  exit "${smoke_exit_code}"

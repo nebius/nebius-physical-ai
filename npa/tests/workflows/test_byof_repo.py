@@ -1,18 +1,106 @@
 from __future__ import annotations
 
+import argparse
+import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+LIBERO_YAML_PATH = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-solution-smoke-libero-b200-gpu.yaml"
+)
+LIBERO_WORKFLOW_PATH = ROOT / "workflows" / "testing" / "byof-libero.yaml"
+
+
+def _libero_contract_args(tmp_path: Path) -> list[str]:
+    config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
+    runtime_manifest = (
+        ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-manifest.json"
+    )
+    decision = {
+        "schema": "npa.libero.runtime-use-decision.v1",
+        "solution": "libero",
+        "decision": "authorized",
+        "runtime_fetch_authorized": True,
+        "runtime_manifest_sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
+        "source_revision": config["repo_ref"],
+        "authorized_boundaries": [
+            "demonstration",
+            "language_model",
+            "runtime_packages",
+            "source",
+            "task_inputs",
+        ],
+        "manager_receipt_sha256": "sha256:" + "2" * 64,
+    }
+    decision_path = tmp_path / "libero-runtime-use-decision.json"
+    decision_path.write_text(json.dumps(decision, sort_keys=True) + "\n", encoding="utf-8")
+    decision_path.chmod(0o600)
+    decision_sha256 = hashlib.sha256(decision_path.read_bytes()).hexdigest()
+    return [
+        "--repo-url", config["repo_url"],
+        "--repo-ref", config["repo_ref"],
+        "--repo-auth", config["repo_auth"],
+        "--base-profile", config["base_profile"],
+        "--base-image", config["base_image"],
+        "--source-prune-path", config["source_prune_path"],
+        "--build-command", config["build_command"],
+        "--workload", config["workload"],
+        "--smoke-command", config["smoke_command"],
+        "--solution-name", config["solution_name"],
+        "--capability-name", config["capability_name"],
+        "--smoke-artifact-name", config["smoke_artifact_name"],
+        "--yaml", config["resource_profile_yaml"],
+        "--task", config["task"],
+        "--iterations", str(config["iterations"]),
+        "--num-envs", str(config["num_envs"]),
+        "--num-demos", str(config["num_demos"]),
+        "--libero-acceptance-candidate-image",
+        "registry.example/project/npa-libero@sha256:" + "1" * 64,
+        "--libero-runtime-use-decision-file", str(decision_path),
+        "--libero-runtime-use-decision-sha256", decision_sha256,
+        "--libero-build-metadata-sha256", "3" * 64,
+    ]
+
+
+def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
+    module = _load_module()
+    config = yaml.safe_load(LIBERO_WORKFLOW_PATH.read_text(encoding="utf-8"))["config"]
+
+    assert config["repo_url"] == f"{module.LIBERO_REPOSITORY}.git"
+    assert config["repo_ref"] == module.LIBERO_REPOSITORY_REF
+    assert config["base_image"] == module.LIBERO_BASE_IMAGE
+    assert config["source_prune_path"] == module.LIBERO_SOURCE_PRUNE_PATH
+    assert config["capability_name"] == module.LIBERO_CAPABILITY
+    assert config["smoke_artifact_name"] == module.LIBERO_SMOKE_ARTIFACT
+    assert config["task"] == module.LIBERO_TASK
+    assert hashlib.sha256(config["build_command"].encode()).hexdigest() == (
+        module.LIBERO_BUILD_COMMAND_SHA256
+    )
+    assert hashlib.sha256(config["smoke_command"].encode()).hexdigest() == (
+        module.LIBERO_SMOKE_COMMAND_SHA256
+    )
 
 
 def _load_module():
@@ -139,10 +227,12 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     token_path = tmp_path / "token"
     url_path = tmp_path / "url"
     ref_path = tmp_path / "ref"
+    prune_path = tmp_path / "prune-path"
     token_path.write_text(token, encoding="utf-8")
     url_path.write_text(repo_url, encoding="utf-8")
     ref_path.write_text(repo_ref, encoding="utf-8")
-    for path in (token_path, url_path, ref_path):
+    prune_path.write_text("private-assets/render-only", encoding="utf-8")
+    for path in (token_path, url_path, ref_path, prune_path):
         path.chmod(0o600)
 
     @contextmanager
@@ -151,9 +241,16 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
             token=token_path,
             repo_url=url_path,
             repo_ref=ref_path,
+            source_prune_path=prune_path,
             repository_sha256="a" * 64,
             ref_sha256="b" * 64,
-            redaction_values=(token, repo_url, repo_ref),
+            source_prune_path_sha256="c" * 64,
+            redaction_values=(
+                token,
+                repo_url,
+                repo_ref,
+                "private-assets/render-only",
+            ),
         )
 
     seen: dict[str, object] = {}
@@ -183,6 +280,8 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
             repo_ref,
             "--repo-auth",
             "github",
+            "--source-prune-path",
+            "private-assets/render-only",
             "--run-id",
             "private-build-test",
             "--skip-push",
@@ -194,27 +293,44 @@ def test_private_build_uses_only_secret_mounts_and_sanitized_metadata(
     command = " ".join(seen["cmd"])
     dockerfile = str(seen["dockerfile"])
     output = capsys.readouterr().out
-    for value in (token, repo_url, repo_ref):
+    for value in (token, repo_url, repo_ref, "private-assets/render-only"):
         assert value not in command
         assert value not in dockerfile
         assert value not in output
-    assert command.count("--secret") == 3
+    assert command.count("--secret") == 4
     assert "npa_byof_repo_token" in command
-    assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 in command
+    assert "npa_byof_source_prune_path" in command
+    assert "BYOF_SOURCE_CACHE_KEY=" + "a" * 64 + "b" * 64 + "c" * 64 in command
     assert "type=secret,id=npa_byof_repo_token" in dockerfile
+    assert "type=secret,id=npa_byof_source_prune_path" in dockerfile
     assert "username=x-access-token" in dockerfile
     assert "password=" in dockerfile
     assert 'ARG OSS_REPO_URL=""' in dockerfile
     assert 'ARG OSS_REPO_REF=""' in dockerfile
     assert "private-byof" in dockerfile
+    assert '"commit":"<private-commit>"' in dockerfile
+    assert '"commit_sha256":"%s"' in dockerfile
+    assert '"source_prune_path":"%s"' in dockerfile
+    assert '"source_prune_path_sha256":"%s"' in dockerfile
+    assert '"source_pruned":%s' in dockerfile
+    assert '"git_objects_removed":%s' in dockerfile
+    assert "<private-source-prune-path>" in dockerfile
     assert "rm -rf /opt/byof/.git" in dockerfile
-    assert seen["redactions"] == (token, repo_url, repo_ref)
+    assert "BYOF_SOURCE_PRUNE_PATH=private-assets/render-only" not in command
+    assert seen["redactions"] == (
+        token,
+        repo_url,
+        repo_ref,
+        "private-assets/render-only",
+    )
     summary = json.loads(output)
     assert summary["repo_url"] == "<private-repository>"
     assert summary["source_identity"] == {
         "repository_sha256": "a" * 64,
         "ref_sha256": "b" * 64,
+        "source_prune_path_sha256": "c" * 64,
     }
+    assert summary["source_prune_path"] == "<private-source-prune-path>"
 
 
 def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
@@ -228,11 +344,14 @@ def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
     token_path = tmp_path / "token"
     url_path = tmp_path / "url"
     ref_path = tmp_path / "ref"
+    prune_path = tmp_path / "prune-path"
     for path, value in zip(
         (token_path, url_path, ref_path), private_values, strict=True
     ):
         path.write_text(value, encoding="utf-8")
         path.chmod(0o600)
+    prune_path.write_text("", encoding="utf-8")
+    prune_path.chmod(0o600)
 
     @contextmanager
     def fake_secrets(*_args, **_kwargs):
@@ -240,8 +359,10 @@ def test_failed_private_build_redacts_summary_stdout_stderr_and_exception(
             token=token_path,
             repo_url=url_path,
             repo_ref=ref_path,
+            source_prune_path=prune_path,
             repository_sha256="a" * 64,
             ref_sha256="b" * 64,
+            source_prune_path_sha256=hashlib.sha256(b"").hexdigest(),
             redaction_values=private_values,
         )
 
@@ -629,6 +750,7 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert "--solution-name" in cmd and "demo-solution" in cmd
     assert "--capability-name" in cmd and "demo-capability" in cmd
     assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    assert "--no-direct-launch" not in cmd
     env = seen.get("env")
     assert isinstance(env, dict)
     assert env["KUBECONFIG"] == "/tmp/kubeconfig"
@@ -637,6 +759,215 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["NPA_BYOF_K8S_NAMESPACE"] == "workbench"
     assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert env["AWS_ACCESS_KEY_ID"] == "key"
+
+
+def test_main_forces_libero_solution_smoke_through_managed_scheduler(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/example/project",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {
+                "kubeconfig": str(Path("/") / "tmp" / "kubeconfig"),
+                "context": "execution-context",
+                "namespace": "workbench",
+            },
+        )(),
+    )
+    monkeypatch.setattr(module, "storage_env_for_project", lambda *_a, **_k: {})
+
+    def fake_run(cmd, **_kwargs):
+        if str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            seen["cmd"] = list(cmd)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"submitted"}\n', stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "libero-managed-route",
+            "--skip-push",
+            *_libero_contract_args(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    cmd = seen["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd.count("--no-direct-launch") == 1
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--solution-name", "LIBERO"], "exact --solution-name libero"),
+        (["--solution-name", "libero", "--run-id", "short"], "SkyPilot run_id"),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "../libero-escape",
+            ],
+            "SkyPilot run_id",
+        ),
+        (
+            [
+                "--yaml",
+                "byof-solution-smoke-libero-b200-gpu",
+                "--run-id",
+                "generic-safe-run-id",
+            ],
+            "exact --solution-name libero",
+        ),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "libero-wrong-workload",
+                "--workload",
+                "datagen",
+                "--yaml",
+                str(LIBERO_YAML_PATH),
+            ],
+            "solution-smoke workload",
+        ),
+        (
+            [
+                "--solution-name",
+                "libero",
+                "--run-id",
+                "libero-wrong-profile",
+                "--workload",
+                "solution-smoke",
+                "--yaml",
+                "generic.yaml",
+            ],
+            "exact B200 solution-smoke profile",
+        ),
+    ],
+)
+def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
+    monkeypatch, capsys, extra, message
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+
+    assert module.main(["--skip-build", "--skip-run", *extra]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert message in result["error"]
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "message"),
+    [
+        ("--repo-url", "https://github.com/example/LIBERO.git", "repository contract"),
+        ("--repo-ref", "main", "source revision contract"),
+        ("--repo-auth", "github", "repository authentication contract"),
+        ("--base-profile", "isaac-lab", "base profile contract"),
+        ("--base-image", "ubuntu:22.04", "base image contract"),
+        ("--source-prune-path", "libero/other", "source prune path contract"),
+        ("--build-command", "true", "build command contract"),
+        ("--smoke-command", "true", "smoke command contract"),
+        ("--capability-name", "other", "capability contract"),
+        ("--smoke-artifact-name", "other.json", "smoke artifact contract"),
+        ("--task", "other", "task contract"),
+        ("--iterations", "2", "iteration count contract"),
+        ("--num-envs", "2", "environment count contract"),
+        ("--num-demos", "2", "demonstration count contract"),
+    ],
+)
+def test_main_binds_exact_libero_inputs_before_registry_or_build(
+    monkeypatch, capsys, tmp_path, flag, value, message
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+    arguments = [
+        "--run-id",
+        "libero-contract-refusal",
+        *_libero_contract_args(tmp_path),
+    ]
+    index = arguments.index(flag)
+    arguments[index + 1] = value
+
+    assert module.main(arguments) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert message in result["error"]
+
+
+def test_main_rejects_unreviewed_libero_profile_with_canonical_basename(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+    profile = tmp_path / "byof-solution-smoke-libero-b200-gpu.yaml"
+    profile.write_text("resources: {}\n", encoding="utf-8")
+    arguments = [
+        "--run-id",
+        "libero-profile-refusal",
+        *_libero_contract_args(tmp_path),
+    ]
+    index = arguments.index("--yaml")
+    arguments[index + 1] = str(profile)
+
+    assert module.main(arguments) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert "packaged B200 solution-smoke profile" in result["error"]
+
+
+def test_main_refuses_libero_skip_run_before_registry_or_build(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_a, **_k: pytest.fail("registry must not resolve before refusal"),
+    )
+
+    assert module.main(
+        [
+            "--run-id",
+            "libero-skip-run-refusal",
+            "--skip-run",
+            *_libero_contract_args(tmp_path),
+        ]
+    ) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert result["solution_name"] == "libero"
+    assert result["error"] == (
+        "LIBERO cannot use --skip-run because live qualification is mandatory"
+    )
 
 
 def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
@@ -1133,6 +1464,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_BASE_IMAGE_DIGEST=" for part in build_args)
     assert any(
         part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
     )
@@ -1173,9 +1505,17 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa.byof.build.v1" in text
     assert "build_command_executed" in text
     assert "build_command_sha256" in text
+    assert "base_image_reference" in text
+    assert "base_image_digest" in text
+    assert "base_image_digest_pinned" in text
+    assert 'org.opencontainers.image.base.name="${BYOF_BASE_IMAGE}"' in text
+    assert 'org.opencontainers.image.base.digest="${BYOF_BASE_IMAGE_DIGEST}"' in text
     assert "sha256sum" in text
     assert "npa_build_metadata.json" in text
     assert "npa_source_metadata.json" in text
+    assert "BYOF_SOURCE_PRUNE_PATH" in text
+    assert 'observed_commit="$(git -C /opt/byof rev-parse HEAD)"' in text
+    assert 'rm -rf -- "/opt/byof/${source_prune_path}" /opt/byof/.git' in text
     assert "printf" in text
     assert "/opt/byof" in text
     assert "USER ubuntu" in text
@@ -1187,12 +1527,344 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "mkdir -p /workspace" in text
     assert "openssh-server" in text
     assert "rsync" in text
+    assert "curl" in text
+    assert "wget" in text
+    assert "gcc" in text
+    assert "patch" in text
+    assert "pciutils" in text
+    assert "fuse3" in text
+    assert "linux-libc-dev" in text
     assert "netcat-openbsd" in text
+    assert "npa-skypilot-bootstrap-guard verify" in text
+    assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" in text
+    assert "--kill-after=5s" in text
     assert "ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+    assert (
+        'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"' in text
+    )
+
+
+def test_immutable_image_digest_accepts_only_exact_digest_suffix() -> None:
+    module = _load_module()
+    digest = "sha256:" + "a" * 64
+
+    assert (
+        module._immutable_image_digest(f"registry.example/team/image@{digest}")
+        == digest
+    )
+    assert module._immutable_image_digest("registry.example/team/image:latest") == ""
+    assert (
+        module._immutable_image_digest(f"registry.example/team/image@{digest}:tag")
+        == ""
+    )
+
+
+def test_dockerfile_refreshes_linux_libc_dev_without_broad_upgrade() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    install_layer = text.split(
+        "apt-get install -y --no-install-recommends", 1
+    )[1].split("&& rm -rf /var/lib/apt/lists/*", 1)[0]
+
+    assert "linux-libc-dev" in install_layer.split()
+    assert "linux-libc-dev=" not in install_layer
+    assert "apt-get upgrade" not in text
+    assert "apt-get dist-upgrade" not in text
+
+
+def test_dockerfile_refuses_missing_security_refresh_package() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    without_linux_libc_dev = text.replace(" linux-libc-dev", "", 1)
+
+    with pytest.raises(RuntimeError, match="missing required security refresh"):
+        module._validate_byof_image_security_refresh(without_linux_libc_dev)
+
+
+def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state = tmp_path / "bootstrap-apt.state"
+    contract_failure = tmp_path / "bootstrap-contract.failed"
+    sky_failure = tmp_path / "apt-ssh-setup.failed"
+    apt_complete = tmp_path / "apt-ssh-setup.complete"
+    apt_calls = tmp_path / "real-apt.calls"
+    real_apt = tmp_path / "real-apt-get"
+    real_apt.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$NPA_TEST_APT_CALLS\"\n",
+        encoding="utf-8",
+    )
+    real_apt.chmod(0o755)
+
+    dpkg_query = bin_dir / "dpkg-query"
+    dpkg_query.write_text(
+        """#!/bin/sh
+format=
+package=
+for argument in "$@"; do
+    case "$argument" in -f=*) format=${argument#-f=} ;; esac
+    package=$argument
+done
+if [ "${NPA_TEST_MISSING:-}" = netcat ]; then
+    case "$package" in netcat|netcat-openbsd|netcat-traditional) exit 1 ;; esac
+elif [ "$package" = "${NPA_TEST_MISSING:-}" ]; then
+    exit 1
+fi
+case "$format" in
+    '${Status}') printf '%s' 'install ok installed' ;;
+    '${Provides}')
+        if [ "${NPA_TEST_MISSING:-}" != fuse ]; then
+            printf '%s' 'fuse (= 3.10.5)'
+        fi
+        ;;
+    *) exit 2 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    dpkg_query.chmod(0o755)
+
+    for command_name in (
+        "sudo",
+        "sshd",
+        "rsync",
+        "service",
+        "curl",
+        "wget",
+        "nc",
+        "gcc",
+        "patch",
+        "lspci",
+        "fusermount",
+        "fusermount3",
+    ):
+        (bin_dir / command_name).symlink_to("/bin/true")
+
+    guard_text = module._skypilot_bootstrap_guard_script()
+    skypilot_tmp = Path("/") / "tmp"
+    replacements = {
+        "/usr/bin/apt-get": str(real_apt),
+        "/usr/bin/timeout": shutil.which("timeout") or "/usr/bin/timeout",
+        str(skypilot_tmp / "npa-skypilot-bootstrap-apt.state"): str(state),
+        str(skypilot_tmp / "npa-skypilot-bootstrap-contract.failed"): str(
+            contract_failure
+        ),
+        str(skypilot_tmp / "apt-ssh-setup.failed"): str(sky_failure),
+        str(skypilot_tmp / "apt_ssh_setup_complete"): str(apt_complete),
+    }
+    for source, target in replacements.items():
+        guard_text = guard_text.replace(source, target)
+
+    guard = bin_dir / "npa-skypilot-bootstrap-guard"
+    guard.write_text(guard_text, encoding="utf-8")
+    guard.chmod(0o755)
+    (bin_dir / "apt-get").symlink_to(guard)
+    (bin_dir / "timeout").symlink_to(guard)
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "NPA_TEST_APT_CALLS": str(apt_calls),
+        "NPA_TEST_MISSING": missing,
+        "SKYPILOT_POD_NODE_TYPE": "head",
+    }
+    return {
+        "apt_calls": apt_calls,
+        "bin_dir": bin_dir,
+        "contract_failure": contract_failure,
+        "env": env,
+        "guard": guard,
+        "sky_failure": sky_failure,
+        "state": state,
+    }
+
+
+@pytest.mark.parametrize(
+    "missing",
+    (
+        "rsync",
+        "curl",
+        "wget",
+        "netcat",
+        "gcc",
+        "patch",
+        "pciutils",
+        "fuse",
+        "fuse3",
+        "openssh-server",
+    ),
+)
+def test_bootstrap_guard_rejects_every_missing_skypilot_package(
+    tmp_path, missing
+) -> None:
+    module = _load_module()
+    assert module.SKYPILOT_BOOTSTRAP_PACKAGE_CAPABILITIES == (
+        "rsync",
+        "curl",
+        "wget",
+        "netcat",
+        "gcc",
+        "patch",
+        "pciutils",
+        "fuse",
+        "fuse3",
+        "openssh-server",
+    )
+    fixture = _bootstrap_guard_fixture(tmp_path, module, missing=missing)
+
+    result = subprocess.run(
+        [fixture["guard"], "verify"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 86
+    assert "NPA_SKYPILOT_BOOTSTRAP_FAILED status=86" in result.stderr
+    assert fixture["contract_failure"].is_file()
+    assert fixture["sky_failure"].is_file()
+
+
+def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    apt_get = fixture["bin_dir"] / "apt-get"
+
+    update = subprocess.run(
+        [apt_get, "update", "-o", "Acquire::Retries=0"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    install = subprocess.run(
+        [apt_get, "install", "-o", "Dpkg::Options::=--force-confold", "-y", "fuse"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert update.returncode == 0
+    assert install.returncode == 0
+    assert "operation=update" in update.stdout
+    assert "operation=install package=fuse provider=fuse3" in install.stdout
+    assert fixture["state"].read_text(encoding="utf-8") == "complete\n"
+    assert not fixture["apt_calls"].exists()
+
+    ordinary_apt = subprocess.run(
+        [apt_get, "update"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ordinary_apt.returncode == 0
+    assert fixture["apt_calls"].read_text(encoding="utf-8") == "update\n"
+
+
+def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    timeout_guard = fixture["bin_dir"] / "timeout"
+    guard_text = timeout_guard.resolve().read_text(encoding="utf-8")
+    timeout_guard.resolve().write_text(
+        guard_text.replace("--kill-after=5s", "--kill-after=0.2s"),
+        encoding="utf-8",
+    )
+    descendant_pid_path = tmp_path / "descendant.pid"
+    command = (
+        "trap '' TERM; "
+        "/bin/bash --noprofile --norc -c "
+        "'trap \"\" TERM; printf \"%s\\n\" \"$$\" > \"$1\"; while :; do :; done' "
+        f"descendant {descendant_pid_path} & wait"
+    )
+
+    result = subprocess.run(
+        [timeout_guard, "0.1s", "/bin/bash", "--noprofile", "--norc", "-c", command],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode in {124, 137}
+    assert "NPA_SKYPILOT_BOOTSTRAP_FAILED" in result.stderr
+    assert "detail=deadline-exceeded" in result.stderr
+    assert fixture["contract_failure"].is_file()
+    assert fixture["sky_failure"].is_file()
+    descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and Path(f"/proc/{descendant_pid}").exists():
+            state = Path(f"/proc/{descendant_pid}/stat").read_text().split()[2]
+            if state == "Z":
+                break
+            time.sleep(0.02)
+        if Path(f"/proc/{descendant_pid}").exists():
+            assert Path(f"/proc/{descendant_pid}/stat").read_text().split()[2] == "Z"
+    finally:
+        try:
+            os.kill(descendant_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["/absolute", "../escape", "assets/../escape", ".git/objects", "with space"],
+)
+def test_source_prune_path_rejects_unsafe_values(value: str) -> None:
+    module = _load_module()
+
+    with pytest.raises(argparse.ArgumentTypeError, match="safe relative repository path"):
+        module._source_prune_path(value)
+
+
+def test_source_prune_path_is_passed_to_the_clone_layer(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    build_args: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/example/project",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["docker", "build"]:
+            build_args.extend(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--repo-url",
+            "https://github.com/example/demo.git",
+            "--repo-ref",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--source-prune-path",
+            "assets/render-only",
+            "--skip-push",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 0
+    assert "BYOF_SOURCE_PRUNE_PATH=assets/render-only" in build_args
+    assert json.loads(capsys.readouterr().out)["source_prune_path"] == (
+        "assets/render-only"
+    )
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

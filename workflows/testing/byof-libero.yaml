@@ -1,0 +1,65 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-libero
+  description: >
+    Quarantined managed qualification path for the LIBERO public neutral
+    bootstrap. The image is not a supported release: an explicit immutable
+    acceptance candidate and manager-issued runtime-use decision are required
+    before the pinned source, runtime, demonstration, and task inputs can be
+    fetched into a non-root run cache.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/Lifelong-Robot-Learning/LIBERO.git"
+  repo_ref: "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  repo_auth: none
+  repo_token_env: ""
+  base_profile: prebuilt
+  base_image: "tool://libero"
+  build_command: ""
+  source_prune_path: ""
+  workload: solution-smoke
+  smoke_command: "/opt/npa/libero/smoke.sh"
+  solution_name: libero
+  capability_name: libero_spatial_bc_rnn_train_reload_heldout
+  smoke_artifact_name: libero-smoke.json
+  resource_profile_yaml: byof-solution-smoke-libero-b200-gpu
+  task: "libero_spatial/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 60
+  libero_acceptance_candidate_image: ""
+  libero_runtime_use_decision_file: ""
+  libero_runtime_use_decision_sha256: ""
+  libero_build_metadata_sha256: ""
+  output_root: s3://{{config.bucket}}/oss-solutions/libero
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+  smoke_uri: "{{config.output_root}}/{{run.id}}/libero-smoke.json"
+  checkpoint_uri: "{{config.output_root}}/{{run.id}}/libero-bc-rnn-smoke.pth"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: B200:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 100
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Submit through the managed scheduler and return its real scheduler job
+      identity. The host runner refuses an empty/unaccepted candidate before
+      image, cache, registry, or workload side effects.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.smoke_uri}}"
+        schema: npa.workbench.libero.bc-smoke.v1
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.libero.bc-checkpoint.v1
+    terminal: true

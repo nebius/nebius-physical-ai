@@ -433,6 +433,78 @@ def raw_task(**env):
                      "AWS_ENDPOINT_URL": "https://storage.eu-west1.nebius.cloud", **env}, "run": "true"}
 
 
+def libero_task(service_account: str | None) -> dict:
+    document = raw_task(BYOF_SOLUTION_NAME="libero")
+    if service_account is not None:
+        document["config"] = {
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {"serviceAccountName": service_account}
+                }
+            }
+        }
+    return document
+
+
+def libero_controller_config(service_account: str = "skypilot-service-account") -> dict:
+    return {
+        "kubernetes": {
+            "pod_config": {"spec": {"serviceAccountName": service_account}}
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "service_account",
+    [None, "", "default", "skypilot-service-account", "another-account"],
+)
+def test_libero_preflight_refuses_non_scoped_payload_account_before_storage(
+    provider, configured, service_account
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [libero_task(service_account)],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("service_account", ["", "default", "npa-byof-libero-payload"])
+def test_libero_preflight_requires_explicit_engine_controller_account(
+    provider, configured, service_account
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    with pytest.raises(ExecutionPreflightError, match="controller_service_account"):
+        preflight_skypilot_submission(
+            [libero_task("npa-byof-libero-payload")],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(service_account),
+        )
+    assert not provider.s3.calls
+
+
+def test_libero_preflight_accepts_split_payload_and_controller_accounts(
+    provider, configured
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    _, report, _ = preflight_skypilot_submission(
+        [libero_task("npa-byof-libero-payload")],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert provider.s3.calls
+
+
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])
 @pytest.mark.parametrize("shortfall", ["", "cpu", "memory"])
 def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
@@ -484,6 +556,59 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
         else:
             assert verified[1]["checks"]["gpu"] == "pass"
             assert provider.s3.calls
+
+
+def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
+    provider, configured, monkeypatch
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    inventory = KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("NVIDIA-B200",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("NVIDIA-B200",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": "B200:1", "cpus": 8, "memory": 32}
+    )
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config={"kubernetes": {"allowed_nodes": {"names": ["unit-node"]}}},
+    )
+
+    assert report["checks"]["gpu"] == "pass"
+    assert provider.s3.calls
 
 
 def test_raw_production_environment_supplies_exact_principal(provider, configured):

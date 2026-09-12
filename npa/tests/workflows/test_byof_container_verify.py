@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +23,9 @@ YAML_PATH = (
     / "profiles"
     / "byof-container-smoke-rtxpro.yaml"
 )
+LIBERO_YAML_PATH = YAML_PATH.with_name(
+    "byof-solution-smoke-libero-b200-gpu.yaml"
+)
 
 
 def _load_module():
@@ -35,7 +39,56 @@ def _load_module():
     return module
 
 
+def _indirect_submit_args(module, monkeypatch, tmp_path):
+    config_path = tmp_path / "skypilot.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
+    monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_a, **_k: [{"name": "task", "envs": {}, "resources": {}}],
+    )
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", lambda *_a: None
+    )
+    monkeypatch.setattr(
+        module,
+        "_write_default_k8s_config",
+        lambda *_a, **_k: str(config_path),
+    )
+    monkeypatch.setattr(
+        module,
+        "verify_solution_payload_service_accounts",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
+    monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    guard = SimpleNamespace(
+        isolated_config_dir=None,
+        mark_launched=lambda **_k: None,
+        teardown=lambda: module.CleanupResult(),
+    )
+    monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
+    monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_a: None)
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
+    return module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--run-id",
+            "human-run-name",
+            "--output-root",
+            "s3://bucket/prefix",
+            "--no-direct-launch",
+            "--no-cleanup",
+        ]
+    )
+
+
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
+    from npa.execution_preflight import skypilot_output_destinations
+
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
@@ -60,6 +113,12 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
     assert envs["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
+    assert json.loads(envs["NPA_EXECUTION_OUTPUTS"]) == [
+        {"uri": "s3://bucket/prefix/byof-demo/", "kind": "directory"}
+    ]
+    assert skypilot_output_destinations(docs) == {
+        "s3://bucket/prefix/byof-demo/": "directory"
+    }
     assert envs["NPA_S3_BUCKET"] == "bucket"
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert "AWS_ACCESS_KEY_ID" not in envs
@@ -67,6 +126,450 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert "AWS_SESSION_TOKEN" not in envs
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in envs
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_render_workflow_materializes_libero_payload_account(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
+
+    docs = module.render_workflow(
+        LIBERO_YAML_PATH,
+        run_id="libero-demo",
+        output_root="s3://bucket/prefix",
+        solution_name="libero",
+    )
+
+    task = docs[1]
+    assert "kubernetes" not in task["resources"]
+    assert task["config"]["kubernetes"]["pod_config"]["spec"][
+        "serviceAccountName"
+    ] == "npa-byof-libero-payload"
+
+
+def test_libero_profile_refuses_missing_or_mistyped_solution_name(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_a, **_k: [{"execution": "serial"}, {"name": "task"}],
+    )
+    for solution_name in ("", "not-libero", "LIBERO", " libero", "libero "):
+        args = module._parse_args(
+            [
+                "--yaml",
+                str(LIBERO_YAML_PATH),
+                "--run-id",
+                "libero-identity-refusal",
+                "--output-root",
+                "s3://bucket/prefix",
+                "--solution-name",
+                solution_name,
+                "--render-only",
+            ]
+        )
+        with pytest.raises(ValueError, match="requires --solution-name libero"):
+            module._submit_and_wait(args)
+
+
+@pytest.mark.parametrize("run_id", ["short", "libero.bad", "../libero-escape"])
+def test_libero_profile_refuses_unsafe_run_id_before_render_output(
+    monkeypatch, run_id
+) -> None:
+    module = _load_module()
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(LIBERO_YAML_PATH),
+            "--run-id",
+            run_id,
+            "--solution-name",
+            "libero",
+            "--render-only",
+        ]
+    )
+    with pytest.raises(ValueError, match="SkyPilot run_id"):
+        module._submit_and_wait(args)
+
+
+def test_libero_payload_account_triggers_contract_independent_of_filename() -> None:
+    module = _load_module()
+    args = SimpleNamespace(solution_name="", yaml_path=Path("generic.yaml"))
+    documents = [
+        {
+            "config": {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {"serviceAccountName": "npa-byof-libero-payload"}
+                    }
+                }
+            }
+        }
+    ]
+
+    assert module._is_libero_invocation(args, documents) is True
+
+
+def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None:
+    module = _load_module()
+    state = tmp_path / "isolated-state"
+    state.mkdir()
+    state.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-private"):
+        module._libero_isolated_state_root(state)
+
+    state.chmod(0o700)
+    assert module._libero_isolated_state_root(state) == state.resolve()
+    with pytest.raises(ValueError, match="requires an isolated"):
+        module._libero_isolated_state_root(None)
+
+
+def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
+    module = _load_module()
+    args = SimpleNamespace(
+        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False, cleanup=False,
+    )
+    documents = [{"execution": "serial"}, {"name": "task"}]
+
+    with pytest.raises(ValueError, match="requires verified managed cleanup"):
+        module._bind_libero_runtime_contract(
+            args, documents, global_config={}, infra="k8s/context"
+        )
+
+
+def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
+    args = SimpleNamespace(
+        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False, cleanup=True,
+    )
+
+    with pytest.raises(ValueError, match="verified isolated Sky API shutdown"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"name": "task"}],
+            global_config={},
+            infra="k8s/context",
+        )
+
+
+def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    runtime_manifest_sha256 = module.hashlib.sha256(
+        module.LIBERO_RUNTIME_MANIFEST.read_bytes()
+    ).hexdigest()
+    decision = {
+        "schema": "npa.libero.runtime-use-decision.v1",
+        "solution": "libero",
+        "decision": "authorized",
+        "runtime_fetch_authorized": True,
+        "runtime_manifest_sha256": runtime_manifest_sha256,
+        "source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+        "authorized_boundaries": sorted(module.LIBERO_DECISION_BOUNDARIES),
+        "manager_receipt_sha256": "sha256:" + "7" * 64,
+    }
+    decision_path = tmp_path / "runtime-use-decision.json"
+    decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
+    decision_path.write_bytes(decision_bytes)
+    decision_path.chmod(0o600)
+    decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", str(decision_path))
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", "8" * 64)
+    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig.write_text("payload proof\n", encoding="utf-8")
+    kubeconfig.chmod(0o600)
+    execution_kubeconfig = tmp_path / "execution-kubeconfig"
+    execution_kubeconfig.write_text("execution proof\n", encoding="utf-8")
+    monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
+    monkeypatch.setattr(module, "_libero_payload_kubeconfig", lambda: kubeconfig)
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda path, **_kwargs: (
+            "payload-proof-context",
+            "isolated-namespace",
+            "6" * 64,
+        )
+        if path == kubeconfig
+        else ("execution-context", "", "6" * 64),
+    )
+    rbac = {
+        "service_account_uid_sha256": "1" * 64,
+        "role_uid_sha256": "2" * 64,
+        "role_binding_uid_sha256": "3" * 64,
+        "rbac_spec_sha256": "4" * 64,
+        "namespace_sha256": "5" * 64,
+    }
+    monkeypatch.setattr(module, "_libero_rbac_evidence", lambda *_a: dict(rbac))
+    args = SimpleNamespace(solution_name="libero", direct_launch=False)
+    documents = [{"execution": "serial"}, {"envs": {}}]
+    expected_evidence = {
+        **rbac,
+        "cluster_identity_sha256": "6" * 64,
+        "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest(),
+    }
+    for name, value in expected_evidence.items():
+        monkeypatch.setenv(f"NPA_LIBERO_EXPECTED_{name.upper()}", value)
+
+    evidence = module._bind_libero_runtime_contract(
+        args,
+        documents,
+        global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+        infra="k8s/execution-context",
+    )
+
+    assert evidence == expected_evidence
+    expected_envs = {
+        f"NPA_LIBERO_EXPECTED_{key.upper()}": value
+        for key, value in evidence.items()
+    }
+    expected_envs.update(
+        {
+            "NPA_LIBERO_RUNTIME_USE_DECISION_B64": module.base64.b64encode(
+                decision_bytes
+            ).decode("ascii"),
+            "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+            "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256": "8" * 64,
+        }
+    )
+    assert documents[1]["envs"] == expected_envs
+
+    invalid_decision = {**decision, "authorized_boundaries": ["source"]}
+    invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
+    decision_path.write_bytes(invalid_bytes)
+    decision_path.chmod(0o600)
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        module.hashlib.sha256(invalid_bytes).hexdigest(),
+    )
+    with pytest.raises(ValueError, match="decision identity is invalid"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    decision_path.write_bytes(decision_bytes)
+    decision_path.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
+
+    for direct, allowed in (
+        (True, {"names": ["worker"]}),
+        (False, None),
+        (False, {"names": ["worker-a", "worker-b"]}),
+        (False, {"names": [" worker"]}),
+        (False, {"names": ["worker "]}),
+    ):
+        args.direct_launch = direct
+        with pytest.raises(ValueError):
+            module._bind_libero_runtime_contract(
+                args,
+                [{"execution": "serial"}, {"envs": {}}],
+                global_config={"kubernetes": {"allowed_nodes": allowed}},
+                infra="k8s/execution-context",
+            )
+
+    args.direct_launch = False
+    missing_variable = "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256"
+    monkeypatch.delenv(missing_variable)
+    with pytest.raises(ValueError, match="owner-receipted hash"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    monkeypatch.setenv(missing_variable, expected_evidence["role_binding_uid_sha256"])
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", "f" * 64)
+    with pytest.raises(ValueError, match="differs for role_uid_sha256"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256", expected_evidence["role_uid_sha256"]
+    )
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda path, **_kwargs: (
+            ("payload-proof-context", "isolated-namespace", "6" * 64)
+            if path == kubeconfig
+            else ("execution-context", "", "7" * 64)
+        ),
+    )
+    with pytest.raises(ValueError, match="different clusters"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+
+    monkeypatch.setattr(
+        module,
+        "_libero_context_contract",
+        lambda _path, **_kwargs: (
+            "execution-context",
+            "isolated-namespace",
+            "6" * 64,
+        ),
+    )
+    with pytest.raises(ValueError, match="explicitly separated"):
+        module._bind_libero_runtime_contract(
+            args,
+            [{"execution": "serial"}, {"envs": {}}],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+        )
+
+
+def test_libero_payload_kubeconfig_must_be_private_regular_file(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig.write_text("proof\n", encoding="utf-8")
+    kubeconfig.chmod(0o644)
+    monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(kubeconfig))
+
+    with pytest.raises(ValueError, match="owner-private regular file"):
+        module._libero_payload_kubeconfig()
+
+    kubeconfig.chmod(0o600)
+    assert module._libero_payload_kubeconfig() == kubeconfig.resolve()
+
+    monkeypatch.setattr(module.os, "getuid", lambda: kubeconfig.stat().st_uid + 1)
+    with pytest.raises(ValueError, match="owner-private regular file"):
+        module._libero_payload_kubeconfig()
+
+
+def test_libero_sky_config_uses_only_explicit_mode_private_owner_input(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    args = SimpleNamespace(config_path="")
+    config = tmp_path / "skypilot-config"
+    config.write_text("kubernetes: {}\n", encoding="utf-8")
+    config.chmod(0o644)
+    monkeypatch.setenv("NPA_LIBERO_SKYPILOT_CONFIG", str(config))
+
+    with pytest.raises(ValueError, match="owner-private regular file"):
+        module._libero_global_config_path(args)
+
+    config.chmod(0o600)
+    assert module._libero_global_config_path(args) == str(config.resolve())
+    monkeypatch.delenv("NPA_LIBERO_SKYPILOT_CONFIG")
+    with pytest.raises(ValueError, match="owner-supplied"):
+        module._libero_global_config_path(args)
+
+
+def test_libero_context_contract_binds_server_and_ca_without_exposing_them(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    config = {
+        "current-context": "payload-context",
+        "contexts": [
+            {
+                "name": "payload-context",
+                "context": {"cluster": "cluster", "namespace": "isolated"},
+            }
+        ],
+        "clusters": [
+            {
+                "name": "cluster",
+                "cluster": {
+                    "server": "https://cluster.example",
+                    "certificate-authority-data": "base64-ca",
+                },
+            }
+        ],
+    }
+    seen: dict[str, object] = {}
+
+    def kubectl_json(arguments, *, purpose, kubeconfig):
+        seen.update(arguments=arguments, purpose=purpose, kubeconfig=kubeconfig)
+        return config
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    path = Path("/private/payload-kubeconfig")
+    context, namespace, identity = module._libero_context_contract(
+        path, require_namespace=True
+    )
+
+    assert (context, namespace) == ("payload-context", "isolated")
+    assert identity == module._sha256_json(
+        {
+            "server": "https://cluster.example",
+            "certificate_authority_data": "base64-ca",
+        }
+    )
+    assert seen == {
+        "arguments": ["config", "view", "--minify", "--flatten", "--raw"],
+        "purpose": "selected-context",
+        "kubeconfig": path,
+    }
+
+    config["clusters"][0]["cluster"]["insecure-skip-tls-verify"] = True
+    with pytest.raises(RuntimeError, match="strict TLS identity"):
+        module._libero_context_contract(path, require_namespace=True)
+
+
+def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None:
+    module = _load_module()
+    namespace = "isolated-namespace"
+    objects = {
+        "serviceaccount": {
+            "metadata": {"uid": "account-uid"},
+        },
+        "role": {
+            "metadata": {"uid": "role-uid"},
+            "rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}],
+        },
+        "rolebinding": {
+            "metadata": {"uid": "binding-uid"},
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "npa-byof-libero-payload",
+                    "namespace": namespace,
+                }
+            ],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": "npa-byof-libero-pod-reader",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_libero_resource",
+        lambda _kubeconfig, _context, _namespace, kind, _name: objects[kind],
+    )
+
+    kubeconfig = Path("/private/payload-kubeconfig")
+    evidence = module._libero_rbac_evidence(
+        kubeconfig, "payload-context", namespace
+    )
+    assert evidence["service_account_uid_sha256"] == module.hashlib.sha256(
+        b"account-uid"
+    ).hexdigest()
+
+    objects["role"]["rules"][0]["verbs"] = ["get", "list"]
+    with pytest.raises(RuntimeError, match="broader"):
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
+    objects["role"]["rules"][0]["verbs"] = ["get"]
+    objects["rolebinding"]["subjects"][0]["name"] = "default"
+    with pytest.raises(RuntimeError, match="differs"):
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace)
 
 
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:
@@ -281,6 +784,51 @@ def test_wait_timeout_zero_checks_status_once(monkeypatch) -> None:
     }
 
 
+def test_wait_preserves_isolated_scheduler_identity(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "config.yaml"
+    observed: dict[str, object] = {}
+
+    def status(job_id, **kwargs):
+        observed.update(job_id=job_id, **kwargs)
+        return SimpleNamespace(status="SUCCEEDED")
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    module._wait_for_terminal(
+        "73",
+        sky_bin="sky",
+        isolated_config_dir=isolated,
+        config_path=config,
+        wait_timeout=0,
+        poll_interval=1,
+    )
+
+    assert observed == {
+        "job_id": "73",
+        "sky_bin": "sky",
+        "isolated_config_dir": isolated,
+        "config_path": config,
+    }
+
+
+def test_wait_treats_verified_absence_as_terminal_failure(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="ABSENT"),
+    )
+
+    final, diagnostics = module._wait_for_terminal(
+        "73", sky_bin="sky", wait_timeout=-1, poll_interval=1
+    )
+
+    assert final.status == "ABSENT"
+    assert diagnostics["terminal"] is True
+    assert diagnostics["polls"] == 1
+
+
 def test_positive_wait_is_bounded_and_reports_stuck_state(monkeypatch) -> None:
     module = _load_module()
     clock = {"now": 100.0}
@@ -327,6 +875,808 @@ def test_wait_timeout_less_than_negative_one_is_rejected() -> None:
         module._wait_for_terminal(
             "run", sky_bin="sky", wait_timeout=-2, poll_interval=1
         )
+
+
+def test_managed_cleanup_cancels_and_drains_exact_job_before_down(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    calls: list[object] = []
+    statuses = iter(["RUNNING", "CANCELLING", "CANCELLED"])
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "config.yaml"
+
+    def status(job_id, **kwargs):
+        calls.append(("status", job_id, kwargs))
+        return SimpleNamespace(status=next(statuses))
+
+    def cancel(**kwargs):
+        calls.append(("cancel", kwargs))
+        return {"cancel_returncode": 0}
+
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(module, "cancel_workflow_job", cancel)
+
+    def verified_absence(**_kwargs):
+        calls.append("verify-absent")
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        verified_absence,
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=isolated,
+        config_path=config,
+        poll_interval=1,
+    )
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
+    assert calls[-2:] == ["down", "verify-absent"]
+    cancel_call = next(call for call in calls if call[0] == "cancel")[1]
+    assert cancel_call == {
+        "sky_bin": "sky",
+        "job_id": "73",
+        "run_id": "human-run-name",
+        "isolated_config_dir": isolated,
+        "config_path": config,
+        "timeout": 10,
+        "poll_seconds": 1.0,
+        "also_down_cluster": False,
+    }
+    assert [
+        call[1] for call in calls if isinstance(call, tuple) and call[0] == "status"
+    ] == [
+        "73",
+        "73",
+        "73",
+    ]
+
+
+def test_managed_cleanup_preserves_clusters_when_exact_cancel_fails(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    down = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="RUNNING"),
+    )
+    monkeypatch.setattr(
+        module, "cancel_workflow_job", lambda **_k: {"cancel_returncode": 1}
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: down.append(True) or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert result.errors == ["exact managed-job cancellation failed"]
+    assert down == []
+
+
+def test_managed_cleanup_preserves_clusters_when_exact_cancel_raises(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    down = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="RUNNING"),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: (_ for _ in ()).throw(TypeError("cancel unavailable")),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: down.append(True) or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73", teardown_guard=guard, sky_bin="sky",
+        isolated_config_dir=None, config_path=None, poll_interval=1,
+    )
+
+    assert result.errors == ["exact managed-job cancellation raised unexpectedly"]
+    assert down == []
+
+
+def test_managed_cleanup_reports_teardown_exception_without_absence_claim(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="CANCELLED"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        lambda **_k: pytest.fail("absence cannot be checked after teardown failure"),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: (_ for _ in ()).throw(OSError("teardown failed")),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73", teardown_guard=guard, sky_bin="sky",
+        isolated_config_dir=None, config_path=None, poll_interval=1,
+    )
+
+    assert result.errors == ["run-cluster teardown raised unexpectedly"]
+    assert result.remote_absence_verified is False
+
+
+def test_managed_cleanup_preserves_clusters_on_ambiguous_controller_status(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="FAILED_CONTROLLER"),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert result.errors == [
+        "managed job did not reach a verified terminal or absent state; "
+        "preserving its clusters"
+    ]
+    assert calls == ["cancel"]
+
+
+def test_managed_cleanup_cancels_after_status_exception_then_proves_drain(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    statuses = iter(
+        [subprocess.TimeoutExpired(["sky", "jobs", "queue"], 1), "CANCELLED"]
+    )
+
+    def status(*_args, **_kwargs):
+        value = next(statuses)
+        if isinstance(value, Exception):
+            raise value
+        return SimpleNamespace(status=value)
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_managed_clusters_absent",
+        lambda **_k: calls.append("verify") or module.CleanupResult(),
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is True
+    assert calls == ["cancel", "down", "verify"]
+
+
+def test_managed_cleanup_preserves_clusters_after_persistent_status_exception(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("status unavailable")),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert "could not be verified" in result.errors[0]
+    assert calls == ["cancel"]
+
+
+@pytest.mark.parametrize(
+    "status_failure",
+    [None, SimpleNamespace(), TypeError("malformed status")],
+)
+def test_managed_cleanup_cancels_on_malformed_or_unlisted_status_failure(
+    monkeypatch, status_failure
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+
+    def status(*_args, **_kwargs):
+        if isinstance(status_failure, Exception):
+            raise status_failure
+        return status_failure
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: calls.append("cancel") or {"cancel_returncode": 0},
+    )
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: calls.append("down") or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert "could not be verified" in result.errors[0]
+    assert calls == ["cancel"]
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected_error"),
+    [
+        ("not-json", "was not exact JSON"),
+        ('{"unexpected": []}', "invalid schema"),
+        ('{"clusters": [], "error": "denied"}', "invalid schema"),
+        ('[{"status": "UP"}]', "invalid row"),
+        ('[{"name": " human-run-name-worker "}]', "invalid row"),
+        ('[{"name": "human-run-name-worker\\u0000"}]', "invalid row"),
+        (
+            '[{"name": "unrelated", "cluster": "human-run-name-worker"}]',
+            "ambiguous name row",
+        ),
+        (
+            '[{"name": "unrelated", "error": "permission denied"}]',
+            "contradictory error metadata",
+        ),
+        ('[{"name": "unrelated", "error": ""}]', "contradictory error metadata"),
+        ('[{"name": "unrelated", "errors": []}]', "contradictory error metadata"),
+        ('[{"name": "unrelated", "exception": null}]', "contradictory error metadata"),
+        ('[{"name": "human-run-name-worker"}]', "still contains"),
+    ],
+)
+def test_post_teardown_inventory_refuses_ambiguous_or_present_state(
+    monkeypatch, stdout, expected_error
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            ["sky", "status"], 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name",
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        timeout=10,
+    )
+
+    assert result.ok is False
+    assert expected_error in result.errors[0]
+    assert result.remote_absence_verified is False
+
+
+def test_post_teardown_inventory_proves_exact_run_absence(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "config.yaml"
+    observed = {}
+
+    def run(cmd, **kwargs):
+        observed.update(cmd=cmd, kwargs=kwargs)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='[{"name": "unrelated-cluster"}]', stderr=""
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name",
+        sky_bin="sky",
+        isolated_config_dir=isolated,
+        config_path=config,
+        timeout=10,
+    )
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
+    assert observed["cmd"] == [
+        "sky",
+        "status",
+        "--config",
+        str(config),
+        "--refresh",
+        "--output",
+        "json",
+    ]
+    assert observed["kwargs"]["env"]["HOME"] == str(isolated / "home")
+
+
+def test_post_teardown_inventory_exception_keeps_absence_unverified(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["sky", "status"], 1)
+        ),
+    )
+
+    result = module._verify_managed_clusters_absent(
+        run_id="human-run-name", sky_bin="sky", isolated_config_dir=None,
+        config_path=None, timeout=1,
+    )
+
+    assert result.errors == ["post-teardown SkyPilot cluster inventory raised"]
+    assert result.remote_absence_verified is False
+
+
+def test_managed_cleanup_preserves_resources_without_scheduler_id() -> None:
+    module = _load_module()
+    down = []
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        teardown=lambda: down.append(True) or module.CleanupResult(),
+    )
+
+    result = module._cancel_then_teardown_managed_job(
+        "",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+
+    assert result.ok is False
+    assert "preserving" in result.errors[0]
+    assert down == []
+
+
+def test_submit_waits_on_scheduler_id_not_human_run_name(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    isolated.chmod(0o700)
+    args.isolated_config_dir = str(isolated)
+    observed: dict[str, object] = {"resolve_calls": 0}
+
+    def resolve_isolated(value):
+        observed["resolve_calls"] = int(observed["resolve_calls"]) + 1
+        assert value == str(isolated)
+        return isolated.resolve()
+
+    def guard_factory(**kwargs):
+        observed["guard_isolated"] = kwargs["isolated_config_dir"]
+        return SimpleNamespace(
+            run_id="human-run-name",
+            timeout=10,
+            isolated_config_dir=kwargs["isolated_config_dir"],
+            mark_launched=lambda **_k: None,
+            teardown=lambda: module.CleanupResult(),
+        )
+
+    def submit(_path, run_id, **kwargs):
+        observed["submitted_run_id"] = run_id
+        observed["submitted_isolated"] = kwargs["isolated_config_dir"]
+        return SimpleNamespace(job_id="73", log_paths={})
+
+    def wait(scheduler_job_id, **kwargs):
+        observed["waited_job_id"] = scheduler_job_id
+        observed["waited_isolated"] = kwargs["isolated_config_dir"]
+        return SimpleNamespace(status="SUCCEEDED"), {"terminal": True}
+
+    monkeypatch.setattr(module, "resolve_isolated_config_dir", resolve_isolated)
+    monkeypatch.setattr(module, "SignalTeardown", guard_factory)
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_wait_for_terminal", wait)
+
+    assert module._submit_and_wait(args) == 0
+    assert observed == {
+        "submitted_run_id": "human-run-name",
+        "submitted_isolated": isolated.resolve(),
+        "waited_job_id": "73",
+        "waited_isolated": isolated.resolve(),
+        "guard_isolated": isolated.resolve(),
+        "resolve_calls": 1,
+    }
+
+
+def test_libero_refuses_isaac_lab_precheck_failure_override(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    isolated.chmod(0o700)
+    args.isolated_config_dir = str(isolated)
+    args.solution_name = "libero"
+    monkeypatch.setenv("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
+    monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
+    monkeypatch.setattr(
+        module, "_libero_global_config_path", lambda _args: _args.config_path
+    )
+    monkeypatch.setattr(module, "_bind_libero_runtime_contract", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (
+            SimpleNamespace(status="FAILED_PRECHECKS"),
+            {"terminal": True},
+        ),
+    )
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["final"]["status"] == "FAILED_PRECHECKS"
+
+
+def test_submit_refuses_empty_scheduler_id(monkeypatch, tmp_path, capsys) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: pytest.fail("waiter must not run without a scheduler ID"),
+    )
+
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["submit"] == {
+        "error_type": "ValueError",
+        "scheduler_job_id_recovered": False,
+        "status": "failed",
+    }
+
+
+@pytest.mark.parametrize("job_id", [" 73", "73 ", "human-run-name", "0", -1])
+def test_submit_refuses_nonexact_numeric_scheduler_id(
+    monkeypatch, tmp_path, capsys, job_id
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id=job_id, log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: pytest.fail("waiter must receive only an exact job ID"),
+    )
+
+    assert module._submit_and_wait(args) == 2
+    assert json.loads(capsys.readouterr().out)["submit"]["status"] == "failed"
+
+
+def test_submit_error_recovers_exact_scheduler_id_and_config_for_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    isolated = tmp_path / "isolated"
+    generated_config = (
+        isolated / "submissions" / "human-run-name" / "skypilot-config.yaml"
+    )
+    generated_config.parent.mkdir(parents=True)
+    generated_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    generated_config.chmod(0o600)
+    args.isolated_config_dir = str(isolated)
+    observed: dict[str, object] = {}
+    transaction = SimpleNamespace(job_id="73")
+
+    def submit(*_args, **_kwargs):
+        raise module.SkyPilotSubmitError(
+            "reconciled failure",
+            transaction=transaction,
+        )
+
+    def cleanup(scheduler_job_id, **kwargs):
+        observed.update(job_id=scheduler_job_id, config_path=kwargs["config_path"])
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == {"job_id": "73", "config_path": generated_config}
+    assert summary["submit"]["scheduler_job_id_recovered"] is True
+    assert summary["submit"]["reconciled_scheduler_job_id"] is True
+    assert summary["submit"]["generated_config_recovered"] is True
+    assert summary["cleanup"]["verified"] is True
+    assert summary["cleanup"]["remote_absence_verified"] is True
+
+
+def test_submit_error_preserves_when_generated_config_cannot_be_recovered(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    args.isolated_config_dir = str(isolated)
+    observed: list[str] = []
+
+    def submit(*_args, **_kwargs):
+        raise module.SkyPilotSubmitError(
+            "reconciled failure",
+            transaction=SimpleNamespace(job_id="73"),
+        )
+
+    def cleanup(scheduler_job_id, **_kwargs):
+        observed.append(scheduler_job_id)
+        result = module.CleanupResult()
+        result.errors.append("exact config unavailable; resources preserved")
+        return result
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == [""]
+    assert summary["submit"]["reconciled_scheduler_job_id"] is True
+    assert summary["submit"]["scheduler_job_id_recovered"] is False
+    assert summary["submit"]["generated_config_recovered"] is False
+    assert summary["cleanup"]["remote_absence_verified"] is False
+
+
+def test_wait_exception_emits_failure_and_cleans_exact_scheduler_id(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    observed: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("status failed")),
+    )
+
+    def cleanup(scheduler_job_id, **_kwargs):
+        observed.append(scheduler_job_id)
+        result = module.CleanupResult()
+        result.verified = True
+        result.remote_absence_verified = True
+        return result
+
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup)
+
+    assert module._submit_and_wait(args) == 2
+    summary = json.loads(capsys.readouterr().out)
+    assert observed == ["73"]
+    assert summary["submit"]["error_type"] == "RuntimeError"
+    assert summary["cleanup"]["verified"] is True
+
+
+def test_submit_returns_failure_when_exact_cleanup_is_not_verified(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_a, **_k: SimpleNamespace(status="SUCCEEDED"),
+    )
+
+    def failed_teardown():
+        result = module.CleanupResult()
+        result.errors.append("cluster absence was not verified")
+        return result
+
+    guard = SimpleNamespace(
+        run_id="human-run-name",
+        timeout=10,
+        isolated_config_dir=None,
+        config_path=None,
+        mark_launched=lambda **_k: None,
+        teardown=failed_teardown,
+    )
+    monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["cleanup"] == {
+        "errors": ["cluster absence was not verified"],
+        "ok": False,
+        "remote_absence_verified": False,
+        "resources_removed": [],
+        "verified": False,
+    }
+
+
+def test_submit_requires_and_emits_verified_remote_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (SimpleNamespace(status="SUCCEEDED"), {"terminal": True}),
+    )
+    cleanup = module.CleanupResult()
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
+    monkeypatch.setattr(
+        module, "_cancel_then_teardown_managed_job", lambda *_a, **_k: cleanup
+    )
+
+    assert module._submit_and_wait(args) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["cleanup"] == {
+        "errors": [],
+        "ok": True,
+        "remote_absence_verified": True,
+        "resources_removed": [],
+        "verified": True,
+    }
+
+
+def test_submit_rejects_error_free_but_unverified_cleanup(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_a, **_k: (SimpleNamespace(status="SUCCEEDED"), {"terminal": True}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cancel_then_teardown_managed_job",
+        lambda *_a, **_k: module.CleanupResult(),
+    )
+
+    assert module._submit_and_wait(args) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["cleanup"]["ok"] is False
+    assert summary["cleanup"]["verified"] is False
+    assert summary["cleanup"]["remote_absence_verified"] is False
 
 
 def test_render_workflow_normalizes_docker_image_for_summary(monkeypatch) -> None:
@@ -395,19 +1745,27 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
     module = _load_module()
     seen: list[list[str]] = []
+    environments: list[tuple[Path | None, dict[str, str]]] = []
 
     def fake_run(cmd, **kwargs):
-        del kwargs
         seen.append(list(cmd))
+        environments.append((isolated, dict(kwargs["env"])))
         return subprocess.CompletedProcess(
             cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr=""
         )
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        module,
+        "sky_environment",
+        lambda _isolated: {},
+    )
+    isolated = Path("/owner/isolated-sky-state")
     module._ensure_infra_enabled(
         sky_bin="/opt/sky",
         infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
+        isolated_config_dir=isolated,
     )
 
     assert seen == [
@@ -422,6 +1780,35 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
             "/tmp/skypilot.yaml",
         ],
     ]
+    assert [root for root, _env in environments] == [isolated, isolated]
+    assert environments[0][1]["SKYPILOT_GLOBAL_CONFIG"] == "/tmp/skypilot.yaml"
+
+
+def test_stop_sky_api_fails_closed_and_binds_exact_config(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "generated.yaml"
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(module, "sky_environment", lambda root: {"ROOT": str(root)})
+
+    def fail(cmd, **kwargs):
+        observed.update(cmd=list(cmd), env=dict(kwargs["env"]))
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="failed")
+
+    monkeypatch.setattr(module.subprocess, "run", fail)
+    with pytest.raises(module.SkyPilotConfigError, match="absence is unverified"):
+        module._stop_sky_api(
+            sky_bin="/opt/sky",
+            isolated_config_dir=isolated,
+            config_path=config,
+        )
+    assert observed["cmd"] == ["/opt/sky", "api", "stop"]
+    assert observed["env"] == {
+        "ROOT": str(isolated),
+        "SKYPILOT_GLOBAL_CONFIG": str(config),
+    }
 
 
 def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
@@ -627,6 +2014,7 @@ def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
     text = Path(config_path).read_text(encoding="utf-8")
     assert "imagePullSecrets" in text
     assert "agent-sa" in text
+    assert "serviceAccountName: skypilot-service-account" in text
     assert "kubectl create secret docker-registry" not in text
     assert "allowed_contexts" in text
     assert "customer-mk8s" in text
@@ -670,6 +2058,11 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     monkeypatch.setenv("KUBECONFIG", original)
     monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "1")
     monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    isolated = tmp_path / "isolated-state"
+    isolated.mkdir()
+    monkeypatch.setattr(
+        module, "resolve_isolated_config_dir", lambda _value: isolated
+    )
     monkeypatch.setattr(module, "_default_run_id", lambda: "byof-restore")
     monkeypatch.setattr(
         module,
@@ -688,8 +2081,10 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
         module, "_normalize_kubeconfig_current_context", _leak_kubeconfig
     )
     monkeypatch.setattr(module, "_default_infra", lambda: "k8s/demo")
+    config_path = tmp_path / "skypilot.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
-        module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml"
+        module, "_write_default_k8s_config", lambda *_a, **_k: str(config_path)
     )
     monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
     monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
@@ -702,13 +2097,20 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
-    monkeypatch.setattr(module, "sky_environment", lambda *_a, **_k: os.environ.copy())
+    environment_roots: list[Path | None] = []
+    monkeypatch.setattr(
+        module,
+        "sky_environment",
+        lambda root: environment_roots.append(root) or os.environ.copy(),
+    )
 
     args = module._parse_args(
         [
             "--yaml",
             str(YAML_PATH),
             "--direct-launch",
+            "--isolated-config-dir",
+            str(isolated),
             "--output-root",
             "s3://bucket/prefix",
         ]
@@ -716,3 +2118,4 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     assert module._submit_and_wait(args) == 0
     assert os.environ.get("KUBECONFIG") == original
     assert ["/opt/sky", "api", "stop"] in seen_cmds
+    assert environment_roots == [isolated]

@@ -1,0 +1,32 @@
+{
+  "schema": "npa.workbench.image-manifest.v1",
+  "tool": "libero",
+  "image_name": "npa-libero",
+  "version": "public-neutral-bootstrap-unbuilt",
+  "status": "quarantined_unbuilt_unvalidated",
+  "redistribution": "public",
+  "payload": "neutral_bootstrap_only",
+  "source_revision": "",
+  "oci_digest": "",
+  "gpu_validation": null,
+  "anonymous_pull_verified": false,
+  "base_linux_amd64_manifest": "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496",
+  "base_rootfs_material": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+  "base_provenance": {
+    "repository": "index.docker.io/library/python",
+    "blob_sha256": "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b",
+    "predicate_type": "https://slsa.dev/provenance/v0.2",
+    "builder_id": "https://github.com/docker-library",
+    "source_revision": "688a0b86bb44289df16a363e9f41d90514c1a5f9"
+  },
+  "base_sbom": {
+    "format": "https://spdx.dev/Document",
+    "blob_sha256": "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
+  },
+  "runtime_payloads_baked": false,
+  "runtime_use_decision_required": true,
+  "runtime_manifest_sha256": "6112d8c26e4c1ee5523b35a285d492047dc71f77f9998eabe99a5d963ecdb712",
+  "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+  "governing_terms_count": 7,
+  "catalog_release": false
+}

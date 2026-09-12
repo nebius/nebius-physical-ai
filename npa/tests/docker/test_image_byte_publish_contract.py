@@ -201,7 +201,10 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     publish = yaml.safe_load(PUBLISH.read_text())
     build_steps = publish["jobs"]["build-development"]["steps"]
     setup = next(step for step in build_steps if step.get("uses") == "actions/setup-python@v6")
-    assert setup["with"]["python-version"] == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
+    assert setup["with"]["python-version"] == (
+        "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || "
+        "matrix.tool == 'libero') && '3.12' || '3.11' }}"
+    )
     for name, job in publish["jobs"].items():
         if name == "build-development":
             continue

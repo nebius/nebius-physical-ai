@@ -72,6 +72,9 @@ MANUAL_GATES = {
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
+    "NPA_BYOF_LIBERO_LIVE_B200": (
+        "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
+    ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",

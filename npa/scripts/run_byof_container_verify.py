@@ -4,37 +4,56 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
 
+from npa.execution_preflight import (
+    SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    verify_solution_payload_service_accounts,
+)
 from npa.workflows.byof.live import resolve_byof_profile_path
 from npa.clients.project_credentials import (
     s3_client_for_project,
     storage_env_for_project,
 )
-from npa.orchestration.skypilot import submit_workflow, workflow_status
+from npa.orchestration.skypilot import (
+    SkyPilotSubmitError,
+    submit_workflow,
+    workflow_status,
+)
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
     SkyPilotVersionError,
+    resolve_isolated_config_dir,
     resolve_sky_bin,
 )
-from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.cleanup import (
+    CleanupResult,
+    cluster_name_patterns_for_run,
+    sky_environment,
+)
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
     restore_signal_handlers,
 )
+from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
@@ -46,6 +65,25 @@ DEFAULT_YAML = (
     / "byof-container-smoke-rtxpro.yaml"
 )
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
+LIBERO_SOLUTION_NAME = "libero"
+LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
+LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
+LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
+LIBERO_PROFILE_FILENAME = "byof-solution-smoke-libero-b200-gpu.yaml"
+LIBERO_RUNTIME_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "docker"
+    / "workbench"
+    / "libero"
+    / "runtime-manifest.json"
+)
+LIBERO_DECISION_BOUNDARIES = {
+    "source",
+    "runtime_packages",
+    "demonstration",
+    "task_inputs",
+    "language_model",
+}
 
 
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
@@ -138,6 +176,7 @@ DEFAULT_OUTPUT_ROOT = _normalize_output_root(
     os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof"
 )
 TERMINAL_STATUSES = {
+    "ABSENT",
     "SUCCEEDED",
     "CANCELLED",
     "FAILED",
@@ -146,6 +185,390 @@ TERMINAL_STATUSES = {
     "FAILED_NO_RESOURCE",
     "FAILED_CONTROLLER",
 }
+VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
+
+
+def _is_libero_invocation(
+    args: argparse.Namespace, documents: list[dict[str, Any]]
+) -> bool:
+    if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+        return True
+    if Path(args.yaml_path).name == LIBERO_PROFILE_FILENAME:
+        return True
+    for document in documents:
+        config = document.get("config")
+        if not isinstance(config, dict):
+            continue
+        kubernetes = config.get("kubernetes")
+        if not isinstance(kubernetes, dict):
+            continue
+        pod_config = kubernetes.get("pod_config")
+        if not isinstance(pod_config, dict):
+            continue
+        pod_spec = pod_config.get("spec")
+        if not isinstance(pod_spec, dict):
+            continue
+        if pod_spec.get("serviceAccountName") == LIBERO_PAYLOAD_SERVICE_ACCOUNT:
+            return True
+    return False
+
+
+def _sha256_json(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _libero_allowed_node(global_config: dict[str, Any]) -> str:
+    kubernetes = global_config.get("kubernetes") or {}
+    allowed = kubernetes.get("allowed_nodes") if isinstance(kubernetes, dict) else None
+    if not isinstance(allowed, dict) or set(allowed) != {"names"}:
+        raise ValueError(
+            "LIBERO requires owner-supplied kubernetes.allowed_nodes.names"
+        )
+    names = allowed.get("names")
+    if (
+        not isinstance(names, list)
+        or len(names) != 1
+        or not isinstance(names[0], str)
+        or not names[0].strip()
+        or names[0] != names[0].strip()
+    ):
+        raise ValueError("LIBERO requires exactly one exact non-empty allowed node name")
+    return names[0]
+
+
+def _kubectl_json(
+    arguments: list[str], *, purpose: str, kubeconfig: Path
+) -> dict[str, Any]:
+    result = subprocess.run(
+        ["kubectl", "--kubeconfig", str(kubeconfig), *arguments, "-o", "json"],
+        env=sky_environment(None),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Kubernetes {purpose} observation failed")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Kubernetes {purpose} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Kubernetes {purpose} did not return an object")
+    return payload
+
+
+def _mode_private_regular_file(value: str, *, label: str) -> Path:
+    if not value:
+        raise ValueError(f"LIBERO requires an owner-supplied {label}")
+    path = Path(value).expanduser()
+    try:
+        metadata = path.lstat()
+    except OSError:
+        metadata = None
+    if (
+        metadata is None
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError(
+            f"LIBERO {label} must be an owner-private regular file"
+        )
+    return path.resolve()
+
+
+def _stop_sky_api(
+    *,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | str | None,
+) -> None:
+    """Stop the selected Sky API or fail without claiming successful cleanup."""
+
+    environment = sky_environment(isolated_config_dir)
+    if config_path:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
+    try:
+        result = subprocess.run(
+            [sky_bin, "api", "stop"],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - shutdown ambiguity is fatal
+        raise SkyPilotConfigError(
+            "SkyPilot API shutdown raised; isolated API absence is unverified"
+        ) from exc
+    if result.returncode != 0:
+        raise SkyPilotConfigError(
+            "SkyPilot API shutdown failed; isolated API absence is unverified"
+        )
+
+
+def _libero_payload_kubeconfig() -> Path:
+    return _mode_private_regular_file(
+        os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG", "").strip(),
+        label="payload kubeconfig",
+    )
+
+
+def _libero_isolated_state_root(path: Path | None) -> Path:
+    if path is None:
+        raise ValueError("LIBERO requires an isolated SkyPilot state root")
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError("LIBERO isolated SkyPilot state must be a directory")
+    metadata = path.stat()
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise ValueError("LIBERO isolated SkyPilot state must be owner-private")
+    return path.resolve()
+
+
+def _libero_global_config_path(args: argparse.Namespace) -> str:
+    configured = args.config_path or os.environ.get(
+        "NPA_LIBERO_SKYPILOT_CONFIG", ""
+    ).strip()
+    return str(
+        _mode_private_regular_file(configured, label="SkyPilot global config")
+    )
+
+
+def _libero_context_contract(
+    kubeconfig: Path, *, expected_context: str = "", require_namespace: bool
+) -> tuple[str, str, str]:
+    config = _kubectl_json(
+        ["config", "view", "--minify", "--flatten", "--raw"],
+        purpose="selected-context",
+        kubeconfig=kubeconfig,
+    )
+    context = str(config.get("current-context") or "").strip()
+    if not context:
+        raise RuntimeError("LIBERO kubeconfig has no current context")
+    if expected_context and context != expected_context:
+        raise RuntimeError("LIBERO kubeconfig differs from its expected context")
+    contexts = config.get("contexts") or []
+    matches = [item for item in contexts if item.get("name") == context]
+    if len(matches) != 1:
+        raise RuntimeError("LIBERO selected context is absent or ambiguous")
+    context_record = matches[0].get("context") or {}
+    namespace = str(context_record.get("namespace") or "").strip()
+    if require_namespace and not namespace:
+        raise RuntimeError("LIBERO selected context has no namespace")
+    selected_cluster = str(context_record.get("cluster") or "").strip()
+    clusters = [
+        item for item in config.get("clusters") or [] if item.get("name") == selected_cluster
+    ]
+    if len(clusters) != 1:
+        raise RuntimeError("LIBERO selected cluster is absent or ambiguous")
+    cluster = clusters[0].get("cluster") or {}
+    server = str(cluster.get("server") or "").strip()
+    certificate_data = str(cluster.get("certificate-authority-data") or "").strip()
+    if not server or not certificate_data or cluster.get("insecure-skip-tls-verify"):
+        raise RuntimeError("LIBERO selected cluster lacks strict TLS identity")
+    cluster_identity_sha256 = _sha256_json(
+        {"server": server, "certificate_authority_data": certificate_data}
+    )
+    return context, namespace, cluster_identity_sha256
+
+
+def _libero_resource(
+    kubeconfig: Path, context: str, namespace: str, kind: str, name: str
+) -> dict[str, Any]:
+    payload = _kubectl_json(
+        ["--context", context, "--namespace", namespace, "get", kind, name],
+        purpose=f"LIBERO {kind}",
+        kubeconfig=kubeconfig,
+    )
+    metadata = payload.get("metadata") or {}
+    if metadata.get("name") != name or metadata.get("namespace") != namespace:
+        raise RuntimeError(f"LIBERO {kind} identity differs from the expected object")
+    if not metadata.get("uid") or not metadata.get("creationTimestamp"):
+        raise RuntimeError(f"LIBERO {kind} has incomplete ownership metadata")
+    return payload
+
+
+def _libero_rbac_evidence(
+    kubeconfig: Path, context: str, namespace: str
+) -> dict[str, str]:
+    account = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "serviceaccount",
+        LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+    )
+    role = _libero_resource(
+        kubeconfig, context, namespace, "role", LIBERO_PAYLOAD_ROLE
+    )
+    binding = _libero_resource(
+        kubeconfig,
+        context,
+        namespace,
+        "rolebinding",
+        LIBERO_PAYLOAD_ROLE_BINDING,
+    )
+    rules = [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]
+    subjects = [
+        {
+            "kind": "ServiceAccount",
+            "name": LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            "namespace": namespace,
+        }
+    ]
+    role_ref = {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": LIBERO_PAYLOAD_ROLE,
+    }
+    if role.get("rules") != rules:
+        raise RuntimeError("LIBERO payload Role is broader than pods/get")
+    if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
+        raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
+    return {
+        "service_account_uid_sha256": hashlib.sha256(
+            account["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "role_uid_sha256": hashlib.sha256(
+            role["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "role_binding_uid_sha256": hashlib.sha256(
+            binding["metadata"]["uid"].encode()
+        ).hexdigest(),
+        "rbac_spec_sha256": _sha256_json(
+            {"rules": rules, "subjects": subjects, "roleRef": role_ref}
+        ),
+        "namespace_sha256": hashlib.sha256(namespace.encode()).hexdigest(),
+    }
+
+
+def _bind_libero_runtime_contract(
+    args: argparse.Namespace,
+    documents: list[dict[str, Any]],
+    *,
+    global_config: dict[str, Any],
+    infra: str,
+) -> dict[str, str] | None:
+    if not _is_libero_invocation(args, documents):
+        return None
+    if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
+        raise ValueError("the LIBERO profile requires --solution-name libero")
+    if args.direct_launch:
+        raise ValueError("LIBERO requires managed scheduler submission")
+    if not getattr(args, "cleanup", True):
+        raise ValueError("LIBERO requires verified managed cleanup")
+    if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
+        raise ValueError("LIBERO requires verified isolated Sky API shutdown")
+    decision_path = _mode_private_regular_file(
+        os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_FILE", "").strip(),
+        label="runtime-use decision",
+    )
+    decision_bytes = decision_path.read_bytes()
+    decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
+    expected_decision_sha256 = os.environ.get(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
+    ).strip()
+    if decision_sha256 != expected_decision_sha256:
+        raise ValueError("LIBERO runtime-use decision differs from its owner receipt")
+    try:
+        decision = json.loads(decision_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError("LIBERO runtime-use decision is not valid JSON") from exc
+    if not isinstance(decision, dict):
+        raise ValueError("LIBERO runtime-use decision identity is invalid")
+    runtime_manifest_sha256 = hashlib.sha256(
+        LIBERO_RUNTIME_MANIFEST.read_bytes()
+    ).hexdigest()
+    boundaries = decision.get("authorized_boundaries")
+    if (
+        decision.get("schema") != "npa.libero.runtime-use-decision.v1"
+        or decision.get("solution") != "libero"
+        or decision.get("decision") != "authorized"
+        or decision.get("runtime_fetch_authorized") is not True
+        or decision.get("runtime_manifest_sha256") != runtime_manifest_sha256
+        or decision.get("source_revision")
+        != "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+        or not isinstance(boundaries, list)
+        or set(boundaries) != LIBERO_DECISION_BOUNDARIES
+        or len(boundaries) != len(LIBERO_DECISION_BOUNDARIES)
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            str(decision.get("manager_receipt_sha256") or ""),
+        )
+        is None
+        or any(str(key).startswith("ACCEPT_") for key in decision)
+    ):
+        raise ValueError("LIBERO runtime-use decision identity is invalid")
+    build_metadata_sha256 = os.environ.get(
+        "NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256", ""
+    ).strip()
+    if re.fullmatch(r"[0-9a-f]{64}", build_metadata_sha256) is None:
+        raise ValueError("LIBERO requires independent build metadata SHA-256")
+    if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
+        raise ValueError("LIBERO requires one explicit Kubernetes context")
+    allowed_node = _libero_allowed_node(global_config)
+    execution_context = infra.removeprefix("k8s/").strip()
+    payload_kubeconfig = _libero_payload_kubeconfig()
+    payload_context, namespace, payload_cluster_sha256 = _libero_context_contract(
+        payload_kubeconfig, require_namespace=True
+    )
+    if payload_context == execution_context:
+        raise ValueError(
+            "LIBERO payload and execution contexts must remain explicitly separated"
+        )
+    execution_kubeconfig_value = os.environ.get("KUBECONFIG", "").strip()
+    execution_kubeconfig = Path(execution_kubeconfig_value)
+    if not execution_kubeconfig_value or not execution_kubeconfig.is_file():
+        raise ValueError("LIBERO requires the selected NPA execution kubeconfig")
+    _, _, execution_cluster_sha256 = _libero_context_contract(
+        execution_kubeconfig,
+        expected_context=execution_context,
+        require_namespace=False,
+    )
+    if payload_cluster_sha256 != execution_cluster_sha256:
+        raise ValueError("LIBERO payload and execution kubeconfigs select different clusters")
+    evidence = _libero_rbac_evidence(payload_kubeconfig, payload_context, namespace)
+    evidence["cluster_identity_sha256"] = payload_cluster_sha256
+    evidence["allowed_node_sha256"] = hashlib.sha256(allowed_node.encode()).hexdigest()
+    for name, observed in evidence.items():
+        variable = f"NPA_LIBERO_EXPECTED_{name.upper()}"
+        expected = os.environ.get(variable, "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(f"LIBERO requires owner-receipted hash {variable}")
+        if expected != observed:
+            raise ValueError(f"LIBERO owner-receipted hash differs for {name}")
+    for document in documents[1:]:
+        envs = document.setdefault("envs", {})
+        for name, value in evidence.items():
+            envs[f"NPA_LIBERO_EXPECTED_{name.upper()}"] = value
+        envs["NPA_LIBERO_RUNTIME_USE_DECISION_B64"] = base64.b64encode(
+            decision_bytes
+        ).decode("ascii")
+        envs["NPA_LIBERO_RUNTIME_USE_DECISION_SHA256"] = decision_sha256
+        envs["NPA_LIBERO_EXPECTED_BUILD_METADATA_SHA256"] = build_metadata_sha256
+    return evidence
+
+
+def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
+    """Move the NPA resource-profile Kubernetes contract to SkyPilot config."""
+
+    resources = document.get("resources") or {}
+    if not isinstance(resources, dict):
+        raise ValueError("BYOF task resources must be a mapping")
+    kubernetes = resources.pop("kubernetes", None)
+    if kubernetes in (None, {}):
+        return
+    if not isinstance(kubernetes, dict):
+        raise ValueError("BYOF task resources.kubernetes must be a mapping")
+    config = document.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("BYOF task config must be a mapping")
+    existing = config.get("kubernetes")
+    if existing not in (None, {}, kubernetes):
+        raise ValueError("BYOF task Kubernetes resource and config contracts disagree")
+    config["kubernetes"] = kubernetes
 
 
 def render_workflow(
@@ -172,7 +595,11 @@ def render_workflow(
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
         normalized_root = _normalize_output_root(output_root)
-        envs["S3_OUTPUT_PREFIX"] = normalized_root.rstrip("/") + f"/{run_id}/"
+        output_prefix = normalized_root.rstrip("/") + f"/{run_id}/"
+        envs["S3_OUTPUT_PREFIX"] = output_prefix
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [{"uri": output_prefix, "kind": "directory"}], separators=(",", ":")
+        )
         bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
             os.environ.get("NPA_S3_BUCKET", "")
         )
@@ -216,6 +643,7 @@ def render_workflow(
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
                 resources["image_id"] = f"docker:{image_ref}"
+        _materialize_task_kubernetes_config(doc)
     return docs
 
 
@@ -385,9 +813,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _wait_for_terminal(
-    run_id: str,
+    scheduler_job_id: str,
     *,
     sky_bin: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     wait_timeout: int,
     poll_interval: int,
 ) -> tuple[Any, dict[str, Any]]:
@@ -402,7 +832,12 @@ def _wait_for_terminal(
     )
     deadline = None if wait_timeout == -1 else time.time() + wait_timeout
     statuses: list[str] = []
-    final = workflow_status(run_id, sky_bin=sky_bin)
+    status_kwargs = {
+        "isolated_config_dir": isolated_config_dir,
+        "config_path": config_path,
+        "sky_bin": sky_bin,
+    }
+    final = workflow_status(scheduler_job_id, **status_kwargs)
     statuses.append(final.status)
     polls = 1
     while (
@@ -411,7 +846,7 @@ def _wait_for_terminal(
         and (deadline is None or time.time() < deadline)
     ):
         time.sleep(max(poll_interval, 1))
-        final = workflow_status(run_id, sky_bin=sky_bin)
+        final = workflow_status(scheduler_job_id, **status_kwargs)
         statuses.append(final.status)
         polls += 1
     diagnostics = {
@@ -434,6 +869,218 @@ def _wait_for_terminal(
     return final, diagnostics
 
 
+def _exact_scheduler_job_id(value: Any) -> str:
+    """Return one positive numeric scheduler ID without normalizing text."""
+
+    candidate = str(value or "")
+    if candidate != candidate.strip() or not re.fullmatch(r"[1-9][0-9]*", candidate):
+        raise ValueError(
+            "workflow submission returned no exact numeric scheduler job ID"
+        )
+    return candidate
+
+
+def _cancel_exact_managed_job(
+    scheduler_job_id: str,
+    *,
+    teardown_guard: SignalTeardown,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    poll_interval: int,
+) -> CleanupResult:
+    """Cancel one exact managed job in its submitted scheduler state."""
+
+    cleanup = CleanupResult()
+    cleanup.commands.append([sky_bin, "jobs", "cancel", "--yes", scheduler_job_id])
+    try:
+        cancel = cancel_workflow_job(
+            sky_bin=sky_bin,
+            job_id=scheduler_job_id,
+            run_id=teardown_guard.run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            timeout=max(int(teardown_guard.timeout), 1),
+            poll_seconds=max(float(poll_interval), 0.1),
+            also_down_cluster=False,
+        )
+    except Exception:  # noqa: BLE001 - preserve resources on cancellation ambiguity
+        cleanup.errors.append("exact managed-job cancellation raised unexpectedly")
+        return cleanup
+    if cancel["cancel_returncode"] != 0:
+        cleanup.errors.append("exact managed-job cancellation failed")
+    else:
+        cleanup.resources_removed.append(f"managed-job:{scheduler_job_id}")
+    return cleanup
+
+
+def _cancel_then_teardown_managed_job(
+    scheduler_job_id: str,
+    *,
+    teardown_guard: SignalTeardown,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    poll_interval: int,
+) -> CleanupResult:
+    """Cancel and drain one exact managed job before tearing down its clusters."""
+
+    cleanup = CleanupResult()
+    if not scheduler_job_id:
+        cleanup.errors.append(
+            "scheduler job ID is unavailable; preserving possible managed resources"
+        )
+        return cleanup
+    status_kwargs = {
+        "sky_bin": sky_bin,
+        "isolated_config_dir": isolated_config_dir,
+        "config_path": config_path,
+        "poll_interval": poll_interval,
+    }
+    try:
+        final, _ = _wait_for_terminal(
+            scheduler_job_id, wait_timeout=0, **status_kwargs
+        )
+    except Exception:  # noqa: BLE001 - cleanup must still attempt exact cancellation
+        final = None
+    if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
+        cleanup.extend(
+            _cancel_exact_managed_job(
+                scheduler_job_id,
+                teardown_guard=teardown_guard,
+                **status_kwargs,
+            )
+        )
+        if not cleanup.ok:
+            return cleanup
+        try:
+            final, _ = _wait_for_terminal(
+                scheduler_job_id,
+                wait_timeout=max(int(teardown_guard.timeout), 1),
+                **status_kwargs,
+            )
+        except Exception:  # noqa: BLE001 - ambiguous drain must preserve resources
+            cleanup.errors.append(
+                "managed job drain status could not be verified after exact "
+                "cancellation; preserving its clusters"
+            )
+            return cleanup
+    if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
+        cleanup.errors.append(
+            "managed job did not reach a verified terminal or absent state; "
+            "preserving its clusters"
+        )
+        return cleanup
+    try:
+        cleanup.extend(teardown_guard.teardown())
+    except Exception:  # noqa: BLE001 - never claim teardown or absence on ambiguity
+        cleanup.errors.append("run-cluster teardown raised unexpectedly")
+        return cleanup
+    if cleanup.ok:
+        absence = _verify_managed_clusters_absent(
+            run_id=teardown_guard.run_id,
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            timeout=max(int(teardown_guard.timeout), 1),
+        )
+        cleanup.extend(absence)
+        cleanup.verified = absence.verified
+        cleanup.remote_absence_verified = absence.remote_absence_verified
+    return cleanup
+
+
+def _strict_cluster_names(output: str) -> list[str]:
+    """Return names from one exact SkyPilot cluster inventory document."""
+
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError("inventory was not exact JSON") from exc
+    if isinstance(payload, list):
+        clusters = payload
+    elif (
+        isinstance(payload, dict)
+        and set(payload) == {"clusters"}
+        and isinstance(payload["clusters"], list)
+    ):
+        clusters = payload["clusters"]
+    else:
+        raise ValueError("inventory had an invalid schema")
+    names: list[str] = []
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            raise ValueError("inventory contained an invalid row")
+        if any(key in cluster for key in ("error", "errors", "exception")):
+            raise ValueError("inventory contained contradictory error metadata")
+        name_fields = [key for key in ("name", "cluster") if key in cluster]
+        if not name_fields:
+            raise ValueError("inventory contained an invalid row")
+        if len(name_fields) > 1:
+            raise ValueError("inventory contained an ambiguous name row")
+        name = cluster[name_fields[0]]
+        if (
+            not isinstance(name, str)
+            or not name
+            or name != name.strip()
+            or not re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        ):
+            raise ValueError("inventory contained an invalid row")
+        names.append(name)
+    return names
+
+
+def _verify_managed_clusters_absent(
+    *,
+    run_id: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    timeout: int,
+) -> CleanupResult:
+    """Fail closed unless a fresh structured inventory proves run absence."""
+
+    cmd = [sky_bin, "status", "--refresh", "--output", "json"]
+    if config_path is not None:
+        cmd[2:2] = ["--config", str(config_path)]
+    cleanup = CleanupResult(commands=[cmd])
+    try:
+        result = subprocess.run(
+            cmd,
+            env=sky_environment(isolated_config_dir),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 - absence must remain unverified
+        cleanup.errors.append("post-teardown SkyPilot cluster inventory raised")
+        return cleanup
+    if result.returncode != 0:
+        cleanup.errors.append("post-teardown SkyPilot cluster inventory command failed")
+        return cleanup
+    try:
+        names = _strict_cluster_names(result.stdout)
+    except ValueError as exc:
+        cleanup.errors.append(f"post-teardown SkyPilot cluster {exc}")
+        return cleanup
+    patterns = cluster_name_patterns_for_run(run_id)
+    matches = [
+        name
+        for name in names
+        if any(fnmatchcase(name, pattern) for pattern in patterns)
+    ]
+    if matches:
+        cleanup.errors.append(
+            "post-teardown inventory still contains run-owned SkyPilot clusters"
+        )
+        return cleanup
+    cleanup.verified = True
+    cleanup.remote_absence_verified = True
+    return cleanup
+
+
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     output_root = _normalize_output_root(args.output_root)
@@ -448,6 +1095,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         capability_name=args.capability_name,
         smoke_artifact_name=args.smoke_artifact_name,
     )
+    is_libero = _is_libero_invocation(args, docs)
+    if is_libero and args.solution_name != LIBERO_SOLUTION_NAME:
+        raise ValueError("the LIBERO profile requires --solution-name libero")
+    if is_libero:
+        cluster_name_patterns_for_run(run_id)
     outputs = {
         "root": output_root.rstrip("/") + f"/{run_id}/",
         "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
@@ -469,21 +1121,50 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         )
         return 0
 
-    preflight_output_storage(output_root=output_root, run_id=run_id)
-
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
         )
+        isolated_config_dir = resolve_isolated_config_dir(
+            args.isolated_config_dir or None
+        )
+        if is_libero:
+            isolated_config_dir = _libero_isolated_state_root(isolated_config_dir)
+        api_stop_attempted = False
+        preserve_api = False
+        api_config_path: Path | None = None
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
-            _write_yaml_documents(rendered_yaml, docs)
             infra = args.infra or _default_infra()
-            config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
-            _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
+            config_path = (
+                _libero_global_config_path(args)
+                if is_libero
+                else args.config_path or _write_default_k8s_config(tmp_path, infra)
+            )
+            api_config_path = Path(config_path) if config_path else None
+            global_config: dict[str, Any] = {}
+            if config_path:
+                loaded_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+                if loaded_config is not None and not isinstance(loaded_config, dict):
+                    raise ValueError("SkyPilot global config must be a mapping")
+                global_config = loaded_config or {}
+            verify_solution_payload_service_accounts(
+                docs, global_config=global_config
+            )
+            libero_binding = _bind_libero_runtime_contract(
+                args, docs, global_config=global_config, infra=infra
+            )
+            _write_yaml_documents(rendered_yaml, docs)
+            preflight_output_storage(output_root=output_root, run_id=run_id)
+            _ensure_infra_enabled(
+                sky_bin=sky_bin,
+                infra=infra,
+                config_path=config_path,
+                isolated_config_dir=isolated_config_dir,
+            )
             if args.direct_launch:
                 return _direct_launch(
                     rendered_yaml=rendered_yaml,
@@ -492,6 +1173,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     sky_bin=sky_bin,
                     infra=infra,
                     config_path=config_path,
+                    isolated_config_dir=isolated_config_dir,
                     cleanup=args.cleanup,
                     secret_envs=resolve_secret_envs(
                         args.secret_env, solution_name=args.solution_name
@@ -499,13 +1181,53 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
-                isolated_config_dir=args.isolated_config_dir,
+                isolated_config_dir=isolated_config_dir,
                 sky_bin=sky_bin,
                 poll_interval=max(float(args.poll_interval), 0.0),
             )
-            previous_handlers = install_teardown_signal_handlers(
-                teardown_guard.teardown
+            scheduler_job_id = ""
+            submitted_config_path = Path(config_path) if config_path else None
+            expected_submission_config_path = (
+                isolated_config_dir
+                / "submissions"
+                / run_id
+                / "skypilot-config.yaml"
+                if isolated_config_dir is not None
+                else None
             )
+            cleanup_result: CleanupResult | None = None
+            cleanup_started = False
+
+            def cleanup_submission() -> CleanupResult:
+                nonlocal cleanup_result, cleanup_started
+                if cleanup_started:
+                    if cleanup_result is not None:
+                        return cleanup_result
+                    pending = CleanupResult()
+                    pending.outcome = "unsafe"
+                    pending.errors.append(
+                        "cleanup is already in progress; absence is not verified"
+                    )
+                    return pending
+                cleanup_started = True
+                try:
+                    cleanup_result = _cancel_then_teardown_managed_job(
+                        scheduler_job_id,
+                        teardown_guard=teardown_guard,
+                        sky_bin=sky_bin,
+                        isolated_config_dir=teardown_guard.isolated_config_dir,
+                        config_path=submitted_config_path,
+                        poll_interval=args.poll_interval,
+                    )
+                except Exception:  # noqa: BLE001 - never claim ambiguous cleanup
+                    cleanup_result = CleanupResult()
+                    cleanup_result.outcome = "unsafe"
+                    cleanup_result.errors.append(
+                        "cleanup transaction failed; owned-resource absence is unverified"
+                    )
+                return cleanup_result
+
+            previous_handlers = install_teardown_signal_handlers(cleanup_submission)
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
@@ -514,7 +1236,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,
-                    isolated_config_dir=args.isolated_config_dir,
+                    isolated_config_dir=isolated_config_dir,
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=infra,
@@ -523,20 +1245,26 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     ),
                     timeout=args.submit_timeout,
                 )
+                scheduler_job_id = _exact_scheduler_job_id(result.job_id)
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
-                    else None
+                    else submit_config_path
                 )
+                api_config_path = submitted_config_path
                 teardown_guard.mark_launched(config_path=submitted_config_path)
                 summary = {
                     "run_id": run_id,
                     "submit": result.__dict__,
                     "outputs": outputs,
                 }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
                 final, wait_diagnostics = _wait_for_terminal(
-                    run_id,
+                    scheduler_job_id,
                     sky_bin=sky_bin,
+                    isolated_config_dir=teardown_guard.isolated_config_dir,
+                    config_path=submitted_config_path,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
                 )
@@ -544,14 +1272,116 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["wait"] = wait_diagnostics
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
-                    os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                    not is_libero
+                    and os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
                     and final.status == "FAILED_PRECHECKS"
                 ):
                     return_code = 0
+            except SkyPilotSubmitError as exc:
+                transaction = exc.transaction
+                reconciled_scheduler_job_id = False
+                generated_config_recovered = False
+                if transaction is not None and transaction.job_id:
+                    reconciled_scheduler_job_id = True
+                    try:
+                        scheduler_job_id = _exact_scheduler_job_id(
+                            transaction.job_id
+                        )
+                    except ValueError:
+                        scheduler_job_id = ""
+                if scheduler_job_id and expected_submission_config_path is not None:
+                    try:
+                        submitted_config_path = _mode_private_regular_file(
+                            str(expected_submission_config_path),
+                            label="generated SkyPilot submission config",
+                        )
+                    except ValueError:
+                        scheduler_job_id = ""
+                    else:
+                        generated_config_recovered = True
+                        api_config_path = submitted_config_path
+                teardown_guard.mark_launched(config_path=submitted_config_path)
+                summary = {
+                    "run_id": run_id,
+                    "submit": {
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "scheduler_job_id_recovered": bool(scheduler_job_id),
+                        "reconciled_scheduler_job_id": (
+                            reconciled_scheduler_job_id
+                        ),
+                        "generated_config_recovered": generated_config_recovered,
+                    },
+                    "outputs": outputs,
+                }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
+                return_code = 2
+            except Exception as exc:  # noqa: BLE001 - cleanup must still be reported
+                summary = {
+                    "run_id": run_id,
+                    "submit": {
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "scheduler_job_id_recovered": bool(scheduler_job_id),
+                    },
+                    "outputs": outputs,
+                }
+                if libero_binding is not None:
+                    summary["libero_runtime_binding"] = libero_binding
+                return_code = 2
             finally:
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
-                    teardown_guard.teardown()
+                    cleanup_result = cleanup_submission()
+            if summary is not None and cleanup_result is not None:
+                cleanup_verified = bool(
+                    cleanup_result.ok
+                    and cleanup_result.verified
+                    and cleanup_result.remote_absence_verified
+                )
+                summary["cleanup"] = {
+                    "ok": cleanup_verified,
+                    "errors": cleanup_result.errors,
+                    "resources_removed": cleanup_result.resources_removed,
+                    "verified": cleanup_result.verified,
+                    "remote_absence_verified": (
+                        cleanup_result.remote_absence_verified
+                    ),
+                }
+                if not cleanup_verified:
+                    return_code = 1
+                    if is_libero:
+                        preserve_api = True
+            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
+                if preserve_api:
+                    if summary is not None:
+                        summary["api_stop"] = {
+                            "ok": False,
+                            "preserved_for_cleanup_recovery": True,
+                        }
+                else:
+                    api_stop_attempted = True
+                    try:
+                        _stop_sky_api(
+                            sky_bin=sky_bin,
+                            isolated_config_dir=isolated_config_dir,
+                            config_path=api_config_path,
+                        )
+                    except SkyPilotConfigError:
+                        if summary is None:
+                            raise
+                        summary["api_stop"] = {
+                            "ok": False,
+                            "preserved_for_cleanup_recovery": False,
+                        }
+                        return_code = 1
+                    else:
+                        if summary is not None:
+                            summary["api_stop"] = {
+                                "ok": True,
+                                "preserved_for_cleanup_recovery": False,
+                            }
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:
@@ -561,14 +1391,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ.pop("KUBECONFIG", None)
             else:
                 os.environ["KUBECONFIG"] = previous_kubeconfig
-            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
-                subprocess.run(
-                    [sky_bin, "api", "stop"],
-                    env=sky_environment(None),
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
+            if (
+                os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
+                and not api_stop_attempted
+                and not preserve_api
+            ):
+                _stop_sky_api(
+                    sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=api_config_path,
                 )
 
 
@@ -580,6 +1411,7 @@ def _direct_launch(
     sky_bin: str,
     infra: str,
     config_path: str = "",
+    isolated_config_dir: Path | None = None,
     cleanup: bool = True,
     secret_envs: list[str] | None = None,
 ) -> int:
@@ -600,7 +1432,7 @@ def _direct_launch(
         cmd.extend(["--infra", infra])
     if config_path:
         cmd.extend(["--config", config_path])
-    launch_env = sky_environment(None)
+    launch_env = sky_environment(isolated_config_dir)
     for secret_name in secret_envs or ():
         if launch_env.get(secret_name):
             cmd.extend(["--secret", secret_name])
@@ -685,6 +1517,7 @@ def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
                 "imagePullSecrets": [
                     {"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS
                 ],
+                "serviceAccountName": SKYPILOT_ENGINE_SERVICE_ACCOUNT,
             }
         }
     }
@@ -791,27 +1624,30 @@ def _contains_error_payload(value: Any) -> bool:
     )
 
 
-def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:
+def _ensure_infra_enabled(
+    *,
+    sky_bin: str,
+    infra: str,
+    config_path: str = "",
+    isolated_config_dir: Path | None = None,
+) -> None:
     if os.environ.get("NPA_BYOF_SKIP_SKY_CHECK") == "1":
         return
     normalized = infra.strip().lower()
     if not (normalized.startswith("kubernetes") or normalized.startswith("k8s")):
         return
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
-        subprocess.run(
-            [sky_bin, "api", "stop"],
-            env=sky_environment(None),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+        _stop_sky_api(
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
         )
     cmd = [sky_bin, "check", "kubernetes", "-o", "json"]
     if config_path:
         cmd.extend(["--config", config_path])
     result = subprocess.run(
         cmd,
-        env=sky_environment(None),
+        env=sky_environment(isolated_config_dir),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

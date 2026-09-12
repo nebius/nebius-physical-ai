@@ -54,6 +54,7 @@ npa/.venv/bin/npa workbench byof run \
   --repo-ref <immutable-ref> \
   --base-profile ubuntu \
   --workload solution-smoke \
+  --source-prune-path '<unused-restricted-source-subtree>' \
   --build-command '<pinned-install-command>' \
   --smoke-command '<real-capability-command>' \
   --solution-name <solution> \
@@ -61,6 +62,20 @@ npa/.venv/bin/npa workbench byof run \
   --smoke-artifact-name <solution>_<capability>.json \
   --skip-push --skip-run --dry-run --output json
 ```
+
+Omit `--source-prune-path` when every source byte is allowed in the private
+image. When a headless qualification must exclude one render-only subtree, the
+option removes that validated repository-relative path and the Git object
+database in the same clone layer, then records the observed commit and prune
+receipt in `npa_source_metadata.json`. Deleting files later in `--build-command`
+does not remove their bytes from an earlier image layer.
+
+For a private source, that receipt preserves only placeholders, SHA-256 values,
+and removal booleans; it never copies the private repository URL, ref, observed
+commit, or prune path into reusable metadata. The prune path travels to
+BuildKit through an owner-only secret mount, is part of command-output
+redaction, and appears in the CLI summary only as a placeholder plus SHA-256;
+it is never a plain build argument or image-history value.
 
 For a first-class image, add or update:
 

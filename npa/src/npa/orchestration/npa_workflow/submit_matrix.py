@@ -898,6 +898,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "byof-libero.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "LIBERO's public-neutral candidate remains quarantined and unbuilt; a "
+            "separately authorized exact-digest one-B200 gate owns qualification"
+        ),
+        notes=(
+            "Managed prebuilt LIBERO-Spatial BC-RNN train/reload/heldout path with "
+            "manifest-bound runtime fetch; this matrix neither builds nor submits it, "
+            "and the report validator never proves infrastructure execution by itself."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,

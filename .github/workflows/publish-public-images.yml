@@ -43,6 +43,14 @@ on:
         description: "Runner label for public development image builds"
         required: false
         default: "ubuntu-latest"
+      libero_private_image_inventory_sha256:
+        description: "Manager-accepted private-stage LIBERO complete-image inventory SHA-256"
+        required: false
+        default: ""
+      libero_private_config_digest:
+        description: "Manager-accepted private-stage LIBERO OCI config digest"
+        required: false
+        default: ""
       cleanup_development_tools:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
@@ -90,6 +98,8 @@ jobs:
           DEVELOPMENT_SHA: ${{ inputs.development_sha || github.sha }}
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
+          LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ inputs.libero_private_image_inventory_sha256 }}
+          LIBERO_PRIVATE_CONFIG_DIGEST: ${{ inputs.libero_private_config_digest }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -143,6 +153,13 @@ jobs:
           # deliberately name an older dev SHA after GPU evidence is committed.
           if matrix and head != sha:
               raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
+          if any(item["tool"] == "libero" for item in matrix):
+              inventory = os.environ["LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256"]
+              config_digest = os.environ["LIBERO_PRIVATE_CONFIG_DIGEST"]
+              if re.fullmatch(r"[0-9a-f]{64}", inventory) is None:
+                  raise SystemExit("libero: manager-accepted private image inventory is required")
+              if re.fullmatch(r"sha256:[0-9a-f]{64}", config_digest) is None:
+                  raise SystemExit("libero: manager-accepted private config digest is required")
 
           print(f"target={target}")
           print(f"development_sha={sha}")
@@ -188,6 +205,8 @@ jobs:
       DOCKERFILE: ${{ matrix.dockerfile }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ inputs.libero_private_image_inventory_sha256 }}
+      LIBERO_PRIVATE_CONFIG_DIGEST: ${{ inputs.libero_private_config_digest }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -198,7 +217,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -214,6 +233,9 @@ jobs:
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
+            npa/tests/docker/test_libero_runtime_bootstrap.py \
+            npa/tests/docker/test_libero_image_contract.py \
+            npa/tests/docker/test_libero_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
@@ -326,6 +348,25 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
+      - name: Fetch immutable LIBERO base provenance metadata
+        if: matrix.tool == 'libero'
+        run: |
+          set -euo pipefail
+          # Metadata only: this fetches Docker Official Images' published in-toto
+          # provenance blob, not an image layer or a runtime payload.
+          crane blob \
+            index.docker.io/library/python@sha256:0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b \
+            > "$RUNNER_TEMP/libero-base-provenance.intoto.json"
+          echo \
+            '0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b  '"$RUNNER_TEMP/libero-base-provenance.intoto.json" | \
+            sha256sum --check --strict
+          crane blob \
+            index.docker.io/library/python@sha256:b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb \
+            > "$RUNNER_TEMP/libero-base-sbom.intoto.json"
+          echo \
+            'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
+            sha256sum --check --strict
+
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
       # intentionally invalid placeholder credential; no registry write occurs
@@ -359,15 +400,25 @@ jobs:
         run: |
           set -euo pipefail
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
-          if [[ "$TOOL" == curobo ]]; then
-            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
-            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
-            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          if [[ "$TOOL" == curobo || "$TOOL" == libero ]]; then
+            source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
+          fi
+          metadata_args=()
+          if [[ "$TOOL" == libero ]]; then
+            metadata_args+=(
+              --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
+              --provenance=mode=max
+              --sbom=true
+            )
+            export BUILDX_METADATA_PROVENANCE=max
           fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
+            "${metadata_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
@@ -380,6 +431,13 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            if [ -n "$libero_export_container" ]; then
+              docker container rm "$libero_export_container" >/dev/null
+            fi
+          }
+          trap cleanup_libero_export EXIT
           npa/.venv/bin/python - <<'PY'
           import json
           import os
@@ -403,9 +461,10 @@ jobs:
           forbidden = ("OMNI_KIT_ACCEPT_EULA=YES", "ISAACSIM_ACCEPT_EULA=YES")
           if any(value in serialized for value in forbidden):
               raise SystemExit("cached EULA acceptance found in OCI config")
-          history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
-          if any(value in history for value in forbidden):
-              raise SystemExit("cached EULA acceptance found in layer history")
+          if tool != "libero":
+              history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
+              if any(value in history for value in forbidden):
+                  raise SystemExit("cached EULA acceptance found in layer history")
           PY
           # The loaded runtime image remains in Docker's image store. BuildKit's
           # disposable construction cache can be larger than the image itself and
@@ -416,6 +475,23 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$IMAGE")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-image-inventory.json" \
+              --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -605,6 +681,13 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            if [ -n "$libero_export_container" ]; then
+              docker container rm "$libero_export_container" >/dev/null
+            fi
+          }
+          trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
@@ -674,6 +757,23 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
           fi
+          if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$exact")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
+          fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -703,8 +803,10 @@ jobs:
           anonymous_attempt=1
           while true; do
             anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
-            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
-              >/dev/null 2>"$anonymous_log"; then
+            if anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE" \
+              2>"$anonymous_log")" && \
+              DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
+                >/dev/null 2>>"$anonymous_log"; then
               break
             fi
             cat "$anonymous_log" >&2
@@ -715,6 +817,7 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
+          test "$anonymous_digest" = "$DIGEST"
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
