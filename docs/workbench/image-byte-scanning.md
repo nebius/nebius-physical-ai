@@ -85,6 +85,12 @@ must reject RoboTwin/CuRobo source, CUDA/cuDNN/NVIDIA/PyTorch/SAPIEN/MPLib/Warp
 runtime bytes, asset archives and extracted trees, download/runtime caches,
 credentials or manager context, and HDF5/video/frame outputs across flattened
 rootfs, every layer, nested archives, ELF dependencies, and build history. Its
+private exact-digest input is read with a byte bound and pulled through the OCI
+Distribution API in-process. Docker credential helpers, when configured, receive
+only the registry name over standard input; no private image or repository value
+is placed in a child-process argument vector.
+
+The scanner's
 Phase A public-native policy intentionally carries unresolved detector identities
 and therefore cannot authorize a scan or publication. A later transaction must
 bind it to reviewed exact built bytes; scanning never grants runtime-use rights.

@@ -165,8 +165,23 @@ def test_robotwin_dry_run_carries_only_runtime_context_variable_name(
     assert secret not in " ".join(argv)
 
 
-def test_robotwin_direct_cli_refuses_before_loading_runner(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "identity_args",
+    [
+        [
+            "--repo-url",
+            "https://github.com:443/RoboTwin-Platform/RoboTwin.git/",
+        ],
+        [
+            "--repo-url",
+            "https://github.com/example/not-robotwin.git",
+            "--image",
+            "registry.invalid/private/npa-robotwin:mutable",
+        ],
+    ],
+)
+def test_robotwin_equivalent_or_mutable_direct_cli_refuses_before_loading_runner(
+    monkeypatch: pytest.MonkeyPatch, identity_args: list[str]
 ) -> None:
     monkeypatch.delenv(TRANSPORT_CONTEXT_ENV, raising=False)
     monkeypatch.setattr(
@@ -181,8 +196,7 @@ def test_robotwin_direct_cli_refuses_before_loading_runner(
             "workbench",
             "byof",
             "run",
-            "--repo-url",
-            "https://github.com/RoboTwin-Platform/RoboTwin.git",
+            *identity_args,
             "--runtime-context-env",
             PUBLIC_CONTEXT_ENV,
         ],
