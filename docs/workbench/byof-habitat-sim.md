@@ -81,9 +81,10 @@ source-archive, cache, credential, CUDA/NVIDIA, FFmpeg, and gated-data paths or
 hashes. It also hashes the embedded runtime locks, notices, and smoke module;
 reconciles installed apt and Python distributions to those locks; checks every
 projected source byte against its immutable inventory; binds native venv ELF
-files to wheel `RECORD` hashes; parses every ELF `DT_NEEDED` entry and requires
-an owned, same-architecture runtime target; and requires the OCI revision label
-to equal the reviewed full Git SHA. The verifier also binds the selected Ubuntu
+files to wheel `RECORD` hashes; parses every ELF `DT_NEEDED`, `DT_RPATH`, and
+`DT_RUNPATH` entry, records the loader-order search path, and refuses unresolved
+or multiply compatible same-architecture targets; and requires the OCI revision
+label to equal the reviewed full Git SHA. The verifier also binds the selected Ubuntu
 base diff ID and requires operator-reviewed SHA-256 values for the complete dpkg
 inventory and native closure. The dpkg inventory includes every installed
 binary version, architecture, source package/version, exact dpkg `.list`
@@ -142,8 +143,11 @@ an anonymous 401/403 refusal and authenticated exact-digest pull; known public
 registry hosts and equivalent GHCR spellings are rejected. The STRICT provider
 receipt binds one node-group ID and the exact Kubernetes node name/provider ID;
 the selector reads that node back and requires the completed pod to name it.
-The selector also requires a succeeded pod, an exact observed digest, and a
-terminated zero exit. A live transaction and cleanup require separate manager
+Owner-only JSON is read through mode- and UID-checked no-follow descriptors and
+bound to the same directory entry before and after parsing. The selector also
+requires the pod's declared container image, observed image ID, and receipt to
+name the same immutable digest, plus a succeeded pod and terminated zero exit.
+A live transaction and cleanup require separate manager
 authorization.
 
 ## Deferred
