@@ -131,6 +131,19 @@ printf '%s' "$$" >"${NPA_TEST_EXEC_PID}"
 : >"${NPA_TEST_EXEC_STARTED}"
 case "${NPA_TEST_EXEC_MODE:-block}" in
     exit) exit 0 ;;
+    descendant)
+        (
+            : >"${NPA_TEST_DESCENDANT_STARTED}"
+            while [ ! -e "${NPA_TEST_DESCENDANT_RELEASE}" ]; do
+                test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90
+                sleep 0.05
+            done
+            test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90
+            : >"${NPA_TEST_DESCENDANT_OBSERVED}"
+        ) &
+        printf '%s' "$!" >"${NPA_TEST_DESCENDANT_PID}"
+        exit 0
+        ;;
     block|ignore|observe) while :; do sleep 1; done ;;
 esac
 ''',
@@ -289,6 +302,10 @@ def _exec_environment(
         "NPA_TEST_LAUNCH_WINDOW_STARTED": str(tmp_path / "launch-window-started"),
         "NPA_TEST_LAUNCH_WINDOW_RELEASE": str(tmp_path / "launch-window-release"),
         "NPA_TEST_SIGNAL_PENDING": str(tmp_path / "signal-pending"),
+        "NPA_TEST_DESCENDANT_STARTED": str(tmp_path / "descendant-started"),
+        "NPA_TEST_DESCENDANT_RELEASE": str(tmp_path / "descendant-release"),
+        "NPA_TEST_DESCENDANT_OBSERVED": str(tmp_path / "descendant-observed"),
+        "NPA_TEST_DESCENDANT_PID": str(tmp_path / "descendant-pid"),
     }
 
 
@@ -744,6 +761,53 @@ def test_finite_payload_exit_cleans_snapshot(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     _assert_process_gone(payload_pid)
     assert not snapshot_root.parent.exists()
+
+
+def test_successful_leader_keeps_snapshot_until_descendant_exits(
+    tmp_path: Path,
+) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", exec_mode="descendant"
+        ),
+        start_new_session=True,
+    )
+    snapshot_root: Path | None = None
+    payload_group: int | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "descendant-started",
+            process,
+            child_pid_path=tmp_path / "exec-pid",
+        )
+        payload_group = _recorded_pid(tmp_path / "exec-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        time.sleep(0.2)
+        assert process.poll() is None
+        assert snapshot_root.is_dir()
+
+        (tmp_path / "descendant-release").touch()
+        stdout, stderr = _communicate_or_kill(
+            process, child_process_group=payload_group
+        )
+
+        assert process.returncode == 0, (stdout, stderr)
+        assert (tmp_path / "descendant-observed").is_file()
+        _assert_process_group_gone(payload_group)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=payload_group)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
 
 
 @pytest.mark.parametrize(
