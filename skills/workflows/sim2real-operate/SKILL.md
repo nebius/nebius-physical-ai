@@ -23,6 +23,35 @@ with an actionable migration to this canonical spec.
    source SHA; never use source overlays or best-effort bootstrap.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
+   Inspect the primary frames selected for hosted evaluation for object and
+   end-effector visibility, including intermediate action times. Stage 8 sees
+   only primary images; clear secondary views and valid temporal bindings cannot
+   make an occluded primary image useful for task-specific visual credit.
+   Rebuild and regenerate rollouts when this visibility check fails; never
+   relabel an existing view or rewrite its pose metadata in place.
+   Run the selected Isaac image's `isaac-bootstrap status` against the cache
+   PVC and require `ready=yes` for its reported `expected_tree` before using
+   read-only/offline mode. The cache stamp includes the bootstrap script, so
+   unchanged wheel pins alone do not prove that a rebuilt image can reuse it.
+   If absent, run `npa/docker/workbench/common/warm-isaac-cache.yaml` with that
+   exact image digest to create its versioned tree; preserve older cache trees.
+   Inspect first and last frames from all three cameras for the robot and task;
+   successful PNG decoding alone does not prove useful rendered content. Serialized
+   camera poses remain WXYZ, while Isaac Lab 3 sensor offsets require XYZW. Use
+   `camera_rotation_for_isaac_lab` at each sensor boundary. Reject blank or
+   misdirected capture before hosted evaluation or PPO; rebuild the affected image
+   and regenerate the invalid rollouts rather than replaying them as complete.
+   Hosted Stage 8 must bind each action to selected primary-frame metadata by
+   exact `sim_step`. Sample order and a final context frame are not action
+   timestamps. The v4 evaluator contract requires null camera references, zero
+   confidence, neutral tags, and explicit insufficient evidence for unsampled
+   actions. Stage 9 must reject older or inconsistent bindings before PPO; do not
+   rewrite archived critiques to attach a different frame. Unsupported visual
+   events contribute no auxiliary reward, corrective action, or PPO tag counts.
+   Generation must enforce those same bindings with one ordered JSON Schema
+   `prefixItems` entry per action, fixed step/camera fields, and neutral values
+   for unsupported events. Verify actual endpoint schema support with real
+   rollout input; retain strict parser rejection and never repair model output.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.
@@ -48,6 +77,14 @@ Submit with `--runtime --resume`. Pass tenant-specific data only through
 `--var`, isolated config, and secret envs. For a no-deadline run pass
 `--max-wait-seconds 0`; the runtime still records wave/job status in
 `<run-root>/npa-workflow/runtime.json`.
+
+The runtime driver stays on the submitting host. Run it on an always-on
+operator VM for long jobs; a laptop entering sleep interrupts network access
+even when GPU jobs continue on the cluster. After a driver interruption, verify
+recorded jobs before using `--resume-run` for the same run. Never start two
+runtime drivers for one run concurrently. Status includes stages discovered in
+the runtime ledger when the initial manifest has no steps. Successful recorded
+jobs alone do not prove that the remaining workflow graph completed.
 
 The graph owns every stage Job. Isaac rollout/PPO/eval execute their proven
 payload inside their already admitted SkyPilot GPU task and must report

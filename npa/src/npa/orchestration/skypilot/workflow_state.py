@@ -515,6 +515,23 @@ def workflow_state_error_is_missing(exc: BaseException) -> bool:
     return code.lower() in {"404", "nosuchkey", "notfound", "no_such_key"}
 
 
+def _task_selection_failed(
+    result: subprocess.CompletedProcess[str], *, job_id: str, stage: str,
+) -> bool:
+    """Recognize a complete task-not-found diagnostic amid SkyPilot log banners."""
+    if result.returncode != 0 or not stage:
+        return False
+    task = int(stage) if stage.isdecimal() else stage
+    diagnostic = f"No task found matching {task!r} in job {job_id}. Valid task IDs are "
+    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    output = re.sub(r"\x1b\[[0-9;]*m", "", output).strip()
+    pattern = (
+        "^" + re.escape(diagnostic)
+        + r"0(?:-[1-9][0-9]*)?\.\s*\ncommand terminated with exit code 102[ \t\r]*$"
+    )
+    return re.search(pattern, output, flags=re.MULTILINE) is not None
+
+
 def tail_live_job_logs(
     *, sky_bin: str, job_id: str, stage: str = "", follow: bool = False,
     timeout: int = 300,
@@ -546,14 +563,18 @@ def tail_live_job_logs(
     if stage:
         cmd.append(stage)
     cmd.append("--follow" if follow else "--no-follow")
-    return subprocess.run(
-        cmd, env=env, cwd=runtime.isolated_config_dir,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+    result = subprocess.run(
+        cmd, env=env, cwd=runtime.isolated_config_dir or Path.home(),
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=timeout, check=False,
     )
+    # SkyPilot's non-following SDK streams output without returning the remote
+    # exit code. Its CLI consequently exits zero even for task-not-found 102.
+    # Match only that complete, request-bound provider diagnostic; application
+    # tracebacks and failure messages are still successfully retrieved logs.
+    if _task_selection_failed(result, job_id=job_id, stage=stage):
+        return subprocess.CompletedProcess(result.args, 102, result.stdout, result.stderr)
+    return result
 
 
 def cancel_workflow_job(

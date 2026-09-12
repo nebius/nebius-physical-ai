@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -351,6 +351,36 @@ def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
     if members:
         return members
     return [(str(item), None) for item in wave.get("states") or []]
+
+
+def runtime_manifest_view(
+    manifest: RunManifest, runtime_waves: Sequence[Mapping[str, Any]],
+) -> RunManifest:
+    """Include observed runtime stages omitted from an early manifest.
+
+    Args:
+        manifest: Durable manifest, possibly written before any stage ran.
+        runtime_waves: Recorded wave attempts with exact stage identities.
+
+    Returns:
+        An independent manifest view with each missing stage/iteration added.
+        Existing planned stages and their metadata retain their order.
+
+    Raises:
+        None.
+    """
+    steps = [dict(step) for step in manifest.steps]
+    known = {(str(step.get("state") or ""), step.get("iteration")) for step in steps}
+    for wave in runtime_waves:
+        for name, iteration in _wave_members(wave):
+            identity = (name, iteration)
+            if not name or identity in known:
+                continue
+            known.add(identity)
+            # Attempt outcomes come from attribution, which retains retries.
+            # Copying a historical failure into the stage would make it final.
+            steps.append({"state": name, "iteration": iteration, "status": SUBMITTED_STATUS})
+    return replace(manifest, steps=steps)
 
 
 def reconstruct_stage_job_attribution(

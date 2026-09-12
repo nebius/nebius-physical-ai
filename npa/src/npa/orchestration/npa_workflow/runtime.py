@@ -62,6 +62,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
+from npa.orchestration.npa_workflow.supervisor import PreflightEvidence
 from npa.orchestration.npa_workflow.waves import split_into_batches
 from npa.orchestration.skypilot.launch_transaction import logical_launch_identity
 from npa.verification import sanitize_reason
@@ -450,6 +451,9 @@ class SkyPilotWaveExecutor:
         self.run_id = run_id
         self.render_options = render_options or SkypilotRenderOptions()
         self.options = options or RuntimeOptions()
+        self._preflight_checks = dict(self.options.preflight_evidence)
+        self._preflight_checks["gang_capacity"] = "unknown"
+        self._preflight_by_attempt: dict[tuple[str, int], PreflightEvidence] = {}
         self.ledger = ledger or RuntimeLedger(None, workflow=spec.name, run_id=run_id)
         self._submitter = submitter
         self._status_fn = status_fn
@@ -1534,7 +1538,6 @@ class SkyPilotWaveExecutor:
             ArtifactValidation,
             AttemptIdentity,
             CheckpointValidation,
-            PreflightEvidence,
             RecoveryAction,
             RecoveryContext,
             SkyPilotSupervisorAdapter,
@@ -1570,10 +1573,7 @@ class SkyPilotWaveExecutor:
         expected_workflow_sha256 = _workflow_identity(self.spec)
         expected_source_sha256 = _source_identity()
         expected_image_digest = _image_identity(self.render_options)
-        preflight = PreflightEvidence(
-            checks=self.options.preflight_evidence,
-            observed_at=utc_now(),
-        )
+        preflight = self._attempt_preflight(attempt)
         checkpoint = CheckpointValidation()
         context = RecoveryContext(
             expected_workflow_sha256=expected_workflow_sha256,
@@ -1825,6 +1825,8 @@ class SkyPilotWaveExecutor:
         return f"{base}{suffix}"
 
     def _submit(self, path: Path, job_name: str, attempt: WaveAttempt) -> Any:
+        # A failed refresh or retry cannot inherit another launch's capacity proof.
+        self._preflight_by_attempt.pop((attempt.key, attempt.attempt), None)
         submitter: Callable[..., Any] | None = self._submitter
         if submitter is None:
             from npa.orchestration.skypilot.workflow import submit_workflow
@@ -1889,7 +1891,36 @@ class SkyPilotWaveExecutor:
             )
         if self.options.sky_bin:
             kwargs["sky_bin"] = self.options.sky_bin
-        return submitter(path, job_name, **kwargs)
+        rendered_wave_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        result = submitter(path, job_name, **kwargs)
+        if self._submitter is None:
+            self._record_submit_preflight(attempt, rendered_wave_sha256)
+        return result
+
+    def _attempt_preflight(self, attempt: WaveAttempt) -> PreflightEvidence:
+        """Adoption has no current-driver proof that the wave launch gate ran."""
+
+        return self._preflight_by_attempt.get(
+            (attempt.key, attempt.attempt),
+            PreflightEvidence(checks=dict(self._preflight_checks)),
+        )
+
+    def _record_submit_preflight(
+        self, attempt: WaveAttempt, rendered_wave_sha256: str
+    ) -> None:
+        # Returning from the default SDK proves its mandatory wave gate passed.
+        # This is a submit-time observation, not a new free-capacity check at poll.
+        self._preflight_by_attempt[(attempt.key, attempt.attempt)] = PreflightEvidence(
+            checks={**self._preflight_checks, "gang_capacity": "pass"},
+            observed_at=utc_now(),
+            scope={
+                "source": "default_sdk_submit",
+                "run_id": self.run_id,
+                "wave_key": attempt.key,
+                "attempt": attempt.attempt,
+                "rendered_wave_sha256": rendered_wave_sha256,
+            },
+        )
 
     def _record_launch_transaction(
         self, attempt: WaveAttempt, payload: Mapping[str, Any]

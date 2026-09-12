@@ -433,6 +433,99 @@ def raw_task(**env):
                      "AWS_ENDPOINT_URL": "https://storage.eu-west1.nebius.cloud", **env}, "run": "true"}
 
 
+@pytest.fixture
+def gpu_inventory(monkeypatch):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory, KubernetesGpuNode
+
+    node = KubernetesGpuNode(
+        "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
+        free_cpu_millis=16000, free_memory_bytes=128 * 10**9, free_pod_slots=1,
+    )
+    inventory = KubernetesGpuInventory("unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(node,))
+    monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
+    return node
+
+
+@pytest.mark.parametrize("cpu,memory", [(16, 128), ("16", "128"), ("16+", "128+"), (1.5, 0.5)])
+def test_rendered_gpu_resources_reach_real_capacity_check(provider, configured, gpu_inventory, cpu, memory):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus=cpu, memory=memory)
+    resources_before = document["resources"].copy()
+    _, report, _ = preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert report["checks"]["gpu"] == "pass"
+    assert provider.s3.calls
+    assert document["resources"] == resources_before
+
+
+def test_workflow_rendered_gpu_minimum_passes_sdk_preflight(provider, configured, gpu_inventory):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.npa_workflow.skypilot_render import normalize_resources
+
+    document = raw_task()
+    document["resources"] = normalize_resources({
+        "cloud": "kubernetes", "region": "unit-context", "accelerators": "B200:1",
+        "cpus": 16, "memory": "128Gi",
+    })
+    assert document["resources"]["cpus"] == "16+"
+    assert document["resources"]["memory"] == "128+"
+    _, report, _ = preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert report["checks"]["gpu"] == "pass"
+
+
+@pytest.mark.parametrize("missing", ["cpu", "memory"])
+@pytest.mark.parametrize("minimum_suffix", ["", "+"])
+def test_gpu_minimum_capacity_denial_precedes_storage(provider, configured, gpu_inventory, monkeypatch, missing, minimum_suffix):
+    from dataclasses import replace
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory, UnsatisfiableAcceleratorError
+
+    node = replace(gpu_inventory, **({"free_cpu_millis": 15999} if missing == "cpu" else {"free_memory_bytes": 128 * 10**9 - 1}))
+    inventory = KubernetesGpuInventory("unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(node,))
+    monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus="16" + minimum_suffix, memory="128" + minimum_suffix)
+    with pytest.raises(ExecutionPreflightError, match="gpu") as caught:
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert isinstance(caught.value.__cause__, UnsatisfiableAcceleratorError)
+    assert "128000000000 memory bytes" in str(caught.value.__cause__)
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("resource,value", [
+    ("cpus", "16++"), ("memory", "128++"), ("cpus", "NaN"),
+    ("memory", "Infinity"), ("cpus", 0), ("memory", -1),
+    ("cpus", True), ("memory", "4x"), ("memory", "private-invalid-value"),
+])
+def test_unresolved_gpu_minimum_fails_before_storage(provider, configured, gpu_inventory, resource, value):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus="16+", memory="128+")
+    document["resources"][resource] = value
+    with pytest.raises(ExecutionPreflightError, match="gpu") as caught:
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert "private-invalid-value" not in str(caught.value)
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("cpu,memory", [
+    ("16.0001+", "128+"), ("16+", "128.0000000001+"),
+    ("16+", "128.000000000000000000000000000001+"),
+])
+def test_fractional_gpu_minimum_never_rounds_down(provider, configured, gpu_inventory, cpu, memory):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import UnsatisfiableAcceleratorError
+
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus=cpu, memory=memory)
+    with pytest.raises(ExecutionPreflightError, match="gpu") as caught:
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert isinstance(caught.value.__cause__, UnsatisfiableAcceleratorError)
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])
 @pytest.mark.parametrize("shortfall", ["", "cpu", "memory"])
 def test_sky_resource_units_preserve_exact_gpu_capacity_checks(

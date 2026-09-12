@@ -123,6 +123,22 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
 
 
+def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
+    requirements = (WORKBENCH / "common/sim2real-genesis-requirements.txt").read_text()
+    pin = re.search(r"^GitPython==(\S+)$", requirements, re.MULTILINE)
+    assert pin and Version(pin.group(1)) >= Version("3.1.62")
+    for relative in (
+        "sim2real-envgen/Dockerfile", "sim2real-eval/Dockerfile", "lerobot-vlm-rl/Dockerfile",
+    ):
+        text = (WORKBENCH / relative).read_text()
+        install = text.index("-r /opt/npa/sim2real-genesis-requirements.txt")
+        assert install < text.index("python -m pip check"), relative
+        assert not re.search(r"GitPython\s*(?:@|==)", text, re.IGNORECASE), relative
+        if relative == "sim2real-envgen/Dockerfile":
+            assert install < text.index("FROM scratch AS runtime")
+            assert f'm.version("GitPython") == "{pin.group(1)}"' in text
+
+
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:
     installer = (WORKBENCH / "common/install_isaac_runtime_base.sh").read_text(
         encoding="utf-8"

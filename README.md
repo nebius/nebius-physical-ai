@@ -136,7 +136,11 @@ See the [workflow catalog](workflows/README.md),
 [authoring guide](docs/workbench/npa-workflow-guide.md), and
 [run lifecycle](docs/run-lifecycle.md). The canonical
 [14-stage Sim2Real pipeline](docs/workbench/guides/sim2real-workflow.md) uses this
-same runtime and requires its own prepared images, task data, and resource profiles.
+same runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml)
+and requires its own prepared images, task data, and resource profiles.
+Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
+simulator episode resets across sparse samples and exclude reset intervals from
+training credit. The older `sim2real/runbook.yaml` is a legacy path.
 
 <a id="whats-in-the-box"></a>
 
