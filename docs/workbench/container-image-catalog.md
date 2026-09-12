@@ -47,9 +47,9 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
+**38 packaging entries** (36 redistribution-eligible and two restricted) and
+**39 mapped tools**: 32 public-release members, two restricted tools, and five
+quarantined tools (`curobo`, `ncore`, `openpi`, `robocasa`, and `robotwin`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
 
@@ -61,6 +61,20 @@ publication gates plus the checked-in Blackwell validator and real
 `DiffusionPolicy` construction on B200. This optional version does not replace
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
+
+## Unbuilt BYOF bootstrap candidates excluded from publication
+
+RoboTwin 2.0 is intentionally absent from the public image table. Its
+`npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` candidate is a planned public
+zero-vendor-payload bootstrap, not a published image. Phase A leaves the Ubuntu
+base, apt closure, and runtime lock incomplete and refuses builds/runs. RoboTwin,
+CuRobo, CUDA/cuDNN, simulator packages, assets, caches, credentials, and outputs
+remain outside the image. No exact image, byte scan, SBOM, provenance,
+anonymous-pull result, or RTX result exists. The independent runtime-use and
+output-rights decisions, bounded run-scoped `noncommercial` statement,
+customer-owned runtime credential/exact payload-probe contract, isolated
+ephemeral-cache default, and exact-digest RTX PRO 6000 gate are documented in
+[`byof-robotwin.md`](byof-robotwin.md).
 
 ## Pending NCore conversion image
 

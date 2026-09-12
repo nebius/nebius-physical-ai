@@ -1,0 +1,105 @@
+{
+  "schema_version": "npa.robotwin.runtime-lock.v1",
+  "status": "incomplete",
+  "reason": "CUDA/cuDNN delivery and use, the CuRobo service/output boundary beyond the recorded noncommercial evaluation scope, the simulator/Python closure, and aggregate RoboTwin asset/output treatment remain incomplete.",
+  "packaging_shape": "whole-source-sdk-runtime-fetch",
+  "operator_scope": {
+    "statement": "noncommercial",
+    "intended_activity": "containerization-and-technical-workload-validation-and-evaluation",
+    "record": "owner-only-bounded-manager-run-record",
+    "lifetime": "expires-with-bounded-manager-run",
+    "global_or_permanent": false,
+    "curobo_compatibility": "noncommercial-research-or-evaluation-only",
+    "service_and_output_use": "human-decision-required"
+  },
+  "target": {
+    "os": "linux",
+    "architecture": "amd64",
+    "python_abi": "cp310",
+    "cuda_abi": "12.8",
+    "compute_capability": "12.0"
+  },
+  "sources": [
+    {
+      "name": "RoboTwin",
+      "version": "96c1feab536306b50c26af200044fcdf126e8904",
+      "origin": "https://github.com/RoboTwin-Platform/RoboTwin",
+      "tree_sha1": "230ab2f721cd38878b2aa5198eb1e5cba624771b",
+      "license": "MIT",
+      "license_url": "https://github.com/RoboTwin-Platform/RoboTwin/blob/96c1feab536306b50c26af200044fcdf126e8904/LICENSE",
+      "license_sha256": "c695d421718e54e6f3a60858f0c601125c3ecc60c199332c15947360561e2a9f",
+      "artifact": null,
+      "destination_class": "runtime-source"
+    },
+    {
+      "name": "CuRobo",
+      "version": "0.7.8",
+      "revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+      "origin": "https://github.com/NVlabs/curobo",
+      "tree_sha1": "fa311cf154de8c8ed148aeefd064119532324d5a",
+      "license": "NVIDIA Source Code License for cuRobo",
+      "license_url": "https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE",
+      "license_sha256": "797d1e69fe7fd1c502e87af12c5a0ed08a84c7a8a22af1c7a3589cbfadff4364",
+      "notices_sha256": "208e6ee6488630aaba4d9f06113844f58c8867d3be6348c122a6aa8b9e2409c1",
+      "artifact": null,
+      "destination_class": "runtime-source",
+      "use_restriction": "noncommercial-research-or-evaluation"
+    }
+  ],
+  "assets": [
+    {
+      "repository": "TianxingChen/RoboTwin2.0",
+      "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "name": "embodiments.zip",
+      "size_bytes": 219859313,
+      "sha256": "6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6",
+      "destination_class": "runtime-input"
+    },
+    {
+      "repository": "TianxingChen/RoboTwin2.0",
+      "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "name": "objects.zip",
+      "size_bytes": 3737778549,
+      "sha256": "6aa56b3cf1e1064f7c809308144da36b00815f8b137fef2d7e4de856f8becf27",
+      "destination_class": "runtime-input"
+    }
+  ],
+  "weights": [],
+  "runtime_artifacts": [],
+  "access": {
+    "status": "not-probed",
+    "timing": "before-provisioning",
+    "evidence_key": [
+      "provider",
+      "customer-credential-fingerprint",
+      "artifact",
+      "immutable-revision-or-digest",
+      "terms-revision"
+    ],
+    "anonymous_artifacts": "exact-revision-payload-byte-probe",
+    "gated_artifacts": "customer-credential-exact-revision-payload-byte-probe",
+    "credential_owner": "customer",
+    "credential_phase": "runtime-only-secret-value",
+    "credential_persistence": false,
+    "token_is_terms_acceptance": false
+  },
+  "cache": {
+    "status": "disabled-until-lock-complete",
+    "tier": "node-local-ephemeral",
+    "owner_access": "single-customer-single-workload",
+    "identity_key": [
+      "provider",
+      "artifact",
+      "immutable-revision-or-digest",
+      "format"
+    ],
+    "durable_reuse": "disabled-until-rights-and-isolation-approved",
+    "contains_credentials": false,
+    "receipt_written_last": true,
+    "population": "unique-owner-only-staging-then-atomic-rename"
+  },
+  "outputs": {
+    "inside_runtime_cache": false,
+    "authorized_destination_only": true
+  }
+}

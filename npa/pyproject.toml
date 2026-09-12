@@ -213,6 +213,7 @@ curobo = "0.8.0-cuda13-b300-unbuilt"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
 ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"
+robotwin = "2.0-curobo-v0.7.8-rtfetch-unbuilt"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"

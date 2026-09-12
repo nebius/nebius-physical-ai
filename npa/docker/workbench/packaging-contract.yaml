@@ -248,6 +248,24 @@ images:
       layer commits; only runtime shared libraries and notices remain. No weights or populated
       runtime cache. Publication quarantined pending exact-byte security/license
       scans and independent real B200 and RTX PRO 6000 capability validation.
+  robotwin:
+    dockerfile: robotwin/Dockerfile
+    tier: job
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is ubuntu,
+      no SSH host keys or credentials are baked, and no default root process runs.
+    notes: >-
+      Phase A zero-vendor-payload bootstrap candidate. RoboTwin, CuRobo v0.7.8,
+      CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, assets, caches, credentials,
+      and outputs are absent and runtime-only. The base, apt, and runtime locks
+      remain incomplete, so builds and runs fail closed. The bounded operator
+      scope is noncommercial validation/evaluation; customer credentials are
+      runtime-only and exact gated payload probes must precede provisioning.
+      Cache reuse defaults to isolated node-local ephemeral storage. Public
+      redistribution and real RTX capability claims remain quarantined pending
+      exact-byte and remaining human/legal evidence.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service

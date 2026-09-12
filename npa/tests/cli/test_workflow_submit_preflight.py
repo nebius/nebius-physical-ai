@@ -7,6 +7,7 @@ separate run, and there was no command to produce the npa source copy at all.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from io import StringIO
 import json
 import os
@@ -16,11 +17,17 @@ import pytest
 from rich.console import Console
 import typer
 from typer.testing import CliRunner
+import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    PUBLIC_CONTEXT_ENV as ROBOTWIN_CONTEXT_ENV,
+    TRANSPORT_CONTEXT_ENV as ROBOTWIN_TRANSPORT_ENV,
+)
 
 runner = CliRunner()
+_REAL_EXECUTION_TARGET_PREFLIGHT = workflow_cli._execution_target_preflight
 
 SPEC = (
     Path(__file__).resolve().parents[3]
@@ -33,6 +40,12 @@ COSMOS3_SPEC = (
 SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3]
     / "workflows" / "main" / "sim2real.yaml"
+)
+ROBOTWIN_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "testing"
+    / "byof-robotwin.yaml"
 )
 
 
@@ -82,6 +95,558 @@ def _submit_cosmos3(*args: str):
     )
 
 
+def _submit_robotwin(*args: str):
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(ROBOTWIN_SPEC),
+            "--run-id",
+            "robotwin-public-launcher",
+            "--no-deploy-if-absent",
+            *args,
+        ],
+    )
+
+
+def _install_robotwin_submit_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[dict[str, object], Path]:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
+        "complete",
+    )
+    kubeconfig = tmp_path / "kubeconfig.yaml"
+    kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\n"
+        "current-context: robotwin-context\n"
+        "clusters: [{name: robotwin-cluster, cluster: {server: "
+        "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
+        "contexts: [{name: robotwin-context, context: {cluster: "
+        "robotwin-cluster, user: robotwin-user}}]\n"
+        "users: [{name: robotwin-user, user: {token: portable-test-token}}]\n",
+        encoding="utf-8",
+    )
+    skypilot = tmp_path / "skypilot.yaml"
+    skypilot.write_text(
+        "kubernetes:\n  allowed_contexts: [robotwin-context]\n",
+        encoding="utf-8",
+    )
+    for path in (kubeconfig, skypilot):
+        path.chmod(0o600)
+    payload: dict[str, object] = {
+        "solution": "robotwin",
+        "ownership_provenance": "manager-issued",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c",
+        "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation": {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        },
+        "license_acceptance": {
+            "nvidia_cuda_eula": True,
+            "nvidia_cudnn_sla": True,
+            "curobo_noncommercial_research_or_evaluation": True,
+            "robotwin2_aggregate_asset_and_output_terms": True,
+        },
+        "project": "robotwin-private-project-canary",
+        "nebius_profile": "robotwin-private-profile-canary",
+        "kubeconfig": str(kubeconfig),
+        "kubernetes_context": "robotwin-context",
+        "skypilot_config_path": str(skypilot),
+        "bucket": "robotwin-private-bucket-canary",
+        "output_root": "s3://robotwin-private-bucket-canary/output",
+        "run_id": "robotwin-private-run-canary",
+    }
+    context = tmp_path / "runtime-context.json"
+    context.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    context.chmod(0o600)
+    monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
+    return payload, context
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+    tmp_path: Path,
+    malformed: bool,
+) -> None:
+    monkeypatch.delenv(ROBOTWIN_CONTEXT_ENV, raising=False)
+    args = ["--secret-env", ROBOTWIN_CONTEXT_ENV, "--skip-preflight"]
+    if malformed:
+        context = tmp_path / "robotwin-context.json"
+        context.write_text("{", encoding="utf-8")
+        context.chmod(0o600)
+        monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
+    boundaries = [
+        mocker.patch(
+            "npa.orchestration.npa_workflow.first_run_state.prepare_run"
+        ),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
+        ),
+        mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
+        mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
+        mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.deploy.ensure_infra_present"
+        ),
+        mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
+    ]
+
+    result = _submit_robotwin(*args)
+
+    assert result.exit_code == 1, result.output
+    expected = "context-invalid-json" if malformed else "context-missing"
+    assert expected in result.output
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
+def test_robotwin_self_certified_context_refuses_before_external_boundaries(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    _install_robotwin_submit_context(monkeypatch, tmp_path)
+    boundaries = [
+        mocker.patch(
+            "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
+        ),
+        mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
+        mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
+    ]
+
+    result = _submit_robotwin(
+        "--secret-env", ROBOTWIN_CONTEXT_ENV, "--skip-preflight"
+    )
+
+    assert result.exit_code == 1
+    assert "manager-runtime-use-receipt-unavailable" in result.output
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
+def test_relabelled_robotwin_workflow_refuses_before_external_boundaries(
+    mocker, tmp_path: Path
+) -> None:
+    document = yaml.safe_load(ROBOTWIN_SPEC.read_text(encoding="utf-8"))
+    document["metadata"]["name"] = "generic-workflow"
+    document["config"].update(
+        {
+            "solution_name": "generic-solution",
+            "runtime_context_env": "GENERIC_RUNTIME_CONTEXT",
+            "repo_ref": "main",
+        }
+    )
+    relabelled = tmp_path / "generic-workflow.yaml"
+    relabelled.write_text(yaml.safe_dump(document), encoding="utf-8")
+    boundaries = [
+        mocker.patch(
+            "npa.orchestration.npa_workflow.first_run_state.prepare_run"
+        ),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
+        ),
+        mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
+        mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
+        mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch(
+            "npa.orchestration.npa_workflow.deploy.ensure_infra_present"
+        ),
+        mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
+    ]
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(relabelled),
+            "--run-id",
+            "generic-public-launcher",
+            "--no-deploy-if-absent",
+            "--skip-preflight",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "workflow-config" in result.output
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
+def test_robotwin_plan_only_is_context_free_and_publicly_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, "private-context-path-canary")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.read_owner_context",
+        lambda *_args, **_kwargs: pytest.fail("plan-only read private context"),
+    )
+
+    result = _submit_robotwin("--plan-only", "--output-format", "json")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    serialized = json.dumps(payload, sort_keys=True)
+    assert ROBOTWIN_CONTEXT_ENV in serialized
+    assert ROBOTWIN_TRANSPORT_ENV not in serialized
+    assert "private-context-path-canary" not in serialized
+    assert "example-bucket" in serialized
+
+
+def test_non_robotwin_live_submit_never_enters_robotwin_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.prepare_live_submit",
+        lambda *_args, **_kwargs: pytest.fail("non-RoboTwin entered special preflight"),
+    )
+
+    result = _submit("--skip-preflight")
+
+    assert result.exit_code != 0
+
+
+def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import robotwin_preflight
+    from npa.orchestration.skypilot.workflow import WorkflowResult
+
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_verified_control_plane_source_bytes",
+        lambda _uri, _fingerprint: None,
+    )
+    private, context_path = _install_robotwin_submit_context(monkeypatch, tmp_path)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
+    summary_uri = (
+        f"{private['output_root']}/{private['run_id']}/npa_byof_summary.json"
+    )
+    credentials = SimpleNamespace(
+        endpoint_url="https://storage.eu-north1.nebius.cloud",
+        secret_values={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        missing=(),
+        access_key_id="test-access-key",
+        secret_access_key="test-secret-key",
+    )
+    captured: dict[str, object] = {}
+    receipts: list[dict[str, object]] = []
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=credentials,
+    )
+    source_uri = "s3://public-source-bucket/npa-src/npa/" + "a" * 64
+    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
+    saved_source_resolver = mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_src_s3_uri_with_origin",
+        return_value=(source_uri, "environment"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._local_source_fingerprint",
+        return_value="a" * 64,
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._submit_prerequisites", return_value=[]
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
+    )
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch("npa.execution_preflight.verify_execution_scope", return_value={})
+    mocker.patch("npa.provisioning_journal.current_operation", return_value=None)
+    operation_prepare = mocker.patch(
+        "npa.provisioning_journal.ProvisioningOperation.prepare"
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.submission_lock",
+        return_value=nullcontext(),
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=lambda _project, _run_id, value, **_kwargs: receipts.append(value),
+    )
+    mocker.patch("npa.orchestration.npa_workflow.src_staging._storage_client")
+    mocker.patch("npa.orchestration.npa_workflow.src_staging.verify_staged_source")
+
+    def execution_target(*_args, **kwargs):
+        captured["authorized_output_uri"] = kwargs["authorized_output_uri"]
+        return object(), {"execution_readiness": "pass"}
+
+    def submit_workflow(*args, **kwargs):
+        captured["submit_args"] = args
+        captured["submit_kwargs"] = kwargs
+        captured["rendered"] = Path(args[0]).read_text(encoding="utf-8")
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="public-job-canary",
+            stdout=f"downstream mentioned {summary_uri}",
+        )
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        side_effect=execution_target,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=submit_workflow,
+    )
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+
+    result = _submit_robotwin(
+        "--secret-env",
+        ROBOTWIN_CONTEXT_ENV,
+        "--secret-env",
+        "AWS_ACCESS_KEY_ID",
+        "--secret-env",
+        "AWS_SECRET_ACCESS_KEY",
+        "--skip-preflight",
+        "--isolated-config-dir",
+        str(tmp_path / "sky-state"),
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["authorized_output_uri"] == summary_uri
+    submit_kwargs = captured["submit_kwargs"]
+    assert ROBOTWIN_CONTEXT_ENV not in submit_kwargs["secret_envs"]
+    assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["secret_envs"]
+    assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["extra_env"]
+    assert submit_kwargs["infra"] == "k8s/robotwin-context"
+    assert submit_kwargs["robotwin_submit_context"] is not None
+    assert submit_kwargs["execution_preflight_report"] == {
+        "execution_readiness": "pass"
+    }
+    assert str(context_path) not in json.dumps(submit_kwargs["secret_envs"])
+    rendered = str(captured["rendered"])
+    assert ROBOTWIN_CONTEXT_ENV in rendered
+    assert ROBOTWIN_TRANSPORT_ENV not in rendered
+    for field in (
+        "project",
+        "nebius_profile",
+        "kubeconfig",
+        "kubernetes_context",
+        "skypilot_config_path",
+        "bootstrap_image",
+        "bucket",
+        "output_root",
+        "run_id",
+    ):
+        value = str(private[field])
+        assert value not in rendered
+        assert value not in result.output
+    assert summary_uri not in result.output
+    assert "<redacted>" in json.loads(result.stdout)["stdout"]
+    assert receipts == []
+    operation_prepare.assert_not_called()
+    saved_source_resolver.assert_not_called()
+    assert source_uri not in result.output
+    stage.assert_not_called()
+
+
+def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_genuine_runtime_use_receipt",
+        lambda _raw: None,
+    )
+    _install_robotwin_submit_context(monkeypatch, tmp_path)
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=SimpleNamespace(
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            secret_values={},
+            missing=(),
+            access_key_id="test-access-key",
+            secret_access_key="test-secret-key",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_src_s3_uri_with_origin",
+        return_value=("", "default"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._local_source_fingerprint",
+        return_value="a" * 64,
+    )
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    state = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    operation = mocker.patch("npa.provisioning_journal.ProvisioningOperation.prepare")
+
+    result = _submit_robotwin(
+        "--secret-env",
+        ROBOTWIN_CONTEXT_ENV,
+        "--skip-preflight",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code != 0
+    assert "control-plane-source-explicit-uri-required" in result.output
+    stage.assert_not_called()
+    state.assert_not_called()
+    launch.assert_not_called()
+    operation.assert_not_called()
+
+
+def test_robotwin_authorized_output_stays_runtime_only_not_in_submission_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+
+    actual = "s3://private-bucket-canary/output/robotwin-run-canary/npa_byof_summary.json"
+    captured: dict[str, object] = {}
+
+    def resolve_execution_target(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_uris=tuple(kwargs["output_uris"]))
+
+    monkeypatch.setattr(
+        "npa.execution_preflight.resolve_execution_target", resolve_execution_target
+    )
+    monkeypatch.setattr(
+        "npa.execution_preflight.verify_execution_target",
+        lambda target, **_kwargs: {"verified": target.output_uris},
+    )
+    spec = load_spec(ROBOTWIN_SPEC)
+
+    target, _report = _REAL_EXECUTION_TARGET_PREFLIGHT(
+        spec,
+        project="private-project-canary",
+        context="private-context-canary",
+        region="",
+        run_id="robotwin-public-launcher",
+        assume_decision="",
+        credentials=SimpleNamespace(),
+        authorized_output_uri=actual,
+        verify_cluster=False,
+    )
+    prepared = SimpleNamespace(
+        spec=spec,
+        plan=SimpleNamespace(
+            steps=build_plan(spec, run_id="robotwin-public-launcher").steps
+        ),
+    )
+    receipt = workflow_cli._npa_submission_receipt(
+        prepared, "robotwin-public-launcher"
+    )
+
+    assert target.output_uris == (actual,)
+    assert captured["output_uris"] == [actual]
+    assert "authorization" not in receipt
+    receipt_outputs = [
+        output["uri"]
+        for step in receipt["steps"]
+        for output in step.get("outputs", [])
+    ]
+    assert receipt_outputs == [
+        "s3://example-bucket/oss-solutions/robotwin/"
+        "robotwin-public-launcher/npa_byof_summary.json"
+    ]
+    assert actual not in json.dumps(receipt, sort_keys=True)
+    assert actual not in json.dumps(
+        build_plan(spec, run_id="robotwin-public-launcher").to_dict()
+    )
+
+
+def test_robotwin_source_staging_is_not_a_workload_output_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import load_spec
+
+    summary = "s3://manager-bucket/output/robotwin-run/npa_byof_summary.json"
+    source = "s3://control-bucket/npa-source/exact-head"
+    resolved: list[dict[str, object]] = []
+
+    def resolve_execution_target(**kwargs):
+        resolved.append(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    def verify_execution_target(target, **_kwargs):
+        return {
+            "presence": "pass",
+            "access": "pass",
+            "destination_count": len(target.output_uris),
+        }
+
+    monkeypatch.setattr(
+        "npa.execution_preflight.resolve_execution_target", resolve_execution_target
+    )
+    monkeypatch.setattr(
+        "npa.execution_preflight.verify_execution_target", verify_execution_target
+    )
+
+    target, report = _REAL_EXECUTION_TARGET_PREFLIGHT(
+        load_spec(ROBOTWIN_SPEC),
+        project="manager-project",
+        context="manager-context",
+        region="",
+        run_id="robotwin-public-launcher",
+        assume_decision="",
+        credentials=SimpleNamespace(),
+        source_uri=source,
+        authorized_output_uri=summary,
+        verify_cluster=False,
+    )
+
+    assert target.output_uris == [summary]
+    assert report["destination_count"] == 1
+    assert resolved[0]["output_uris"] == [summary]
+    assert resolved[1]["output_uris"] == [source + "/"]
+    assert resolved[1]["provenance"] == {
+        "outputs": "control-plane-source-staging"
+    }
+    assert report["control_plane_source_staging"] == {
+        "presence": "pass",
+        "access": "pass",
+        "destination_count": 1,
+    }
+
+
 def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> None:
     output = StringIO()
     monkeypatch.setattr(
@@ -97,6 +662,55 @@ def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> Non
     assert output.getvalue() == (
         "Error: invalid target [H100:1] after closing tag [/:]\n"
     )
+
+
+def test_fail_discards_the_handled_exception_graph(monkeypatch) -> None:
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+
+    try:
+        raise ValueError("private-context-document-canary")
+    except ValueError:
+        with pytest.raises(typer.Exit) as exc_info:
+            workflow_cli._fail("sanitized refusal")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert "private-context-document-canary" not in output.getvalue()
+
+
+def test_robotwin_private_submit_values_are_redacted_from_errors_and_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private = "s3://private-bucket-canary/private-output"
+    transport = "private-transport-value-canary"
+    token = workflow_cli._SUBMIT_PRIVATE_REDACTIONS.set((private, transport))
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+    try:
+        with pytest.raises(typer.Exit):
+            workflow_cli._fail(f"target {private} carried {transport}")
+        redacted = workflow_cli._redact_submit_private_values(
+            {"error": private, "nested": [f"prefix:{transport}"]}
+        )
+    finally:
+        workflow_cli._SUBMIT_PRIVATE_REDACTIONS.reset(token)
+
+    assert private not in output.getvalue()
+    assert transport not in output.getvalue()
+    assert output.getvalue() == "Error: target <redacted> carried <redacted>\n"
+    assert redacted == {
+        "error": "<redacted>",
+        "nested": ["prefix:<redacted>"],
+    }
 
 
 def test_submit_lists_every_missing_prerequisite_at_once() -> None:

@@ -298,6 +298,24 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "not closed-loop or physical-robot task evidence" in case.notes
 
 
+def test_robotwin_case_is_normal_submit_with_one_delegated_strict_rtx() -> None:
+    case = next(
+        item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert not case.plan_only
+    assert not case.runtime
+    assert set(case.secret_envs) == {
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+    assert "CPU-only outer launcher" in case.notes
+    assert "sole accelerator request" in case.notes
+    assert "one STRICT RTX PRO 6000 Blackwell inner job" in case.notes
+
+
 @pytest.mark.parametrize(
     "name", ["sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"]
 )

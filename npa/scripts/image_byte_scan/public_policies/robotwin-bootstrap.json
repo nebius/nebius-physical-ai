@@ -1,0 +1,8 @@
+{
+  "schema_version": "npa.image-native-content-policy.v1",
+  "detector_identity": {
+    "config_sha256": "UNRESOLVED-PHASE-A",
+    "helper_sha256": "UNRESOLVED-PHASE-A"
+  },
+  "entries": []
+}

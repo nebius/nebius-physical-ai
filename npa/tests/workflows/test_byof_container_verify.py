@@ -6,8 +6,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -97,6 +99,182 @@ def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == [
         "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
     ]
+
+
+def test_robotwin_gate_evidence_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    evidence_names = [
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+    ]
+    for name in evidence_names:
+        monkeypatch.setenv(name, "2" if name.endswith("ARCHIVES") else "a" * 64)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+    assert module.resolve_secret_envs(None, solution_name="robotwin") == evidence_names
+
+
+def test_robotwin_inner_coordinates_use_only_secret_values_and_ignore_ambient_controls(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    authorization = SimpleNamespace(
+        run_id="robotwin-private-run-canary",
+        output_root="s3://private-bucket-canary/output",
+        skypilot_config_source="/owner-only/robotwin-skypilot.yaml",
+        kubernetes_context="private-context-canary",
+    )
+    environment = {
+        module.CHILD_IMAGE_ENV: "registry.example/private/image@sha256:" + "a" * 64,
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "NEBIUS_S3_ENDPOINT": "https://storage.eu-north1.nebius.cloud",
+    }
+    context = object()
+    monkeypatch.setattr(
+        module,
+        "prepare_inner_submit",
+        lambda observed, values: (
+            context
+            if observed is authorization and values is environment
+            else pytest.fail("authorization was not carried in process")
+        ),
+    )
+    for name, value in {
+        "NPA_BYOF_DIRECT_LAUNCH": "1",
+        "NPA_BYOF_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_BIN": "/untrusted/sky",
+        "NPA_BYOF_S3_ENDPOINT": "https://unauthorized.invalid",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE": "1",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--solution-name",
+            "robotwin",
+            "--infra",
+            "k8s/argv-override",
+            "--sky-bin",
+            "/untrusted/argv-sky",
+            "--direct-launch",
+        ]
+    )
+    assert (
+        module._apply_robotwin_authorization(args, authorization, environment)
+        is context
+    )
+
+    assert args.infra == "k8s/private-context-canary"
+    assert args.sky_bin == ""
+    assert args.direct_launch is False
+    assert args.image == environment[module.CHILD_IMAGE_ENV]
+    assert args.output_root == authorization.output_root
+    assert args.run_id == authorization.run_id
+    assert args.config_path == authorization.skypilot_config_source
+
+    rendered = yaml.safe_dump_all(
+        module.render_workflow(
+            YAML_PATH,
+            run_id=args.run_id,
+            output_root=args.output_root,
+            image=args.image,
+            solution_name="robotwin",
+            runtime_env=environment,
+        ),
+        sort_keys=False,
+    )
+    for value in (
+        args.image,
+        args.output_root,
+        args.run_id,
+        args.config_path,
+        authorization.kubernetes_context,
+    ):
+        assert value not in rendered
+    for name in (
+        module.CHILD_BUCKET_ENV,
+        module.CHILD_IMAGE_ENV,
+        module.CHILD_OUTPUT_PREFIX_ENV,
+        module.CHILD_RUN_ID_ENV,
+    ):
+        assert name in rendered
+
+    assert module.main(["--solution-name", "robotwin"]) == 2
+
+
+def test_authorized_robotwin_scrubs_ambient_controls_for_inner_submit(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    authorization = SimpleNamespace(kubeconfig_source="/owner-only/kubeconfig")
+    context = object()
+    supplied_environment = {"AUTHORIZED_CANARY": "yes"}
+    hostile_names = (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+        "NPA_BYOF_SKIP_SKY_CHECK",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    )
+    for name in hostile_names:
+        monkeypatch.setenv(name, f"hostile-{name.lower()}")
+    monkeypatch.setattr(
+        module,
+        "_apply_robotwin_authorization",
+        lambda _args, observed, values: (
+            context
+            if observed is authorization and values is supplied_environment
+            else pytest.fail("authorization was not preserved in process")
+        ),
+    )
+
+    def submit(_args, *, robotwin_submit_context, authorized_env):
+        assert robotwin_submit_context is context
+        assert authorized_env is supplied_environment
+        assert os.environ["KUBECONFIG"] == authorization.kubeconfig_source
+        assert all(name not in os.environ for name in hostile_names)
+        return 0
+
+    monkeypatch.setattr(module, "_submit_and_wait", submit)
+
+    assert module.run_authorized_robotwin(
+        ["--solution-name", "robotwin"],
+        authorization=authorization,
+        environment=supplied_environment,
+    ) == 0
+    assert all(os.environ[name] == f"hostile-{name.lower()}" for name in hostile_names)
+
+
+def test_robotwin_sky_bootstrap_is_worker_local_and_pinned(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_module()
+    from npa.cli import skypilot as skypilot_cli
+
+    observed: dict[str, object] = {}
+    sky_bin = tmp_path / "runtime" / "skypilot-venv" / "bin" / "sky"
+
+    def bootstrap_skypilot(**kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(sky_bin=sky_bin)
+
+    monkeypatch.setattr(skypilot_cli, "bootstrap_skypilot", bootstrap_skypilot)
+
+    assert module._bootstrap_robotwin_sky(tmp_path / "runtime") == str(sky_bin)
+    assert observed == {
+        "venv_path": tmp_path / "runtime" / "skypilot-venv",
+        "python_bin": sys.executable,
+    }
 
 
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:

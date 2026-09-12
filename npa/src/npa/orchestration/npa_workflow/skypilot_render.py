@@ -1261,7 +1261,7 @@ def default_npa_setup() -> str:
         "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
         "dest = pathlib.Path('/tmp/npa-src')\n"
         "dest.mkdir(parents=True, exist_ok=True)\n"
-        "print('syncing', uri, '->', dest, flush=True)\n"
+        "print('syncing confidential NPA source ->', dest, flush=True)\n"
         "kwargs = {'config': Config(signature_version='s3v4')}\n"
         "if os.environ.get('AWS_ENDPOINT_URL'):\n"
         "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
@@ -1314,7 +1314,7 @@ def default_npa_setup() -> str:
         "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
         "dest = pathlib.Path('/tmp/npa-src-overlay')\n"
         "dest.mkdir(parents=True, exist_ok=True)\n"
-        "print('overlay syncing', uri, '->', dest, flush=True)\n"
+        "print('overlay syncing confidential NPA source ->', dest, flush=True)\n"
         "kwargs = {'config': Config(signature_version='s3v4')}\n"
         "if os.environ.get('AWS_ENDPOINT_URL'):\n"
         "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
@@ -1744,6 +1744,14 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
+        if (
+            tool_ref == "workbench.byof.repo"
+            and "--runtime-context-env" in step.argv
+            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in step.argv
+            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" not in seen
+        ):
+            seen.add("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
+            hints.append("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
         if tool_ref == "workbench.byof.repo" and any(
             value == "openpi" or "pi05_droid_jointpos_polaris" in value
             for value in step.argv
@@ -1927,13 +1935,32 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_NAME": spec.name,
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
-        # Retain output roles for the shared raw/rendered SDK submission gate.
-        "NPA_EXECUTION_OUTPUTS": json.dumps([
-            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
-            for output in scheduler_task.get("outputs") or []
-            if str(output.get("uri") or "").startswith("s3://")
-        ], separators=(",", ":")),
     }
+    from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
+
+    if recognize_contract(spec):
+        # This exact contract binds its real output on the preverified target.
+        # An explicit empty declaration keeps source-input URIs from being
+        # mistaken for undeclared writes by the shared raw-submit preflight.
+        envs["NPA_EXECUTION_OUTPUTS"] = "[]"
+    else:
+        # Retain output roles for the shared raw/rendered SDK submission gate.
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [
+                {
+                    "uri": output["uri"],
+                    "kind": output.get("kind")
+                    or (
+                        "directory"
+                        if str(output["uri"]).endswith("/")
+                        else "file"
+                    ),
+                }
+                for output in scheduler_task.get("outputs") or []
+                if str(output.get("uri") or "").startswith("s3://")
+            ],
+            separators=(",", ":"),
+        )
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
         material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(

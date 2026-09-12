@@ -21,6 +21,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
+| RoboTwin 2.0 (**public-bootstrap candidate; unbuilt/quarantined**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | deferred `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -41,6 +42,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
+| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **bootstrap unbuilt; qualification pending** | Phase A proves only local refusal/packaging contracts. Runtime/legal decisions, exact bytes, anonymous pull, and one STRICT-reservation-backed RTX PRO 6000 run remain pending; schema/plan checks are not execution evidence. |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
@@ -97,6 +99,63 @@ unique and must be tested with its own upstream-named capabilities.
 > (`byof-robocasa.yaml`) is preserved for compatibility, but the native tool is
 > the maintained surface. See `skills/tools/robocasa/SKILL.md` and
 > `workflows/testing/robocasa-smoke.yaml`.
+
+### RoboTwin 2.0
+
+Pinned bimanual SAPIEN simulation and native data-collection candidate. The
+source is `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`; required runtime assets come from
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. A future authorized clean smoke
+would fetch and hash-check only the aggregate objects and embodiments archives,
+then use the
+ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
+into the image: the live harness scans the exact private image digest's rootfs
+and every layer before it may submit the GPU run.
+
+The registry candidate now uses normal `npa workbench workflow submit` with a CPU-only
+outer launcher. Before any credential, image, storage, scheduler, network, or
+GPU action, the client will validate the exact immutable public workflow plus one
+owner-only manager context, converts its validated bytes to an internal value
+secret, and binds the live workload output to the manager-derived destination
+without persisting that destination or authorization evidence. The worker will
+revalidate owner-only temporary files and delegate the sole accelerator request
+to the fixed one-RTX inner profile.
+Plans and rendered YAML retain sanitized placeholders; qualification remains
+pending until that normal-submit path produces genuine private live evidence.
+
+| Capability | Status | Upstream basis / required evidence |
+| --- | --- | --- |
+| `sapien_vulkan_rt_renderer` | qualification pending | `SapienRenderer`, `rt` camera shader, successful `vulkaninfo`, and SAPIEN device summary from one RTX PRO 6000 (`sm_120`) |
+| `beat_block_hammer_successful_seed_search` | qualification pending | official `scripts/collect_data.py beat_block_hammer demo_clean` seed-search phase, reduced only to one episode |
+| `beat_block_hammer_successful_seed_replay` | qualification pending hard gate | official replay must finish with `check_success()` true; imports, registration, simulator startup, or a planned trajectory do not pass |
+| `robotwin_native_hdf5_collection` | qualification pending hard gate | non-empty native HDF5 with RoboTwin provenance, action/state/vision groups, positive action count, size, and SHA-256 |
+| `robotwin_rendered_mp4` | qualification pending hard gate | fully decoded MP4 with positive dimensions and exactly `action_count + 1` frames, size, and SHA-256 |
+
+The planned public image contains none of these bytes; a future authorized
+runtime would compile pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
+limits use to noncommercial research/evaluation. The operator's exact
+`noncommercial` statement for this bounded run is compatible with that field of
+use for containerization and technical workload validation/evaluation; it
+expires with the run and does not authorize hosted service or broader outputs.
+Those service/output questions stay human-gated even though a
+zero-vendor-payload bootstrap may be eligible for public redistribution after
+exact-byte review. Public artifacts require exact-revision payload probes;
+gated artifacts additionally require the customer's own runtime-only credential
+and an exact provider/artifact/revision/terms access result before provisioning.
+No generic consent flag is used. The candidate remains unbuilt,
+publication-quarantined, and absent from the public image table. The Hugging Face
+asset repository card says MIT, while the
+aggregate object archive includes mixed documented source families; future
+tasks must review the terms of their selected objects. Registry credentials,
+runtime fetch, and the byte-absence scan do not grant permission; the
+manager-owned decisions remain pre-fetch/pre-run gates. See
+[`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
+artifact contract.
+
+Deferred: the 50-task sweep, randomized-background coverage, policy training or
+evaluation, other embodiments and object-license review, and physical-robot
+deployment.
 
 ### OpenPI
 

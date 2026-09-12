@@ -93,6 +93,7 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
+| `npa-robotwin` (zero-payload bootstrap candidate) | pending build; not routed or validated | blocked (no RT cores) | pending build; exact-digest qualification not run | blocked (renderer contract is RTX-only) | blocked (renderer contract is RTX-only) |
 | `npa-alpamayo2-super` | supported | supported | **verified** [63] | **verified** [62] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **historical evidence** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
@@ -126,6 +127,14 @@ likewise predates its current coherent release.
 **blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`. Whether a given blocked cell can be closed at all is evaluated in [Can the blocked images support every Nebius GPU?](blocked-image-gpu-feasibility.md) — some are physical (rendering needs RT cores), others are a stale software gate or an unspent GPU hour.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
 **not built** — the Dockerfile is in tree but no image has been built, so no cell has any evidence behind it. Reading the Dockerfile is not evidence.
+
+`npa-robotwin` is recorded as `unknown` / `pending-build` only to keep the
+machine-readable packaging inventory complete. The candidate remains unbuilt,
+publication-quarantined, and absent from the public image catalog. No image
+digest, byte scan, public pull, architecture result, or live capability evidence
+exists. Its future rendering workload remains RTX-only and must not route to
+B200 or B300; this pending record does not authorize a build or establish GPU
+compatibility.
 
 `npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
 Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,
