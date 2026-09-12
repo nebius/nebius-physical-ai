@@ -761,6 +761,10 @@ def _gymnasium_live_command(
         e2e_project or "",
     ]
     cmd.extend(["--image", preset, "--skip-build"])
+    # The owner-side harness is the sole cleanup authority so its exact
+    # sky-down exit status and namespace-baseline receipt cannot be discarded
+    # by the inner wrapper.
+    cmd.append("--no-cleanup")
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:
         cmd.extend(["--config-path", config_path])
@@ -1047,8 +1051,14 @@ def _gymnasium_sky_cluster_absent(
     )
     assert result.returncode == 0, "SkyPilot cluster status lookup failed"
     payload = json.loads(result.stdout)
-    clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
-    assert isinstance(clusters, list), "unexpected SkyPilot cluster status schema"
+    assert isinstance(payload, list), "unexpected SkyPilot cluster status schema"
+    clusters = payload
+    assert all(
+        isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and bool(item["name"].strip())
+        for item in clusters
+    ), "unexpected SkyPilot cluster record schema"
     return not any(item.get("name") == run_id for item in clusters)
 
 
@@ -1287,30 +1297,14 @@ def _cleanup_gymnasium_run_after_success(
     config_path: str | None,
     namespace_baseline: dict[str, list[dict[str, object]]],
 ) -> None:
-    try:
-        _cleanup_gymnasium_run(
-            env,
-            namespace=namespace,
-            run_id=run_id,
-            config_path=config_path,
-            namespace_baseline=namespace_baseline,
-            issue_down=False,
-        )
-    except AssertionError as passive_error:
-        try:
-            _cleanup_gymnasium_run(
-                env,
-                namespace=namespace,
-                run_id=run_id,
-                config_path=config_path,
-                namespace_baseline=namespace_baseline,
-                issue_down=True,
-            )
-        except BaseException as active_error:
-            passive_error.add_note(
-                f"active exact-run cleanup also failed: {active_error}"
-            )
-            raise passive_error from active_error
+    _cleanup_gymnasium_run(
+        env,
+        namespace=namespace,
+        run_id=run_id,
+        config_path=config_path,
+        namespace_baseline=namespace_baseline,
+        issue_down=True,
+    )
 
 
 def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
@@ -1440,20 +1434,22 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     )
     stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
     stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
-    with (
-        _new_gymnasium_private_file(stdout_path) as stdout_stream,
-        _new_gymnasium_private_file(stderr_path) as stderr_stream,
-    ):
-        proc = subprocess.Popen(
-            cmd,
-            stdout=stdout_stream,
-            stderr=stderr_stream,
-            text=True,
-            cwd=str(REPO_ROOT),
-            env=env,
-            start_new_session=True,
-        )
-        try:
+    proc: subprocess.Popen[str] | None = None
+    cleanup_complete = False
+    try:
+        with (
+            _new_gymnasium_private_file(stdout_path) as stdout_stream,
+            _new_gymnasium_private_file(stderr_path) as stderr_stream,
+        ):
+            proc = subprocess.Popen(
+                cmd,
+                stdout=stdout_stream,
+                stderr=stderr_stream,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+                start_new_session=True,
+            )
             receipt = _gymnasium_pod_image_receipt(
                 proc,
                 env=env,
@@ -1468,13 +1464,57 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 raise AssertionError(
                     f"BYOF runner exited {returncode}; inspect owner-private logs"
                 )
-        except BaseException as primary_error:
+        _cleanup_gymnasium_run_after_success(
+            env,
+            namespace=namespace,
+            run_id=run_id,
+            config_path=config_path,
+            namespace_baseline=namespace_baseline,
+        )
+        cleanup_complete = True
+        stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+        credential_markers = live_credential_markers()
+        assert_no_credential_leakage(
+            stdout + "\n" + stderr, extra_forbidden=credential_markers
+        )
+        summary = _parse_last_json_blob(stdout + "\n" + stderr)
+        assert_no_credential_leakage(
+            json.dumps(summary, sort_keys=True), extra_forbidden=credential_markers
+        )
+        assert summary["status"] == "ok", summary
+        expected_digest = _gymnasium_expected_digest(summary)
+        assert receipt["expected_digest"] == expected_digest
+        assert receipt["observed_digest"] == expected_digest
+        artifact_bytes, remote_summary = _gymnasium_remote_evidence(
+            e2e_project, root_uri=run_root
+        )
+        assert_no_credential_leakage(
+            artifact_bytes.decode("utf-8"), extra_forbidden=credential_markers
+        )
+        assert_no_credential_leakage(
+            json.dumps(remote_summary, sort_keys=True),
+            extra_forbidden=credential_markers,
+        )
+        _assert_gymnasium_robotics_artifact(
+            artifact_bytes, expected_digest=expected_digest
+        )
+        assert remote_summary["smoke_exit_code"] == 0
+        assert remote_summary["smoke_artifact"]["size_bytes"] == len(artifact_bytes)
+        assert (
+            remote_summary["smoke_artifact"]["sha256"]
+            == hashlib.sha256(artifact_bytes).hexdigest()
+        )
+        assert expected_digest in remote_summary["pod_observed_image_id"]
+    except BaseException as primary_error:
+        if proc is not None:
             try:
                 _terminate_gymnasium_runner(proc)
             except BaseException as termination_error:
                 primary_error.add_note(
                     f"BYOF runner termination also failed: {termination_error}"
                 )
+        if proc is not None and not cleanup_complete:
             try:
                 _cleanup_gymnasium_run(
                     env,
@@ -1488,49 +1528,10 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 primary_error.add_note(
                     f"exact-run cleanup also failed: {cleanup_error}"
                 )
-            try:
-                _cleanup_gymnasium_failed_output(e2e_project, root_uri=run_root)
-            except BaseException as output_cleanup_error:
-                primary_error.add_note(
-                    f"failed-run output cleanup also failed: {output_cleanup_error}"
-                )
-            raise
-    _cleanup_gymnasium_run_after_success(
-        env,
-        namespace=namespace,
-        run_id=run_id,
-        config_path=config_path,
-        namespace_baseline=namespace_baseline,
-    )
-    stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
-    stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
-    credential_markers = live_credential_markers()
-    assert_no_credential_leakage(
-        stdout + "\n" + stderr, extra_forbidden=credential_markers
-    )
-    summary = _parse_last_json_blob(stdout + "\n" + stderr)
-    assert_no_credential_leakage(
-        json.dumps(summary, sort_keys=True), extra_forbidden=credential_markers
-    )
-    assert summary["status"] == "ok", summary
-    expected_digest = _gymnasium_expected_digest(summary)
-    assert receipt["expected_digest"] == expected_digest
-    assert receipt["observed_digest"] == expected_digest
-    artifact_bytes, remote_summary = _gymnasium_remote_evidence(
-        e2e_project, root_uri=run_root
-    )
-    assert_no_credential_leakage(
-        artifact_bytes.decode("utf-8"), extra_forbidden=credential_markers
-    )
-    assert_no_credential_leakage(
-        json.dumps(remote_summary, sort_keys=True),
-        extra_forbidden=credential_markers,
-    )
-    _assert_gymnasium_robotics_artifact(artifact_bytes, expected_digest=expected_digest)
-    assert remote_summary["smoke_exit_code"] == 0
-    assert remote_summary["smoke_artifact"]["size_bytes"] == len(artifact_bytes)
-    assert (
-        remote_summary["smoke_artifact"]["sha256"]
-        == hashlib.sha256(artifact_bytes).hexdigest()
-    )
-    assert expected_digest in remote_summary["pod_observed_image_id"]
+        try:
+            _cleanup_gymnasium_failed_output(e2e_project, root_uri=run_root)
+        except BaseException as output_cleanup_error:
+            primary_error.add_note(
+                f"failed-run output cleanup also failed: {output_cleanup_error}"
+            )
+        raise
