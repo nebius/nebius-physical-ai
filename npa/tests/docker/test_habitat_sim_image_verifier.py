@@ -264,6 +264,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
                 b"Package: python3\nStatus: install ok installed\n"
                 b"Version: 3.10.6-1~22.04.1\nSource: python3-defaults\n\n",
             ),
+            file("var/lib/dpkg/info/python3.list", b"/usr/bin/python3\n"),
             file("usr/share/doc/python3/copyright", b"python license\n"),
             file("opt/venv/lib/python3.10/site-packages/fixture/native.so", native),
         ]
@@ -343,13 +344,19 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 20
+    assert report["regular_files_read"] == 21
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
         "architecture": "",
         "source": "python3-defaults",
         "source_version": "3.10.6-1~22.04.1",
+        "file_lists": [
+            {
+                "path": "var/lib/dpkg/info/python3.list",
+                "sha256": _digest(b"/usr/bin/python3\n"),
+            }
+        ],
         "copyright_path": "usr/share/doc/python3/copyright",
         "copyright_sha256": _digest(b"python license\n"),
     }
@@ -430,6 +437,38 @@ def test_every_installed_package_requires_copyright_bytes(tmp_path) -> None:
         b"Version: 1.0\nSource: transitive-source\n\n",
     )
     assert "runtime_package_copyright_missing" in _codes(_verify(tmp_path, [entries]))
+
+
+def test_every_installed_package_list_bytes_are_bound(tmp_path) -> None:
+    baseline = _verify(tmp_path, [_required_entries()])
+    entries = _required_entries()
+    list_index = next(
+        index for index, row in enumerate(entries) if row[0].endswith("python3.list")
+    )
+    entries[list_index] = file(
+        "var/lib/dpkg/info/python3.list", b"/usr/bin/python3.10\n"
+    )
+    report = _verify(
+        tmp_path,
+        [entries],
+        expected_dpkg_inventory_sha256=baseline["dpkg_inventory_sha256"],
+    )
+    assert "runtime_dpkg_inventory_lock_mismatch" in _codes(report)
+
+    missing = [
+        row for row in _required_entries() if not row[0].endswith("python3.list")
+    ]
+    assert "runtime_package_file_list_population" in _codes(
+        _verify(tmp_path, [missing])
+    )
+
+    duplicate = _required_entries()
+    duplicate.append(
+        file("var/lib/dpkg/info/python3:amd64.list", b"/usr/bin/python3\n")
+    )
+    assert "runtime_package_file_list_population" in _codes(
+        _verify(tmp_path, [duplicate])
+    )
 
 
 def test_native_needed_resolution_and_dpkg_ownership_are_closed(tmp_path) -> None:
