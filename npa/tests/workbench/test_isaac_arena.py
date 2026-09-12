@@ -105,7 +105,21 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
     assert argv[-1] == "cube_goal_pose"
     assert argv[argv.index("--num_episodes") + 1] == "1"
     assert "--headless" in argv
+    assert argv[argv.index("--device") + 1] == "cuda:0"
     assert "--record_viewport_video" not in argv
+
+    cpu_argv = build_evaluation_argv(
+        IsaacArenaRequest(output_path=str(tmp_path), execution_device="cpu"),
+        output_dir=tmp_path / "cpu-upstream",
+    )
+    assert cpu_argv[cpu_argv.index("--device") + 1] == "cpu"
+
+    with pytest.raises(IsaacArenaError, match="execution_device"):
+        evaluate(
+            IsaacArenaRequest(
+                output_path=str(tmp_path), execution_device="cuda", dry_run=True
+            )
+        )
 
     configured = build_evaluation_argv(
         IsaacArenaRequest(
@@ -403,6 +417,8 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
         "baked": True,
         "license": "Apache-2.0",
     }
+    assert result["runtime"]["execution_device"] == "cuda:0"
+    assert result["runtime"]["viewport_renderer_gpu_required"] is True
     assert result["runtime"]["lightwheel_registry_assets"]["runtime_fetch"] is True
     assert result["runtime"]["lightwheel_registry_assets"]["redistribution"] is False
     assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0

@@ -221,6 +221,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("policy_type", "policy_type", "--policy-type"),
             _p("input_path", "input_path", "--input-path"),
             _p("replay_target_steps", "replay_target_steps", "--replay-target-steps"),
+            _p("execution_device", "execution_device", "--execution-device"),
             _p("num_episodes", "num_episodes", "--num-episodes"),
             _p("num_envs", "num_envs", "--num-envs"),
             _p("seed", "seed", "--seed"),

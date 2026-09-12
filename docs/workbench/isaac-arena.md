@@ -125,6 +125,9 @@ result = evaluate(
     policy_type="replay",
     input_path="./test_demo_gr1_open_microwave.hdf5",
     replay_target_steps=250,
+    # Keep RTX viewport rendering while using the pinned upstream GR1
+    # environment's stable CPU-physics path on sm_120.
+    execution_device="cpu",
     object_name="tomato_soup_can",
     record_video=True,
     run_id="<run-id>",
@@ -177,7 +180,12 @@ external-plugin support claim.
   no RT cores, so this path makes no render or meaningful-motion claim.
 - `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the nonzero
   operator-owned trajectory for the 250-step task horizon on RTX PRO 6000 and requires a
-  motion-validated viewport MP4.
+  motion-validated viewport MP4. The pinned upstream GR1 environment poisons
+  CUDA during GPU-physics initialization on the qualified sm_120 target, so
+  this workflow explicitly runs its one-environment physics/policy loop on CPU
+  while the assigned RTX GPU performs viewport rendering. The result records
+  both the execution device and measured GPU identity; this is not a CUDA
+  physics claim.
 
 Validate and plan before submission, substitute an operator-owned bucket, and
 pass the standard S3 credentials through workflow secret handling. No model

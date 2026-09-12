@@ -20,6 +20,10 @@ config:
   # The upstream task horizon is 5 s at 50 Hz. The 80 recorded commands remain
   # byte-bound evidence; NPA holds the last genuine command through step 250.
   replay_target_steps: "250"
+  # GR1 GPU-physics initialization is not stable on the pinned upstream's
+  # sm_120 path. Keep real RTX viewport rendering but run its one-environment
+  # physics/policy loop on CPU; result.json records both facts.
+  execution_device: cpu
   num_episodes: "1"
   num_envs: "1"
   seed: "42"

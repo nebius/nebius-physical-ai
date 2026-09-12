@@ -17,6 +17,7 @@ config:
   environment: cube_goal_pose
   policy_type: zero_action
   replay_target_steps: "0"
+  execution_device: "cuda:0"
   num_episodes: "1"
   num_envs: "1"
   seed: "42"

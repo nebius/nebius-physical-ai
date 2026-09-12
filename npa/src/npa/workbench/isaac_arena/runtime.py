@@ -476,6 +476,15 @@ def capabilities() -> dict[str, Any]:
                 "limitation": "Upstream supports it, but NPA currently requests only the viewport recorder.",
             },
             "b200": "State-only evaluation; B200 has no RT cores and carries no video claim.",
+            "execution_devices": {
+                "cuda:0": "Default GPU physics and policy execution path.",
+                "cpu": (
+                    "CPU physics/policy execution with the assigned RTX GPU retained for "
+                    "viewport rendering. Use this compatibility path when an upstream "
+                    "environment poisons CUDA during GPU-physics initialization; the result "
+                    "still records the independently measured renderer GPU."
+                ),
+            },
             "agent_ui": "Use the authenticated native video renderer; Arena does not emit a truthful native Rerun .rrd.",
         },
     }
@@ -490,6 +499,7 @@ class IsaacArenaRequest:
     policy_type: str = "zero_action"
     input_path: str = ""
     replay_target_steps: int = 0
+    execution_device: str = "cuda:0"
     num_episodes: int = 1
     num_envs: int = 1
     seed: int = 42
@@ -540,6 +550,8 @@ def _validate(request: IsaacArenaRequest) -> None:
         raise IsaacArenaError("replay_target_steps cannot be negative")
     if request.replay_target_steps and request.policy_type != "replay":
         raise IsaacArenaError("replay_target_steps is valid only for replay policies")
+    if request.execution_device not in {"cpu", "cuda:0"}:
+        raise IsaacArenaError("execution_device must be cpu or cuda:0")
 
 
 def _local_input(request: IsaacArenaRequest, root: Path) -> Path | None:
@@ -570,7 +582,7 @@ def build_evaluation_argv(
         f"{ISAAC_ARENA_ROOT}/isaaclab_arena/evaluation/policy_runner.py",
         "--headless",
         "--device",
-        "cuda:0",
+        request.execution_device,
         "--policy_type",
         request.policy_type,
         "--num_episodes",
@@ -1111,6 +1123,8 @@ def evaluate(
             "request": public_request,
             "runtime": {
                 "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
+                "execution_device": request.execution_device,
+                "viewport_renderer_gpu_required": request.record_video,
                 "isaac_runtime_fetch": True,
                 "lightwheel_sdk": {
                     "version": LIGHTWHEEL_SDK_VERSION,

@@ -46,7 +46,11 @@ Use the four-seed CUDA state-only workflow on B200; it must not record cameras
 or a viewport because B200 has no RT cores. Its four sequential real evaluation
 states are the comprehensive daily workflow coverage for this image. Use RTX
 PRO 6000 for the independent graphics qualification and require a non-empty
-MP4.
+MP4. For the pinned GR1 environment on sm_120, use `--execution-device cpu`:
+upstream GPU-physics initialization poisons CUDA before policy construction,
+while CPU physics plus RTX viewport rendering remains the supported
+qualification path. Record both the execution device and measured renderer GPU
+and never describe this as CUDA physics.
 
 ```bash
 npa workbench health preflight --checks nebius,s3
