@@ -31,8 +31,11 @@ At run time the operator must supply a manager-issued, exact-manifest-bound
 use decision. Missing or mismatched decisions refuse before cache creation or
 network access. Runtime fetch changes delivery only; it is not consent and
 does not grant use, redistribution, commercial, service, or output rights.
-The fetched cache stays non-root, mode-restricted, atomic, and separate from
-`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact.
+The fetched cache stays non-root, atomic, sealed read-only, and separate from
+`NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. Offline
+warm reuse revalidates a complete source/runtime/data/model file inventory and
+refuses writable or changed trees. The qualification gate itself requires a
+cold-fetch receipt from the current run.
 
 The candidate remains unbuilt, unvalidated, and quarantined. It must pass the
 dedicated complete-byte scanner, SBOM/provenance/security gates, anonymous

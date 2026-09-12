@@ -50,7 +50,7 @@ RUN set -eux; \
     install -d -m 0700 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero /workspace/byof-runs; \
     install -d -m 0755 /run/sshd /opt/npa/libero; \
     printf '%s\n' \
-      'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/sbin/service ssh start, /usr/sbin/service ssh restart, /usr/sbin/sshd' \
+      'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
       > /etc/sudoers.d/npa-skypilot-ssh; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \

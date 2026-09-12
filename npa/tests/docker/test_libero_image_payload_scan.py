@@ -133,6 +133,16 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
         ("usr/lib/libcudart.so.12", b"ELF", "cuda_or_nvidia_payload"),
         ("workspace/.cache/npa/libero/current/file", b"x", "populated_runtime_cache"),
         ("workspace/byof-runs/run/checkpoint.pth", b"x", "workflow_output"),
+        (
+            "opt/byof/libero/lifelong/algos/base.py",
+            b"source",
+            "libero_source_outside_neutral_bootstrap",
+        ),
+        (
+            "opt/torch/lib/libtorch.so",
+            b"runtime",
+            "torch_runtime_outside_python_distribution",
+        ),
     ],
 )
 def test_scanner_refuses_each_forbidden_boundary(tmp_path, path, content, kind) -> None:
@@ -152,6 +162,86 @@ def test_scanner_refuses_forbidden_bytes_hidden_in_nested_archive(tmp_path) -> N
     findings = _scan(module, [layer], _config(module), _metadata(module))
 
     assert any(item.kind == "torch_distribution" for item in findings)
+
+
+def test_scanner_refuses_nonzero_tar_padding(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/neutral": b"x"})
+    payload = bytearray(layer.read_bytes())
+    with tarfile.open(layer, "r:") as archive:
+        member = archive.getmember("opt/neutral")
+    payload[member.offset_data + member.size] = 1
+    layer.write_bytes(payload)
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "nonzero_archive_padding" for item in findings)
+
+
+def test_scanner_refuses_unaccounted_trailing_archive_bytes(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/neutral": b"x"})
+    layer.write_bytes(layer.read_bytes() + b"not-accounted")
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "unaccounted_archive_bytes" for item in findings)
+
+
+def test_scanner_refuses_unsupported_archive_member(tmp_path) -> None:
+    module = _load_module()
+    layer = tmp_path / "layer.tar"
+    with tarfile.open(layer, "w") as archive:
+        member = tarfile.TarInfo("opt/neutral-pipe")
+        member.type = tarfile.FIFOTYPE
+        archive.addfile(member)
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "unsupported_archive_member" for item in findings)
+
+
+def test_scanner_validates_whiteouts_and_flattened_rootfs(tmp_path) -> None:
+    module = _load_module()
+    first = _layer(tmp_path / "first.tar", {"opt/neutral": b"x"})
+    second = _layer(tmp_path / "second.tar", {"opt/.wh.neutral": b""})
+    exported = _layer(tmp_path / "rootfs.tar", {"usr/bin/sh": b"shell"})
+
+    valid = module._layer_graph_findings([first, second])
+    mismatch = module._layer_graph_findings([first, second], exported)
+
+    assert valid == []
+    assert any(item.kind == "flattened_rootfs_mismatch" for item in mismatch)
+
+
+def test_scanner_refuses_malformed_whiteout(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"opt/.wh.payload": b"not-empty"})
+
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+
+    assert any(item.kind == "malformed_whiteout" for item in findings)
+
+
+def test_scanner_refuses_outer_member_not_bound_by_docker_manifest(tmp_path) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "inner.tar", {"opt/neutral": b"x"})
+    manifest = json.dumps(
+        [{"Config": "config.json", "Layers": ["layer.tar"]}], sort_keys=True
+    ).encode()
+    archive = _layer(
+        tmp_path / "image.tar",
+        {
+            "manifest.json": manifest,
+            "config.json": b"{}",
+            "layer.tar": layer.read_bytes(),
+            "unbound.bin": b"hidden",
+        },
+    )
+
+    findings = module._docker_save_outer_findings(archive)
+
+    assert any(item.kind == "unaccounted_outer_archive_member" for item in findings)
 
 
 @pytest.mark.parametrize(

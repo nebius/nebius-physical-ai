@@ -178,6 +178,26 @@ def prepare_language_model(
     )
 
 
+def runtime_materialized_this_run(output_dir: Path, runtime_root: Path) -> bool:
+    receipt_path = output_dir / "npa_runtime_bootstrap.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        raise RuntimeError("LIBERO runtime bootstrap receipt is absent")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != "npa.libero.runtime-cache.v1"
+        or receipt.get("solution") != "libero"
+        or receipt.get("status") != "ready"
+        or receipt.get("warm_reuse") is not False
+        or Path(str(receipt.get("cache_path") or "")).resolve()
+        != runtime_root.resolve()
+    ):
+        raise RuntimeError(
+            "LIBERO hard gate requires this run's cold guarded runtime fetch"
+        )
+    return True
+
+
 def authoritative_task_embedding(model_path: Path, max_word_len: int) -> torch.Tensor:
     tokenizer = AutoTokenizer.from_pretrained(
         str(model_path), revision=LANGUAGE_MODEL_REVISION, local_files_only=True
@@ -438,7 +458,8 @@ try:
         or cache_dir in output_dir.parents
     ):
         raise RuntimeError("LIBERO cache and smoke output boundaries overlap")
-    observed_dataset_sha256, downloaded = download_verified(dataset_path)
+    materialized_this_run = runtime_materialized_this_run(output_dir, cache_dir)
+    observed_dataset_sha256, _ = download_verified(dataset_path)
 
     with h5py.File(dataset_path, "r") as hdf5:
         data_group = hdf5["data"]
@@ -501,7 +522,7 @@ try:
     (
         language_model_path,
         observed_language_model_files,
-        language_model_downloaded,
+        _,
     ) = prepare_language_model(cache_dir / "models")
     task_embedding = authoritative_task_embedding(
         language_model_path, int(cfg.data.max_word_len)
@@ -657,7 +678,7 @@ try:
                 **result["dataset"],
                 "observed_sha256": observed_dataset_sha256,
                 "observed_size_bytes": dataset_path.stat().st_size,
-                "downloaded_this_run": downloaded,
+                "downloaded_this_run": materialized_this_run,
                 "demo_count": len(demo_ids),
                 "sample_count": sample_count,
                 "dataset_bddl_path": dataset_bddl,
@@ -693,7 +714,7 @@ try:
                 "embedding_shape": list(task_embedding.shape),
                 "embedding_dtype": str(task_embedding.dtype).removeprefix("torch."),
                 "embedding_finite": bool(torch.isfinite(task_embedding).all().item()),
-                "downloaded_this_run": language_model_downloaded,
+                "downloaded_this_run": materialized_this_run,
                 "cache_uploaded": False,
             },
             "split": {

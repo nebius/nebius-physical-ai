@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import bz2
+import gzip
 import hashlib
+import io
 import json
+import lzma
 import re
 import sys
+import tarfile
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -30,6 +35,19 @@ BASE_PROVENANCE_SHA256 = (
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
 
 FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "libero_source_outside_neutral_bootstrap",
+        re.compile(
+            r"(?:^|/)(?:opt/byof|opt/(?:libero|robomimic|robosuite)|"
+            r"usr/src/(?:libero|robomimic|robosuite)|"
+            r"workspace/(?:libero|robomimic|robosuite))(?:/|$)",
+            re.I,
+        ),
+    ),
+    (
+        "torch_runtime_outside_python_distribution",
+        re.compile(r"(?:^|/)(?:opt|usr/local|workspace)/(?:pytorch|torch)(?:/|$)", re.I),
+    ),
     (
         "libero_or_simulation_distribution",
         re.compile(
@@ -141,6 +159,10 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
     rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
     rb"cupti|cufile|cusparse|cusolver|curand|cufft|nvidia)[A-Za-z0-9_.-]*\.so",
     re.I,
+)
+
+_ARCHIVE_METADATA_FILES = frozenset(
+    {"manifest.json", "repositories", "index.json", "oci-layout"}
 )
 
 
@@ -266,12 +288,315 @@ def _base_provenance_findings(
     return findings
 
 
+def _normalized_tar_path(name: str) -> str:
+    candidate = name
+    while candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate or candidate.startswith("/"):
+        raise ValueError("archive member path is empty or absolute")
+    parts = candidate.rstrip("/").split("/")
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("archive member path is not canonical and confined")
+    return "/".join(parts)
+
+
+def _uncompressed_tar_bytes(path: Path) -> bytes:
+    payload = path.read_bytes()
+    if payload.startswith(b"\x1f\x8b"):
+        return gzip.decompress(payload)
+    if payload.startswith(b"BZh"):
+        return bz2.decompress(payload)
+    if payload.startswith(b"\xfd7zXZ\x00"):
+        return lzma.decompress(payload)
+    if payload.startswith(b"\x28\xb5\x2f\xfd"):
+        if walker.zstd is None:
+            raise RuntimeError("zstd archive cannot be accounted without zstandard")
+        with walker.zstd.ZstdDecompressor().stream_reader(io.BytesIO(payload)) as reader:
+            return reader.read()
+    return payload
+
+
+def _archive_records(
+    path: Path,
+) -> tuple[list[tuple[tarfile.TarInfo, str, tuple[object, ...]]], list[walker.Finding]]:
+    payload = _uncompressed_tar_bytes(path)
+    findings: list[walker.Finding] = []
+    if len(payload) % tarfile.BLOCKSIZE:
+        findings.append(
+            walker.Finding(
+                "unaccounted_archive_bytes",
+                path.name,
+                "decompressed tar length is not block aligned",
+            )
+        )
+    records: list[tuple[tarfile.TarInfo, str, tuple[object, ...]]] = []
+    cursor = 0
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
+        for member in archive:
+            try:
+                normalized = _normalized_tar_path(member.name)
+            except ValueError as exc:
+                findings.append(
+                    walker.Finding("unsafe_archive_member", member.name, str(exc))
+                )
+                continue
+            if member.offset < cursor or member.offset_data < member.offset:
+                findings.append(
+                    walker.Finding(
+                        "overlapping_archive_member",
+                        normalized,
+                        f"invalid tar offsets in {path.name}",
+                    )
+                )
+                continue
+            if any(payload[cursor : member.offset]):
+                findings.append(
+                    walker.Finding(
+                        "unaccounted_archive_bytes",
+                        normalized,
+                        f"nonzero bytes precede a member in {path.name}",
+                    )
+                )
+            data_end = member.offset_data + member.size
+            padded_end = (data_end + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+            padded_end *= tarfile.BLOCKSIZE
+            if data_end > len(payload):
+                findings.append(
+                    walker.Finding(
+                        "truncated_archive_member",
+                        normalized,
+                        f"member exceeds {path.name}",
+                    )
+                )
+                continue
+            if any(payload[data_end:padded_end]):
+                findings.append(
+                    walker.Finding(
+                        "nonzero_archive_padding",
+                        normalized,
+                        f"member padding contains bytes in {path.name}",
+                    )
+                )
+            descriptor: tuple[object, ...]
+            if member.isfile():
+                content = payload[member.offset_data:data_end]
+                descriptor = ("file", member.size, hashlib.sha256(content).hexdigest())
+            elif member.isdir():
+                descriptor = ("directory",)
+            elif member.issym():
+                descriptor = ("symlink", member.linkname)
+            elif member.islnk():
+                try:
+                    target = _normalized_tar_path(member.linkname)
+                except ValueError as exc:
+                    findings.append(
+                        walker.Finding("unsafe_archive_hardlink", normalized, str(exc))
+                    )
+                    target = ""
+                descriptor = ("hardlink", target)
+            elif member.ischr() and member.devmajor == 0 and member.devminor == 0:
+                descriptor = ("whiteout-device", member.size)
+            else:
+                descriptor = ("unsupported", member.type.decode(errors="replace"))
+                findings.append(
+                    walker.Finding(
+                        "unsupported_archive_member",
+                        normalized,
+                        f"unsupported tar member type in {path.name}",
+                    )
+                )
+            records.append((member, normalized, descriptor))
+            cursor = padded_end
+    if any(payload[cursor:]):
+        findings.append(
+            walker.Finding(
+                "unaccounted_archive_bytes",
+                path.name,
+                "nonzero bytes remain after the final accounted member",
+            )
+        )
+    return records, findings
+
+
+def _apply_layer_records(
+    records: list[tuple[tarfile.TarInfo, str, tuple[object, ...]]],
+    state: dict[str, tuple[object, ...]],
+    *,
+    source: str,
+) -> list[walker.Finding]:
+    findings: list[walker.Finding] = []
+    seen: set[str] = set()
+    for member, path, descriptor in records:
+        if path in seen:
+            findings.append(
+                walker.Finding(
+                    "duplicate_archive_member", path, f"duplicate path in {source}"
+                )
+            )
+        seen.add(path)
+        parent, _, name = path.rpartition("/")
+        if name.startswith(".wh."):
+            valid_whiteout = (
+                (member.isfile() and member.size == 0)
+                or descriptor == ("whiteout-device", 0)
+            )
+            if not valid_whiteout:
+                findings.append(
+                    walker.Finding(
+                        "malformed_whiteout",
+                        path,
+                        f"whiteout is not an empty file or 0:0 device in {source}",
+                    )
+                )
+                continue
+            if name == ".wh..wh..opq":
+                prefix = f"{parent}/" if parent else ""
+                for existing in tuple(state):
+                    if existing.startswith(prefix) and existing != parent:
+                        state.pop(existing, None)
+            else:
+                target_name = name.removeprefix(".wh.")
+                if not target_name:
+                    findings.append(
+                        walker.Finding(
+                            "malformed_whiteout", path, "whiteout target is empty"
+                        )
+                    )
+                    continue
+                target = f"{parent}/{target_name}" if parent else target_name
+                for existing in tuple(state):
+                    if existing == target or existing.startswith(f"{target}/"):
+                        state.pop(existing, None)
+            continue
+        if descriptor[0] == "whiteout-device":
+            findings.append(
+                walker.Finding(
+                    "unsupported_archive_member",
+                    path,
+                    f"0:0 device is not named as an OCI whiteout in {source}",
+                )
+            )
+            continue
+        state[path] = descriptor
+    return findings
+
+
+def _resolve_hardlinks(
+    state: dict[str, tuple[object, ...]],
+) -> tuple[dict[str, tuple[object, ...]], list[walker.Finding]]:
+    resolved: dict[str, tuple[object, ...]] = {}
+    findings: list[walker.Finding] = []
+    for path, descriptor in state.items():
+        current = descriptor
+        visited = {path}
+        while current[0] == "hardlink":
+            target = str(current[1])
+            if target in visited or target not in state:
+                findings.append(
+                    walker.Finding(
+                        "invalid_archive_hardlink",
+                        path,
+                        "hardlink target is absent or cyclic",
+                    )
+                )
+                break
+            visited.add(target)
+            current = state[target]
+        resolved[path] = current
+    return resolved, findings
+
+
+def _layer_graph_findings(
+    layer_tars: list[Path], exported_rootfs: Path | None = None
+) -> list[walker.Finding]:
+    findings: list[walker.Finding] = []
+    state: dict[str, tuple[object, ...]] = {}
+    for layer in layer_tars:
+        records, archive_findings = _archive_records(layer)
+        findings.extend(archive_findings)
+        findings.extend(_apply_layer_records(records, state, source=layer.name))
+    flattened, hardlink_findings = _resolve_hardlinks(state)
+    findings.extend(hardlink_findings)
+    for path in flattened:
+        for kind, pattern in FORBIDDEN_PATHS:
+            if pattern.search(path):
+                findings.append(
+                    walker.Finding(
+                        kind,
+                        path,
+                        "forbidden path exists in flattened filesystem",
+                    )
+                )
+    if exported_rootfs is not None:
+        records, archive_findings = _archive_records(exported_rootfs)
+        findings.extend(archive_findings)
+        exported: dict[str, tuple[object, ...]] = {}
+        findings.extend(
+            _apply_layer_records(records, exported, source=exported_rootfs.name)
+        )
+        exported, hardlink_findings = _resolve_hardlinks(exported)
+        findings.extend(hardlink_findings)
+        comparable = {
+            path: value for path, value in flattened.items() if value[0] != "directory"
+        }
+        exported_comparable = {
+            path: value for path, value in exported.items() if value[0] != "directory"
+        }
+        if comparable != exported_comparable:
+            findings.append(
+                walker.Finding(
+                    "flattened_rootfs_mismatch",
+                    "<exported-rootfs>",
+                    "exported filesystem differs from the ordered OCI layers",
+                )
+            )
+    return findings
+
+
+def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
+    records, findings = _archive_records(path)
+    with tarfile.open(path, "r:*") as archive:
+        manifest_stream = archive.extractfile(archive.getmember("manifest.json"))
+        if manifest_stream is None:
+            raise RuntimeError("docker save archive has no readable manifest.json")
+        manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
+    if not isinstance(manifests, list) or len(manifests) != 1:
+        raise RuntimeError("docker save archive must contain exactly one image")
+    manifest = manifests[0]
+    allowed = {
+        *_ARCHIVE_METADATA_FILES,
+        str(manifest.get("Config") or ""),
+        *(str(item) for item in (manifest.get("Layers") or [])),
+    }
+    for member, normalized, descriptor in records:
+        if descriptor[0] != "directory" and normalized not in allowed:
+            findings.append(
+                walker.Finding(
+                    "unaccounted_outer_archive_member",
+                    normalized,
+                    "docker-save member is not bound by its manifest",
+                )
+            )
+        if descriptor[0] not in {"file", "directory"}:
+            findings.append(
+                walker.Finding(
+                    "unsupported_outer_archive_member",
+                    normalized,
+                    "docker-save archive member is not a regular file or directory",
+                )
+            )
+    return findings
+
+
 def scan_tars(
     tars: list[Path],
     config: dict[str, Any],
     build_metadata: dict[str, Any],
     base_provenance_bytes: bytes,
     base_provenance: dict[str, Any],
+    *,
+    exported_rootfs: Path | None = None,
+    docker_save: Path | None = None,
 ) -> list[walker.Finding]:
     original_secret_content = walker.SECRET_CONTENT
     original_elf_dependency = walker.FORBIDDEN_ELF_DEPENDENCY
@@ -288,8 +613,15 @@ def scan_tars(
     finally:
         walker.SECRET_CONTENT = original_secret_content
         walker.FORBIDDEN_ELF_DEPENDENCY = original_elf_dependency
+    layer_tars = (
+        [item for item in tars if item != exported_rootfs]
+        if exported_rootfs is not None
+        else tars
+    )
     return [
         *findings,
+        *_layer_graph_findings(layer_tars, exported_rootfs),
+        *(_docker_save_outer_findings(docker_save) if docker_save else []),
         *_config_findings(config),
         *_metadata_findings(build_metadata, config),
         *_base_provenance_findings(base_provenance_bytes, base_provenance),
@@ -333,12 +665,18 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="npa-libero-byte-scan-") as temporary:
             if args.image:
                 tars, config = walker.remote_material(args.image, Path(temporary))
+                exported_rootfs = tars[0]
+                docker_save = None
             elif args.docker_save:
                 tars, config = walker.docker_save_material(
                     args.docker_save, Path(temporary)
                 )
+                exported_rootfs = None
+                docker_save = args.docker_save
             else:
                 tars = [args.rootfs_tar]
+                exported_rootfs = None
+                docker_save = None
                 config = (
                     json.loads(args.config_json.read_text(encoding="utf-8"))
                     if args.config_json
@@ -350,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
                 metadata,
                 base_provenance_bytes,
                 base_provenance,
+                exported_rootfs=exported_rootfs,
+                docker_save=docker_save,
             )
     except Exception as exc:  # noqa: BLE001 - every unreadable byte fails closed
         print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))

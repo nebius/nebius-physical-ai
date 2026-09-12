@@ -30,6 +30,7 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "USER ubuntu" in text
     assert "useradd --uid 1000" in text
     assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH" in text
+    assert "/usr/sbin/sshd" not in text
     assert "NOPASSWD:ALL" not in text.replace(" ", "")
     assert "apt-get upgrade" not in text
     assert '$1 ~ /^(base|dependency|direct)$/' in text

@@ -244,10 +244,54 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     assert warm["warm_reuse"] is True
     assert final.is_dir()
     assert (final / ".complete.json").is_file()
+    assert (final / ".content-inventory.json").is_file()
+    assert cold["content_inventory_entry_count"] > 0
+    assert cold["content_inventory_sha256"] == warm["content_inventory_sha256"]
     assert (Path(args.cache_root) / "current").resolve() == final.resolve()
     assert not list(Path(args.cache_root).glob(".*.partial-*"))
     assert not (final / "source" / ".git").exists()
     assert not (final / "source" / "libero" / "libero" / "assets").exists()
+    assert all(
+        path.is_symlink() or path.stat().st_mode & 0o222 == 0
+        for path in (final, *final.rglob("*"))
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["source/libero/lifelong/utils.py", "venv/bin/python"],
+)
+def test_warm_cache_refuses_tampered_source_or_runtime(
+    monkeypatch, tmp_path, relative
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    target = Path(args.cache_root) / fixture["manifest_sha"] / relative
+    target.chmod(0o600)
+    target.write_bytes(target.read_bytes() + b"tampered")
+    target.chmod(0o400)
+
+    with pytest.raises(module.BootstrapRefusal, match="differs from inventory"):
+        module.ensure(args)
+
+
+def test_warm_cache_refuses_writable_tree(monkeypatch, tmp_path) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    target = (
+        Path(args.cache_root)
+        / fixture["manifest_sha"]
+        / "source"
+        / "libero"
+        / "lifelong"
+        / "utils.py"
+    )
+    target.chmod(0o600)
+
+    with pytest.raises(module.BootstrapRefusal, match="cache is writable"):
+        module.ensure(args)
 
 
 def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> None:
