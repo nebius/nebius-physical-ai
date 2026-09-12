@@ -119,6 +119,7 @@ The extended work also fixed two failures found through testing:
 | Package-only coverage | 75.98%; 60% gate passed |
 | Guardrails after startup fix | 2,828 passed |
 | Focused startup regressions | Failed before fix; 49 related tests passed after fix |
+| Dedicated Linux security regression target before PR publication | 651 passed; real CPU checkpoint runtime; tested code matches the branch |
 | Independent live artifact tests | Two passed for each of three reports |
 | Ruff, generated CLI docs drift, diff confidentiality and secret scans | Passed |
 
