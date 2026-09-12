@@ -146,6 +146,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         },
         "runtime_artifact_count": len(artifacts),
         "runtime_artifacts": artifacts,
+        "runtime_python": dict(module.EXPECTED_RUNTIME_PYTHON),
+        "runtime_use_decision": dict(module.EXPECTED_RUNTIME_DECISION_METADATA),
+        "boundaries": dict(module.EXPECTED_BOUNDARIES),
     }
     manifest_path = tmp_path / "runtime-manifest.json"
     manifest_sha = _write_json(manifest_path, manifest)
@@ -216,6 +219,37 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "manifest_sha": manifest_sha,
     }
     return module, args, fixture
+
+
+@pytest.mark.parametrize(
+    "mutation,expected",
+    [
+        ("unknown_top_level", "top-level schema"),
+        ("stale_decision_schema", "decision metadata"),
+        ("runtime_python_drift", "Python identity"),
+        ("output_boundary_drift", "boundary metadata"),
+    ],
+)
+def test_runtime_manifest_rejects_unknown_or_stale_contract_metadata(
+    tmp_path: Path, mutation: str, expected: str
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest_path = Path(args.manifest)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if mutation == "unknown_top_level":
+        manifest["unreviewed"] = True
+    elif mutation == "stale_decision_schema":
+        manifest["runtime_use_decision"]["schema"] = (
+            "npa.libero.runtime-use-decision.v1"
+        )
+    elif mutation == "runtime_python_drift":
+        manifest["runtime_python"]["abi"] = "cp311"
+    else:
+        manifest["boundaries"]["outputs"] = "anywhere"
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(manifest_path, manifest)
+
+    with pytest.raises(module.BootstrapRefusal, match=expected):
+        module._validate_manifest(manifest_path)
 
 
 def test_fetched_execution_environment_excludes_every_storage_secret(
@@ -528,7 +562,8 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
 
     def fake_run(command: list[str], **kwargs) -> None:
         commands.append((command, kwargs["environment"]))
-        if command[1:4] == ["-m", "venv", str(tmp_path / "runtime" / "venv")]:
+        if command[1:4] == ["-m", "venv", "--copies"]:
+            assert command[4] == str(tmp_path / "runtime" / "venv")
             python = tmp_path / "runtime" / "venv" / "bin" / "python"
             python.parent.mkdir(parents=True)
             python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -549,6 +584,7 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
 
     installs = [command for command, _environment in commands if "install" in command]
     assert len(installs) == 2
+    assert any("--copies" in command for command, _environment in commands)
     assert all("--require-hashes" in command for command in installs)
     assert all("--no-deps" in command for command in installs)
     assert all("--no-index" in command for command in installs)
@@ -557,6 +593,53 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     subprocess_environments = [environment for _command, environment in commands]
     subprocess_environments.extend(check_output_environments)
     assert len(subprocess_environments) == 4
+    assert all(
+        module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
+        for environment in subprocess_environments
+    )
+    assert all("HF_TOKEN" not in environment for environment in subprocess_environments)
+    assert all(
+        environment["HOME"] == str(tmp_path / "runtime")
+        for environment in subprocess_environments
+    )
+
+
+def test_source_fetch_uses_only_the_credential_free_materialization_environment(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    for name in module.STORAGE_SECRET_ENV_NAMES:
+        monkeypatch.setenv(name, f"secret-{name}")
+    monkeypatch.setenv("HF_TOKEN", "unrelated-provider-secret")
+    license_bytes = b"MIT fixture\n"
+    source = {
+        "repository": "https://example.invalid/LIBERO.git",
+        "revision": "a" * 40,
+        "tree": "b" * 40,
+        "sparse_paths": ["LICENSE"],
+        "license_file": "LICENSE",
+        "license_sha256": _sha(license_bytes),
+    }
+    subprocess_environments: list[dict[str, str]] = []
+    (tmp_path / "runtime").mkdir()
+
+    def fake_run(command: list[str], **kwargs) -> None:
+        subprocess_environments.append(kwargs["environment"])
+        if command[1:3] == ["init", "--quiet"]:
+            destination = kwargs["cwd"]
+            (destination / ".git").mkdir()
+            (destination / "LICENSE").write_bytes(license_bytes)
+
+    def fake_check_output(command: list[str], **kwargs) -> str:
+        subprocess_environments.append(kwargs["env"])
+        return source["revision"] if "^{commit}" in command[-1] else source["tree"]
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module.subprocess, "check_output", fake_check_output)
+
+    module._fetch_source(tmp_path / "runtime", source)
+
+    assert len(subprocess_environments) == 10
     assert all(
         module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
         for environment in subprocess_environments
@@ -805,6 +888,42 @@ def test_warm_cache_refuses_writable_tree(monkeypatch, tmp_path) -> None:
 
     with pytest.raises(module.BootstrapRefusal, match="cache is writable"):
         module.ensure(args)
+
+
+@pytest.mark.parametrize(
+    "target", ["inside", "../outside", "/untrusted-external-cache-target"]
+)
+def test_runtime_cache_refuses_every_symlink(tmp_path, target) -> None:
+    module = _load_module()
+    root = tmp_path / "runtime"
+    root.mkdir()
+    (root / "inside").write_text("fixture", encoding="utf-8")
+    (root / "link").symlink_to(target)
+
+    with pytest.raises(module.BootstrapRefusal, match="may not contain symlinks"):
+        module._inventory_entries(root)
+
+
+def test_status_validates_inventory_before_reporting_materialized(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    target = (
+        Path(args.cache_root)
+        / fixture["manifest_sha"]
+        / "source"
+        / "libero"
+        / "lifelong"
+        / "utils.py"
+    )
+    target.chmod(0o600)
+    target.write_bytes(target.read_bytes() + b"tampered")
+    target.chmod(0o400)
+
+    with pytest.raises(module.BootstrapRefusal, match="differs from inventory"):
+        module.status(args)
 
 
 def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> None:

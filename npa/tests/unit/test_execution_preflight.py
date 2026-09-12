@@ -526,6 +526,7 @@ def test_fractional_gpu_minimum_never_rounds_down(provider, configured, gpu_inve
     assert not provider.s3.calls
 def libero_task(service_account: str | None) -> dict:
     document = raw_task(BYOF_SOLUTION_NAME="libero")
+    document["name"] = "byof-solution-smoke-libero-b200-gpu"
     if service_account is not None:
         document["config"] = {
             "kubernetes": {
@@ -594,6 +595,56 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
 
     assert report["execution_readiness"] == "pass"
     assert provider.s3.calls
+
+
+@pytest.mark.parametrize("missing_signal", ["profile", "solution"])
+def test_libero_preflight_requires_both_canonical_identity_signals(
+    provider, configured, missing_signal
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    if missing_signal == "profile":
+        document["name"] = "renamed-task"
+    else:
+        del document["envs"]["BYOF_SOLUTION_NAME"]
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+def test_libero_preflight_allows_only_manager_authorized_secret_session_pair(
+    provider, configured
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+        extra_env={
+            "AWS_SESSION_TOKEN": "temporary-session",
+            "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64": "manager-bound-secret",
+        },
+    )
+    assert report["execution_readiness"] == "pass"
+    assert provider.s3.calls
+
+    with pytest.raises(ExecutionPreflightError, match="credentials"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+            extra_env={"AWS_SESSION_TOKEN": "temporary-session"},
+        )
 
 
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])

@@ -61,7 +61,8 @@ permissions:
 concurrency:
   # Serialize every mutation of one registry namespace. A failed first publish
   # must finish removing its private package and referrers before any retry.
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}
+  # Both selector branches deliberately collapse to the same mutation group.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ (inputs.release_tag || inputs.development_sha) && 'registry-mutation' || 'registry-mutation' }}
   cancel-in-progress: false
 
 jobs:
@@ -140,7 +141,25 @@ jobs:
               if subprocess.run(
                   ["git", "merge-base", "--is-ancestor", sha, head], check=False
               ).returncode:
-                  raise SystemExit("libero: accepted development SHA is not an ancestor of HEAD")
+                  raise SystemExit(
+                      "libero: accepted development SHA is not an ancestor of HEAD"
+                  )
+              acceptance_delta = subprocess.check_output(
+                  [
+                      "git",
+                      "diff",
+                      "--name-only",
+                      "--diff-filter=ACDMRTUXB",
+                      f"{sha}..{head}",
+                      "--",
+                  ],
+                  text=True,
+              ).splitlines()
+              if acceptance_delta != ["npa/src/npa/deploy/libero_image_manifest.json"]:
+                  raise SystemExit(
+                      "libero: only the checked-in acceptance manifest may differ "
+                      "from the accepted development SHA"
+                  )
               try:
                   libero_publication_lineage_values(
                       libero_acceptance, Path.cwd(), development_sha=sha
@@ -333,6 +352,9 @@ jobs:
         run: |
           if [ "$TOOL" = libero ]; then
             git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD
+            test "$(git diff --name-only --diff-filter=ACDMRTUXB \
+              "$DEVELOPMENT_SHA..HEAD" --)" = \
+              "npa/src/npa/deploy/libero_image_manifest.json"
           else
             test "$(git rev-parse HEAD)" = "$DEVELOPMENT_SHA"
           fi
@@ -435,6 +457,7 @@ jobs:
               # version of any media type may survive the first-publication gate.
               versions="$(mktemp)"
               gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
               version_count="$(jq 'length' "$versions")"
               if [ "$TOOL" = libero ]; then
                 test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
@@ -450,6 +473,9 @@ jobs:
                 echo "Private destination is repository-bound and contains exactly the accepted untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
               else
                 if [ "$version_count" != 0 ]; then
+                  if [ "$tagged_count" != 0 ]; then
+                    echo "::error::Private destination contains tagged versions"
+                  fi
                   echo "::error::Private destination contains image or referrer versions; refusing a visibility change"
                   exit 1
                 fi
@@ -662,10 +688,11 @@ jobs:
           forbidden = ("OMNI_KIT_ACCEPT_EULA=YES", "ISAACSIM_ACCEPT_EULA=YES")
           if any(value in serialized for value in forbidden):
               raise SystemExit("cached EULA acceptance found in OCI config")
-          if tool != "libero":
-              history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
-              if any(value in history for value in forbidden):
-                  raise SystemExit("cached EULA acceptance found in layer history")
+          history = subprocess.check_output(
+              ["docker", "history", "--no-trunc", image], text=True
+          )
+          if any(value in history for value in forbidden):
+              raise SystemExit("cached EULA acceptance found in layer history")
           PY
           # The loaded runtime image remains in Docker's image store. BuildKit's
           # disposable construction cache can be larger than the image itself and

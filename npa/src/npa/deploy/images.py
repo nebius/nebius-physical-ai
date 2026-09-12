@@ -67,8 +67,25 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/scripts/run_byof_repo.py",
     "npa/scripts/scan_image_libero_payload.py",
     "npa/scripts/scan_image_wan_payload.py",
+    "npa/src/npa/cli/workbench/byof.py",
     "npa/src/npa/deploy/images.py",
+    "npa/src/npa/errors.py",
+    "npa/src/npa/execution_preflight.py",
+    "npa/src/npa/lifecycle_intent.py",
+    "npa/src/npa/workbench/gpu_classes.py",
     "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+    "npa/tests/deploy/test_public_publish.py",
+    "npa/tests/docker/test_libero_runtime_bootstrap.py",
+    "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
+    "npa/tests/unit/test_execution_preflight.py",
+    "npa/tests/workflows/test_byof_container_verify.py",
+    "npa/tests/workflows/test_byof_libero.py",
+    "npa/tests/workflows/test_byof_repo.py",
+)
+LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS = (
+    "npa/scripts",
+    "npa/src/npa",
+    "npa/tests/e2e",
 )
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
     "https://slsa.dev/provenance/v1",
@@ -465,9 +482,32 @@ def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
 
     return _repository_file_bundle_sha256(
         repository_root,
-        schema="npa.libero.publication-enforcement-bundle.v1",
-        paths=LIBERO_PUBLICATION_ENFORCEMENT_PATHS,
+        schema="npa.libero.publication-enforcement-bundle.v2",
+        paths=libero_publication_enforcement_paths(repository_root),
     )
+
+
+def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ...]:
+    """Resolve every accepted runner plus its security-critical Python closure."""
+
+    paths = set(LIBERO_PUBLICATION_ENFORCEMENT_PATHS)
+    for relative_root in LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS:
+        directory = repository_root / relative_root
+        if not directory.is_dir() or directory.is_symlink():
+            raise RuntimeError(
+                f"LIBERO enforcement root is unavailable: {relative_root}"
+            )
+        discovered = list(directory.rglob("*.py"))
+        if not discovered:
+            raise RuntimeError(f"LIBERO enforcement root is empty: {relative_root}")
+        for candidate in discovered:
+            if not candidate.is_file() or candidate.is_symlink():
+                raise RuntimeError(
+                    "LIBERO enforcement source must be a regular file: "
+                    f"{candidate.relative_to(repository_root).as_posix()}"
+                )
+            paths.add(candidate.relative_to(repository_root).as_posix())
+    return tuple(sorted(paths))
 
 
 def libero_publication_lineage_values(

@@ -404,7 +404,7 @@ def verify_solution_payload_service_accounts(
     documents: Sequence[Mapping[str, Any]],
     *,
     global_config: Mapping[str, Any] | None,
-) -> None:
+) -> bool:
     """Keep LIBERO's payload identity separate from SkyPilot's controller.
 
     SkyPilot's engine account needs to create and manage task resources.  The
@@ -416,7 +416,8 @@ def verify_solution_payload_service_accounts(
         documents: Rendered SkyPilot workflow documents to inspect.
         global_config: The exact SkyPilot controller configuration.
     Returns:
-        None after every applicable payload/controller identity passes.
+        Whether the documents contain the canonical LIBERO task, after every
+        applicable payload/controller identity passes.
     Raises:
         ExecutionPreflightError: A LIBERO identity is absent, shared, or invalid.
     """
@@ -442,14 +443,22 @@ def verify_solution_payload_service_accounts(
 
     global_kubernetes = (global_config or {}).get("kubernetes") or {}
     global_spec = pod_spec(global_kubernetes, check="controller_service_account")
+    libero_found = False
 
     for document in skypilot_task_documents(documents):
         envs = document.get("envs") or {}
-        is_libero = document.get("name") == LIBERO_PROFILE_NAME or (
+        profile_signal = document.get("name") == LIBERO_PROFILE_NAME
+        solution_signal = (
             isinstance(envs, Mapping) and envs.get("BYOF_SOLUTION_NAME") == "libero"
         )
-        if not is_libero:
+        if not profile_signal and not solution_signal:
             continue
+        if not profile_signal or not solution_signal:
+            raise ExecutionPreflightError(
+                "payload_service_account",
+                "LIBERO requires matching canonical profile and solution identity signals",
+            )
+        libero_found = True
 
         resources = document.get("resources") or {}
         resource_kubernetes = (
@@ -479,6 +488,7 @@ def verify_solution_payload_service_accounts(
                 "controller_service_account",
                 "LIBERO requires the manager SkyPilot config to select the engine account explicitly",
             )
+    return libero_found
 
 
 def preflight_skypilot_submission(
@@ -511,7 +521,7 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError("worker_environment", "implicit SkyPilot project overrides require an explicit --config-path and removal of the implicit override", status="unknown")
     documents = skypilot_task_documents(documents)
     workflow_env = skypilot_workflow_environment(documents)
-    verify_solution_payload_service_accounts(
+    libero_submission = verify_solution_payload_service_accounts(
         documents, global_config=global_config
     )
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
@@ -636,7 +646,22 @@ def preflight_skypilot_submission(
             if value:
                 env[name] = value
     verify_worker_environment(target, [*documents, dict(global_config or {})])
-    if process_env.get("AWS_SESSION_TOKEN") or workflow_env.get("AWS_SESSION_TOKEN"):
+    session_token = process_env.get("AWS_SESSION_TOKEN", "")
+    output_authorization = process_env.get(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""
+    )
+    if workflow_env.get("AWS_SESSION_TOKEN"):
+        raise ExecutionPreflightError(
+            "credentials",
+            "session tokens must use the redacted runtime secret channel",
+        )
+    if libero_submission:
+        if bool(session_token) != bool(output_authorization):
+            raise ExecutionPreflightError(
+                "credentials",
+                "LIBERO requires its session token and manager authorization together",
+            )
+    elif session_token:
         raise ExecutionPreflightError("credentials", "session-token overrides are unsupported by the executing principal contract")
     verify_nebius_mount_principal([*documents, dict(global_config or {})], target=target, sky_bin=sky_bin,
                                   environment={**process_env, **injected}, cwd=cwd)
