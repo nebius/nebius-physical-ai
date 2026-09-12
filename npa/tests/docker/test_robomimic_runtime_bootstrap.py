@@ -99,6 +99,7 @@ if [ "${1:-}" = "-c" ]; then
     case "${NPA_TEST_IMPORT_MODE:-success}" in
         fail) exit 42 ;;
         block) while :; do sleep 1; done ;;
+        remove) rm -- "$0"; exit 0 ;;
     esac
     exit 0
 fi
@@ -136,8 +137,11 @@ def _wait_for_file(path: Path, process: subprocess.Popen[str]) -> None:
                 f"status={process.returncode} stdout={stdout!r} stderr={stderr!r}"
             )
         time.sleep(0.01)
-    process.kill()
-    process.communicate()
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.communicate(timeout=5)
     pytest.fail(f"bootstrap did not create {path.name}")
 
 
@@ -395,7 +399,19 @@ def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> Non
     assert not snapshot_root.parent.exists()
 
 
-def test_bootstrap_cleans_snapshot_when_signalled_during_import(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("signal_number", "expected_returncode"),
+    [
+        (signal.SIGHUP, 129),
+        (signal.SIGINT, 130),
+        (signal.SIGTERM, 143),
+    ],
+)
+def test_bootstrap_cleans_snapshot_when_signalled_during_import(
+    tmp_path: Path,
+    signal_number: signal.Signals,
+    expected_returncode: int,
+) -> None:
     script = _bootstrap_with_fake_snapshot(tmp_path)
     process = subprocess.Popen(
         ["bash", str(script), "exec", "smoke.py"],
@@ -407,10 +423,25 @@ def test_bootstrap_cleans_snapshot_when_signalled_during_import(tmp_path: Path) 
     )
     _wait_for_file(tmp_path / "import-started", process)
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-    os.killpg(process.pid, signal.SIGTERM)
+    os.killpg(process.pid, signal_number)
     process.communicate(timeout=5)
 
-    assert process.returncode is not None
+    assert process.returncode == expected_returncode
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_cleans_snapshot_when_final_exec_fails(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_exec_environment(tmp_path, import_mode="remove"),
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    assert result.returncode == 127, result.stderr
     assert not snapshot_root.parent.exists()
 
 
@@ -434,7 +465,8 @@ def test_successful_exec_keeps_snapshot_available_to_payload(tmp_path: Path) -> 
         assert snapshot_root.is_dir()
         os.killpg(process.pid, signal.SIGTERM)
         process.communicate(timeout=5)
-        assert snapshot_root.is_dir()
+        assert process.returncode == 143
+        assert not snapshot_root.parent.exists()
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
