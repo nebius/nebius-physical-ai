@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 import hashlib
 import json
@@ -301,24 +301,14 @@ def prepare_run_cmd(
             workflow_identity=spec.name,
             resume_run=requested,
         )
-        from npa.orchestration.npa_workflow.submission_state import (
-            update_submission_state,
-        )
+        from npa.orchestration.npa_workflow.submission_state import record_submission_plan
 
-        update_submission_state(
+        record_submission_plan(
             project or "default",
             prepared.run_id,
-            {
-                "launch_state": "reserved",
-                "workflow": {
-                    "name": spec.name,
-                    "kind": "npa.workflow/v0.0.1",
-                },
-                "planning": {
-                    "state": "durable",
-                    "source": "prepare-run",
-                },
-            },
+            workflow={"name": spec.name, "kind": "npa.workflow/v0.0.1"},
+            planning={"state": "durable", "source": "prepare-run"},
+            launch_state="reserved",
         )
     except Exception as exc:
         _fail(str(exc))
@@ -1640,27 +1630,17 @@ def submit_cmd(
                     new_run_id="" if resume else resolved_run_id,
                     persist=True,
                 )
-                from npa.orchestration.npa_workflow.submission_state import (
-                    update_submission_state,
-                )
+                from npa.orchestration.npa_workflow.submission_state import record_submission_plan
 
-                update_submission_state(
+                record_submission_plan(
                     project or "default",
                     resolved_run_id,
-                    {
-                        "launch_state": "planned",
-                        "workflow": {
-                            "name": workflow_identity,
-                            "kind": "npa.workflow/v0.0.1",
-                        },
-                        "planning": {
-                            "state": "durable",
-                            "source_action": source_action,
-                            "input_action": "planned"
-                            if is_paidf_spec
-                            else "not-required",
-                            "infra_context": infra_context,
-                        },
+                    workflow={"name": workflow_identity, "kind": "npa.workflow/v0.0.1"},
+                    planning={
+                        "state": "durable",
+                        "source_action": source_action,
+                        "input_action": "planned" if is_paidf_spec else "not-required",
+                        "infra_context": infra_context,
                     },
                 )
             except Exception as exc:
@@ -1809,14 +1789,23 @@ def submit_cmd(
             image_overrides["*"] = image_value
         image_overrides.update(specific_image_overrides)
 
+        render_endpoint = (
+            s3_endpoint or os.environ.get("AWS_ENDPOINT_URL")
+            or os.environ.get("NEBIUS_S3_ENDPOINT")
+            or "https://storage.eu-north1.nebius.cloud"
+        )
+        runtime_environment = (
+            _runtime_submit_environment(
+                merged_npa_spec, run_id=resolved_run_id,
+                secret_env_values=extra_env, endpoint=render_endpoint,
+            )
+            if runtime and not plan_only else None
+        )
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
             image_overrides=image_overrides,
             image_digest_pins=image_digest_pins,
-            aws_endpoint_url=s3_endpoint
-            or os.environ.get("AWS_ENDPOINT_URL")
-            or os.environ.get("NEBIUS_S3_ENDPOINT")
-            or "https://storage.eu-north1.nebius.cloud",
+            aws_endpoint_url=render_endpoint,
             gpu_target=gpu_target,
             image_variant=image_variant,
             # Never mint/print live registry tokens for --plan-only.
@@ -1825,17 +1814,7 @@ def submit_cmd(
         )
         # The first discovery starts the isolated API. Bind it to the same
         # resolved principal and storage settings that every runtime wave uses.
-        submission_environment = (
-            _npa_submission_environment(
-                merged_npa_spec,
-                run_id=resolved_run_id,
-                secret_env_values=extra_env,
-                endpoint=npa_render_options.aws_endpoint_url,
-            )
-            if runtime and not plan_only
-            else nullcontext()
-        )
-        with submission_environment:
+        with _temporary_runtime_environment(runtime_environment):
             accelerator_overrides = _resolve_submit_accelerators(
                 yaml_path,
                 spec=merged_npa_spec,
@@ -1843,6 +1822,7 @@ def submit_cmd(
                 sky_bin=sky_bin,
                 assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
+                environment=runtime_environment,
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
@@ -1870,6 +1850,15 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
+            runtime_preflight_evidence = {
+                "exact_image_pull": "pass" if preflight_images else "unknown",
+                "credentials_access": "pass",
+                "execution_target": "pass" if execution_preflight_report else "unknown",
+                "accelerator_resolution": "pass" if resolve_accelerators else "unknown",
+                "per_node_gpu_shape": "pass" if resolve_accelerators else "unknown",
+                "gang_capacity": "unknown",
+            }
+
             def refresh_runtime_preflight(_wave_yaml: Path) -> None:
                 """Re-establish mutable launch facts before every runtime wave."""
 
@@ -1944,20 +1933,7 @@ def submit_cmd(
                 allow_terminal_plan_migration=allow_terminal_plan_migration,
                 plan_migration_reason=plan_migration_reason,
                 adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
-                preflight_evidence={
-                    "exact_image_pull": (
-                        "pass" if preflight_images else "unknown"
-                    ),
-                    "credentials_access": "pass",
-                    "execution_target": "pass" if execution_preflight_report else "unknown",
-                    "accelerator_resolution": (
-                        "pass" if resolve_accelerators else "unknown"
-                    ),
-                    "per_node_gpu_shape": (
-                        "pass" if resolve_accelerators else "unknown"
-                    ),
-                    "gang_capacity": "pass",
-                },
+                preflight_evidence=runtime_preflight_evidence,
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
                 project=project,
@@ -2552,16 +2528,10 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
     }
 
 
-@contextmanager
-def _npa_submission_environment(
-    spec,
-    *,
-    run_id: str,
-    secret_env_values: Mapping[str, str],
-    endpoint: str,
-) -> Iterator[None]:
-    """Bind API discovery and runtime waves to one resolved submission identity."""
-
+def _runtime_submit_environment(
+    spec, *, run_id: str, secret_env_values: Mapping[str, str], endpoint: str,
+) -> dict[str, str]:
+    """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
     from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
 
@@ -2572,16 +2542,23 @@ def _npa_submission_environment(
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
-    previous_env = {name: os.environ.get(name) for name in environment}
+    return environment
+
+
+@contextmanager
+def _temporary_runtime_environment(environment: Mapping[str, str] | None):
+    """Restore the caller's environment after readiness, runtime, or failure."""
+    values = environment or {}
+    previous = {name: os.environ.get(name) for name in values}
     try:
-        os.environ.update(environment)
+        os.environ.update(values)
         yield
     finally:
-        for name, previous in previous_env.items():
-            if previous is None:
+        for name, value in previous.items():
+            if value is None:
                 os.environ.pop(name, None)
             else:
-                os.environ[name] = previous
+                os.environ[name] = value
 
 
 def _run_npa_workflow_runtime(
@@ -2690,15 +2667,21 @@ def _run_npa_workflow_runtime(
         # The preflight and every wave use the same selected principal. A new
         # submit/resume invocation resolves rotated credentials again.
         credential_resolver=lambda: dict(secret_env_values),
-        preflight_evidence=dict(preflight_evidence or {}),
+        # The launch hook updates this mapping only after its real checks pass.
+        preflight_evidence=preflight_evidence,
         pre_submit_hook=pre_submit_hook,
     )
-    with _npa_submission_environment(
-        spec,
-        run_id=run_id,
-        secret_env_values=secret_env_values,
-        endpoint=str(getattr(render_options, "aws_endpoint_url", "") or ""),
-    ):
+    runtime_env = _runtime_submit_environment(
+        spec, run_id=run_id, secret_env_values=secret_env_values,
+        endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+    )
+    with _temporary_runtime_environment(runtime_env):
+        # Record entry into the runtime before it can launch a wave. A runtime
+        # receipt has multiple job identities in S3, so no single job ID belongs here.
+        update_submission_state(
+            project or "default", run_id,
+            {"launch": {"status": "launching", "kind": "runtime"}},
+        )
         try:
             report = run_workflow_runtime(
                 spec,
@@ -3278,6 +3261,7 @@ def _resolve_submit_accelerators(
     enabled: bool,
     config_path: Path | None = None,
     isolated_config_dir: Path | None = None,
+    environment: Mapping[str, str] | None = None,
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
@@ -3329,34 +3313,35 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    try:
-        ensure_local_api_daemon_health(
-            sky_bin=sky_bin or None,
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-        )
-    except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
-        _fail(f"SkyPilot API daemon preflight failed: {exc}")
-        return {}
+    with _temporary_runtime_environment(environment):
+        try:
+            ensure_local_api_daemon_health(
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+            )
+        except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
+            _fail(f"SkyPilot API daemon preflight failed: {exc}")
+            return {}
 
-    context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
-    try:
-        resolutions = wait_for_kubernetes_accelerators(
-            requested,
-            context=context,
-            sky_bin=sky_bin or None,
-            timeout=readiness_timeout,
-            poll_interval=readiness_poll_interval,
-            on_status=lambda message: typer.echo(message, err=True),
-        )
-    except (
-        KubernetesGpuCatalogError,
-        SkyPilotNotInstalledError,
-        UnsatisfiableAcceleratorError,
-        ValueError,
-    ) as exc:
-        _fail(f"accelerator readiness failed: {exc}")
-        return {}
+        context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
+        try:
+            resolutions = wait_for_kubernetes_accelerators(
+                requested,
+                context=context,
+                sky_bin=sky_bin or None,
+                timeout=readiness_timeout,
+                poll_interval=readiness_poll_interval,
+                on_status=lambda message: typer.echo(message, err=True),
+            )
+        except (
+            KubernetesGpuCatalogError,
+            SkyPilotNotInstalledError,
+            UnsatisfiableAcceleratorError,
+            ValueError,
+        ) as exc:
+            _fail(f"accelerator readiness failed: {exc}")
+            return {}
 
     overrides: dict[str, str] = {}
     for accelerator, resolution in resolutions.items():
@@ -4400,6 +4385,7 @@ def _durable_workflow_status(
             build_actionable_run_status,
             reconstruct_stage_job_attribution,
             reconcile_submitted_manifest,
+            runtime_manifest_view,
         )
 
         run_manifest = RunManifest.from_dict(manifest)
@@ -4413,6 +4399,8 @@ def _durable_workflow_status(
             for item in resolution.runtime_state.get("stages") or []
             if isinstance(item, dict)
         ]
+        run_manifest = runtime_manifest_view(run_manifest, runtime_waves)
+        recorded_manifest_status = str(run_manifest.status or "").upper()
         for step in run_manifest.steps:
             name = str(step.get("state") or "")
             candidates = [
@@ -4437,7 +4425,9 @@ def _durable_workflow_status(
         job_observations: dict[str, dict[str, object]] = {}
         controller_output = ""
         diagnostics: list[str] = []
-        verification_errors: list[str] = []
+        verification_errors: list[str] = (
+            [resolution.runtime_state_error] if resolution.runtime_state_error else []
+        )
         attribution = reconstruct_stage_job_attribution(
             run_manifest, runtime_waves=runtime_waves
         )
@@ -4554,7 +4544,19 @@ def _durable_workflow_status(
             project=project or state.project,
             failure_threshold=startup_failure_threshold,
         )
-        manifest_terminal = str(run_manifest.status or "").upper()
+        runtime_status = str(resolution.runtime_state.get("status") or "").upper()
+        if (
+            runtime_waves
+            and run_payload.get("status") == "SUCCEEDED"
+            and recorded_manifest_status in {"PLANNED", "SUBMITTED", "RUNNING"}
+            and runtime_status != "SUCCEEDED"
+        ):
+            run_payload["status"] = runtime_status or recorded_manifest_status
+            verification_errors.append(
+                "All recorded jobs succeeded, but workflow completion is not recorded. "
+                "The runtime may need to continue with --resume-run."
+            )
+        manifest_terminal = recorded_manifest_status
         runtime_terminal_states = _latest_runtime_wave_states(runtime_waves)
         if (
             manifest_terminal == "SUCCEEDED"
@@ -5850,6 +5852,18 @@ def logs_cmd(
                                     **selected_attempt,
                                     "sky_task_id": str(task_id),
                                 }
+                        elif (
+                            job_id
+                            and len(matching_waves) == 1
+                            and selected_wave.get("kind") == "serial"
+                            and wave_states == [selected_stage]
+                            and selected_wave.get("tasks", []) == []
+                        ):
+                            # A driver can stop after recording the job ID but
+                            # before its first task observation. The renderer's
+                            # single-state serial wave has exactly task 0; its
+                            # provider name is the full job name, not the stage.
+                            selected_attempt = {**selected_attempt, "sky_task_id": "0"}
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.

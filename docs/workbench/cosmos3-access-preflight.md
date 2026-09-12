@@ -46,7 +46,22 @@ still fails mid-download until they separately accept
 `nvidia/Cosmos-Guardrail1`, and the reverse is also true. Both paths can skip
 the guardrail download entirely: pass `--no-guardrails` to
 `npa workbench cosmos3 generate` per run, or to `vllm serve` at server launch
-on the vLLM-Omni path.
+on the vLLM-Omni path. On the NPA generation path that opt-out is explicit in
+the result as `requested: false`, `status: explicit_opt_out`, and
+`effective: false`.
+
+Credential readiness is only the download gate. A requested NPA generation is
+accepted only after the runtime receipt proves that prompt and generated-media
+safety models were both discovered and evaluated. The pinned upstream preset
+ships an empty generated-media model list, so NPA restores its shipped
+`VideoContentSafetyFilter`; missing models, invalid results, internal
+Qwen3Guard errors, and failed sampled-frame classifier calls all fail closed.
+Before importing NLTK, NPA also materializes the pinned Guardrail1 Blocklist
+tokenizer subtree as integrity-checked regular files; the hardened NLTK runtime
+correctly refuses the symlinks in a raw Hugging Face snapshot.
+Inspect `guardrail_state.discovered`, `evaluated`, `evaluation_details`,
+`status`, and `effective` in `generate.json` rather than treating the legacy
+top-level `guardrails` request flag as proof of execution.
 
 ## The authenticated 401-vs-403 diagnostic
 
@@ -110,7 +125,7 @@ client. Measured on the affected pair: the 146-file, 17 GB guardrail repo
 that failed under Xet downloaded in 1m52s with `HF_HUB_DISABLE_XET=1` set,
 and the run proceeded normally afterward.
 
-The current `npa-cosmos3:1.2.2-cu130-r6` image keeps Xet enabled because its
+The current `npa-cosmos3:1.2.2-cu130-r7` image keeps Xet enabled because its
 frozen compatible pair is `huggingface_hub==0.36.2` plus `hf-xet==1.3.2`.
 `verify_env.py` records those baked versions and fails the image build if the
 known-bad `1.23.0`/`1.5.1` pair is ever resolved. Outside that frozen image,

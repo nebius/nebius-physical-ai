@@ -237,13 +237,25 @@ plan an earlier stage wrote rather than a hardcoded string.
 ## Gotchas
 
 - **Canonical Sim2Real is scoring, not planning.** Stage 8 uses
-  `MiniMaxAI/MiniMax-M3` as its only Stage 8 evaluator, on CPU with no
+  `MiniMaxAI/MiniMax-M3` by default as its single Stage 8 evaluator, on CPU with no
   self-hosted evaluator image. It sends a bounded, deterministic rollout-wide
   frame sample and requires event-local structured scores. Stage 9 compares the
   single evaluator result with the authoritative Stage 7 rollout set and rejects
   missing, duplicate, or extra evaluations before PPO. Preserve request
   IDs, token usage, latency, retries, and an authoritative returned cost or
   explicit null separately from model-agent tokens.
+  Hosted rollout requests use a strict JSON response schema for required event
+  fields, selected camera filenames, action indices, and nonempty error-tag
+  arrays. The parser still rejects incomplete coverage, invalid values, and
+  substituted model identities; an endpoint that rejects the schema must fail
+  visibly instead of retrying without it.
+  The v4 hosted contract binds events to recorded primary-frame `sim_step`
+  values. A sampled frame may support only an action at that exact time. For
+  unsampled actions, the model must return a null camera, zero confidence,
+  neutral tags, and an explicit insufficient-evidence critique. Those events
+  retain simulator truth but cannot shape visual corrections or PPO tag counts.
+  Preserve selected frame metadata and generated bindings in the artifact;
+  Stage 9 reconstructs them and rejects older unbound evaluator artifacts.
 - **Sim2Real preflight is stronger than model listing.** Its submit and prepared
   action paths declare `NEBIUS_TOKEN_FACTORY_KEY` by name only, then require
   both key-scoped model availability and a minimal inference before provisioning.

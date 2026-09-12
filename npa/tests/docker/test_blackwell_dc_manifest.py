@@ -314,6 +314,37 @@ def test_measured_arch_lists_back_the_verdicts(entries: list[dict]) -> None:
             )
 
 
+def test_cosmos3_validation_is_bound_to_guarded_promoted_bytes(
+    manifest: dict, entries: list[dict]
+) -> None:
+    cosmos3 = next(entry for entry in entries if entry["name"] == "npa-cosmos3")
+    proof = cosmos3["validated_gpu"]
+    evidence = manifest["validation_evidence"]["npa-cosmos3"]
+
+    assert cosmos3["publication_model"] == "exact-digest-promoted"
+    assert proof["digest"] == cosmos3["published_digest"]
+    assert proof["development_sha"] == cosmos3["development_sha"]
+    assert evidence["validated_digest"] == cosmos3["published_digest"]
+    assert evidence["development_sha"] == cosmos3["development_sha"]
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", cosmos3["published_digest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", cosmos3["development_sha"])
+    guardrails = proof["guardrail_state"]
+    assert guardrails["requested"] is True
+    assert guardrails["effective"] is True
+    assert guardrails["status"] == "passed"
+    assert guardrails["media_attempted_inputs"] == 1
+    assert guardrails["media_successful_inputs"] == 1
+    assert set(guardrails["evaluated"]["prompt_input"]) == {
+        "Blocklist",
+        "Qwen3Guard",
+    }
+    assert guardrails["evaluated"]["generated_media"] == ["VideoContentSafetyFilter"]
+    artifact = proof["artifact"]
+    assert artifact["bytes"] > 0
+    assert [artifact["width"], artifact["height"]] == [960, 960]
+    assert re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"])
+
+
 def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     entries: list[dict],
 ) -> None:

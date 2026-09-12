@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from npa.workbench.alpamayo2_super.ray_sweep import AlpamayoSweepRequest
+
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
     DEFAULT_MANIFEST,
@@ -49,4 +51,21 @@ def infer(
     )
 
 
-__all__ = ["Alpamayo2SuperRequest", "infer"]
+def sweep(request: AlpamayoSweepRequest) -> dict[str, Any]:
+    """Run a Ray experiment through the shared Workbench implementation.
+
+    Args:
+        request: An AlpamayoSweepRequest with explicit experiment settings.
+    Returns:
+        Complete measured report and published artifact locations.
+    Raises:
+        ValueError: Experiment inputs or measurements are invalid.
+        RuntimeError: Ray or inference execution fails.
+        OSError: Artifact I/O fails.
+    """
+    from npa.workbench.alpamayo2_super.ray_sweep import run_sweep
+
+    return run_sweep(request)
+
+
+__all__ = ["Alpamayo2SuperRequest", "AlpamayoSweepRequest", "infer", "sweep"]

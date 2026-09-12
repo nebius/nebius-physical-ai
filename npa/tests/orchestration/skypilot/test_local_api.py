@@ -15,6 +15,22 @@ from npa.orchestration.skypilot import local_api as api
 from npa.orchestration.skypilot import _bin, cleanup, workflow_state
 
 
+@pytest.mark.parametrize("contents", [
+    b"tokens: {}\ntokens: {}\n",
+    b"tokens: {principal: {token: first, token: second}}\n",
+    b"!!python/object/apply:builtins.str ['unsafe-constructor']\n",
+    b"!!python/object:builtins.object {}\n",
+    b"!!python/name:builtins.str\n",
+    b"tokens: {}\n---\ntokens: {}\n",
+])
+def test_strict_credential_yaml_rejects_duplicates_and_object_tags(contents):
+    assert api._strict_mapping(contents) is None
+
+
+def test_strict_credential_yaml_accepts_plain_safe_mapping():
+    assert api._strict_mapping(b"tokens: {}\n") == {"tokens": {}}
+
+
 @pytest.fixture
 def local_runtime(tmp_path):
     package = tmp_path / "modules" / "sky" / "server"
@@ -58,6 +74,38 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     assert len({record["port"], record["queue_port"], record["metrics_port"]}) == 3
     assert record["port"] not in {46580, 50011}
     assert (local_runtime["isolated_dir"] / "local-api" / "daemon.json").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("missed_scans", [1, 3])
+def test_live_new_server_waits_for_process_discovery(local_runtime, monkeypatch, missed_scans):
+    inspect_process = api._process
+    remaining = missed_scans
+
+    def delayed_discovery(record, **kwargs):
+        nonlocal remaining
+        process = inspect_process(record, **kwargs)
+        if process and remaining:
+            remaining -= 1
+            return None
+        return process
+
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "_process", delayed_discovery)
+        result = api.ensure_isolated_api(**local_runtime)
+
+    assert remaining == 0
+    assert result["outcome"] == "owned_isolated_api"
+    record = _record(local_runtime)
+    assert api._listener_owned(record, inspect_process(record))
+    assert api.ensure_isolated_api(**local_runtime) == result
+
+
+def test_new_server_exit_still_fails_readiness(local_runtime):
+    modules = Path(local_runtime["environment"]["PYTHONPATH"])
+    (modules / "sky" / "server" / "server.py").write_text("raise SystemExit(7)\n")
+
+    with pytest.raises(api.IsolatedApiError, match="exited before readiness"):
+        api.ensure_isolated_api(**local_runtime)
 
 
 @pytest.mark.parametrize("resolver", ["resolve_project_storage", "resolve_terraform_state"])
@@ -205,12 +253,18 @@ def test_same_path_mutated_kubeconfig_is_not_same_identity(local_runtime):
     api.stop_isolated_api(local_runtime["isolated_dir"])
 
 
-@pytest.mark.parametrize("setting", ["AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT"])
+@pytest.mark.parametrize("setting", [
+    "AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT",
+    "NPA_S3_PREFIX", "NPA_S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+])
 def test_all_effective_provider_settings_checked_on_adoption(local_runtime, setting):
     api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
     local_runtime["environment"][setting] = "different-fixture-setting"
     with pytest.raises(api.IsolatedApiError, match="different executing identity"):
         api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime) == original
+    assert api._process(original)["pid"] == original["pid"]
 
 
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(local_runtime):
@@ -284,18 +338,19 @@ def test_default_nebius_aws_profile_mutation_is_not_same_principal(local_runtime
         api.ensure_isolated_api(**local_runtime)
 
 
-def test_nebius_short_lived_token_cache_refresh_preserves_identity(local_runtime):
-    token_cache = Path(local_runtime["environment"]["HOME"]) / ".nebius" / "credentials.yaml"
-    token_cache.parent.mkdir()
-    token_cache.write_text("tokens:\n  fixture: first-short-lived-token\n")
+def test_nebius_short_lived_token_cache_refresh_preserves_identity(service_account_runtime):
+    runtime, _, _, token_cache = service_account_runtime
 
-    api.ensure_isolated_api(**local_runtime)
-    original = _record(local_runtime)
-    token_cache.write_text("tokens:\n  fixture: refreshed-short-lived-token\n")
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    token_cache.write_text(
+        "tokens:\n  service-account/fixture-account/fixture-key:\n"
+        "    token: refreshed-short-lived-token\n    expires_at: 200\n"
+    )
 
-    api.ensure_isolated_api(**local_runtime)
+    api.ensure_isolated_api(**runtime)
 
-    assert _record(local_runtime)["pid"] == original["pid"]
+    assert _record(runtime)["pid"] == original["pid"]
 
 
 def test_invalid_credential_yaml_diagnostic_does_not_include_source_secret():
@@ -575,6 +630,326 @@ def test_stop_recovers_process_created_before_pid_was_saved(local_runtime):
     api.stop_isolated_api(local_runtime["isolated_dir"])
     assert _record(local_runtime)["state"] == "stopped"
     assert not api._session_members(original)
+
+
+@pytest.fixture
+def service_account_runtime(local_runtime, request):
+    import yaml
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    home = Path(local_runtime["environment"]["HOME"])
+    provider = home / getattr(request, "param", ".nebius")
+    provider.mkdir()
+    key = home / "selected-private.pem"
+    key.write_bytes(rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    profile = {"auth-type": "service account", "service-account-id": "fixture-account",
+               "public-key-id": "fixture-key", "private-key-file-path": str(key),
+               "endpoint": "fixture.invalid:443", "parent-id": "fixture-project", "tenant-id": "fixture-tenant"}
+    (provider / "config.yaml").write_text(yaml.safe_dump({"default": "selected", "profiles": {"selected": profile}}))
+    cache = provider / "credentials.yaml"
+    cache.write_text(yaml.safe_dump({"tokens": {
+        "service-account/fixture-account/fixture-key": {"token": "fixture-old-bearer", "expires_at": 100},
+        "service-account/retired-account/retired-key": {"token": "fixture-unrelated-bearer", "expires_at": 50}}}))
+    local_runtime["environment"].update(NEBIUS_CONFIG_DIR=str(provider), NPA_CONFIG_DIR=str(home / ".npa"))
+    return local_runtime, provider, key, cache
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+@pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
+def test_service_account_cache_refresh_creation_pruning_preserves_owned_pid(service_account_runtime, initial_cache):
+    runtime, provider, key, cache = service_account_runtime
+    if initial_cache == "absent":
+        cache.unlink()
+    elif initial_cache == "empty":
+        cache.write_text("tokens: {}\n")
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    cache.write_text("tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-new-bearer\n    expires_at: 200\n")
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    assert api._process(original)["pid"] == _record(runtime)["pid"] == original["pid"]
+    assert original["identity_files"][str(key)] == hashlib.sha256(key.read_bytes()).hexdigest()
+    assert original["identity_files"][str(provider / "config.yaml")] == hashlib.sha256((provider / "config.yaml").read_bytes()).hexdigest()
+    assert "fixture-old-bearer" not in json.dumps(original)
+    assert "fixture-new-bearer" not in json.dumps(_record(runtime))
+    assert key.read_text() not in json.dumps(original)
+
+
+def test_service_account_private_key_replacement_rejects_owned_api(service_account_runtime):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    runtime, _, key, _ = service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    key.write_bytes(rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert api._process(original, verify_files=False)["pid"] == original["pid"]
+
+
+@pytest.mark.parametrize("change", ["account", "public-key", "endpoint", "key-source", "missing-key", "invalid-key"])
+@pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
+def test_service_account_durable_auth_change_cannot_adopt(service_account_runtime, change):
+    import yaml
+
+    runtime, provider, key, _ = service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    record_path = runtime["isolated_dir"] / "local-api/daemon.json"
+    original_record = record_path.read_bytes()
+    if change == "missing-key":
+        key.unlink()
+    elif change == "invalid-key":
+        key.write_text("fixture-private-material-must-not-appear-in-error")
+    else:
+        config = provider / "config.yaml"
+        value = yaml.safe_load(config.read_text())
+        field = {"account": "service-account-id", "public-key": "public-key-id",
+                 "endpoint": "endpoint", "key-source": "private-key-file-path"}[change]
+        if change == "key-source":
+            replacement = key.with_name("same-bytes-other-path.pem")
+            replacement.write_bytes(key.read_bytes())
+            value["profiles"]["selected"][field] = str(replacement)
+        else:
+            value["profiles"]["selected"][field] = "different-fixture-value"
+        config.write_text(yaml.safe_dump(value))
+    with pytest.raises(api.IsolatedApiError) as raised:
+        api.ensure_isolated_api(**runtime)
+    assert "fixture-private-material" not in str(raised.value)
+    assert record_path.read_bytes() == original_record
+
+
+@pytest.mark.parametrize("document", [
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: true}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: 1.5}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: null}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: -1}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: '', expires_at: 2}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: {}, expires_at: 2}}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: 2, extra: fixture-x}}",
+    "tokens: {federation/fixture: {token: fixture-x, expires_at: 2}}",
+    "tokens: {service-account//fixture-key: {token: fixture-x, expires_at: 2}}",
+    "tokens: {}\nextra: fixture-x",
+    "tokens: {}\ntokens: {}",
+    "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, token: fixture-y, expires_at: 2}}",
+    "tokens: [fixture-secret-invalid",
+])
+def test_unknown_or_malformed_cache_never_uses_derived_identity(service_account_runtime, document):
+    runtime, _, _, cache = service_account_runtime
+    before = api._identity_files(runtime["environment"])
+    cache.write_text(document)
+    after = api._identity_files(runtime["environment"])
+    assert after[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    assert before != after
+    assert "fixture-secret-invalid" not in json.dumps(after)
+
+
+def _select_nebius_exec(runtime, args, env=None):
+    import yaml
+
+    kube = runtime["isolated_dir"] / "selected-kube.yaml"
+    kube.write_text(yaml.safe_dump({"current-context": "fixture-context",
+        "contexts": [{"name": "fixture-context", "context": {"user": "fixture-user", "cluster": "fixture-cluster"}}],
+        "users": [{"name": "fixture-user", "user": {"exec": {"command": "nebius", "args": args, "env": env}}}]}))
+    runtime["environment"]["KUBECONFIG"] = str(kube)
+    return kube
+
+
+@pytest.mark.parametrize("selection", ["explicit", "equals", "short", "exec-env", "env", "config"])
+def test_effective_nebius_profile_and_config_precedence(service_account_runtime, selection):
+    import yaml
+
+    runtime, provider, key, cache = service_account_runtime
+    path = provider / "config.yaml"
+    data = yaml.safe_load(path.read_text())
+    data["profiles"]["other"] = {"auth-type": "federation", "federation-id": "fixture-federation"}
+    data["default"] = "other"
+    path.write_text(yaml.safe_dump(data))
+    args = ["mk8s", "get-token", "--format", "json"]
+    exec_env = None
+    if selection == "explicit":
+        args += ["--profile", "selected"]
+        runtime["environment"]["NEBIUS_PROFILE"] = "other"
+    elif selection == "equals":
+        args += ["--profile=selected"]
+    elif selection == "short":
+        args += ["-p", "selected"]
+    elif selection == "exec-env":
+        exec_env = [{"name": "NEBIUS_PROFILE", "value": "selected"}]
+        runtime["environment"]["NEBIUS_PROFILE"] = "other"
+    elif selection == "env":
+        runtime["environment"]["NEBIUS_PROFILE"] = "selected"
+    else:
+        custom = runtime["isolated_dir"] / "custom-cli.yaml"
+        data["default"] = "selected"
+        custom.write_text(yaml.safe_dump(data))
+        args += ["--config", str(custom)]
+    _select_nebius_exec(runtime, args, exec_env)
+    before = api._identity_files(runtime["environment"])
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
+    assert before[str(key)] == hashlib.sha256(key.read_bytes()).hexdigest()
+    if selection == "config":
+        assert str(custom) in before
+        custom.write_text(custom.read_text() + "# durable config changed\n")
+        assert api._identity_files(runtime["environment"]) != before
+
+
+@pytest.mark.parametrize("unsupported", ["federation", "extra-auth", "duplicate-config", "relative-key", "relative-config", "tilde-key", "tilde-config", "duplicate-selector", "impersonate", "compact-impersonate", "compact-selector", "endpoint", "exec-home", "multiple-profiles", "missing-user", "mixed-missing-user", "missing-context", "mixed-missing-context"])
+def test_unsupported_auth_selection_keeps_full_cache_fingerprint(service_account_runtime, unsupported):
+    import yaml
+
+    runtime, provider, _, cache = service_account_runtime
+    path = provider / "config.yaml"
+    data = yaml.safe_load(path.read_text())
+    profile = data["profiles"]["selected"]
+    if unsupported == "federation":
+        profile["auth-type"] = "federation"
+    elif unsupported == "extra-auth":
+        profile["token-file"] = "fixture-token-file"
+    elif unsupported == "relative-key":
+        profile["private-key-file-path"] = "selected-private.pem"
+    elif unsupported == "tilde-key":
+        profile["private-key-file-path"] = "~/selected-private.pem"
+    elif unsupported == "endpoint":
+        runtime["environment"]["NEBIUS_ENDPOINT"] = "other-fixture.invalid:443"
+    path.write_text(yaml.safe_dump(data))
+    if unsupported == "duplicate-config":
+        path.write_text(path.read_text() + "default: selected\n")
+    args = {"relative-config": ["--config", "relative.yaml"], "tilde-config": ["--config", "~/.nebius/config.yaml"],
+            "duplicate-selector": ["--profile", "selected", "-p", "selected"], "impersonate": ["-I", "fixture-other-account"],
+            "compact-impersonate": ["-Ifixture-other-account"], "compact-selector": ["-pother"]}.get(unsupported, [])
+    if args or unsupported == "exec-home":
+        _select_nebius_exec(runtime, args, [{"name": "HOME", "value": "/fixture-other-home"}] if unsupported == "exec-home" else None)
+    if unsupported == "multiple-profiles":
+        data["profiles"]["other"] = dict(profile, **{"service-account-id": "fixture-other-account"})
+        path.write_text(yaml.safe_dump(data))
+        kube = _select_nebius_exec(runtime, ["--profile", "selected"])
+        body = yaml.safe_load(kube.read_text())
+        body["contexts"].append({"name": "other-context", "context": {"user": "other-user", "cluster": "fixture-cluster"}})
+        body["users"].append({"name": "other-user", "user": {"exec": {"command": "nebius", "args": ["--profile", "other"]}}})
+        kube.write_text(yaml.safe_dump(body))
+        Path(runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"]).write_text(yaml.safe_dump({"kubernetes": {"allowed_contexts": ["fixture-context", "other-context"]}}))
+    if unsupported in {"missing-user", "mixed-missing-user", "missing-context", "mixed-missing-context"}:
+        kube = _select_nebius_exec(runtime, ["--profile", "selected"])
+        body = yaml.safe_load(kube.read_text())
+        if unsupported == "missing-user":
+            body["users"] = []
+        elif unsupported == "missing-context":
+            body["current-context"] = "absent-context"
+        elif unsupported == "mixed-missing-context":
+            Path(runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"]).write_text(yaml.safe_dump({"kubernetes": {"allowed_contexts": ["fixture-context", "absent-context"]}}))
+        else:
+            body["contexts"].append({"name": "missing-user-context", "context": {"user": "missing-user", "cluster": "fixture-cluster"}})
+            Path(runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"]).write_text(yaml.safe_dump({"kubernetes": {"allowed_contexts": ["fixture-context", "missing-user-context"]}}))
+        kube.write_text(yaml.safe_dump(body))
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+@pytest.mark.parametrize("role", ["NPA_CONFIG_DIR", "AWS_SHARED_CREDENTIALS_FILE", "NEBIUS_IAM_TOKEN_FILE", "native"])
+def test_explicit_credential_file_cannot_be_reclassified_as_provider_cache(service_account_runtime, role):
+    runtime, provider, _, cache = service_account_runtime
+    if role == "native":
+        Path(runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"]).write_text(json.dumps({"workspaces": {"default": {"nebius": {"credentials_file_path": str(cache)}}}}))
+    else:
+        runtime["environment"][role] = str(provider if role == "NPA_CONFIG_DIR" else cache)
+    assert api._identity_files(runtime["environment"])[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+
+
+def test_service_account_legacy_full_hash_record_is_not_silently_rebound(service_account_runtime):
+    runtime, _, _, cache = service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    record = _record(runtime)
+    record["identity_files"][str(cache)] = hashlib.sha256(cache.read_bytes()).hexdigest()
+    record_path = runtime["isolated_dir"] / "local-api/daemon.json"
+    api._write(record_path, record)
+    legacy = record_path.read_bytes()
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert record_path.read_bytes() == legacy
+
+
+@pytest.mark.parametrize("role", ["npa-config", "npa-json", "npa-token", "provider-json", "provider-token"])
+def test_nonderived_identity_alias_remains_byte_strict(service_account_runtime, role):
+    runtime, provider, _, cache = service_account_runtime
+    base = Path(runtime["environment"]["NPA_CONFIG_DIR"]) if role.startswith("npa-") else provider
+    base.mkdir(exist_ok=True)
+    name = {"npa-config": "config.yaml", "npa-json": "credentials.json", "npa-token": "NEBIUS_IAM_TOKEN.txt",
+            "provider-json": "credentials.json", "provider-token": "NEBIUS_IAM_TOKEN.txt"}[role]
+    alias = base / name
+    alias.symlink_to(cache)
+    before = api._identity_files(runtime["environment"])
+    assert before[str(alias)] == before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_designated_provider_cache_alias_uses_same_durable_identity(service_account_runtime):
+    runtime, provider, _, cache = service_account_runtime
+    alias = runtime["isolated_dir"] / "provider-alias"
+    alias.symlink_to(provider, target_is_directory=True)
+    runtime["environment"]["NEBIUS_CONFIG_DIR"] = str(alias)
+    before = api._identity_files(runtime["environment"])
+    assert before[str(alias / "credentials.yaml")] == before[str(cache)]
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
+
+
+@pytest.mark.parametrize("service_account_runtime", ["custom-nebius"], indirect=True)
+def test_custom_provider_does_not_relax_an_unselected_default_cache(service_account_runtime):
+    runtime, _, _, selected_cache = service_account_runtime
+    default_cache = Path(runtime["environment"]["HOME"]) / ".nebius/credentials.yaml"
+    default_cache.parent.mkdir()
+    default_cache.write_bytes(selected_cache.read_bytes())
+    before = api._identity_files(runtime["environment"])
+
+    selected_cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
+    default_cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_exec_override_of_provider_directory_keeps_cache_byte_strict(service_account_runtime):
+    runtime, provider, _, cache = service_account_runtime
+    _select_nebius_exec(runtime, ["--config", str(provider / "config.yaml")], [
+        {"name": "NEBIUS_CONFIG_DIR", "value": str(provider / "other")},
+    ])
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_unreadable_selected_key_fails_without_credential_diagnostics(service_account_runtime, monkeypatch):
+    runtime, _, key, _ = service_account_runtime
+    original = Path.read_bytes
+
+    def unreadable(path):
+        if path == key:
+            raise PermissionError("fixture-secret-error-must-not-leak")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
+    with pytest.raises(api.IsolatedApiError) as raised:
+        api._identity_files(runtime["environment"])
+    assert "fixture-secret-error" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+def test_non_rsa_selected_key_cannot_enable_derived_cache(service_account_runtime):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    runtime, _, key, _ = service_account_runtime
+    key.write_bytes(ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    with pytest.raises(api.IsolatedApiError, match="private key cannot be verified"):
+        api._identity_files(runtime["environment"])
 
 
 @pytest.fixture

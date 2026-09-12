@@ -68,13 +68,15 @@ skills:
           - workflows/testing/curobo-benchmark.yaml
   - name: access-approval
     category: atomic
-    when_to_use: "Prepare, verify, or resume human-bound Hugging Face and NVIDIA NGC access approvals for exact catalog or workflow dependencies, including consent-gated opening of official approval pages."
+    when_to_use: "Prepare, verify, or resume operator-owned Hugging Face and NVIDIA NGC access for exact dependencies, including human-bound upstream approvals and consent-gated official pages; treat a successful payload probe as operationally Ready and reuse one bounded run-scoped use declaration without duplicate NPA acceptance prompts."
     path: skills/atomic/access-approval/SKILL.md
     smoke:
       - type: file_exists
         path: npa/src/npa/agent_backend/access_approval.py
       - type: file_exists
         path: npa/src/npa/workbench/access_approval.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_access_approval_skill.py
       - type: file_exists
         path: npa/tests/agent_eval/test_access_approval.py
   - name: agent-development
@@ -347,7 +349,7 @@ skills:
         contains: "ssh-host"
   - name: third-party-eula-preflight
     category: atomic
-    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the documented product policy (including Isaac default/opt-out and OpenPI scoped opt-in), verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
+    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: reuse the operator's run-scoped use declaration, verify exact upstream runtime-fetch access, apply documented product policies, and keep access, privacy, and redistribution separate."
     path: skills/atomic/third-party-eula-preflight/SKILL.md
     smoke:
       - type: file_exists
@@ -708,6 +710,8 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/alpamayo2-super-inference.yaml
+          - workflows/testing/alpamayo2-ray-sweep.yaml
+          - workflows/testing/alpamayo2-ray-hardcases.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
   - name: retargeting
@@ -970,6 +974,15 @@ skills:
     smoke:
       - type: file_exists
         path: skills/workflows/oss-solution-registry-onboard/SKILL.md
+  - name: runtime-fetch-onboard
+    category: workflows
+    when_to_use: "Keep a solution containerizable when legal, license, or gated-access restrictions prevent baking source, SDKs, model weights, datasets, or assets into a public image: reuse one operator scope decision and use a clean runtime-fetch bootstrap or build-your-own private operator image."
+    path: skills/workflows/runtime-fetch-onboard/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/runtime-fetch-onboard/references/onboarding-contract.md
+      - type: file_exists
+        path: npa/tests/guardrails/test_runtime_fetch_onboard_skill.py
   - name: onboard-world-model
     category: workflows
     when_to_use: "Onboard and containerize a world model (learned action-conditioned simulator — Dreamer/Genie/Cosmos-style latent video prediction) as a multi-GPU BYOF registry candidate: containerize the repo, stage a real dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability smokes, and validate on real GPUs. Open Dreamer is the reference example."
@@ -1147,7 +1160,7 @@ skills:
         contains: "--mask-prompt"
   - name: solution-licensing
     category: atomic
-    when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: classify each artifact, design compliant runtime fetch/cache reuse, decide public vs restricted redistribution, and record it where guards enforce it."
+    when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: reuse one operator-responsibility/use-scope decision, classify each artifact, design runtime fetch/cache reuse, and decide public vs restricted redistribution from built bytes."
     path: skills/atomic/solution-licensing/SKILL.md
     smoke:
       - type: file_exists

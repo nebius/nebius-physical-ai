@@ -66,23 +66,36 @@ image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
 combination is ever resolved; only non-image/custom environments need the
 runtime diagnostic and `HF_HUB_DISABLE_XET=1` fallback described there.
 
-Guardrails are **on** unless you pass `--no-guardrails`, and every result
-manifest records `guardrails` so a run's posture stays auditable.
+Guardrails are **on** unless you pass `--no-guardrails`. The compatibility field
+`guardrails` records that requested posture. `guardrail_state` separately records
+the safety models discovered and evaluated for prompt input and generated media,
+the postprocessors observed, and the final `effective` decision. A guarded run
+is publishable only when both safety stages were actually evaluated and the
+receipt reports `status: passed` and `effective: true`.
 
-Known limitation: a prior live run requested guardrails but upstream reported
-`No safety models found, returning safe`. The manifest currently records the
-requested posture, not proof of effective safety-model execution. This is
-tracked separately in [issue #270](https://github.com/nebius/nebius-physical-ai/issues/270);
-this release does not redesign guardrail behavior.
+The pinned upstream preset has Blocklist and Qwen3Guard for prompt input but an
+empty generated-media safety-model list; upstream otherwise logs `No safety
+models found, returning safe`. NPA restores the framework's shipped
+`VideoContentSafetyFilter` only when that list is empty, instruments the actual
+model calls, and fails closed if discovery, evaluation, or the receipt is absent
+or invalid. `RetinaFaceFilter` remains the generated-media postprocessor. This
+also rejects two pinned-upstream fail-open results: Qwen3Guard returning
+`safe=True` after catching an internal model error, and the video filter returning
+safe after one or more sampled-frame classifier calls failed. The receipt's
+`evaluation_details` reports decisions and, for generated media, attempted and
+successful frame counts. The fallback does not suppress a safety rejection or
+reinterpret an unsafe result.
+`--no-guardrails` remains the only opt-out and is recorded as
+`status: explicit_opt_out`, `requested: false`, and `effective: false`.
 
 ## Build
 
-The supported/default image release is `npa-cosmos3:1.2.2-cu130-r6`. It is an
+The supported/default image release is `npa-cosmos3:1.2.2-cu130-r7`. It is an
 additive successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`,
 which is retained for provenance and must never be
 overwritten or deleted. Pre-merge validation builds use a branch-specific
-candidate tag in a private registry; the official `1.2.2-cu130-r6` tag is built
-and published only from the reviewed trusted commit.
+candidate tag in a private registry; the official `1.2.2-cu130-r7` tag was promoted
+only from the exact source commit whose bytes passed the secure publishing gates.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
@@ -177,8 +190,9 @@ requires credentials for its exact host or a pre-created Kubernetes pull secret
 referenced by the workload. Use the same image override for preflight and submit.
 
 After success, inspect `generate.json` and the media at its `artifact_uri`.
-Confirm the requested mode, nonempty output, and usable decoded image or video;
-the manifest's guardrail setting alone does not prove effective safety screening.
+Confirm the requested mode, nonempty output, usable decoded image or video, and
+the nested effective guardrail receipt. The top-level `guardrails` request flag
+alone is intentionally not treated as proof.
 
 The older raw SkyPilot template for this path was retired after this spec reached
 a terminal live success through the submit matrix. Keep new workflow authoring on
@@ -239,7 +253,9 @@ before generation starts.
 | `the Cosmos 3 inference runtime is not present` | Running outside the image. Use `npa-cosmos3`, or point `COSMOS3_REPO` at a framework checkout with a built `.venv`. |
 | `mode ... conditions on an input image/video` | An `image2video` / `video2video` / `image2image` run without `--input-path`. |
 | `Found no NVIDIA driver` | The container reached real inference but has no GPU. Generation is GPU-only. |
-| `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing; check the upstream log above the error for a guardrail rejection. |
+| `guardrail execution could not be proven` | The native receipt is missing or invalid. Guarded media is withheld; use the supported image/runtime rather than bypassing the receipt. |
+| `guardrails were requested but were not effective` | A prompt or generated-media model was missing, failed, returned an invalid decision, or was not evaluated. The run fails closed. Inspect the sanitized `failure` category in `guardrail_state`. |
+| `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing after effective guardrail execution; inspect the upstream generation log. |
 | `Unable to parse string as hex hash value` from `huggingface_hub`'s Xet client | A download failure specific to the `hf-xet 1.5.1` + `huggingface_hub 1.23.0` pin pair (`huggingface/xet-core#895`), observed on a gated guardrail-repo download. Set `HF_HUB_DISABLE_XET=1` and retry; see [`cosmos3-access-preflight.md`](cosmos3-access-preflight.md). |
 
 For access checks before a run (`gh`/HF/NGC reachability) see
@@ -289,4 +305,9 @@ The serving path's rule is different on both platforms: output is byte-identical
 
 ### Guardrail posture on this path
 
-At this framework ref the video content-safety classifier is commented out upstream ("Too many false positives, add back when fixed"): the runtime posture is the text guardrail (Blocklist + Qwen3Guard) plus the RetinaFaceFilter face-blur postprocessor. Manifests record `guardrails: true` either way; do not describe this path as screening video content.
+These measurements predate the fail-closed NPA wrapper. At this framework ref
+the video content-safety classifier was commented out upstream, so those
+historical runs used the text guardrail plus RetinaFace postprocessing and must
+not be described as having passed generated-media content-safety screening.
+Current `generate` runs additionally require actual
+`VideoContentSafetyFilter` evaluation and an effective receipt.

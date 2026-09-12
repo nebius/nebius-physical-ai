@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import subprocess
 from typing import Any
 
 import pytest
@@ -563,3 +564,154 @@ def test_failure_record_has_machine_readable_fields() -> None:
         "relaunch_allowed": False,
         "checkpoint_mode": "wave_restart",
     }
+
+
+@pytest.mark.parametrize("state", [BackendState.QUEUED, BackendState.RUNNING])
+@pytest.mark.parametrize(
+    "code", ["CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"]
+)
+@pytest.mark.parametrize("used", [0, 1])
+def test_live_capacity_wait_keeps_attempt_without_spending_recovery_budget(
+    state: BackendState, code: str, used: int,
+) -> None:
+    adapter = RecordingAdapter(BackendObservation(state, reason_code=code))
+    ledger = SupervisorLedger(MemoryStore())
+    recovery = replace(
+        context(outputs=ArtifactValidation("partial"), preflight=PreflightEvidence()),
+        infrastructure_recoveries=used, max_infrastructure_recoveries=1,
+    )
+    for _ in range(2):
+        result = WorkflowRunSupervisor(adapter=adapter, ledger=ledger).reconcile(
+            identity(), recovery
+        )
+        assert result["recovery"]["action"] == "adopt_exact_attempt"
+        assert result["recovery"]["relaunch_allowed"] is False
+        assert result["infrastructure_recovery_policy"]["used"] == used
+    assert adapter.cancelled == []
+    assert adapter.launched == []
+    assert all(event["phase"] == "decision" for event in ledger.events())
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+def test_capacity_wait_does_not_adopt_changed_immutable_identity(field: str) -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="CAPACITY_OR_QUOTA")
+    )
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(**{field: "changed"}), context())
+    assert result["recovery"]["reason_code"] == "IMMUTABLE_IDENTITY_MISMATCH"
+    assert adapter.cancelled == adapter.launched == []
+
+
+@pytest.mark.parametrize("field", ["exact_identity", "workload_observable"])
+def test_capacity_wait_requires_authoritative_provider_identity(field: str) -> None:
+    observation = BackendObservation(BackendState.QUEUED, reason_code="CAPACITY_OR_QUOTA")
+    adapter = RecordingAdapter(replace(observation, **{field: False}))
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), context())
+    assert result["recovery"]["reason_code"] == "AMBIGUOUS_ATTEMPT_IDENTITY"
+    assert adapter.cancelled == adapter.launched == []
+
+
+@pytest.mark.parametrize(
+    ("used", "action"), [(0, "relaunch_incomplete_wave"), (1, "terminalize")]
+)
+def test_failed_capacity_attempt_still_uses_bounded_recovery(used: int, action: str) -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.FAILED, reason_code="CAPACITY_OR_QUOTA")
+    )
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), replace(
+        context(), infrastructure_recoveries=used, max_infrastructure_recoveries=1
+    ))
+    assert result["recovery"]["action"] == action
+    assert adapter.cancelled == []
+    assert adapter.launched == (["wave:1"] if used == 0 else [])
+
+
+def _scheduler_blocker_report(message: str):
+    from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
+
+    pod = {
+        "metadata": {"name": "exact-worker"},
+        "status": {
+            "phase": "Pending",
+            "conditions": [{
+                "type": "PodScheduled", "status": "False",
+                "reason": "Unschedulable", "message": message,
+            }],
+        },
+    }
+
+    def runner(command, **_kwargs):
+        items = [pod] if "pods" in command else []
+        return subprocess.CompletedProcess(command, 0, json.dumps({"items": items}), "")
+
+    return inspect_job_blockers(cluster_name="unit-cluster", runner=runner)
+
+
+def _skypilot_adapter_with_report(report, *, recorder: RecordingAdapter):
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    return SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: report,
+        canceller=recorder.cancel_exact,
+        launcher=lambda attempt, checkpoint: recorder.launch_recovery(
+            attempt, checkpoint=checkpoint
+        ),
+    )
+
+
+def test_real_pod_diagnostic_reaches_supervisor_as_capacity_wait() -> None:
+    report = _scheduler_blocker_report(
+        "0/4 nodes are available: 1 Insufficient cpu, 2 Insufficient nvidia.com/gpu, "
+        "2 node(s) didn't match Pod's node affinity/selector."
+    )
+    assert report.blocked and report.blockers[0].reason_code == "CAPACITY_OR_QUOTA"
+    recorder = RecordingAdapter(BackendObservation(BackendState.UNKNOWN))
+    adapter = _skypilot_adapter_with_report(report, recorder=recorder)
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), replace(context(), infrastructure_recoveries=1))
+    assert result["recovery"]["action"] == "adopt_exact_attempt"
+    assert result["observation"]["evidence"]["blockers"][0]["reason_code"] == "CAPACITY_OR_QUOTA"
+    assert recorder.cancelled == recorder.launched == []
+
+
+@pytest.mark.parametrize("capacity_first", [True, False])
+@pytest.mark.parametrize(
+    ("code", "action"),
+    [
+        ("ACCELERATOR_MISMATCH", "cancel_and_terminalize"),
+        ("IMAGE_PULL_AUTH", "cancel_and_terminalize"),
+        ("IMAGE_NOT_FOUND", "cancel_and_terminalize"),
+        ("MISSING_SECRET", "cancel_and_terminalize"),
+        ("CONTAINER_CRASH", "terminalize"),
+    ],
+)
+def test_capacity_wait_cannot_hide_another_pods_fatal_error(
+    code: str, action: str, capacity_first: bool,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import PodBlocker
+
+    report = _scheduler_blocker_report("Insufficient nvidia.com/gpu")
+    report.blockers.append(PodBlocker(
+        pod="other-worker", phase="Pending", reason=code, reason_code=code,
+    ))
+    if not capacity_first:
+        report.blockers.reverse()
+    recorder = RecordingAdapter(BackendObservation(BackendState.UNKNOWN))
+    adapter = _skypilot_adapter_with_report(report, recorder=recorder)
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), context())
+    assert result["recovery"]["action"] == action
+    assert result["recovery"]["reason_code"] == code
+    assert recorder.launched == []
+    assert recorder.cancelled == (["job-1"] if action == "cancel_and_terminalize" else [])

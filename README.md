@@ -72,6 +72,17 @@ by default and needs project admin permission for that setup. Use
 `npa configure --no-provision` to save settings without creating storage.
 See [configuration](docs/configuration.md) for SSO, existing projects, and tokens.
 
+Check a project's saved storage with its configured alias in place of `<alias>`:
+
+```bash
+npa workbench health preflight --project '<alias>' --checks s3,nebius --json
+```
+
+Missing or invalid project storage fails without borrowing shell or host-file
+credentials or changing configuration. S3 readiness uses a bounded listing call;
+it does not enumerate the dataset or verify write access. Without `--project`,
+the S3 check keeps the existing host credential selection.
+
 ### 3. Run and inspect
 
 Choose one guide below and follow it through input preparation, GPU setup,
@@ -125,7 +136,11 @@ See the [workflow catalog](workflows/README.md),
 [authoring guide](docs/workbench/npa-workflow-guide.md), and
 [run lifecycle](docs/run-lifecycle.md). The canonical
 [14-stage Sim2Real pipeline](docs/workbench/guides/sim2real-workflow.md) uses this
-same runtime and requires its own prepared images, task data, and resource profiles.
+same runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml)
+and requires its own prepared images, task data, and resource profiles.
+Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
+simulator episode resets across sparse samples and exclude reset intervals from
+training credit. The older `sim2real/runbook.yaml` is a legacy path.
 
 <a id="whats-in-the-box"></a>
 

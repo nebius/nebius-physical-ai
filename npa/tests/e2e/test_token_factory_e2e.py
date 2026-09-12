@@ -44,7 +44,7 @@ def test_live_provider_contract_recheck(request: pytest.FixtureRequest, tmp_path
     )))
     report = run_contract(
         TokenFactoryClient(), additional_models=additional,
-        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "malformed_json"),
+        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "healthy"),
     )
     request.node.user_properties.append(("provider_contract", report))
     (tmp_path / "provider-contract.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -162,6 +162,52 @@ def _shape_frame(path: Path, *, red_inside: bool) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path)
     return path
+
+
+def _episode_without_reset() -> dict[str, object]:
+    """Describe one continuous simulator episode for the synthetic diagrams."""
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0, "reset_events": [],
+        "reset_on_current_step": False, "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
+
+
+def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> None:
+    """Exercise positional generation constraints against the actual hosted model."""
+    _require_key()
+    from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm
+    from npa.workbench.cosmos.visual_grounding import validate_stored_visual_grounding
+
+    frames = [_shape_frame(tmp_path / f"frame-{index:03d}.png", red_inside=index >= 3)
+              for index in range(6)]
+    actions = [{"step": index, "sim_step": index, "action": [0.1],
+                "episode_boundary": _episode_without_reset()} for index in range(5)]
+    metadata = [{"path": frame.name, "sim_step": index, "view_name": "primary",
+                 "episode_id": "synthetic-diagram", "simulator_episode_id": 0}
+                for index, frame in enumerate(frames)]
+    result = run_token_factory_rollout_vlm(
+        model_id=DEFAULT_REASONER_MODEL, image_paths=frames, actions=actions,
+        frame_metadata=metadata, rollout_id="synthetic-diagram", threshold=0.5,
+        task_description="Move the red square inside the green outline in these diagrams.",
+        max_frames=3,
+    )
+    validate_stored_visual_grounding(result)
+    assert result["model"] == DEFAULT_REASONER_MODEL
+    assert result["selected_frames"] == [frames[index].name for index in (0, 2, 5)]
+    events = {event["step"]: event for event in result["per_step"]}
+    assert len(result["per_step"]) == len(events) == 5
+    assert set(events) == set(range(5))
+    for index, event in events.items():
+        expected = frames[index].name if index in {0, 2} else None
+        assert event["camera_observation"] == expected
+        assert event["visual_grounding"]["action_sim_step"] == index
+        if expected is None:
+            assert event["confidence"] == 0 and event["error_tags"] == ["ok"]
+            assert event["critique_text"] == f"Insufficient visual evidence for step {index}."
+    assert result["request"]["request_id"] and result["request"]["total_tokens"] > 0
+    (tmp_path / "hosted-rollout-evaluation.json").write_text(json.dumps(result, indent=2))
 
 
 def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:

@@ -66,7 +66,7 @@ def _looks_like_auth_failure(text: str) -> bool:
 
 
 def check_hf(credentials: Any, probes: CredentialProbes) -> CheckResult:
-    """Check the Hugging Face token is present and (optionally) accepted."""
+    """Check the Hugging Face token is present and optionally authenticated."""
 
     token = getattr(credentials, "hf_token", "") or ""
     if not token:
@@ -137,7 +137,15 @@ def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
         return CheckResult(
             name="ngc", status=PASS, summary="NGC_API_KEY is authenticated by NGC."
         )
-    if outcome in {"entitlement-required", "tags-401", "tags-403", "tags-404"}:
+    if outcome in {
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "manifest-404",
+        "tags-401",
+        "tags-403",
+        "tags-404",
+    }:
         return CheckResult(
             name="ngc",
             status=PASS,
@@ -204,7 +212,7 @@ def check_s3(credentials: Any, probes: CredentialProbes) -> CheckResult:
         )
     try:
         client = probes.s3_client_factory()
-        client.list_checkpoints(bucket)
+        client.probe_list_access(bucket)
     except Exception as exc:  # noqa: BLE001 - surface any reachability/auth error
         text = str(exc)
         remedy = (

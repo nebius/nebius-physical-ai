@@ -174,26 +174,37 @@ def test_source_revision_and_mode_max_statement_binding(private):
         provenance.verify(index, config, blobs, graph, SHA)
 
 
-@pytest.mark.parametrize("change", ["root", "revision", "subject", "duplicate-sbom", "no-packages", "no-materials"])
-def test_local_provenance_refuses_release_incompatible_evidence(private, change):
+@pytest.mark.parametrize("change,reason", [
+    ("root", "nonroot_required"),
+    ("revision", "config_source_revision"),
+    ("subject", "statement_subject"),
+    ("duplicate-sbom", "unknown_or_duplicate_predicate"),
+    ("no-packages", "embedded_sbom_required"),
+    ("no-materials", "provenance_dependencies_required"),
+])
+@pytest.mark.parametrize("reverse_documents", [False, True])
+def test_local_provenance_refuses_release_incompatible_evidence(private, change, reason, reverse_documents):
     path, digest, _ = _archive(private)
     graph, _ = artifact.inspect(path, digest)
     index, config, blobs = artifact.documents(path, digest, graph)
-    statements = [row for row in blobs.values() if "predicateType" in row]
+    if reverse_documents:
+        blobs = dict(reversed(list(blobs.items())))
+    # Blob order follows content digests, not the attestation's predicate type.
+    statements = {row["predicateType"]: row for row in blobs.values() if "predicateType" in row}
     if change == "root":
         config["config"]["User"] = "000:0"
     elif change == "revision":
         config["config"]["Labels"]["org.opencontainers.image.revision"] = "b" * 40
     elif change == "subject":
-        statements[0]["subject"][0]["digest"]["sha256"] = "e" * 64
+        statements[provenance.SPDX]["subject"][0]["digest"]["sha256"] = "e" * 64
     elif change == "duplicate-sbom":
         att = blobs[index["manifests"][1]["digest"]]
         att["layers"].append(copy.deepcopy(att["layers"][0]))
     elif change == "no-packages":
-        statements[0]["predicate"]["packages"] = []
+        statements[provenance.SPDX]["predicate"]["packages"] = []
     else:
-        statements[1]["predicate"]["materials"] = []
-    with pytest.raises(ValueError):
+        statements["https://slsa.dev/provenance/v0.2"]["predicate"]["materials"] = []
+    with pytest.raises(ValueError, match=reason):
         provenance.verify(index, config, blobs, graph, SHA)
 
 

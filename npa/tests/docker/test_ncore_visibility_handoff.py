@@ -3,6 +3,7 @@
 from contextlib import nullcontext
 import copy
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -21,7 +22,17 @@ def _write(path, value):
 
 
 @pytest.fixture
-def publication(private):
+def publication_umask():
+    # The production CLI sets this before transfer; never inherit another test's mask.
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+@pytest.fixture
+def publication(private, publication_umask):
     path, digest, _ = _archive(private)
     graph, verification = artifact.inspect(path, digest)
     build = _build_receipt(private, digest)

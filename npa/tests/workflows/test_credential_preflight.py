@@ -85,15 +85,18 @@ def test_ngc_nonempty_credential_passes_presence_only_offline(credential: str) -
     assert "not verified" in result.summary
 
 
+@pytest.mark.parametrize(
+    "outcome", ["entitlement-required", "manifest-403", "manifest-404"]
+)
 @pytest.mark.parametrize("credential", ["nvapi-abc123", "registry-credential"])
 def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement(
-    credential: str,
+    credential: str, outcome: str
 ) -> None:
     observed: list[str] = []
 
     def validate(key: str) -> str:
         observed.append(key)
-        return "entitlement-required"
+        return outcome
 
     result = check_ngc(
         _Creds(ngc_api_key=credential), CredentialProbes(ngc_validator=validate)
@@ -130,7 +133,7 @@ def test_s3_present_unverified_without_probe() -> None:
 
 def test_s3_pass_when_reachable() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             return []
 
     creds = _Creds(
@@ -145,7 +148,7 @@ def test_s3_pass_when_reachable() -> None:
 
 def test_s3_fail_on_auth_error() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden AccessDenied")
 
     creds = _Creds(
@@ -276,7 +279,7 @@ def test_run_credential_preflight_rejects_unknown_check() -> None:
 
 def test_has_failure_true_when_any_fail() -> None:
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403")
 
     creds = _Creds(

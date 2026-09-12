@@ -60,7 +60,7 @@ def test_cosmos3_stale_tag_audit_distinguishes_rollback_from_runtime_refs(
     stale.write_text("image_id: npa-cosmos3:1.2.2-cu130\n", encoding="utf-8")
     assert audit._scan_file(stale) == [
         "npa/workflows/cosmos3.yaml: npa-cosmos3:1.2.2-cu130 "
-        "(use npa-cosmos3:1.2.2-cu130-r6)"
+        "(use npa-cosmos3:1.2.2-cu130-r7)"
     ]
 
     rollback = tmp_path / "docs/workbench/cosmos3-generate.md"
@@ -89,7 +89,7 @@ def test_cosmos3_stale_tag_audit_rejects_previous_release_in_current_docs(
 
     assert audit._scan_file(current_doc) == [
         "docs/security/container-golden-evals.md: npa-cosmos3:1.2.2-cu130-r2 "
-        "(use npa-cosmos3:1.2.2-cu130-r6)"
+        "(use npa-cosmos3:1.2.2-cu130-r7)"
     ]
 
 
@@ -115,5 +115,5 @@ def test_cosmos3_stale_tag_audit_requires_explicit_allowlisted_history(
     matrix.write_text("Measured tag: `1.2.2-cu130-r2`.\n", encoding="utf-8")
     assert audit._scan_file(matrix) == [
         "docs/workbench/image-gpu-compatibility-matrix.md: "
-        "npa-cosmos3:1.2.2-cu130-r2 (use npa-cosmos3:1.2.2-cu130-r6)"
+        "npa-cosmos3:1.2.2-cu130-r2 (use npa-cosmos3:1.2.2-cu130-r7)"
     ]

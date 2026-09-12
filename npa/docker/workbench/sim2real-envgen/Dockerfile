@@ -35,6 +35,8 @@ COPY docker/workbench/common/envgen_compat /opt/npa/compat
 # layer. Genesis 0.4.6 declares tetgen and LeRobot 0.4.4 declares W&B
 # unconditionally, so remove those two Requires-Dist entries as part of
 # constructing this deliberately capability-reduced runtime distribution.
+# The shared Genesis requirements own the GitPython pin; keep its installed-version
+# check aligned with that file rather than installing a second version here.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
@@ -61,6 +63,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
       'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"tetgen", "wandb"})' \
+    && python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
     && test ! -e /opt/nvidia/nsight-compute \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 

@@ -53,11 +53,14 @@ quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts co
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
 
-LeRobot 0.6.0 remains selectable package support without an accepted public
-image pin/digest. Its official `npa-lerobot:0.6.0` tag returned
-`404 MANIFEST_UNKNOWN` in the separate optional-variant check; use a validated
-operator image for that version. It is not a missing member of the current
-public release plan.
+LeRobot 0.6.0 is selectable package support with an accepted optional public
+image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
+digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
+compatibility alias for those same bytes. The rebuilt image passed the standard
+publication gates plus the checked-in Blackwell validator and real
+`DiffusionPolicy` construction on B200. This optional version does not replace
+0.5.1 as the current default or add a second `lerobot` row to the default public
+release plan.
 
 ## Pending NCore conversion image
 
@@ -104,6 +107,21 @@ runtime-generated SSH host keys, ready `sshd`, `rsync`, and forwarded worker
 arguments before cleanup. This is a coherent image and capability release, not
 a claim that the complete 14-stage workflow ran; the canonical run was blocked
 before launch because the required hosted Cosmos3 model was stopped upstream.
+
+This historical set predates the current MiniMax-compatible Stage 8/9 evaluator
+contract. It remains anonymously pullable, but cannot run the current canonical
+Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
+for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
+explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
+
+Current EnvGen build sources replace the pinned Genesis parent's GitPython
+3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
+the GitPython security findings that blocked a subsequent development build;
+see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
+The shared Genesis requirements own this installation pin. Regression checks
+require EnvGen's installed-version assertion to match that shared pin.
+Historical image digests retain their original dependency bytes. This source
+update does not change the accepted release pins above.
 
 ## 2026-09-02 private-registry isolation audit
 
@@ -192,7 +210,7 @@ published, and anonymously pullable status for this exact digest only.
 | Wan 2.2 TI2V-5B | `npa-wan2-2` | `2.2-ti2v5b-rtfetch-cu130-20260817` | 2026-08-17 | Wan 2.2 text/image-to-video generation from Apache-2.0 source on an OSS dependency base. CUDA PyTorch and `nvidia-*` wheels are runtime-fetched under their upstream package terms. The accepted exact digest passed the zero-payload, SPDX/SLSA, vulnerability, and single-GPU TI2V/MP4/Rerun gates; the current four-GPU path remains deferred. |
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` | 2026-08-19 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
-| Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | current: `1.2.2-cu130-r6`; historical provenance: `1.2.2-cu130`, `1.2.2-cu130-r2`, `1.2.2-cu130-r5` | 2026-08-21 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. The additive r6 image retains the attested SkyPilot worker bootstrap and adds auditable source-motion-preserving PAIDF publication while keeping every raw Cosmos video. |
+| Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | current: `1.2.2-cu130-r7`; historical provenance: `1.2.2-cu130`, `1.2.2-cu130-r2`, `1.2.2-cu130-r5` | 2026-09-12 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. The additive r7 image retains the attested SkyPilot worker bootstrap and PAIDF publication, fails closed unless prompt and generated-media safety execution is proven, and safely materializes the pinned Blocklist tokenizer data as verified regular files. |
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z-r2` | 2026-08-21 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. The additive r2 image exposes the deterministic ranking/holdout attribute-sample policy consumed by PAIDF. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | NVIDIA Content Agents 0.5.2 | `npa-content-agents` | `0.5.2-npa2` | 2026-08-22 | Public rigid-object material/physics/validation adapter containing Apache-2.0 source and zero OVRTX payload. Exact OVRTX 0.3.0.312915 is fetched directly from NVIDIA into the operator runtime cache. The exact public digest passed byte/layer scanning, anonymous resolution, and a real RTX PRO 6000 workflow. See [Content Agents](content-agents.md). |
 | Cosmos3-Nano native Ray Serve | `npa-cosmos3-ray-serve` | `ray1-cu130` | 2026-08-26 | Persistent authenticated Cosmos3-Nano serving through cosmos-framework's native `OmniModelDeployment` and `@ray.serve.batch` path. The image contains pinned OpenMDW source and the CUDA/Ray closure but no model or guardrail weights. The exact release digest passed payload/security/SBOM/provenance gates and independent guarded two-sample generation with durable S3 evidence on B200 `sm_100` and RTX PRO 6000 `sm_120`. |

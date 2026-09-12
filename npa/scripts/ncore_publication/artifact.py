@@ -1,7 +1,6 @@
 """Derive inspection archives from the verified, unchanged NCore OCI graph."""
 
 import gzip
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -9,7 +8,7 @@ import shutil
 import tarfile
 
 from image_byte_scan import core as W, ncore_verification as N, prepare as P
-from .process import file_sha, write_json
+from .process import file_sha, stream_sha, write_json
 
 _EMPTY_DIFF_ID = "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
 _EMPTY_BLOB = "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
@@ -228,7 +227,7 @@ def _saved_layer(archive, members, name, expected, classic):
     W.require(name in members and members[name].isfile(), "loaded_export_missing_layer")
     member = members[name]
     with archive.extractfile(member) as stream:
-        stored = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+        stored = "sha256:" + stream_sha(stream)
     exact = stored == expected["digest"] and member.size == expected["size"]
     # Classic Docker may re-export the exact decoded tar. Bind all its bytes to
     # the original diff ID; recompression or merely equal extracted files fails.
@@ -236,7 +235,7 @@ def _saved_layer(archive, members, name, expected, classic):
     with archive.extractfile(member) as stream:
         compressed = exact and expected["mediaType"].endswith("+gzip")
         decoded = gzip.GzipFile(fileobj=stream) if compressed else stream
-        diff_id = "sha256:" + hashlib.file_digest(decoded, "sha256").hexdigest()
+        diff_id = "sha256:" + stream_sha(decoded)
     W.require(diff_id == expected["diff_id"], "loaded_layer_diff_id")
     return dict(original_digest=expected["digest"], exported_digest=stored, diff_id=diff_id,
                 byte_relation="stored" if exact else "decoded")
@@ -274,7 +273,7 @@ def _saved_manifest(archive, members, inspected, expected, config_size):
         W.require(blob in members and members[blob].isfile() and members[blob].size == entry["size"],
                   "loaded_manifest_missing_blob")
         with archive.extractfile(members[blob]) as stream:
-            W.require("sha256:" + hashlib.file_digest(stream, "sha256").hexdigest() == entry["digest"],
+            W.require("sha256:" + stream_sha(stream) == entry["digest"],
                       "loaded_manifest_blob_digest")
         names.add(blob)
     return names

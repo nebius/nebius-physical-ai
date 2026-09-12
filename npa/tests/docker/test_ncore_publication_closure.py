@@ -150,7 +150,7 @@ def test_actual_imported_source_closure_rejects_changed_bytes(tmp_path, monkeypa
     path.write_bytes(b"reviewed")
     module = SimpleNamespace(__file__=str(path))
     monkeypatch.setattr(process, "ROOT", tmp_path)
-    monkeypatch.setattr(process.sys, "modules", {"npa.imported": module})
+    monkeypatch.setattr(process, "sys", SimpleNamespace(modules={"npa.imported": module}))
     monkeypatch.setattr(process.subprocess, "run", lambda *_, **__: subprocess.CompletedProcess([], 0, b"reviewed"))
     process._verify_imported_sources(SHA)
     (tmp_path / "unrelated.py").write_bytes(b"dirty unrelated source")
@@ -162,7 +162,8 @@ def test_actual_imported_source_closure_rejects_changed_bytes(tmp_path, monkeypa
 
 def test_host_npa_import_cannot_resolve_to_another_checkout(tmp_path, monkeypatch):
     monkeypatch.setattr(process, "ROOT", tmp_path / "checkout")
-    monkeypatch.setattr(process.sys, "modules", {"npa": SimpleNamespace(__file__=str(tmp_path / "elsewhere.py"))})
+    module = SimpleNamespace(__file__=str(tmp_path / "elsewhere.py"))
+    monkeypatch.setattr(process, "sys", SimpleNamespace(modules={"npa": module}))
     with pytest.raises(ValueError, match="host_npa_import_outside_checkout"):
         process._verify_imported_sources(SHA)
 
@@ -192,7 +193,7 @@ def test_repository_loader_compiles_compared_commit_without_reading_cached_bytec
 
 def test_npa_cannot_be_preloaded_before_import_authorization(monkeypatch):
     monkeypatch.setattr(process, "committed_source", lambda sha: None)
-    monkeypatch.setattr(process.sys, "modules", {"npa": SimpleNamespace()})
+    monkeypatch.setattr(process, "sys", SimpleNamespace(modules={"npa": SimpleNamespace()}))
     with pytest.raises(ValueError, match="host_npa_import_before_source_authorization"):
         with process.committed_npa_imports(SHA):
             pytest.fail("preloaded package accepted")
@@ -397,6 +398,21 @@ def _base_material():
     reference, digest = base.split("@")
     return {"uri": "pkg:docker/" + reference.replace(":", "@") + "?platform=linux%2Famd64&digest=" + digest,
             "digest": {"sha256": digest[7:]}}
+
+
+@pytest.mark.parametrize("query", ["", "?platform=linux%2Famd64"])
+def test_material_reference_accepts_optional_qualifiers(query):
+    dependency = {"uri": "pkg:docker/fixture@1" + query, "digest": {"sha256": "b" * 64}}
+    expected = {"platform": "linux/amd64"} if query else {}
+    assert provenance._material_reference(dependency) == ("docker/fixture@1", expected)
+
+
+@pytest.mark.parametrize("query", ["?platform", "?&platform=linux%2Famd64",
+                                   "?platform=linux%2Famd64&"])
+def test_material_reference_still_rejects_malformed_qualifiers(query):
+    dependency = {"uri": "pkg:docker/fixture@1" + query, "digest": {"sha256": "b" * 64}}
+    with pytest.raises(ValueError):
+        provenance._material_reference(dependency)
 
 
 @pytest.mark.parametrize("change", [None, "unrelated", "digest", "uri-digest", "platform", "duplicate", "query", "builder", "missing-generator"])

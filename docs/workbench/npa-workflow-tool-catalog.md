@@ -26,6 +26,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
+| `workbench.alpamayo2_super.sweep` | `npa workbench alpamayo2-super sweep` | scenario indices, seeds, diffusion settings; optional completed baseline report | per-case verified artifacts, ADE/FDE statistics, matched refinement changes, report checksums | no (Ray GPU actors invoke upstream Alpamayo inference; Ray CPU tasks reduce measured results) |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |

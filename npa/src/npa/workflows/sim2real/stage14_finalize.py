@@ -176,7 +176,6 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             / f"iter-{inner:02d}"
             / "signals"
         )
-        item["validation_report"] = evidence.get("selected_validation_report") or {}
     gold["local_renders_dir"] = str(
         local / str((gold.get("render_lineage") or {}).get("local_relative_dir") or "")
     )

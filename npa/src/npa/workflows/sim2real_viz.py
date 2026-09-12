@@ -202,7 +202,10 @@ def emit_sim2real_rerun(
         has_3d_scene=bool(heldout_pointclouds),
         has_synthetic_data=has_synthetic_data,
     )
-    recording = rr.RecordingStream(APPLICATION_ID)
+    recording = rr.RecordingStream(
+        APPLICATION_ID,
+        recording_id=str((run_metadata or {}).get("run_id") or "") or None,
+    )
     rr.save(output_rrd, default_blueprint=blueprint, recording=recording)
     _send_blueprint(rr, blueprint, recording)
 
@@ -502,18 +505,97 @@ def _log_rollout(
     return seconds
 
 
-def _all_inner_iteration_records(
+def _inner_evidence_payloads(
     local_dir: Path, inner_evidence: dict[str, Any]
 ) -> list[tuple[int, dict[str, Any]]]:
-    """Load every persisted outer/inner evidence record in chronological order."""
+    """Keep each outer loop's candidates beside its persisted or localized passes."""
 
-    records: list[tuple[int, dict[str, Any]]] = []
-    seen: set[tuple[int, int, str]] = set()
+    payloads: list[tuple[int, dict[str, Any]]] = []
     for path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
         payload = _read_json(path)
         outer = int(
             payload.get("outer_iteration") or path.parent.name.rsplit("-", 1)[-1]
         )
+        payloads.append((outer, payload))
+    payloads.append((int(inner_evidence.get("outer_iteration") or 1), inner_evidence))
+    return payloads
+
+
+def _validation_iteration(value: Any) -> int:
+    """Reject coerced identities before joining canonical validation evidence."""
+
+    if type(value) is not int or value < 1:
+        raise Sim2RealVizError("Validation iteration must be a positive integer")
+    return value
+
+
+def _validation_candidates(
+    payload: dict[str, Any], outer: int
+) -> dict[int, dict[str, Any]] | None:
+    """Require one validation candidate for every pass in canonical evidence."""
+
+    if "checkpoint_candidates" not in payload:
+        if any(
+            "vlm_eval_uri" in record or "signal_uri" in record
+            for record in payload.get("iterations") or []
+        ):
+            raise Sim2RealVizError("Canonical validation candidates are missing")
+        return None
+    if _validation_iteration(payload.get("outer_iteration")) != outer:
+        raise Sim2RealVizError("Validation outer iteration does not match its evidence")
+    candidates = {}
+    for candidate in payload["checkpoint_candidates"]:
+        iteration = _validation_iteration(candidate.get("inner_iteration"))
+        if (
+            _validation_iteration(candidate.get("outer_iteration")) != outer
+            or iteration in candidates
+        ):
+            raise Sim2RealVizError("Validation candidate identity is ambiguous")
+        candidates[iteration] = candidate
+    expected = [
+        _validation_iteration(record.get("iteration"))
+        for record in payload["iterations"]
+    ]
+    if len(set(expected)) != len(expected) or set(candidates) != set(expected):
+        raise Sim2RealVizError("Validation candidates do not cover the exact passes")
+    return candidates
+
+
+def _candidate_validation_report(
+    record: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind displayed validation facts to the checkpoint produced by this pass."""
+
+    checkpoint = (record.get("update") or {}).get("checkpoint_path")
+    digest = candidate.get("checkpoint_sha256")
+    report = candidate.get("validation_report") or {}
+    if (
+        not isinstance(checkpoint, str)
+        or not checkpoint.startswith("s3://")
+        or candidate.get("checkpoint_uri") != checkpoint
+        or report.get("policy_checkpoint") != checkpoint
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or report.get("policy_checkpoint_sha256") != digest
+        or (record.get("update") or {}).get("checkpoint_sha256", digest) != digest
+        or candidate.get("evaluation_split") != "validation"
+        or report.get("evaluation_split", "validation") != "validation"
+    ):
+        raise Sim2RealVizError(
+            "Validation report does not match its training checkpoint"
+        )
+    return {**report, "evaluation_split": candidate["evaluation_split"]}
+
+
+def _all_inner_iteration_records(
+    local_dir: Path, inner_evidence: dict[str, Any]
+) -> list[tuple[int, dict[str, Any]]]:
+    """Load every persisted outer/inner evidence record in chronological order."""
+
+    records: dict[tuple[int, str, int], dict[str, Any]] = {}
+    for outer, payload in _inner_evidence_payloads(local_dir, inner_evidence):
+        candidates = _validation_candidates(payload, outer)
         reward_trend = list(payload.get("reward_trend") or [])
         for record_index, record in enumerate(payload.get("iterations") or []):
             if not isinstance(record, dict):
@@ -521,33 +603,66 @@ def _all_inner_iteration_records(
             record = dict(record)
             if record.get("mean_reward") is None and record_index < len(reward_trend):
                 record["mean_reward"] = reward_trend[record_index]
-            key = (
-                outer,
-                int(record.get("iteration") or 0),
-                str(record.get("actions_dir") or ""),
+            if candidates is not None:
+                validation = _candidate_validation_report(
+                    record, candidates[int(record["iteration"])]
+                )
+                record = _merge_iteration_evidence(
+                    record, {"validation_report": validation}
+                )
+            # Legacy regeneration accepts passes without explicit iteration IDs.
+            # Their list positions pair persisted and localized copies without
+            # conflating distinct passes or an explicit ID with a position.
+            identity = (
+                ("iteration", int(record.get("iteration") or 0))
+                if "iteration" in record
+                else ("position", record_index)
             )
-            if key not in seen:
-                records.append((outer, record))
-                seen.add(key)
-    fallback_outer = int(inner_evidence.get("outer_iteration") or 1)
-    reward_trend = list(inner_evidence.get("reward_trend") or [])
-    for record_index, record in enumerate(inner_evidence.get("iterations") or []):
-        if not isinstance(record, dict):
-            continue
-        record = dict(record)
-        if record.get("mean_reward") is None and record_index < len(reward_trend):
-            record["mean_reward"] = reward_trend[record_index]
-        key = (
-            fallback_outer,
-            int(record.get("iteration") or 0),
-            str(record.get("actions_dir") or ""),
-        )
-        if key not in seen:
-            records.append((fallback_outer, record))
-            seen.add(key)
+            key = (outer, *identity)
+            records[key] = _merge_iteration_evidence(records.get(key, {}), record)
     return sorted(
-        records, key=lambda item: (item[0], int(item[1].get("iteration") or 0))
+        [(key[0], record) for key, record in records.items()],
+        key=lambda item: (item[0], int(item[1].get("iteration") or 0)),
     )
+
+
+def _merge_iteration_evidence(
+    persisted: dict[str, Any], localized: dict[str, Any], *, field_path: str = ""
+) -> dict[str, Any]:
+    """Merge one pass's local media paths without replacing contradictory facts."""
+
+    merged = dict(persisted)
+    for key, value in localized.items():
+        if value is None:
+            continue
+        previous = merged.get(key)
+        path = f"{field_path}.{key}" if field_path else key
+        if not field_path and key in {"actions_dir", "vlm_eval_dir", "signal_dir"}:
+            # A replacement controller materializes the same artifacts elsewhere.
+            if value:
+                merged[key] = value
+        elif isinstance(previous, dict) and isinstance(value, dict):
+            merged[key] = _merge_iteration_evidence(previous, value, field_path=path)
+        elif previous is None or previous == value:
+            merged[key] = value
+        else:
+            raise Sim2RealVizError(f"Conflicting iteration evidence for {path}")
+    return merged
+
+
+def _adapter_training_metrics(record: dict[str, Any]) -> dict[str, Any]:
+    """Exclude Isaac's synthetic adapter fields from measured training charts."""
+
+    update = record.get("update") or {}
+    if update.get("backend") == "isaac_rsl_rl_ppo":
+        # Isaac fills these compatibility fields from input signals and the
+        # requested iteration count; its measured losses live in ppo_telemetry.
+        return {}
+    return {
+        "training/loss_before": update.get("loss_before"),
+        "training/loss_after": update.get("loss_after"),
+        "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
+    }
 
 
 def _log_training_iteration_metrics(
@@ -582,9 +697,7 @@ def _log_training_iteration_metrics(
             "progress/inner_loop/outer_iteration": outer,
             "progress/inner_loop/iteration": iteration,
             "training/reward": record.get("mean_reward"),
-            "training/loss_before": (record.get("update") or {}).get("loss_before"),
-            "training/loss_after": (record.get("update") or {}).get("loss_after"),
-            "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
+            **_adapter_training_metrics(record),
             "signal/reward_variance": (record.get("signal_calibration") or {}).get(
                 "mean_reward_variance"
             ),

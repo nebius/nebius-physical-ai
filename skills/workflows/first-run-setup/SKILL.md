@@ -6,9 +6,10 @@ description: Use on a fresh machine or a new Nebius project to get from zero to 
 # First run: zero to a verified result
 
 The failure mode this skill exists to prevent is spending an hour provisioning a
-GPU cluster and discovering at stage three that a token was never accepted. Each
-step below has a **gate**: a command whose success is the precondition for the
-next step. Do not skip ahead because a later step looks more interesting.
+GPU cluster and discovering at stage three that a credential did not have exact
+artifact access. Each step below has a **gate**: a command whose success is the
+precondition for the next step. Do not skip ahead because a later step looks more
+interesting.
 
 Escalate through the cheapest tier that can prove the thing you need. Most
 first-run questions are answered before any GPU is involved.

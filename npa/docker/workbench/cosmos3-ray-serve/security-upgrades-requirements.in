@@ -1,7 +1,13 @@
 # Replace the serving dependency closure above the immutable framework lock.
 # GPU/model dependencies are not part of this overlay.
+# Regenerate with `uv pip compile --python-version 3.12 --exclude-newer
+# 2026-09-08T20:00:00Z --generate-hashes --no-header` from the repository root.
 ray[serve]==2.58.0
-nltk==3.10.3
+# NLTK is installed by common/install_hardened_nltk.sh from the pinned fix commit.
+# Preserve its runtime dependencies in this hash-verified closure.
+defusedxml==0.7.1
+joblib==1.6.0
+regex==2026.9.3
 # The framework's serve extra includes Gradio. Its old Starlette upper bound
 # conflicts with patched Ray; upgrade both sides of that interface together.
 gradio==6.16.0

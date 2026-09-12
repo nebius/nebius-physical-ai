@@ -665,6 +665,16 @@ def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
         goal_curriculum_fraction(1, 0)
 
 
+def _recorded_visual_fields(step: int) -> dict:
+    camera = f"camera-{step:03d}.png"
+    return {"sim_step": step, "camera_observation": camera,
+            "episode_boundary": _no_reset_boundary(),
+            "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v2", "action_step": step,
+                                 "action_sim_step": step, "frame_sim_step": step,
+                                 "camera_observation": camera, "supported": True,
+                                 "episode_boundary": _no_reset_boundary(), "frame_simulator_episode_id": 0}}
+
+
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     evaluation = {
         "rollout_id": "rollout-1",
@@ -672,6 +682,7 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
             {
                 "step": index,
                 "action": [0.1, -0.1],
+                **_recorded_visual_fields(index),
                 "error_tags": ["minor_alignment"],
                 "confidence": 0.9,
                 "model_disagreement": index == 1,
@@ -751,6 +762,7 @@ def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
                 "step": index,
                 "action": [0.1],
                 "critique_source": source,
+                **_recorded_visual_fields(index),
                 "confidence": confidence,
                 "model_disagreement": disagreement,
                 "error_tags": tags,
@@ -918,6 +930,7 @@ Total timesteps: 24576
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 500
+    assert telemetry["final_iteration"]["action_noise_std"] == 1.0
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
     assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
@@ -935,6 +948,7 @@ def test_parse_ppo_telemetry_accepts_rsl_rl_5_console_format() -> None:
     # no longer prints a "Total timesteps" line in the iteration table.
     log = """
 Learning iteration 199/199
+Mean action std: 0.49
 Mean value loss: 1.4190
 Mean surrogate loss: -0.0027
 Mean entropy loss: 11.9853
@@ -945,7 +959,17 @@ Metrics/object_pose/position_error: 0.3215
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 199
+    assert telemetry["final_iteration"]["action_noise_std"] == 0.49
     assert telemetry["final_iteration"]["value_loss"] == 1.419
     assert telemetry["final_iteration"]["surrogate_loss"] == -0.0027
     assert telemetry["final_iteration"]["episode_return"] == 19.96
     assert "total_timesteps" not in telemetry["final_iteration"]
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0, "action_episode_id": 0,
+        "reset_events": [], "reset_on_current_step": False,
+        "action_outcome_valid": True, "temporal_credit_valid": True,
+    }
