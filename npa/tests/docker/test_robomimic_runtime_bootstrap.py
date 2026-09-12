@@ -79,7 +79,9 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
     return runtime_root, lock_path, _sha(inventory_path)
 
 
-def _bootstrap_with_fake_snapshot(tmp_path: Path) -> Path:
+def _bootstrap_with_fake_snapshot(
+    tmp_path: Path, *, expose_launch_window: bool = False
+) -> Path:
     fake_verifier = tmp_path / "fake_verifier.py"
     fake_verifier.write_text(
         """\
@@ -115,20 +117,36 @@ if [ "${1:-}" = "-c" ]; then
     case "${NPA_TEST_IMPORT_MODE:-success}" in
         fail) exit 42 ;;
         block) while :; do sleep 1; done ;;
-        remove) rm -- "$0"; exit 0 ;;
+        remove) chmod 000 "$0"; exit 0 ;;
     esac
     exit 0
+fi
+if [ "${NPA_TEST_EXEC_MODE:-block}" = "ignore" ]; then
+    trap '' HUP INT TERM
+fi
+if [ "${NPA_TEST_EXEC_MODE:-block}" = "observe" ]; then
+    trap 'test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90; : >"${NPA_TEST_SNAPSHOT_OBSERVED}"; exit 0' TERM
 fi
 printf '%s' "$$" >"${NPA_TEST_EXEC_PID}"
 : >"${NPA_TEST_EXEC_STARTED}"
 case "${NPA_TEST_EXEC_MODE:-block}" in
     exit) exit 0 ;;
-    block) while :; do sleep 1; done ;;
+    block|ignore|observe) while :; do sleep 1; done ;;
 esac
 ''',
     encoding="utf-8",
 )
 interpreter.chmod(0o755)
+for path in destination.rglob("*"):
+    if path.is_file() and not path.is_symlink():
+        path.chmod(path.stat().st_mode & 0o555)
+for path in sorted(
+    (item for item in destination.rglob("*") if item.is_dir()),
+    key=lambda item: len(item.parts),
+    reverse=True,
+):
+    path.chmod(0o555)
+destination.chmod(0o555)
 """,
         encoding="utf-8",
     )
@@ -137,27 +155,78 @@ interpreter.chmod(0o755)
         'readonly verifier="/opt/npa/robomimic/verify_image.py"',
         f'readonly verifier="{fake_verifier}"',
     ).replace("/usr/local/bin/python3", sys.executable)
+    if expose_launch_window:
+        source = source.replace(
+            '      ) &\n      child_pid="$!"',
+            """\
+      ) &
+      if [[ -n "${NPA_TEST_LAUNCH_WINDOW_STARTED:-}" ]]; then
+        : >"${NPA_TEST_LAUNCH_WINDOW_STARTED}"
+        while [[ ! -e "${NPA_TEST_LAUNCH_WINDOW_RELEASE}" ]]; do
+          :
+        done
+      fi
+      child_pid="$!"
+""",
+        )
+        source = source.replace(
+            '        pending_status="$2"\n        return',
+            '        pending_status="$2"\n'
+            '        : >"${NPA_TEST_SIGNAL_PENDING}"\n'
+            "        return",
+        )
     script = tmp_path / "runtime_bootstrap.sh"
     script.write_text(source, encoding="utf-8")
     return script
 
 
-def _wait_for_file(path: Path, process: subprocess.Popen[str]) -> None:
+def _kill_process_groups(
+    process: subprocess.Popen[str], *, child_process_group: int | None
+) -> None:
+    process_groups = [process.pid]
+    if child_process_group is not None:
+        process_groups.insert(0, child_process_group)
+    for process_group in process_groups:
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _wait_for_file(
+    path: Path,
+    process: subprocess.Popen[str],
+    *,
+    child_pid_path: Path | None = None,
+) -> None:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if path.is_file():
             return
         if process.poll() is not None:
-            stdout, stderr = process.communicate()
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                child_process_group = (
+                    int(child_pid_path.read_text(encoding="utf-8"))
+                    if child_pid_path is not None and child_pid_path.is_file()
+                    else None
+                )
+                _kill_process_groups(
+                    process, child_process_group=child_process_group
+                )
+                stdout, stderr = process.communicate(timeout=5)
             pytest.fail(
                 f"bootstrap exited before {path.name}: "
                 f"status={process.returncode} stdout={stdout!r} stderr={stderr!r}"
             )
         time.sleep(0.01)
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    child_process_group = (
+        int(child_pid_path.read_text(encoding="utf-8"))
+        if child_pid_path is not None and child_pid_path.is_file()
+        else None
+    )
+    _kill_process_groups(process, child_process_group=child_process_group)
     process.communicate(timeout=5)
     pytest.fail(f"bootstrap did not create {path.name}")
 
@@ -168,11 +237,7 @@ def _communicate_or_kill(
     try:
         return process.communicate(timeout=7)
     except subprocess.TimeoutExpired:
-        for process_group in (child_process_group, process.pid):
-            try:
-                os.killpg(process_group, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        _kill_process_groups(process, child_process_group=child_process_group)
         process.communicate(timeout=5)
         raise
 
@@ -184,6 +249,20 @@ def _recorded_pid(path: Path) -> int:
 def _assert_process_gone(pid: int) -> None:
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def _assert_process_group_gone(process_group: int) -> None:
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process_group, 0)
+
+
+def _remove_snapshot_parent(snapshot_root: Path) -> None:
+    if not snapshot_root.parent.exists():
+        return
+    for path in (snapshot_root, *snapshot_root.rglob("*")):
+        if path.is_dir() and not path.is_symlink():
+            path.chmod(0o755)
+    shutil.rmtree(snapshot_root.parent, ignore_errors=True)
 
 
 def _exec_environment(
@@ -206,6 +285,10 @@ def _exec_environment(
         "NPA_TEST_EXEC_STARTED": str(tmp_path / "exec-started"),
         "NPA_TEST_EXEC_PID": str(tmp_path / "exec-pid"),
         "NPA_TEST_EXEC_MODE": exec_mode,
+        "NPA_TEST_SNAPSHOT_OBSERVED": str(tmp_path / "snapshot-observed"),
+        "NPA_TEST_LAUNCH_WINDOW_STARTED": str(tmp_path / "launch-window-started"),
+        "NPA_TEST_LAUNCH_WINDOW_RELEASE": str(tmp_path / "launch-window-release"),
+        "NPA_TEST_SIGNAL_PENDING": str(tmp_path / "signal-pending"),
     }
 
 
@@ -435,6 +518,8 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
         assert import_gate in text
     assert 'run_child "${snapshot_root}/payload/bin/python" "$@"' in text
     assert 'exec "$@"' in text
+    assert 'find "${snapshot_parent}" -type d -exec chmod u+w' in text
+    assert '${empty_root}.proof' not in text
     assert "trap - EXIT" not in text
 
 
@@ -474,7 +559,19 @@ def test_bootstrap_cleans_snapshot_when_snapshot_creation_fails(
     assert not snapshot_root.parent.exists()
 
 
-def test_bootstrap_stops_snapshot_creation_before_cleanup(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("signal_number", "expected_returncode"),
+    [
+        (signal.SIGHUP, 129),
+        (signal.SIGINT, 130),
+        (signal.SIGTERM, 143),
+    ],
+)
+def test_bootstrap_stops_snapshot_creation_before_cleanup(
+    tmp_path: Path,
+    signal_number: signal.Signals,
+    expected_returncode: int,
+) -> None:
     script = _bootstrap_with_fake_snapshot(tmp_path)
     process = subprocess.Popen(
         ["bash", str(script), "exec", "smoke.py"],
@@ -486,17 +583,81 @@ def test_bootstrap_stops_snapshot_creation_before_cleanup(tmp_path: Path) -> Non
         ),
         start_new_session=True,
     )
-    _wait_for_file(tmp_path / "snapshot-started", process)
-    snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
-    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-    signal_started = time.monotonic()
-    os.kill(process.pid, signal.SIGTERM)
-    _communicate_or_kill(process, child_process_group=snapshot_pid)
+    snapshot_pid: int | None = None
+    snapshot_root: Path | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "snapshot-started",
+            process,
+            child_pid_path=tmp_path / "snapshot-pid",
+        )
+        snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        signal_started = time.monotonic()
+        os.kill(process.pid, signal_number)
+        _communicate_or_kill(process, child_process_group=snapshot_pid)
 
-    assert process.returncode == 143
-    assert time.monotonic() - signal_started < 4
-    _assert_process_gone(snapshot_pid)
-    assert not snapshot_root.parent.exists()
+        assert process.returncode == expected_returncode
+        assert time.monotonic() - signal_started < 4
+        _assert_process_gone(snapshot_pid)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=snapshot_pid)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
+
+
+def test_signal_pending_across_child_launch_is_forwarded(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path, expose_launch_window=True)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", snapshot_mode="block"
+        ),
+        start_new_session=True,
+    )
+    snapshot_pid: int | None = None
+    snapshot_root: Path | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "launch-window-started",
+            process,
+            child_pid_path=tmp_path / "snapshot-pid",
+        )
+        _wait_for_file(
+            tmp_path / "snapshot-pid",
+            process,
+            child_pid_path=tmp_path / "snapshot-pid",
+        )
+        snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        os.kill(process.pid, signal.SIGTERM)
+        _wait_for_file(
+            tmp_path / "signal-pending",
+            process,
+            child_pid_path=tmp_path / "snapshot-pid",
+        )
+        (tmp_path / "launch-window-release").touch()
+        _communicate_or_kill(process, child_process_group=snapshot_pid)
+
+        assert process.returncode == 143
+        _assert_process_group_gone(snapshot_pid)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=snapshot_pid)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
 
 
 @pytest.mark.parametrize(
@@ -521,17 +682,32 @@ def test_bootstrap_cleans_snapshot_when_signalled_during_import(
         env=_exec_environment(tmp_path, import_mode="block"),
         start_new_session=True,
     )
-    _wait_for_file(tmp_path / "import-started", process)
-    import_pid = _recorded_pid(tmp_path / "import-pid")
-    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-    signal_started = time.monotonic()
-    os.kill(process.pid, signal_number)
-    _communicate_or_kill(process, child_process_group=import_pid)
+    import_pid: int | None = None
+    snapshot_root: Path | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "import-started",
+            process,
+            child_pid_path=tmp_path / "import-pid",
+        )
+        import_pid = _recorded_pid(tmp_path / "import-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        signal_started = time.monotonic()
+        os.kill(process.pid, signal_number)
+        _communicate_or_kill(process, child_process_group=import_pid)
 
-    assert process.returncode == expected_returncode
-    assert time.monotonic() - signal_started < 4
-    _assert_process_gone(import_pid)
-    assert not snapshot_root.parent.exists()
+        assert process.returncode == expected_returncode
+        assert time.monotonic() - signal_started < 4
+        _assert_process_gone(import_pid)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=import_pid)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
 
 
 def test_bootstrap_cleans_snapshot_when_final_exec_fails(tmp_path: Path) -> None:
@@ -546,7 +722,7 @@ def test_bootstrap_cleans_snapshot_when_final_exec_fails(tmp_path: Path) -> None
     )
 
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-    assert result.returncode == 127, result.stderr
+    assert result.returncode == 126, result.stderr
     assert not snapshot_root.parent.exists()
 
 
@@ -595,13 +771,18 @@ def test_supervisor_stops_payload_before_cleaning_snapshot(
     snapshot_root: Path | None = None
     payload_pid: int | None = None
     try:
-        _wait_for_file(tmp_path / "exec-started", process)
+        _wait_for_file(
+            tmp_path / "exec-started",
+            process,
+            child_pid_path=tmp_path / "exec-pid",
+        )
         payload_pid = _recorded_pid(tmp_path / "exec-pid")
         snapshot_root = Path(
             (tmp_path / "snapshot-record").read_text(encoding="utf-8")
         )
         assert process.poll() is None
         assert snapshot_root.is_dir()
+        assert snapshot_root.stat().st_mode & 0o222 == 0
         signal_started = time.monotonic()
         os.kill(process.pid, signal_number)
         _communicate_or_kill(process, child_process_group=payload_pid)
@@ -619,7 +800,89 @@ def test_supervisor_stops_payload_before_cleaning_snapshot(
             except ProcessLookupError:
                 pass
         if snapshot_root is not None:
-            shutil.rmtree(snapshot_root.parent, ignore_errors=True)
+            _remove_snapshot_parent(snapshot_root)
+
+
+def test_payload_observes_snapshot_until_supervisor_reaps_it(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", exec_mode="observe"
+        ),
+        start_new_session=True,
+    )
+    snapshot_root: Path | None = None
+    payload_pid: int | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "exec-started",
+            process,
+            child_pid_path=tmp_path / "exec-pid",
+        )
+        payload_pid = _recorded_pid(tmp_path / "exec-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        os.kill(process.pid, signal.SIGTERM)
+        _communicate_or_kill(process, child_process_group=payload_pid)
+
+        assert process.returncode == 143
+        assert (tmp_path / "snapshot-observed").is_file()
+        _assert_process_group_gone(payload_pid)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=payload_pid)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
+
+
+def test_repeated_signal_escalates_and_reaps_ignoring_group(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script), "exec", "smoke.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_exec_environment(
+            tmp_path, import_mode="success", exec_mode="ignore"
+        ),
+        start_new_session=True,
+    )
+    snapshot_root: Path | None = None
+    payload_pid: int | None = None
+    try:
+        _wait_for_file(
+            tmp_path / "exec-started",
+            process,
+            child_pid_path=tmp_path / "exec-pid",
+        )
+        payload_pid = _recorded_pid(tmp_path / "exec-pid")
+        snapshot_root = Path(
+            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
+        )
+        signal_started = time.monotonic()
+        os.kill(process.pid, signal.SIGTERM)
+        time.sleep(0.2)
+        os.kill(process.pid, signal.SIGHUP)
+        _communicate_or_kill(process, child_process_group=payload_pid)
+        signal_elapsed = time.monotonic() - signal_started
+
+        assert process.returncode == 143
+        assert 4.5 <= signal_elapsed < 7
+        _assert_process_group_gone(payload_pid)
+        assert not snapshot_root.parent.exists()
+    finally:
+        if process.poll() is None:
+            _kill_process_groups(process, child_process_group=payload_pid)
+            process.communicate(timeout=5)
+        if snapshot_root is not None:
+            _remove_snapshot_parent(snapshot_root)
 
 
 def test_shipped_assert_refusal_reaches_missing_ready_marker(tmp_path: Path) -> None:
