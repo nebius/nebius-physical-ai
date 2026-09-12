@@ -708,6 +708,8 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/alpamayo2-super-inference.yaml
+          - workflows/testing/alpamayo2-ray-sweep.yaml
+          - workflows/testing/alpamayo2-ray-hardcases.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
   - name: retargeting
