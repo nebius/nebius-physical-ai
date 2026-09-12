@@ -19,7 +19,7 @@
         "cosmos_showcase"
       ],
       "labels": [
-        "COSMOS3 SUPER \u00b7 GENERATED VIDEO"
+        "COSMOS3 SUPER · GENERATED VIDEO"
       ],
       "narration": "The next era of AI moves beyond the screen. Into factories, robots, and the world around us."
     },
@@ -35,7 +35,7 @@
       "subtitle": "Bring your toolchain. Build on Nebius.",
       "assets": [
         "robot",
-        "wan",
+        "wan_mobility",
         "driving"
       ],
       "labels": [
@@ -49,7 +49,7 @@
       "id": "03-cosmos",
       "duration": 10,
       "layout": "comparison",
-      "eyebrow": "GENERATE \u00b7 NVIDIA COSMOS",
+      "eyebrow": "GENERATE · NVIDIA COSMOS",
       "title": [
         "One source.",
         "New conditions."
@@ -61,7 +61,7 @@
       ],
       "labels": [
         "SOURCE VIDEO",
-        "COSMOS3 NANO \u00b7 AUGMENTED"
+        "COSMOS3 NANO · AUGMENTED"
       ],
       "narration": "Use NVIDIA Cosmos to generate new conditions from source video. Inspect what changes, and what your task needs to preserve."
     },
@@ -69,7 +69,7 @@
       "id": "04-wan",
       "duration": 10,
       "layout": "cinematic",
-      "eyebrow": "GENERATE \u00b7 ALIBABA WAN 2.2",
+      "eyebrow": "GENERATE · ALIBABA WAN 2.2",
       "title": [
         "More models.",
         "More possibilities."
@@ -79,7 +79,7 @@
         "wan"
       ],
       "labels": [
-        "WAN 2.2 \u00b7 GENERATED VIDEO"
+        "WAN 2.2 · GENERATED VIDEO"
       ],
       "narration": "Expand your options with Wan. Turn a prompt into video, with the model, seed, and generation settings recorded for the next experiment."
     },
@@ -87,7 +87,7 @@
       "id": "05-curate",
       "duration": 12,
       "layout": "screen",
-      "eyebrow": "CURATE \u00b7 VOXEL51 FIFTYONE",
+      "eyebrow": "CURATE · VOXEL51 FIFTYONE",
       "title": [
         "Make data quality visible."
       ],
@@ -96,7 +96,7 @@
         "fiftyone"
       ],
       "labels": [
-        "FIFTYONE \u00b7 SAVED WORKBENCH REVIEW DATA"
+        "FIFTYONE · SAVED WORKBENCH REVIEW DATA"
       ],
       "narration": "Bring candidates into FiftyOne. Review the visual results and their evaluation evidence together. Make the decision about what moves forward explicit, and inspectable."
     },
@@ -104,7 +104,7 @@
       "id": "06-robotics",
       "duration": 10,
       "layout": "feature",
-      "eyebrow": "SIMULATE \u00b7 ROBOCASA",
+      "eyebrow": "SIMULATE · ROBOCASA",
       "title": [
         "Build skills",
         "in simulation."
@@ -114,7 +114,7 @@
         "robot"
       ],
       "labels": [
-        "ROBOCASA \u00b7 NATIVE SIMULATION ROLLOUT"
+        "ROBOCASA · NATIVE SIMULATION ROLLOUT"
       ],
       "narration": "With RoboCasa, collect rollouts in simulated kitchens. Explore manipulation tasks and create structured data for the next policy experiment."
     },
@@ -122,7 +122,7 @@
       "id": "07-lerobot",
       "duration": 12,
       "layout": "comparison",
-      "eyebrow": "TRAIN & EVALUATE \u00b7 HUGGING FACE LEROBOT",
+      "eyebrow": "TRAIN & EVALUATE · HUGGING FACE LEROBOT",
       "title": [
         "From simulation",
         "to policy experiments."
@@ -134,7 +134,7 @@
       ],
       "labels": [
         "SIMULATION TRAINING DATA",
-        "ACT POLICY \u00b7 HELD-OUT EVALUATION"
+        "ACT POLICY · HELD-OUT EVALUATION"
       ],
       "narration": "Train ACT policies with LeRobot. Inspect held-out rollouts. Keep the checkpoint, training data, and evaluation evidence available for each iteration."
     },
@@ -142,7 +142,7 @@
       "id": "08-reconstruct",
       "duration": 10,
       "layout": "split",
-      "eyebrow": "RECONSTRUCT \u00b7 NVIDIA NUREC",
+      "eyebrow": "RECONSTRUCT · NVIDIA NUREC",
       "title": [
         "Capture once.",
         "Explore in 3D."
@@ -162,7 +162,7 @@
       "id": "09-alpamayo",
       "duration": 12,
       "layout": "reason",
-      "eyebrow": "DRIVING INTELLIGENCE \u00b7 NVIDIA ALPAMAYO",
+      "eyebrow": "DRIVING INTELLIGENCE · NVIDIA ALPAMAYO",
       "title": [
         "See. Reason.",
         "Predict motion."
@@ -172,7 +172,7 @@
         "driving_front"
       ],
       "labels": [
-        "SAVED PREDICTION \u00b7 PROJECTED CAMERA VIEW"
+        "SAVED PREDICTION · PROJECTED CAMERA VIEW"
       ],
       "narration": "Alpamayo connects camera inputs with driving reasoning and predicted motion. Here, a saved result identifies cones and predicts a path through the scene.",
       "quote": "Nudge left to avoid the cones on the right side."
@@ -181,7 +181,7 @@
       "id": "10-rerun",
       "duration": 10,
       "layout": "screen",
-      "eyebrow": "INSPECT \u00b7 RERUN",
+      "eyebrow": "INSPECT · RERUN",
       "title": [
         "Keep the evidence in view."
       ],
@@ -190,7 +190,7 @@
         "rerun"
       ],
       "labels": [
-        "RERUN \u00b7 VERIFIED WAN RECORDING"
+        "RERUN · VERIFIED WAN RECORDING"
       ],
       "narration": "Inspect outputs in Rerun. Bring video and run evidence into the same view, and trace each result back to its generation settings."
     },
@@ -198,7 +198,7 @@
       "id": "11-workbench",
       "duration": 10,
       "layout": "pipeline",
-      "eyebrow": "ORCHESTRATE \u00b7 SKYPILOT ON NEBIUS",
+      "eyebrow": "ORCHESTRATE · SKYPILOT ON NEBIUS",
       "title": [
         "Your toolchain.",
         "One Workbench."
@@ -230,7 +230,7 @@
       "subtitle": "Start with a workflow. Build toward your next capability.",
       "assets": [
         "robot",
-        "wan",
+        "wan_mobility",
         "driving"
       ],
       "labels": [

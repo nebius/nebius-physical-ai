@@ -28,7 +28,8 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: "tool://wan2-2"
+  # The allocated worker and BYOF verifier must use the same accepted bytes.
+  base_image: "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837"
   build_command: ""
   pip_extra: viz
   workload: solution-smoke

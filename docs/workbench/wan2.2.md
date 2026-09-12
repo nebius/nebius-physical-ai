@@ -61,6 +61,14 @@ through the standard workflow `--var` overrides for longer generations.
 - Both use the real `workbench.byof.repo` toolRef and the existing BYOF upload
   path. There is no synthetic or import-only Wan toolRef.
 
+Both specs pin `config.base_image` to the accepted public OCI digest in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`. That single value supplies both
+the allocated GPU task image and BYOF's `--base-image` verification argument.
+The worker requires their exact immutable identities to match before execution;
+a registry tag alias can resolve differently at those two boundaries. For a
+registry mirror, override `base_image` with its full reference at the same
+accepted digest.
+
 Validate and plan the checked-in specs:
 
 ```bash
@@ -300,3 +308,31 @@ The gated live tests also accept `NPA_BYOF_WAN22_LIVE_FRAMES`,
 workflow's 17/8/42 settings. Set them to 121/50/42 to exercise the longer request
 through generation, artifact readback, full MP4 decoding, and verified Rerun
 publication. These overrides do not enable the existing live-test gates.
+
+
+### Verify a completed standard-workflow worker
+
+The read-only worker test checks an existing one- or four-GPU run. Supply its
+outer workflow run ID, configured project alias, exact artifact prefix containing
+`npa_byof_summary.json`, and the expected generation controls. It requires
+`execution: workflow-worker`, a separately recorded allocated-worker ID, the
+accepted immutable image, source artifact hashes, full Wan output validation,
+and exact MP4 bytes inside the downloaded, verified Rerun recording.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_BYOF_WAN22_WORKER_VERIFY=1 \
+NPA_BYOF_WAN22_WORKER_RUN_ID='<completed-workflow-run-id>' \
+NPA_BYOF_WAN22_WORKER_PROJECT='<project-alias>' \
+NPA_BYOF_WAN22_WORKER_PREFIX='s3://<project-bucket>/<completed-artifact-prefix>/' \
+NPA_BYOF_WAN22_LIVE_FRAMES='<requested-frames>' \
+NPA_BYOF_WAN22_LIVE_STEPS='<requested-steps>' \
+NPA_BYOF_WAN22_LIVE_SEED='<requested-seed>' \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_byof_wan22_workflow_worker_live_e2e.py -q
+```
+
+This check reads object storage and writes temporary local downloads. It never
+submits jobs, builds images, provisions resources, or publishes recordings.
+Use an operator environment with the `viz` extra and matching Rerun CLI installed.
+A skipped test is not live execution evidence.

@@ -32,12 +32,22 @@ def _load_runner():
     return module
 
 
-def _capture_upload(context, directory, prefix):
-    context.uploads.append(prefix)
-    for path in Path(directory).rglob("*"):
-        if path.is_file():
-            context.files[path.relative_to(directory).as_posix()] = path.read_bytes()
-    return prefix
+def _capture_upload(context, payload, uri, *, if_none_match):
+    assert if_none_match is True
+    prefix = "s3://test-bucket/results/outer-run/"
+    name = uri.removeprefix(prefix)
+    assert name != uri
+    if name in context.files:
+        raise worker.StoragePreconditionFailed("object already exists")
+    if prefix not in context.uploads:
+        context.uploads.append(prefix)
+    context.files[name] = payload
+    return '"object-version"'
+
+
+def _read_upload(context, uri):
+    name = uri.removeprefix("s3://test-bucket/results/outer-run/")
+    return (context.files[name], '"object-version"') if name in context.files else None
 
 
 @pytest.fixture
@@ -67,9 +77,10 @@ def allocated_worker(tmp_path, monkeypatch):
     monkeypatch.setenv("NPA_WORKFLOW_STATE", "capability")
     monkeypatch.setenv("NPA_TASK_IMAGE", IMAGE)
     storage = SimpleNamespace(
-        upload_directory=lambda directory, prefix: _capture_upload(
-            context, directory, prefix
-        )
+        put_bytes_conditional=lambda payload, uri, **kwargs: _capture_upload(
+            context, payload, uri, **kwargs
+        ),
+        read_bytes_with_etag=lambda uri: _read_upload(context, uri),
     )
     monkeypatch.setattr(worker.StorageClient, "from_environment", lambda: storage)
     return context
@@ -164,6 +175,7 @@ def test_image_mismatch_fails_before_command_or_upload(allocated_worker, image):
     [
         ("repo_ref", "2" * 40),
         ("smoke_artifact_name", "../escape.json"),
+        ("smoke_artifact_name", "."),
         ("workload", "container-verify"),
         ("base_profile", "ubuntu"),
     ],
@@ -209,14 +221,40 @@ def test_wan_worker_requires_postprocess_after_actual_upload(
 def test_upload_failure_prevents_success(allocated_worker, monkeypatch):
     context = allocated_worker
 
-    def upload_failed(*_args):
+    def upload_failed(*_args, **_kwargs):
         raise RuntimeError("upload unavailable")
 
     monkeypatch.setattr(
         worker.StorageClient,
         "from_environment",
-        lambda: SimpleNamespace(upload_directory=upload_failed),
+        lambda: SimpleNamespace(put_bytes_conditional=upload_failed),
     )
     result = CliRunner().invoke(app, _arguments(context, CAPABILITY))
     assert result.exit_code != 0
     assert "upload unavailable" in result.output
+
+
+def test_identical_retry_preserves_published_bytes(allocated_worker):
+    context = allocated_worker
+    args = _arguments(context, CAPABILITY)
+    first = CliRunner().invoke(app, args)
+    assert first.exit_code == 0, first.output
+    context.files["verified.rrd"] = b"previous verified recording"
+    original = dict(context.files)
+    retry = CliRunner().invoke(app, args)
+    assert retry.exit_code == 0, retry.output
+    assert context.files == original
+
+
+def test_changed_retry_cannot_rewrite_verified_recording_lineage(allocated_worker):
+    context = allocated_worker
+    first = CliRunner().invoke(app, _arguments(context, CAPABILITY))
+    assert first.exit_code == 0, first.output
+    context.files["verified.rrd"] = b"previous verified recording"
+    original = dict(context.files)
+    retry = CliRunner().invoke(
+        app, _arguments(context, CAPABILITY.replace("6 * 7", "7 * 7"))
+    )
+    assert retry.exit_code != 0
+    assert "use a new run id" in retry.output
+    assert context.files == original

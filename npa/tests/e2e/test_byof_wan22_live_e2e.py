@@ -34,6 +34,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.workflows.byof.live import (
@@ -51,6 +53,10 @@ from npa.workflows.wan_rerun import (
 
 from .npa_workflow_live_helpers import live_bucket
 
+WAN_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+    f"{wan_accepted_image_manifest()['oci_digest']}"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 WAN_SPEC = (
@@ -253,7 +259,7 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     assert config["repo_url"] == "https://github.com/Wan-Video/Wan2.2.git"
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
     assert "--wait-timeout -1" in rendered
     assert "WanTI2V" in rendered and "generator.generate(" in rendered

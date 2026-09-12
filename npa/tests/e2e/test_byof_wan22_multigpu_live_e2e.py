@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+
 from npa.clients.config import resolve_container_registry
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
@@ -40,6 +42,10 @@ from .test_byof_wan22_live_e2e import (
     _verify_published_rrd,
 )
 
+WAN_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+    f"{wan_accepted_image_manifest()['oci_digest']}"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 WAN_SPEC = (
@@ -99,7 +105,7 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     assert planned["--repo-ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert planned["--yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
     assert planned["--base-profile"] == "prebuilt"
-    assert planned["--base-image"] == "tool://wan2-2"
+    assert planned["--base-image"] == WAN_IMAGE
     assert planned["--wait-timeout"] == "-1"
     assert planned["--capability-name"] in EXPECTED_CAPABILITIES
     assert "--nproc_per_node=4" in smoke

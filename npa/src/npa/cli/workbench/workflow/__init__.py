@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 import hashlib
 import json
@@ -1821,7 +1822,21 @@ def submit_cmd(
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
             accept_eula=accept_eula,
-            gpu_accelerator_overrides=_resolve_submit_accelerators(
+        )
+        # The first discovery starts the isolated API. Bind it to the same
+        # resolved principal and storage settings that every runtime wave uses.
+        submission_environment = (
+            _npa_submission_environment(
+                merged_npa_spec,
+                run_id=resolved_run_id,
+                secret_env_values=extra_env,
+                endpoint=npa_render_options.aws_endpoint_url,
+            )
+            if runtime and not plan_only
+            else nullcontext()
+        )
+        with submission_environment:
+            accelerator_overrides = _resolve_submit_accelerators(
                 yaml_path,
                 spec=merged_npa_spec,
                 infra=infra,
@@ -1832,7 +1847,9 @@ def submit_cmd(
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
-            ),
+            )
+        npa_render_options = replace(
+            npa_render_options, gpu_accelerator_overrides=accelerator_overrides
         )
         # Runtime submits one rendered wave at a time through the mandatory SDK
         # execution preflight. Checking every state here would block CPU-only
@@ -2535,6 +2552,38 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
     }
 
 
+@contextmanager
+def _npa_submission_environment(
+    spec,
+    *,
+    run_id: str,
+    secret_env_values: Mapping[str, str],
+    endpoint: str,
+) -> Iterator[None]:
+    """Bind API discovery and runtime waves to one resolved submission identity."""
+
+    from npa.orchestration.npa_workflow.interpreter import _make_context
+    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+
+    environment = dict(secret_env_values)
+    resolved_config = _make_context(spec, run_id=run_id).config
+    for key in ("bucket", "prefix"):
+        if key in resolved_config:
+            environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
+    if endpoint.strip():
+        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
+    previous_env = {name: os.environ.get(name) for name in environment}
+    try:
+        os.environ.update(environment)
+        yield
+    finally:
+        for name, previous in previous_env.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+
+
 def _run_npa_workflow_runtime(
     yaml_path: Path,
     *,
@@ -2644,21 +2693,12 @@ def _run_npa_workflow_runtime(
         preflight_evidence=dict(preflight_evidence or {}),
         pre_submit_hook=pre_submit_hook,
     )
-    runtime_env = dict(secret_env_values)
-    from npa.orchestration.npa_workflow.interpreter import _make_context
-
-    resolved_config = _make_context(spec, run_id=run_id).config
-    for key in ("bucket", "prefix"):
-        if key in resolved_config:
-            runtime_env[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
-    endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
-    if endpoint:
-        from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
-
-        runtime_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
-    previous_env = {name: os.environ.get(name) for name in runtime_env}
-    try:
-        os.environ.update(runtime_env)
+    with _npa_submission_environment(
+        spec,
+        run_id=run_id,
+        secret_env_values=secret_env_values,
+        endpoint=str(getattr(render_options, "aws_endpoint_url", "") or ""),
+    ):
         try:
             report = run_workflow_runtime(
                 spec,
@@ -2672,12 +2712,6 @@ def _run_npa_workflow_runtime(
         except NpaWorkflowError as exc:
             _fail(str(exc))
             return
-    finally:
-        for name, previous in previous_env.items():
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
     artifact_load: dict[str, object] | None = None
     if (
         report.status == "succeeded"

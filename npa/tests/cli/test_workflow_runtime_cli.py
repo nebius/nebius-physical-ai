@@ -573,6 +573,76 @@ def test_runtime_automatically_uses_resolved_project_storage_credentials(
     assert "AWS_SECRET_ACCESS_KEY" not in os.environ
 
 
+@pytest.fixture()
+def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
+    """Resolve private storage once and observe both actual discovery calls."""
+    from npa.clients.config import StorageConfig
+    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+
+    expected = {
+        "AWS_ACCESS_KEY_ID": "project-access", "AWS_SECRET_ACCESS_KEY": "project-secret",
+        "NPA_S3_BUCKET": "rt-bucket", "NPA_S3_PREFIX": "runs/identity-test",
+        **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.example.invalid"),
+    }
+    for key in expected:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    original_environment = {key: os.environ.get(key) for key in expected}
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
+        return_value=StorageConfig("rt-bucket", expected["AWS_ENDPOINT_URL"],
+                                   expected["AWS_ACCESS_KEY_ID"], expected["AWS_SECRET_ACCESS_KEY"]),
+    )
+    for name in ("_preflight_submit_images", "_verify_submit_controller_owner"):
+        mocker.patch(f"npa.cli.workbench.workflow.{name}", return_value={})
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim", return_value="")
+    mocker.patch("npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health")
+    observations = []
+
+    def discovery(*args, **kwargs):
+        observations.append({key: os.environ.get(key) for key in expected})
+        return {}
+
+    mocker.patch("npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+                 side_effect=discovery)
+    return expected, observations, original_environment
+
+
+@pytest.mark.parametrize("runtime_failure", [False, True])
+def test_runtime_discovery_preserves_resolved_identity_and_restores_environment(
+    configured_gpu_runtime, gpu_then_cpu_spec: Path, mocker, runtime_failure: bool,
+) -> None:
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+    expected, observations, original_environment = configured_gpu_runtime
+    wave = gpu_then_cpu_spec.with_name("wave.yaml")
+    wave.write_text("name: generate\nresources: {cloud: kubernetes, accelerators: 'B200:1'}\nrun: 'true'\n")
+
+    def run(spec, **kwargs):
+        # Exercise the actual per-wave CLI hook under the runtime's environment.
+        kwargs["options"].pre_submit_hook(wave)
+        observations.append({key: os.environ.get(key) for key in expected})
+        if runtime_failure:
+            raise NpaWorkflowError("synthetic runtime failure")
+        return RuntimeReport(workflow=spec.name, run_id=kwargs["run_id"], status="succeeded")
+
+    mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime", side_effect=run)
+    result = RUNNER.invoke(app, [
+        "workbench", "workflow", "submit", str(gpu_then_cpu_spec),
+        "--run-id", "identity-test", "--runtime", "--infra", "k8s/unit-context",
+        "--var", "prefix=runs/{{run.id}}", "--no-deploy-if-absent",
+        "--s3-endpoint", "https://storage.example.invalid",
+    ])
+
+    assert result.exit_code == int(runtime_failure), result.output
+    assert observations == [expected, expected, expected]
+    assert {key: os.environ.get(key) for key in expected} == original_environment
+    assert "project-access" not in result.output
+    assert "project-secret" not in result.output
+
+
 def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,

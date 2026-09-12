@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "382c9bcefa514397dbad29d0d1cf39050f45d310fc3473b78c9bd9c8997a389f",
+  "workflow_sha256": "d3e346c61ec558f92251c0ebbff9c7fd01ede782e09fc61921a2f6259c1b1be9",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,9 +12,9 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Worker-shell tests prove exact integer handoff and rejection before runtime fetch. Rerun tests fully decode longer video and reject request/output count mismatch.",
+      "reason": "Worker-shell tests prove exact integer handoff and rejection before runtime fetch. Planner/renderer tests require the allocated task and BYOF verifier to share the accepted immutable image digest. Rerun tests fully decode longer video and reject request/output count mismatch.",
       "evidence": [
-        "npa/tests/workflows/test_wan_generation_controls.py: 31 passed",
+        "npa/tests/workflows/test_wan_generation_controls.py: 33 passed",
         "npa/tests/workflows/test_wan_rerun.py: 48 passed"
       ]
     }
@@ -37,8 +37,10 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The spec retains the existing tool://wan2-2 resolution and immutable source pin; no target image pull was performed during this code change.",
-      "evidence": []
+      "reason": "Both the allocated worker image and BYOF verification argument pin the accepted public OCI digest. Planning and rendering agree; no target image pull was performed during this authoring check.",
+      "evidence": [
+        "npa/tests/workflows/test_wan_generation_controls.py::test_worker_image_and_byof_verifier_share_the_accepted_digest"
+      ]
     },
     "target_runtime": {
       "status": "unverified",

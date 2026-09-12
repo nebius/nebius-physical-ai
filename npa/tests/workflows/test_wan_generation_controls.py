@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 
@@ -137,3 +138,30 @@ def test_distributed_wrapper_passes_requested_controls_as_upstream_argv() -> Non
         "--base_seed",
         "7",
     ]
+
+
+@pytest.mark.parametrize("filename", SPECS)
+def test_worker_image_and_byof_verifier_share_the_accepted_digest(filename: str) -> None:
+    from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    expected = (
+        f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+        f"{wan_accepted_image_manifest()['oci_digest']}"
+    )
+    spec = load_spec(ROOT / "workflows" / "testing" / filename)
+    plan = build_plan(spec, run_id="immutable-worker-image")
+    step = plan.steps[0]
+    assert step.argv[step.argv.index("--base-image") + 1] == expected
+    assert step.resources_profile["image"] == expected
+    rendered = render_skypilot_yaml(
+        spec, plan, run_id="immutable-worker-image",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [document for document in yaml.safe_load_all(rendered) if document][-1]
+    assert task["resources"]["image_id"] == f"docker:{expected}"

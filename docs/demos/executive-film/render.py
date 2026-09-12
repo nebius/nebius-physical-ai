@@ -238,7 +238,7 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                 "ffmpeg_version": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0],
                 "assets": {role: {"sha256": asset["sha256"], "kind": asset["kind"],
                                   "crop": asset.get("crop")} for role, asset in assets.items()},
-                "editorial": "Saved run outputs; crops, loops and presentation zooms; no new model inference claimed."}
+                "editorial": "Separate saved run outputs; editorial assembly applies crops, loops and presentation zooms."}
 
 
 def _evidence(target, storyboard, assets, directory, storyboard_path=None):

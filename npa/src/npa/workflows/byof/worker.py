@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, StoragePreconditionFailed
 from npa.orchestration.npa_workflow.run_resolution import validate_run_id
 
 
@@ -84,7 +84,7 @@ def _validate_request(request: WorkerSmoke) -> str:
         raise ValueError("BYOF worker requires a smoke command and named capability")
     artifact = PurePosixPath(request.artifact_name)
     if (
-        not request.artifact_name
+        not artifact.parts
         or artifact.is_absolute()
         or artifact.as_posix() != request.artifact_name
         or any(part in {".", ".."} for part in artifact.parts)
@@ -199,6 +199,27 @@ def _summary(
     }
 
 
+def _publish_artifacts(storage: StorageClient, root: Path, prefix: str) -> None:
+    paths = sorted(root.rglob("*"), key=lambda path: (
+        path.name == "npa_byof_summary.json", path.relative_to(root).as_posix()
+    ))
+    for path in paths:
+        if path.is_symlink():
+            raise ValueError("BYOF output artifacts must not contain symbolic links")
+        if not path.is_file():
+            continue
+        uri = prefix + path.relative_to(root).as_posix()
+        payload = path.read_bytes()
+        try:
+            storage.put_bytes_conditional(payload, uri, if_none_match=True)
+        except StoragePreconditionFailed:
+            existing = storage.read_bytes_with_etag(uri)
+            if existing is None or existing[0] != payload:
+                raise RuntimeError(
+                    "BYOF artifact already exists with different bytes; use a new run id"
+                ) from None
+
+
 def run_prebuilt_smoke(request: WorkerSmoke) -> dict[str, Any]:
     """Execute and upload a capability without starting another scheduler.
 
@@ -224,7 +245,7 @@ def run_prebuilt_smoke(request: WorkerSmoke) -> dict[str, Any]:
         exit_code = _execute(request, root, prefix)
         summary = _summary(request, metadata, root, exit_code)
         (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
-        storage.upload_directory(str(root), prefix)
+        _publish_artifacts(storage, root, prefix)
     if exit_code != 0:
         raise RuntimeError(
             f"BYOF smoke command failed with exit code {exit_code}; diagnostics uploaded"

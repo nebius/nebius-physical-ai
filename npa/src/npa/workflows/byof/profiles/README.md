@@ -21,6 +21,10 @@ request. It uploads the real outputs, logs, and a summary with artifact hashes
 before running any mandatory solution postprocessor. Failed commands and
 missing required artifacts upload diagnostics and fail the stage. Wan still
 requires verified RRD publication before completion.
+Publication creates each object conditionally and reuses an existing object
+only when its bytes match. A changed result needs a new run ID, preserving the
+source artifacts beneath previously verified recordings. The summary is
+published after its source files.
 
 Worker detection uses the renderer's `NPA_WORKFLOW_RUN_ID`,
 `NPA_WORKFLOW_STATE`, and `NPA_TASK_IMAGE` environment. Operators do not set these
