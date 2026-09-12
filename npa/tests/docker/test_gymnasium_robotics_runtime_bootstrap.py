@@ -487,6 +487,20 @@ def test_wheel_stream_expansion_limit_refuses_before_install(tmp_path: Path) -> 
     assert not (tmp_path / "cache/current").exists()
 
 
+def test_only_standard_venv_compatibility_link_is_removed(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "lib").mkdir()
+    link = runtime / "lib64"
+    link.symlink_to("lib")
+    BOOTSTRAP._remove_venv_compatibility_link(runtime)
+    assert not link.exists()
+
+    link.symlink_to("/tmp")
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="unexpected compatibility"):
+        BOOTSTRAP._remove_venv_compatibility_link(runtime)
+
+
 def test_unowned_or_unsafe_cache_root_refuses(tmp_path: Path) -> None:
     manifest, requirements, content = _write_inputs(tmp_path)
     cache = tmp_path / "cache"
