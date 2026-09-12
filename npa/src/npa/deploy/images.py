@@ -872,6 +872,10 @@ def build_and_push_command(image: str) -> str:
     tool = tool_for_image_name(image_name)
     if not tool:
         return ""
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        # Quarantined candidates require their dedicated, reviewed build and
+        # byte-scan transaction; never suggest the generic push shortcut.
+        return ""
     if tool == "ncore":
         # The generic recipe omits the mandatory source revision and would build
         # an unsupported release tag. This helper deliberately never publishes.
