@@ -512,6 +512,7 @@ def test_local_builder_outputs_attested_oci_without_push_or_load() -> None:
 def test_verifier_requires_reviewed_complete_runtime_closure_hashes() -> None:
     verifier = (PACKAGE / "verify_image.py").read_text(encoding="utf-8")
     assert '"--expected-dpkg-inventory-sha256", required=True' in verifier
+    assert '"--expected-python-venv-inventory-sha256", required=True' in verifier
     assert '"--expected-native-closure-sha256", required=True' in verifier
 
 

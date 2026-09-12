@@ -313,6 +313,7 @@ def _verify(
     *,
     contract: dict[str, object] | None = None,
     expected_dpkg_inventory_sha256: str | None = None,
+    expected_python_venv_inventory_sha256: str | None = None,
     expected_native_closure_sha256: str | None = None,
     **kwargs,
 ) -> dict[str, object]:
@@ -330,6 +331,7 @@ def _verify(
             SOURCE_REVISION,
             "0" * 64,
             "0" * 64,
+            "0" * 64,
         )
         return H.verify(
             fd,
@@ -339,6 +341,8 @@ def _verify(
             _digest(archive.read_bytes()),
             SOURCE_REVISION,
             expected_dpkg_inventory_sha256 or probe["dpkg_inventory_sha256"],
+            expected_python_venv_inventory_sha256
+            or probe["python_venv_inventory_sha256"],
             expected_native_closure_sha256 or probe["native_elf_closure_sha256"],
         )
     finally:
@@ -372,6 +376,11 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     assert report["projected_source_file_count"] == 2
     assert report["python_distribution_count"] == 4
     assert report["python_record_files_verified"] == 1
+    assert len(report["python_venv_inventory"]) == 9
+    assert (
+        report["python_venv_inventory_sha256"]
+        == report["expected_python_venv_inventory_sha256"]
+    )
     assert report["native_elf_count"] == 1
     assert report["dpkg_inventory_sha256"] == report["expected_dpkg_inventory_sha256"]
     assert (
@@ -387,10 +396,12 @@ def test_complete_runtime_inventory_hashes_are_required(tmp_path) -> None:
         tmp_path,
         [_required_entries()],
         expected_dpkg_inventory_sha256="0" * 64,
+        expected_python_venv_inventory_sha256="0" * 64,
         expected_native_closure_sha256="0" * 64,
     )
     assert {
         "runtime_dpkg_inventory_lock_mismatch",
+        "python_venv_inventory_lock_mismatch",
         "native_elf_closure_lock_mismatch",
     } <= _codes(report)
 
@@ -415,6 +426,8 @@ def test_graph_binding_requires_a_valid_exact_runtime_closure() -> None:
         "content_bytes_read": 1,
         "expected_dpkg_inventory_sha256": closure,
         "dpkg_inventory_sha256": closure,
+        "expected_python_venv_inventory_sha256": closure,
+        "python_venv_inventory_sha256": closure,
         "expected_native_closure_sha256": closure,
         "native_elf_closure_sha256": closure,
         "expected_source_revision": SOURCE_REVISION,
@@ -424,6 +437,7 @@ def test_graph_binding_requires_a_valid_exact_runtime_closure() -> None:
     for key in (
         "valid",
         "dpkg_inventory_sha256",
+        "python_venv_inventory_sha256",
         "native_elf_closure_sha256",
     ):
         invalid = copy.deepcopy(receipt)
@@ -433,6 +447,96 @@ def test_graph_binding_requires_a_valid_exact_runtime_closure() -> None:
             match="habitat_oci_verifier_not_valid|habitat_oci_runtime_closure_binding",
         ):
             H.bind(result, invalid, digest)
+
+
+def test_python_venv_inventory_rejects_record_rewrite_and_unrecorded_bytes(
+    tmp_path,
+) -> None:
+    original = b"VALUE = 'reviewed'\n"
+    changed = b"VALUE = 'changed'\n"
+    path = "opt/venv/lib/python3.10/site-packages/fixture/runtime.py"
+    record_path = (
+        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
+    )
+    native = _elf64(soname="native.so")
+    entries = _required_entries()
+    record_index = next(
+        index for index, row in enumerate(entries) if row[0] == record_path
+    )
+    entries[record_index] = file(
+        record_path,
+        (
+            f"fixture/native.so,{_record_hash(native)},{len(native)}\n"
+            f"fixture/runtime.py,{_record_hash(original)},{len(original)}\n"
+            "fixture-1.0.dist-info/RECORD,,\n"
+        ).encode(),
+    )
+    entries.append(file(path, original))
+    baseline = _verify(tmp_path, [entries])
+    assert baseline["valid"] is True
+
+    rewritten = copy.deepcopy(entries)
+    rewritten[-1] = file(path, changed)
+    rewritten[record_index] = file(
+        record_path,
+        (
+            f"fixture/native.so,{_record_hash(native)},{len(native)}\n"
+            f"fixture/runtime.py,{_record_hash(changed)},{len(changed)}\n"
+            "fixture-1.0.dist-info/RECORD,,\n"
+        ).encode(),
+    )
+    rewritten_report = _verify(
+        tmp_path,
+        [rewritten],
+        expected_python_venv_inventory_sha256=baseline[
+            "python_venv_inventory_sha256"
+        ],
+    )
+    assert "python_venv_inventory_lock_mismatch" in _codes(rewritten_report)
+
+    unrecorded = _required_entries()
+    unrecorded.append(file(path, changed))
+    unrecorded_report = _verify(
+        tmp_path,
+        [unrecorded],
+        expected_python_venv_inventory_sha256=baseline[
+            "python_venv_inventory_sha256"
+        ],
+    )
+    assert "python_venv_inventory_lock_mismatch" in _codes(unrecorded_report)
+
+
+def test_python_distribution_record_population_and_unhashed_entries_are_closed(
+    tmp_path,
+) -> None:
+    missing_record = [
+        row
+        for row in _required_entries()
+        if not row[0].endswith("pip-22.0.2.dist-info/RECORD")
+    ]
+    assert "python_record_population_invalid" in _codes(
+        _verify(tmp_path, [missing_record])
+    )
+
+    path = "opt/venv/lib/python3.10/site-packages/fixture/runtime.py"
+    record_path = (
+        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
+    )
+    native = _elf64(soname="native.so")
+    unhashed = _required_entries()
+    record_index = next(
+        index for index, row in enumerate(unhashed) if row[0] == record_path
+    )
+    unhashed[record_index] = file(
+        record_path,
+        (
+            f"fixture/native.so,{_record_hash(native)},{len(native)}\n"
+            "fixture/runtime.py,,\n"
+            "fixture-1.0.dist-info/RECORD,,\n"
+        ).encode(),
+    )
+    unhashed.append(file(path, b"not record-bound\n"))
+    assert "python_record_entry_unbound" in _codes(_verify(tmp_path, [unhashed]))
 
 
 def test_every_installed_package_requires_copyright_bytes(tmp_path) -> None:
@@ -662,6 +766,7 @@ def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> N
             contract,
             _digest(archive.read_bytes()),
             SOURCE_REVISION,
+            "0" * 64,
             "0" * 64,
             "0" * 64,
         )
