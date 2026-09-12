@@ -3674,8 +3674,8 @@ def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None
     """
     body = _render_backend_body(monkeypatch)
 
-    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
-    assert '@app.get("/sim-viz/rrd-blob")' not in body
+    assert '@app.get("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_get")' in body
+    assert '@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")' in body
 
 
 def test_rendered_backend_skips_unreadable_ssh_key_candidates(

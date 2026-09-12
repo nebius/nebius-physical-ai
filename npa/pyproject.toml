@@ -122,6 +122,8 @@ sonic = [
 dev = [
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
+    # The served agent audit explicitly selects Uvicorn's websockets protocol.
+    "websockets>=10,<16",
     # Daily public DROID staging tests use the OpenPI image's GCS client.
     "google-cloud-storage==3.13.1",
     # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
@@ -143,6 +145,7 @@ dev = [
 [dependency-groups]
 dev = [
     "uvicorn>=0.52.4",
+    "websockets>=10,<16",
     "google-cloud-storage==3.13.1",
     "fastapi~=0.136.1",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.

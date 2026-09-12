@@ -425,6 +425,28 @@ def test_terraform_splits_and_fails_closed_ingress() -> None:
     assert "nebius_secret_key" not in template_args
 
 
+def test_terraform_optionally_binds_a_public_ipv4_pool_to_new_networks() -> None:
+    """An explicit pool is opt-in and flows through network-to-subnet inheritance."""
+    main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
+    variables_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
+
+    pool_variable = variables_tf.split('variable "public_ipv4_pool_id"', 1)[1].split(
+        "}", 1
+    )[0]
+    network = main_tf.split('resource "nebius_vpc_v1_network" "workbench"', 1)[1].split(
+        'resource "nebius_vpc_v1_subnet" "workbench"', 1
+    )[0]
+    subnet = main_tf.split('resource "nebius_vpc_v1_subnet" "workbench"', 1)[1].split(
+        '# ── Security group', 1
+    )[0]
+
+    assert 'default     = ""' in pool_variable
+    assert "var.public_ipv4_pool_id" in network
+    assert "pools = [{ id = trimspace(var.public_ipv4_pool_id) }]" in network
+    assert "var.public_ipv4_pool_id" in subnet
+    assert "use_network_pools = true" in subnet
+
+
 def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:
     outputs = (PACKAGE_ROOT / "src/npa/deploy/terraform/outputs.tf").read_text()
 
