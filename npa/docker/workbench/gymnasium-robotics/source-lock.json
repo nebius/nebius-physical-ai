@@ -45,7 +45,7 @@
       "delivery_status": "runtime-only"
     }
   ],
-  "expected_python_distribution_count": 26,
+  "expected_python_distribution_count": 19,
   "resolved_python_artifact_count": 1,
   "components": {
     "farama_gymnasium_robotics": {

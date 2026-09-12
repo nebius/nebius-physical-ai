@@ -41,7 +41,7 @@ EXPECTED_MUJOCO_VERSION = "3.12.0"
 EXPECTED_DECISION_SHA256 = (
     "758a29a6fae55075dc4ba879907e81f949b7a4e23fa726b790fd4361241697a3"
 )
-EXPECTED_WHEEL_COUNT = 26
+EXPECTED_WHEEL_COUNT = 19
 ALLOWED_HOSTS = frozenset(
     {"github.com", "codeload.github.com", "files.pythonhosted.org"}
 )
