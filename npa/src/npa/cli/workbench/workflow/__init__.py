@@ -1811,7 +1811,11 @@ def submit_cmd(
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
             accept_eula=accept_eula,
-            gpu_accelerator_overrides=_resolve_submit_accelerators(
+        )
+        # The first discovery starts the isolated API. Bind it to the same
+        # resolved principal and storage settings that every runtime wave uses.
+        with _temporary_runtime_environment(runtime_environment):
+            accelerator_overrides = _resolve_submit_accelerators(
                 yaml_path,
                 spec=merged_npa_spec,
                 infra=infra,
@@ -1823,7 +1827,9 @@ def submit_cmd(
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
-            ),
+            )
+        npa_render_options = replace(
+            npa_render_options, gpu_accelerator_overrides=accelerator_overrides
         )
         # Runtime submits one rendered wave at a time through the mandatory SDK
         # execution preflight. Checking every state here would block CPU-only
@@ -2534,8 +2540,8 @@ def _runtime_submit_environment(
     for key in ("bucket", "prefix"):
         if key in resolved_config:
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
-    if endpoint:
-        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
+    if endpoint.strip():
+        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
     return environment
 
 

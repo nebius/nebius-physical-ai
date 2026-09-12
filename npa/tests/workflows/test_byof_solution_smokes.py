@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
 
+
+WAN_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+    f"{wan_accepted_image_manifest()['oci_digest']}"
+)
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = ROOT / "workflows" / "testing"
 SKILL_PATH = (
@@ -380,7 +386,7 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["pip_extra"] == "viz"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
     assert config["wait_timeout"] == "-1"
@@ -479,7 +485,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["pip_extra"] == "viz"
     assert config["wait_timeout"] == "-1"
     assert "wan-runtime ensure" in smoke

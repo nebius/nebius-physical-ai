@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import textwrap
 from pathlib import Path
 
@@ -3469,7 +3470,7 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
     work_root = tmp_path / "work"
 
     monkeypatch.setenv("NPA_TERRAFORM_BIN", str(terraform))
-    monkeypatch.setenv("NPA_NEBIUS_BIN", "/bin/true")
+    monkeypatch.setenv("NPA_NEBIUS_BIN", sys.executable)
     monkeypatch.setattr(L, "_default_work_root", lambda: work_root)
     monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "tenant-test")
     monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")

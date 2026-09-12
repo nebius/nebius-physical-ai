@@ -165,7 +165,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`byof-openpi.yaml`](testing/byof-openpi.yaml) | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`byof-robocasa.yaml`](testing/byof-robocasa.yaml) | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
 | [`byof-wan2.2-multigpu.yaml`](testing/byof-wan2.2-multigpu.yaml) | Wan 2.2 generation across four participating GPU ranks; MP4, topology, and Rerun evidence |
-| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence |
+| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence; [configurable frames, sampling steps, and seed](../docs/workbench/wan2.2.md#generate-a-longer-clip) on both Wan routes |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
 
 #### Hosted inference and VLM evaluation

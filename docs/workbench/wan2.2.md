@@ -44,9 +44,11 @@ rechecks the closure report. This proves the strongest honest pre-overlay
 boundary; the real single- and multi-GPU workflows prove the full import and
 inference path only after runtime provisioning.
 
-The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
-size and 24 fps with eight sampling steps. The shorter duration and sampling
-count make this a capability smoke; they are not a production-quality claim.
+The default hard gate generates 17 frames at the official TI2V-5B 1280×704
+spatial size and 24 fps with eight sampling steps and seed 42. The shorter
+duration and sampling count make this a capability smoke; they are not a
+production-quality claim. Both workflows expose `frames`, `steps`, and `seed`
+through the standard workflow `--var` overrides for longer generations.
 
 ## Workflow surfaces
 
@@ -58,6 +60,14 @@ count make this a capability smoke; they are not a production-quality claim.
   `--t5_fsdp`, and `--ulysses_size 4`.
 - Both use the real `workbench.byof.repo` toolRef and the existing BYOF upload
   path. There is no synthetic or import-only Wan toolRef.
+
+Both specs pin `config.base_image` to the accepted public OCI digest in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`. That single value supplies both
+the allocated GPU task image and BYOF's `--base-image` verification argument.
+The worker requires their exact immutable identities to match before execution;
+a registry tag alias can resolve differently at those two boundaries. For a
+registry mirror, override `base_image` with its full reference at the same
+accepted digest.
 
 Validate and plan the checked-in specs:
 
@@ -78,6 +88,44 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 The default declaration is text-to-video. The single-GPU smoke also has an
 honest optional image input, but image-to-video remains deferred until its own
 live input/output evidence is accepted.
+
+## Generate a longer clip
+
+After configuring your project, storage, and the workflow's GPU target, submit
+a 121-frame clip (about 5.04 seconds at 24 fps) with 50 sampling steps:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit \
+  workflows/testing/byof-wan2.2.yaml \
+  --run-id wan22-longer-clip \
+  --var bucket="${NPA_CHECKPOINT_BUCKET#s3://}" \
+  --var frames=121 --var steps=50 --var seed=42 \
+  --var 'prompt=A cinematic wide shot of a mobile robot moving through a sunlit warehouse.'
+```
+
+Use `byof-wan2.2-multigpu.yaml` for the existing four-B200 route. The same
+controls reach the pinned upstream launcher. Set a new run ID for each output;
+the verified artifact publication preserves existing objects.
+
+| Control | Default | Accepted values |
+| --- | --- | --- |
+| `frames` | `17` | integer at least 5, in the upstream `4n+1` form |
+| `steps` | `8` | positive integer |
+| `seed` | `42` | non-negative integer; negative random-seed selection is disabled for reproducibility |
+
+Config values cross the worker shell boundary as base64 data. The CPU-only
+preflight validates them before `wan-runtime ensure` or any model fetch and
+saves the exact integers in `wan2_2_generation_request.json`. Inference consumes
+that request, and the primary artifact records the requested count, steps, and
+seed. Ambient `WAN22_FRAMES`, `WAN22_STEPS`, and `WAN22_SEED` no longer override
+the workflow config. Resolution remains 1280×704 at 24 fps. Longer clips and
+more sampling steps require more GPU memory and computation; choose them for
+your output needs and inspect the result before using it.
+
+Rerun validation checks every decoded frame against the requested count. It
+retains the exact video-byte identity, image/runtime, spatial, temporal, and
+distributed evidence gates; a longer declared request cannot pass with a
+truncated output.
 
 ## GPU and runtime gates
 
@@ -254,3 +302,37 @@ npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 The two live GPU cases retain explicit operator gates. Their always-on portions
 validate and plan the exact checked-in workflows. Successful future live runs
 must also publish and verify the named RRD and manifest.
+
+The gated live tests also accept `NPA_BYOF_WAN22_LIVE_FRAMES`,
+`NPA_BYOF_WAN22_LIVE_STEPS`, and `NPA_BYOF_WAN22_LIVE_SEED`, defaulting to the
+workflow's 17/8/42 settings. Set them to 121/50/42 to exercise the longer request
+through generation, artifact readback, full MP4 decoding, and verified Rerun
+publication. These overrides do not enable the existing live-test gates.
+
+
+### Verify a completed standard-workflow worker
+
+The read-only worker test checks an existing one- or four-GPU run. Supply its
+outer workflow run ID, configured project alias, exact artifact prefix containing
+`npa_byof_summary.json`, and the expected generation controls. It requires
+`execution: workflow-worker`, a separately recorded allocated-worker ID, the
+accepted immutable image, source artifact hashes, full Wan output validation,
+and exact MP4 bytes inside the downloaded, verified Rerun recording.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_BYOF_WAN22_WORKER_VERIFY=1 \
+NPA_BYOF_WAN22_WORKER_RUN_ID='<completed-workflow-run-id>' \
+NPA_BYOF_WAN22_WORKER_PROJECT='<project-alias>' \
+NPA_BYOF_WAN22_WORKER_PREFIX='s3://<project-bucket>/<completed-artifact-prefix>/' \
+NPA_BYOF_WAN22_LIVE_FRAMES='<requested-frames>' \
+NPA_BYOF_WAN22_LIVE_STEPS='<requested-steps>' \
+NPA_BYOF_WAN22_LIVE_SEED='<requested-seed>' \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_byof_wan22_workflow_worker_live_e2e.py -q
+```
+
+This check reads object storage and writes temporary local downloads. It never
+submits jobs, builds images, provisions resources, or publishes recordings.
+Use an operator environment with the `viz` extra and matching Rerun CLI installed.
+A skipped test is not live execution evidence.

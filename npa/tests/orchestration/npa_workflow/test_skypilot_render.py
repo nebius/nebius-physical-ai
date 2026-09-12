@@ -55,7 +55,7 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     ("name", "expected_image"),
     [
         ("byof-openpi.yaml", "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"),
-        ("byof-wan2.2.yaml", "docker:registry.example/npa-wan2-2:"),
+        ("byof-wan2.2.yaml", "docker:ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:"),
     ],
 )
 def test_non_isaac_byof_specs_render_their_declared_runtime_image(

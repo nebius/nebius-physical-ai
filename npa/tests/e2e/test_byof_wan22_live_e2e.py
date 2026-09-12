@@ -34,6 +34,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.workflows.byof.live import (
@@ -51,6 +53,10 @@ from npa.workflows.wan_rerun import (
 
 from .npa_workflow_live_helpers import live_bucket
 
+WAN_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+    f"{wan_accepted_image_manifest()['oci_digest']}"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 WAN_SPEC = (
@@ -75,11 +81,23 @@ def _spec_config() -> dict[str, object]:
     return config
 
 
-def _planned_byof_args(run_id: str) -> dict[str, str | bool]:
+def _live_generation_controls(config: dict) -> dict[str, int]:
+    controls = {}
+    for key in ("frames", "steps", "seed"):
+        value = os.environ.get(f"NPA_BYOF_WAN22_LIVE_{key.upper()}", str(config[key]))
+        controls[key] = int(value)
+    return controls
+
+
+def _planned_byof_args(
+    run_id: str, generation: dict[str, int] | None = None
+) -> dict[str, str | bool]:
     """Return the planner-rendered BYOF arguments for the checked-in spec."""
     from npa.orchestration.npa_workflow import build_plan, load_spec
 
-    steps = build_plan(load_spec(WAN_SPEC), run_id=run_id).to_dict().get("steps") or []
+    spec = load_spec(WAN_SPEC)
+    spec.config.update(generation or {})
+    steps = build_plan(spec, run_id=run_id).to_dict().get("steps") or []
     assert len(steps) == 1, steps
     argv = [str(part) for part in (steps[0].get("argv") or [])]
     assert argv[:4] == ["npa", "workbench", "byof", "run"], argv
@@ -241,7 +259,7 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     assert config["repo_url"] == "https://github.com/Wan-Video/Wan2.2.git"
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
     assert "--wait-timeout -1" in rendered
     assert "WanTI2V" in rendered and "generator.generate(" in rendered
@@ -292,7 +310,8 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
     assert re.search(r"@sha256:[0-9a-f]{64}$", reuse_image), reuse_image
     run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    planned = _planned_byof_args(run_id)
+    controls = _live_generation_controls(config)
+    planned = _planned_byof_args(run_id, controls)
     image = reuse_image
     profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
@@ -409,13 +428,14 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     assert artifact["requested"] == {
         "width": 1280,
         "height": 704,
-        "frame_count": 17,
+        "frame_count": controls["frames"],
         "fps": 24.0,
-        "inference_steps": 8,
+        "inference_steps": controls["steps"],
     }
+    assert artifact["seed"] == controls["seed"]
     observed = artifact["observed"]
     assert observed["width"] == 1280 and observed["height"] == 704
-    assert observed["frame_count"] == 17
+    assert observed["frame_count"] == controls["frames"]
     assert float(observed["fps"]) > 0
     assert float(observed["max_spatial_std"]) >= 1.0
     assert int(observed["pixel_range"]) >= 4
@@ -472,7 +492,7 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     stream = _decode_mp4(video_path)
     assert int(stream["width"]) == 1280
     assert int(stream["height"]) == 704
-    assert int(stream["nb_read_frames"]) == 17
+    assert int(stream["nb_read_frames"]) == controls["frames"]
     numerator, denominator = (int(part) for part in stream["avg_frame_rate"].split("/"))
     assert denominator > 0 and numerator / denominator > 0
     manifest = _verify_published_rrd(
@@ -482,7 +502,7 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
         layout=SINGLE_GPU_LAYOUT,
         run_id=run_id,
         video_path=video_path,
-        expected_frame_count=17,
+        expected_frame_count=controls["frames"],
         expected_fps=float(observed["fps"]),
         expected_rank_count=0,
         tmp_path=tmp_path,

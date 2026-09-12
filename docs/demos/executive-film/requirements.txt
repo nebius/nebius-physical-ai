@@ -1,0 +1,2 @@
+# Optional narration generator; render dependencies are supplied by npa[dev].
+edge-tts==7.2.7

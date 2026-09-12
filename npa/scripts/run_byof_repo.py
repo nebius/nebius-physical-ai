@@ -34,6 +34,11 @@ from npa.workflows.byof.source_auth import (
     private_repository_secrets,
     validate_repository_url,
 )
+from npa.workflows.byof.worker import (
+    WorkerSmoke,
+    in_workflow_worker,
+    run_prebuilt_smoke,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -720,6 +725,54 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def _postprocess_solution(
+    args: argparse.Namespace, key: str | None, summary: dict[str, Any]
+) -> None:
+    if key is None:
+        return
+    result = run_registered_postprocess(
+        key,
+        PostprocessContext(
+            run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
+            project=args.project or None,
+            wan_acceptance_candidate_image=args.wan_acceptance_candidate_image.strip(),
+        ),
+    )
+    if result is None:
+        raise RuntimeError(
+            f"registered solution {key!r} returned no verified postprocess result"
+        )
+    summary["postprocess"] = result
+
+
+def _run_worker(
+    args: argparse.Namespace, summary: dict[str, Any], *, image: str,
+    base_profile: str, postprocess_key: str | None,
+) -> int:
+    if base_profile != "prebuilt" or args.workload != "solution-smoke" or args.skip_run:
+        raise ValueError(
+            "Allocated BYOF workflow workers support prebuilt solution-smoke only; "
+            "build and launch other workloads from the operator host"
+        )
+    summary["build"] = {"ok": True, "skipped": True}
+    summary["run"] = run_prebuilt_smoke(WorkerSmoke(
+        run_id=args.run_id,
+        image=image,
+        repo_url=args.repo_url,
+        repo_ref=args.repo_ref,
+        output_root=args.output_root,
+        command=args.smoke_command,
+        solution=args.solution_name,
+        capability=args.capability_name,
+        artifact_name=args.smoke_artifact_name,
+        repo_root=Path(BYOF_REPO_MOUNT),
+    ))
+    _postprocess_solution(args, postprocess_key, summary)
+    summary["status"] = "ok"
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def _run_byof(
     args: argparse.Namespace,
     *,
@@ -748,6 +801,11 @@ def _run_byof(
             raise ValueError(
                 f"registered solution {postprocess_key!r} cannot use --skip-run "
                 "because verified postprocessing is mandatory"
+            )
+        if in_workflow_worker():
+            return _run_worker(
+                args, summary, image=image, base_profile=base_profile,
+                postprocess_key=postprocess_key,
             )
         if not skip_build:
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
@@ -935,23 +993,7 @@ def _run_byof(
             summary["run"] = _parse_last_json(run_proc.stdout) or {
                 "status": "submitted"
             }
-            if postprocess_key is not None:
-                postprocess = run_registered_postprocess(
-                    postprocess_key,
-                    PostprocessContext(
-                        run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
-                        project=args.project or None,
-                        wan_acceptance_candidate_image=(
-                            args.wan_acceptance_candidate_image.strip()
-                        ),
-                    ),
-                )
-                if postprocess is None:
-                    raise RuntimeError(
-                        f"registered solution {postprocess_key!r} returned no "
-                        "verified postprocess result"
-                    )
-                summary["postprocess"] = postprocess
+            _postprocess_solution(args, postprocess_key, summary)
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
