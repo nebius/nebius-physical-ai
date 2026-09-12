@@ -449,9 +449,9 @@ def _publish_current_cache_link(
     current = cache_root / "current"
     temporary_link = cache_root / f".current-{os.getpid()}"
     temporary_link.unlink(missing_ok=True)
-    _require_cache_entry_identity(final, expected)
-    temporary_link.symlink_to(final.name)
     try:
+        _require_cache_entry_identity(final, expected)
+        temporary_link.symlink_to(final.name)
         _require_cache_entry_identity(final, expected)
         temporary_link.replace(current)
         _require_cache_entry_identity(final, expected)
@@ -978,16 +978,28 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
         warm_reuse = locked_identity is not None
         if warm_reuse:
             assert locked_identity is not None
-            with _open_cache_entry(final, expected=locked_identity) as stable_final:
-                record = _validate_complete(
-                    stable_final,
-                    manifest,
-                    manifest_sha256,
-                    decision_sha256,
-                    requirements_sha256,
-                    governing_terms_sha256,
-                )
-                _publish_current_cache_link(cache_root, final, locked_identity)
+            published = False
+            try:
+                with _open_cache_entry(final, expected=locked_identity) as stable_final:
+                    record = _validate_complete(
+                        stable_final,
+                        manifest,
+                        manifest_sha256,
+                        decision_sha256,
+                        requirements_sha256,
+                        governing_terms_sha256,
+                    )
+                    _publish_current_cache_link(cache_root, final, locked_identity)
+                    published = True
+            except Exception:
+                current = cache_root / "current"
+                if (
+                    published
+                    and current.is_symlink()
+                    and os.readlink(current) == final.name
+                ):
+                    current.unlink()
+                raise
         else:
             partial = Path(
                 tempfile.mkdtemp(prefix=f".{manifest_sha256}.partial-", dir=cache_root)

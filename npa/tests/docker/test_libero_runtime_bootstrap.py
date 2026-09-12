@@ -453,6 +453,35 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
     assert (cache_root / "current").resolve() == final.resolve()
 
 
+def test_manifest_cache_entry_swap_during_validation_removes_current_link(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    cache_root = Path(args.cache_root)
+    final = cache_root / fixture["manifest_sha"]
+    preserved = cache_root / ".preserved-final"
+    output = Path(args.output_dir)
+    output.mkdir()
+    original_validate = module._validate_complete
+
+    def swap_after_descriptor_validation(*validate_args, **validate_kwargs):
+        record = original_validate(*validate_args, **validate_kwargs)
+        final.rename(preserved)
+        final.symlink_to(output, target_is_directory=True)
+        return record
+
+    monkeypatch.setattr(module, "_validate_complete", swap_after_descriptor_validation)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+            module.ensure(args)
+        assert not (cache_root / "current").exists()
+    finally:
+        final.unlink(missing_ok=True)
+        preserved.rename(final)
+
+
 @pytest.mark.parametrize(
     "relative",
     ["source/libero/lifelong/utils.py", "venv/bin/python"],
