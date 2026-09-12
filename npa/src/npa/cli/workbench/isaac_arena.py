@@ -50,6 +50,12 @@ def evaluate_cmd(
     input_path: str = typer.Option(
         "", "--input-path", help="Replay file or RSL-RL checkpoint tree."
     ),
+    replay_target_steps: int = typer.Option(
+        0,
+        "--replay-target-steps",
+        min=0,
+        help="Replay horizon; holds the final recorded action without truncating.",
+    ),
     num_episodes: int = typer.Option(1, "--num-episodes", min=1),
     num_envs: int = typer.Option(1, "--num-envs", min=1),
     seed: int = typer.Option(42, "--seed"),
@@ -70,6 +76,7 @@ def evaluate_cmd(
                 environment=environment,
                 policy_type=policy_type,
                 input_path=input_path,
+                replay_target_steps=replay_target_steps,
                 num_episodes=num_episodes,
                 num_envs=num_envs,
                 seed=seed,

@@ -102,6 +102,47 @@ def _yaml_document(contents: str | bytes) -> Any:
         raise IsolatedApiError("executing credential/configuration YAML is invalid") from None
 
 
+def _npa_config_identity(path: Path, environment: Mapping[str, str]) -> str:
+    """Fingerprint only the selected project's execution-bearing NPA config.
+
+    Agent/workbench inventory is mutable control-plane state.  Binding an
+    already-running SkyPilot daemon to those unrelated records can make its
+    exact jobs impossible to inspect or cancel.  An explicitly selected
+    project remains fail-closed on every other project field and on legacy
+    root-level storage/registry routing.
+    """
+
+    contents = path.read_bytes()
+    project_alias = environment.get("NPA_SKYPILOT_PROJECT", "").strip()
+    if not project_alias:
+        return hashlib.sha256(contents).hexdigest()
+    document = _yaml_document(contents)
+    if not isinstance(document, dict):
+        raise IsolatedApiError("executing NPA configuration must be a mapping")
+    projects = document.get("projects") or {}
+    if not isinstance(projects, dict) or project_alias not in projects:
+        raise IsolatedApiError("selected SkyPilot project is absent from NPA configuration")
+    project = projects[project_alias]
+    if not isinstance(project, dict):
+        raise IsolatedApiError("selected SkyPilot project configuration must be a mapping")
+    selected = {
+        key: value
+        for key, value in project.items()
+        if key not in {"agents", "workbenches", "controller_owner"}
+    }
+    identity = {
+        "project_alias": project_alias,
+        "project": selected,
+        "legacy_runtime": {
+            key: document[key]
+            for key in ("storage", "container_registry", "src_s3_uri")
+            if key in document
+        },
+    }
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any] | None = None) -> dict[str, str]:
     home = Path(environment.get("HOME") or "").expanduser()
     kube_paths = [Path(item).expanduser() for item in environment.get("KUBECONFIG", "").split(os.pathsep) if item]
@@ -155,7 +196,11 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     result = {}
     for path in paths:
         try:
-            result[str(path.absolute())] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
+            if path.is_file() and path == npa_directory / "config.yaml":
+                digest = _npa_config_identity(path, environment)
+            else:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
+            result[str(path.absolute())] = digest
         except OSError:
             raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
     return result

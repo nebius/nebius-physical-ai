@@ -65,7 +65,12 @@ The evaluator supports the three local policy adapters registered by upstream:
   meaningful visual evidence merely because its MP4 decodes.
 - `replay`: `--input-path` resolves to an Isaac Lab episode HDF5 file. NPA
   rejects effectively zero actions or a trajectory with no changing recorded
-  state before starting the simulator.
+  state before starting the simulator. The generic upstream loader otherwise
+  copies every recorded observation/state tensor to CUDA even though its replay
+  adapter consumes only actions and the initial state, so NPA materializes
+  exactly those required fields in owner-private scratch. When a recording is
+  shorter than a known task horizon, `--replay-target-steps` may hold its final
+  recorded action through that horizon; it refuses to truncate source actions.
 - `rsl_rl`: `--input-path` resolves to `model*.pt` or a directory containing
   exactly one such checkpoint with sibling `params/agent.yaml`.
 
@@ -85,7 +90,9 @@ npa workbench isaac-arena evaluate \
   --environment gr1_open_microwave \
   --policy-type replay \
   --input-path ./test_demo_gr1_open_microwave.hdf5 \
+  --replay-target-steps 250 \
   --embodiment gr1_pink \
+  --object tomato_soup_can \
   --record-video \
   --run-id "<run-id>"
 ```
@@ -94,6 +101,10 @@ Inputs and outputs may be local or operator-owned S3 paths. The simulator
 subprocess receives no cloud, model, or HTTP admission credentials. Each result
 contains raw episode JSONL, upstream static HTML, the credential-isolated simulator
 log, and `result.json` with aggregate metrics, GPU identity, byte sizes, and hashes.
+The original operator input and the normalized execution HDF5 are never output
+artifacts. The result redacts their location and binds both the source SHA-256
+and exact executed-input SHA-256, along with source, executed, and final-action
+hold step counts.
 `--record-video` additionally fails unless upstream writes H.264 at least
 320×240 and one second long, and independent FFmpeg sampling finds at least two
 frame pairs with both mean absolute luma delta ≥1.0 and ≥0.5% of pixels changing
@@ -113,6 +124,8 @@ result = evaluate(
     environment="gr1_open_microwave",
     policy_type="replay",
     input_path="./test_demo_gr1_open_microwave.hdf5",
+    replay_target_steps=250,
+    object_name="tomato_soup_can",
     record_video=True,
     run_id="<run-id>",
 )
@@ -160,10 +173,10 @@ external-plugin support claim.
 ## Supported workflows
 
 - `workflows/testing/isaac-arena-evaluation-b200.yaml` runs a sequential
-  four-seed state-only replay suite on one B200. B200 has no RT cores, so this
-  path makes no render claim.
-- `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the same
-  nonzero operator-owned trajectory on RTX PRO 6000 and requires a
+  four-seed zero-action `cube_goal_pose` state regression on one B200. B200 has
+  no RT cores, so this path makes no render or meaningful-motion claim.
+- `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the nonzero
+  operator-owned trajectory for the 250-step task horizon on RTX PRO 6000 and requires a
   motion-validated viewport MP4.
 
 Validate and plan before submission, substitute an operator-owned bucket, and
@@ -208,8 +221,8 @@ were removed; the pre-existing shared controller, clusters, and operator storage
 were retained.
 
 The current release gate requires the genuine replay workflow above on RTX PRO
-6000, plus a B200 state-only regression because input binding, result parsing,
-and behavior validation share one execution path. Record exact live measurements
+6000, plus the established B200 state-only regression because common upstream
+execution and result parsing changed. Record exact live measurements
 here only after both runs and the authenticated Agent UI checks complete.
 
 Arena emits MP4 and HTML/JSON evidence, not a native `.rrd`. The Agent UI must

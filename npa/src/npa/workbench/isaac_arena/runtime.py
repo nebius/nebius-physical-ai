@@ -307,6 +307,15 @@ def capabilities() -> dict[str, Any]:
                     "input_required",
                     "upstream_alpha",
                 ],
+                "execution_contract": {
+                    "source_evidence": "SHA-256, action statistics, recorded state change, and recorded success metadata",
+                    "gpu_materialization": "private actions plus initial_state only; unused observations and state histories are not copied to CUDA",
+                    "episode_horizon": (
+                        "The source trajectory is never truncated. Optional replay_target_steps "
+                        "holds its final recorded action until the known task horizon."
+                    ),
+                    "retained_input_bytes": False,
+                },
             },
             {
                 "name": "rsl_rl",
@@ -442,6 +451,11 @@ def capabilities() -> dict[str, Any]:
             ],
             "rerun_rrd": False,
         },
+        "input_handling": {
+            "operator_input_bytes_published": False,
+            "source_and_execution_hashes_retained": True,
+            "source_location_redacted_from_result": True,
+        },
         "rendering": {
             "viewport_video": {
                 "npa_status": ["implemented", "upstream_alpha"],
@@ -475,6 +489,7 @@ class IsaacArenaRequest:
     environment: str = "cube_goal_pose"
     policy_type: str = "zero_action"
     input_path: str = ""
+    replay_target_steps: int = 0
     num_episodes: int = 1
     num_envs: int = 1
     seed: int = 42
@@ -521,6 +536,10 @@ def _validate(request: IsaacArenaRequest) -> None:
         raise IsaacArenaError("zero_action does not accept input_path")
     if request.policy_type != "zero_action" and not request.input_path:
         raise IsaacArenaError(f"{request.policy_type} requires input_path")
+    if request.replay_target_steps < 0:
+        raise IsaacArenaError("replay_target_steps cannot be negative")
+    if request.replay_target_steps and request.policy_type != "replay":
+        raise IsaacArenaError("replay_target_steps is valid only for replay policies")
 
 
 def _local_input(request: IsaacArenaRequest, root: Path) -> Path | None:
@@ -687,6 +706,11 @@ def _replay_input_evidence(path: Path) -> dict[str, Any]:
                 raise IsaacArenaError("replay contains no changing recorded state")
             return {
                 "episode": episode_name,
+                "recorded_success": (
+                    bool(episode.attrs["success"])
+                    if "success" in episode.attrs
+                    else None
+                ),
                 "steps": int(actions.shape[0]),
                 "action_dimensions": int(actions.shape[-1]),
                 "action_abs_max": action_abs_max,
@@ -702,6 +726,80 @@ def _replay_input_evidence(path: Path) -> dict[str, Any]:
             }
     except OSError as exc:
         raise IsaacArenaError("replay input is not a readable HDF5 file") from exc
+
+
+def _prepare_replay_execution_input(
+    source: Path,
+    private_dir: Path,
+    *,
+    target_steps: int,
+    source_evidence: dict[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    """Create the minimal private replay file the upstream adapter consumes.
+
+    Isaac Lab's generic HDF5 loader eagerly copies every recorded observation
+    and state tensor to CUDA, even though ReplayActionPolicy uses only actions
+    and the initial state.  Normalize to that exact contract and optionally
+    hold the last genuine command until the task horizon so upstream can emit
+    a completed, scored episode.  Neither source nor normalized input is
+    published as an output artifact.
+    """
+
+    try:
+        import h5py
+        import numpy as np
+    except ImportError as exc:  # pragma: no cover - provided by the Isaac runtime
+        raise IsaacArenaError("replay normalization requires h5py and numpy") from exc
+    episode_name = str((source_evidence.get("trajectory") or {}).get("episode") or "")
+    if not episode_name:
+        raise IsaacArenaError("replay evidence does not identify an episode")
+    destination = private_dir / "replay-execution.hdf5"
+    private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        with h5py.File(source, "r") as source_file:
+            source_episode = source_file["data"][episode_name]
+            actions = np.asarray(source_episode["actions"])
+            source_steps = int(actions.shape[0])
+            executed_steps = target_steps or source_steps
+            if executed_steps < source_steps:
+                raise IsaacArenaError(
+                    "replay_target_steps cannot truncate the recorded trajectory"
+                )
+            if executed_steps > source_steps:
+                held = np.repeat(actions[-1:], executed_steps - source_steps, axis=0)
+                execution_actions = np.concatenate((actions, held), axis=0)
+            else:
+                execution_actions = actions
+            with h5py.File(destination, "w") as output_file:
+                for key, value in source_file.attrs.items():
+                    output_file.attrs[key] = value
+                output_data = output_file.create_group("data")
+                for key, value in source_file["data"].attrs.items():
+                    output_data.attrs[key] = value
+                output_data.attrs["total"] = executed_steps
+                output_episode = output_data.create_group(episode_name)
+                for key, value in source_episode.attrs.items():
+                    output_episode.attrs[key] = value
+                output_episode.attrs["num_samples"] = executed_steps
+                output_episode.create_dataset(
+                    "actions", data=execution_actions, compression="gzip"
+                )
+                if "initial_state" not in source_episode:
+                    raise IsaacArenaError("replay HDF5 episode contains no initial_state")
+                source_episode.copy("initial_state", output_episode)
+    except (KeyError, OSError) as exc:
+        raise IsaacArenaError("replay input cannot be normalized for execution") from exc
+    destination.chmod(0o600)
+    return destination, {
+        "strategy": "actions_initial_state_only_hold_final_action",
+        "source_sha256": str(source_evidence.get("sha256") or ""),
+        "executed_sha256": _sha256(destination),
+        "source_steps": source_steps,
+        "executed_steps": executed_steps,
+        "held_final_action_steps": executed_steps - source_steps,
+        "fields": ["actions", "initial_state"],
+        "published": False,
+    }
 
 
 def _input_evidence(
@@ -978,15 +1076,31 @@ def evaluate(
     _validate(request)
     with tempfile.TemporaryDirectory(prefix="npa-isaac-arena-") as scratch:
         root = Path(scratch)
-        output_root = root / "upstream"
-        output_root.mkdir()
-        local_input = None if request.dry_run else _local_input(request, root)
+        artifact_root = root / "artifacts"
+        private_dir = root / "private"
+        output_root = artifact_root / "upstream"
+        output_root.mkdir(parents=True)
+        local_input = None if request.dry_run else _local_input(request, private_dir)
         input_evidence = (
             None if request.dry_run else _input_evidence(request, local_input)
         )
+        execution_input = local_input
+        if request.policy_type == "replay" and not request.dry_run:
+            assert local_input is not None and input_evidence is not None
+            execution_input, execution_evidence = _prepare_replay_execution_input(
+                local_input,
+                private_dir,
+                target_steps=request.replay_target_steps,
+                source_evidence=input_evidence,
+            )
+            input_evidence["execution"] = execution_evidence
         argv = build_evaluation_argv(
-            request, output_dir=output_root, local_input=local_input
+            request, output_dir=output_root, local_input=execution_input
         )
+        public_request = asdict(request)
+        public_request["output_path"] = "<operator-output>"
+        if public_request["input_path"]:
+            public_request["input_path"] = "<operator-input>"
         base: dict[str, Any] = {
             "schema": ARTIFACT_SCHEMA,
             "upstream": {
@@ -994,7 +1108,7 @@ def evaluate(
                 "version": ISAAC_ARENA_VERSION,
                 "revision": ISAAC_ARENA_REVISION,
             },
-            "request": asdict(request),
+            "request": public_request,
             "runtime": {
                 "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
                 "isaac_runtime_fetch": True,
@@ -1034,7 +1148,7 @@ def evaluate(
             check=False,
         )
         log_text = completed.stdout or ""
-        log_path = root / "evaluation.log"
+        log_path = artifact_root / "evaluation.log"
         log_path.write_text(log_text, encoding="utf-8")
         if completed.returncode != 0:
             tail = "\n".join((completed.stdout or "").splitlines()[-40:])
@@ -1082,6 +1196,10 @@ def evaluate(
             )
         effective_run_id = request.run_id or run_dir.name
         input_sha256 = str((input_evidence or {}).get("sha256") or "")
+        executed_input_sha256 = str(
+            ((input_evidence or {}).get("execution") or {}).get("executed_sha256")
+            or input_sha256
+        )
         video_metadata = {}
         for path in videos:
             metadata = _probe_mp4(path)
@@ -1090,12 +1208,13 @@ def evaluate(
                 "upstream_run_directory": run_dir.name,
                 "policy_type": request.policy_type,
                 "input_sha256": input_sha256,
+                "executed_input_sha256": executed_input_sha256,
             }
             video_metadata[path] = metadata
 
         # Publish the complete upstream report tree, and bind every retained
         # byte—not just its top-level index—to the result manifest.
-        artifacts = sorted(path for path in root.rglob("*") if path.is_file())
+        artifacts = sorted(path for path in artifact_root.rglob("*") if path.is_file())
         manifest = {
             **base,
             "status": "ok",
@@ -1106,7 +1225,7 @@ def evaluate(
             "gpu": _gpu_info(),
             "artifacts": [
                 {
-                    "path": str(path.relative_to(root)),
+                    "path": str(path.relative_to(artifact_root)),
                     "bytes": path.stat().st_size,
                     "sha256": _sha256(path),
                     **(
@@ -1120,9 +1239,9 @@ def evaluate(
         }
         if not manifest["gpu"]["available"]:
             raise IsaacArenaError("Arena evaluation returned without a CUDA device")
-        result_path = root / "result.json"
+        result_path = artifact_root / "result.json"
         result_path.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        destination = _publish(root, request.output_path)
+        destination = _publish(artifact_root, request.output_path)
         return {**manifest, "published_to": destination}

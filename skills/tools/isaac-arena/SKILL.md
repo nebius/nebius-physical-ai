@@ -31,7 +31,7 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
   into the operator cache by `/isaac-sim/python.sh` after the shared
   `ACCEPT_EULA` preflight.
 - Replay HDF5 and RSL-RL checkpoints: operator runtime inputs; never bake or
-  publish them.
+  publish them. The result records source hashes, not storage locations.
 - Arena 0.3.0 is tested against Isaac Lab 3.0 beta 2. NPA uses the compatible
   patched Lab `3.0.0b2.post1` / Isaac Sim `6.0.1.0` baseline and must requalify
   every changed image digest.
@@ -54,7 +54,7 @@ npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b2
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
 
-The accepted release is `0.3.0-isaaclab3-20260912`, exact manifest
+The historical accepted release is `0.3.0-isaaclab3-20260912`, exact manifest
 `sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`,
 promoted without rebuilding from development source SHA
 `22783a16abcd424df540b71e94600d705b317f9b`. On a target whose accelerator
@@ -67,7 +67,13 @@ video spec. This is an exact placement pin, not cross-platform fallback.
 `zero_action`, `replay`, and `rsl_rl` policies. Replay requires one HDF5 file.
 RSL-RL requires a `model*.pt` checkpoint beside `params/agent.yaml`, matching
 upstream's real runner contract. Use `--input-path` with a local path or S3 URI;
-NPA materializes the input before starting the simulator.
+NPA materializes the input before starting the simulator. The upstream replay
+loader eagerly moves every episode field to CUDA, even though the policy uses
+only `actions` and `initial_state`; NPA therefore creates a private minimal
+execution HDF5 and never publishes either input. Its result binds the source and
+executed hashes. For a known longer task horizon, `--replay-target-steps` may
+repeat the last recorded action until the horizon but must never truncate the
+genuine action sequence.
 
 Successful evaluation requires:
 
@@ -77,17 +83,19 @@ Successful evaluation requires:
 - `upstream/<timestamp>/index.html` plus linked pages under `report/`;
 - a required MP4 when `--record-video` is selected; and
 - `result.json` with the source revision, request, measured GPU identity,
-  success rate, byte sizes, and SHA-256 hashes.
+  success rate, byte sizes, source/executed input binding, and SHA-256 hashes.
 
-The zero-action qualification is a real baseline evaluation and may correctly
+The B200 zero-action qualification is a real baseline evaluation and may correctly
 report zero success. Do not turn that expected policy result into a synthetic
 pass; the capability gate is factual execution and artifact integrity.
 
-Accepted exact-digest evidence comprises independent 1,050-step episodes on
+Historical exact-digest evidence comprises independent 1,050-step episodes on
 B200 `(10, 0)` and RTX PRO 6000 `(12, 0)`. B200 retained five task artifacts /
 86,082 bytes with no MP4. RTX retained six / 1,119,004 bytes, including an
 independently decoded 1,024,140-byte H.264 viewport MP4 at 1280×720 for 70.067
-seconds. The supported comprehensive B200 YAML subsequently completed all four
+seconds. Because that video was not checked for temporal change and used a
+zero-action policy, it is not meaningful visual evidence. The supported
+comprehensive B200 YAML subsequently completed all four
 seed states with 1,050 steps each and 20 independently hash-verified task
 artifacts / 344,330 bytes. Consult
 `npa/docker/workbench/blackwell-dc-images.json` for the machine-readable,
@@ -108,8 +116,10 @@ npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
 Require a clean Omniverse payload scan, non-root user, exact Arena source
 labels/license, empty runtime cache, anonymous digest resolution, and real
 completed-episode runs on both B200 (`sm_100`) and RTX PRO 6000 (`sm_120`)
-before promotion. Preserve the B200 no-video and RTX required-video distinction
-in evidence.
+before promotion. The RTX run must use a nonzero replay/RSL-RL input, observe
+positive behavior, and pass decoded temporal-motion thresholds; a decodable
+static video is failure. Preserve the B200 no-video and RTX required-video
+distinction in evidence.
 
 Cancel exact workflow runs before removing any dedicated resources. Do not
 destroy shared clusters, buckets, or reserved capacity after a validation run.
@@ -118,6 +128,8 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
 
 - Exit 78 before download: explicit EULA opt-out; do not bypass it.
 - No episode JSONL: use `--num-episodes`, not an incomplete step-only smoke.
+- Replay ends before an episode result: use the environment's exact known task
+  horizon with `--replay-target-steps`; do not guess a horizon or truncate data.
 - Missing `params/agent.yaml`: stage the complete RSL-RL checkpoint directory.
 - Missing `lightwheel_sdk`: reject that image as incomplete; the accepted image
   must contain hash-locked SDK 1.0.3 while retaining an empty asset cache.

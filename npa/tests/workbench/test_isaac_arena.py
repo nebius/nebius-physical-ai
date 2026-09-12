@@ -20,6 +20,8 @@ from npa.workbench.isaac_arena.runtime import (
     build_evaluation_argv,
     capabilities,
     evaluate,
+    _input_evidence,
+    _prepare_replay_execution_input,
     _probe_mp4,
 )
 
@@ -214,6 +216,82 @@ def _fake_moving_upstream(
     )
 
 
+def _make_replay(path: Path, *, steps: int = 4) -> None:
+    import h5py
+    import numpy as np
+
+    with h5py.File(path, "w") as dataset:
+        data = dataset.create_group("data")
+        data.attrs["env_args"] = '{"env_name":"fixture","type":2}'
+        data.attrs["total"] = steps
+        episode = data.create_group("demo_0")
+        episode.attrs["num_samples"] = steps
+        episode.attrs["success"] = True
+        episode.create_dataset(
+            "actions",
+            data=np.arange(steps * 3, dtype=np.float32).reshape(steps, 3) / 10,
+        )
+        initial = episode.create_group("initial_state")
+        robot = initial.create_group("robot")
+        robot.create_dataset("joint_pos", data=np.array([0.1, 0.2]))
+        states = episode.create_group("states")
+        states.create_dataset(
+            "joint_pos", data=np.arange(steps * 2).reshape(steps, 2)
+        )
+        observations = episode.create_group("obs")
+        observations.create_dataset(
+            "large_unused_tensor", data=np.ones((steps, 8), dtype=np.float32)
+        )
+
+
+def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
+    tmp_path: Path,
+) -> None:
+    replay = tmp_path / "source.hdf5"
+    private = tmp_path / "private"
+    _make_replay(replay)
+    evidence = _input_evidence(
+        IsaacArenaRequest(
+            output_path=str(tmp_path / "out"),
+            policy_type="replay",
+            input_path=str(replay),
+        ),
+        replay,
+    )
+    assert evidence is not None
+    assert evidence["trajectory"]["recorded_success"] is True
+
+    execution, normalized = _prepare_replay_execution_input(
+        replay, private, target_steps=6, source_evidence=evidence
+    )
+
+    import h5py
+    import numpy as np
+
+    with h5py.File(execution, "r") as dataset:
+        episode = dataset["data"]["demo_0"]
+        assert set(episode) == {"actions", "initial_state"}
+        assert episode["actions"].shape == (6, 3)
+        np.testing.assert_array_equal(episode["actions"][-1], episode["actions"][-2])
+        assert int(dataset["data"].attrs["total"]) == 6
+        assert int(episode.attrs["num_samples"]) == 6
+    assert normalized == {
+        "strategy": "actions_initial_state_only_hold_final_action",
+        "source_sha256": evidence["sha256"],
+        "executed_sha256": normalized["executed_sha256"],
+        "source_steps": 4,
+        "executed_steps": 6,
+        "held_final_action_steps": 2,
+        "fields": ["actions", "initial_state"],
+        "published": False,
+    }
+    assert len(normalized["executed_sha256"]) == 64
+    with pytest.raises(IsaacArenaError, match="cannot truncate"):
+        _prepare_replay_execution_input(
+            replay, private, target_steps=3, source_evidence=evidence
+        )
+
+
 @patch(
     "npa.workbench.isaac_arena.runtime._probe_mp4",
     return_value={
@@ -271,6 +349,7 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "upstream_run_directory": "2026-09-12_01-02-03",
         "policy_type": "zero_action",
         "input_sha256": "",
+        "executed_input_sha256": "",
     }
 
 
@@ -280,7 +359,7 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "kind": "replay_hdf5",
         "bytes": 100,
         "sha256": "a" * 64,
-        "trajectory": {"meaningful": True},
+        "trajectory": {"meaningful": True, "episode": "demo_0"},
     },
 )
 @patch(
@@ -305,7 +384,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     _gpu: object, _probe: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
-    replay.write_bytes(b"fixture")
+    _make_replay(replay)
     result = evaluate(
         IsaacArenaRequest(
             output_path=str(tmp_path / "published"),
@@ -314,6 +393,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
             input_path=str(replay),
             record_video=True,
             run_id="arena-moving-run",
+            replay_target_steps=6,
         ),
         runner=_fake_moving_upstream,
     )
@@ -331,6 +411,13 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     )
     assert video["video"]["binding"]["run_id"] == "arena-moving-run"
     assert video["video"]["binding"]["input_sha256"] == "a" * 64
+    assert len(video["video"]["binding"]["executed_input_sha256"]) == 64
+    assert result["input"]["execution"]["source_steps"] == 4
+    assert result["input"]["execution"]["executed_steps"] == 6
+    assert not (tmp_path / "published" / "private").exists()
+    assert all("replay-execution" not in entry["path"] for entry in result["artifacts"])
+    assert result["request"]["input_path"] == "<operator-input>"
+    assert result["request"]["output_path"] == "<operator-output>"
 
 
 @patch(
@@ -339,7 +426,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
         "kind": "replay_hdf5",
         "bytes": 100,
         "sha256": "a" * 64,
-        "trajectory": {"meaningful": True},
+        "trajectory": {"meaningful": True, "episode": "demo_0"},
     },
 )
 @patch(
@@ -354,7 +441,7 @@ def test_nonzero_policy_rejects_no_output_behavior(
     _gpu: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
-    replay.write_bytes(b"fixture")
+    _make_replay(replay)
     with pytest.raises(IsaacArenaError, match="no positive task"):
         evaluate(
             IsaacArenaRequest(

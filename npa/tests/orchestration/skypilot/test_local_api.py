@@ -298,6 +298,51 @@ def test_nebius_short_lived_token_cache_refresh_preserves_identity(local_runtime
     assert _record(local_runtime)["pid"] == original["pid"]
 
 
+def test_selected_project_ignores_inventory_and_other_project_mutations(
+    local_runtime,
+) -> None:
+    npa_dir = Path(local_runtime["environment"]["HOME"]) / ".npa"
+    npa_dir.mkdir()
+    config = npa_dir / "config.yaml"
+    config.write_text(
+        "projects:\n"
+        "  selected:\n"
+        "    project_id: fixture-project\n"
+        "    kubernetes: {context: fixture-context}\n"
+        "    agents: {ui: {status: provisioned}}\n"
+        "  unrelated:\n"
+        "    project_id: other-project\n",
+        encoding="utf-8",
+    )
+    local_runtime["environment"]["NPA_SKYPILOT_PROJECT"] = "selected"
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+
+    config.write_text(
+        "projects:\n"
+        "  selected:\n"
+        "    project_id: fixture-project\n"
+        "    kubernetes: {context: fixture-context}\n"
+        "    agents: {ui: {status: changed}}\n"
+        "    workbenches: {new-ui: {status: provisioned}}\n"
+        "  unrelated:\n"
+        "    project_id: changed-other-project\n",
+        encoding="utf-8",
+    )
+    api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime)["pid"] == original["pid"]
+
+    config.write_text(
+        "projects:\n"
+        "  selected:\n"
+        "    project_id: changed-selected-project\n"
+        "    kubernetes: {context: fixture-context}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**local_runtime)
+
+
 def test_invalid_credential_yaml_diagnostic_does_not_include_source_secret():
     with pytest.raises(api.IsolatedApiError) as raised:
         api._yaml_document("credentials: [fixture-secret-token")

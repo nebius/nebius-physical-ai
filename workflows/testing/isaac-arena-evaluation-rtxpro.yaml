@@ -17,11 +17,14 @@ config:
   input_uri: "s3://{{config.bucket}}/operator-inputs/isaac-arena/gr1-open-microwave.hdf5"
   environment: gr1_open_microwave
   policy_type: replay
+  # The upstream task horizon is 5 s at 50 Hz. The 80 recorded commands remain
+  # byte-bound evidence; NPA holds the last genuine command through step 250.
+  replay_target_steps: "250"
   num_episodes: "1"
   num_envs: "1"
   seed: "42"
   embodiment: gr1_pink
-  object: ""
+  object: tomato_soup_can
 
 resources:
   gpu:
