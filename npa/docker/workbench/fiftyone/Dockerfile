@@ -1,6 +1,6 @@
-# Digest pinned to the maintained Python security release.
+# Digest pinned to the maintained Python security release on Debian Bookworm.
 # To update: re-resolve via registry API and update digest below.
-FROM python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+FROM python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84
 
 ARG FIFTYONE_VERSION=1.21.0
 ARG BOTO3_VERSION=1.43.6
@@ -9,7 +9,7 @@ ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
 ARG PILLOW_VERSION=12.3.0
 # MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
-# NOT ship a mongod binary for this platform (trixie), so real curation
+# NOT ship a mongod binary for this image, so real curation
 # (compute_uniqueness / compute_similarity / compute_visualization, which all need
 # the DB) fails with "Could not find `mongod`". We bundle the generic Ubuntu 22.04
 # mongod build into fiftyone_db's bin dir so FiftyOne launches its own DB with no
