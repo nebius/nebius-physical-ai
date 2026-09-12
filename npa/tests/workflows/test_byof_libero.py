@@ -179,6 +179,8 @@ def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> N
     assert '"rendering_invoked": False' in smoke
     assert "runtime_materialized_this_run" in smoke
     assert 'receipt.get("warm_reuse") is not False' in smoke
+    assert 'receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256' in smoke
+    assert 'receipt.get("decision_sha256")' in smoke
     assert ".render(" not in smoke
     assert "offscreen" not in smoke.lower()
 
