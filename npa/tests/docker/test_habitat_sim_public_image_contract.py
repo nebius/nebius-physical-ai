@@ -15,7 +15,9 @@ DOCKERFILE = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
 
 def test_candidate_is_public_eligible_but_unbuilt_and_unpublishable() -> None:
     assert images.CONTAINER_IMAGE_NAMES["habitat-sim"] == "npa-habitat-sim"
-    assert images.SUPPORTED_TOOL_VERSIONS["habitat-sim"].endswith("-unbuilt")
+    assert "habitat-sim" not in images.SUPPORTED_TOOL_VERSIONS
+    assert images.UNBUILT_CANDIDATE_TOOL_VERSIONS["habitat-sim"].endswith("-unbuilt")
+    assert images.supported_tool_version("habitat-sim").endswith("-unbuilt")
     assert images.is_publicly_redistributable("habitat-sim")
     assert "habitat-sim" in images.UNVALIDATED_PUBLICATION_TOOLS
     assert "habitat-sim" not in images.publicly_publishable_tools()
