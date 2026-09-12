@@ -44,8 +44,20 @@ class NcoreRuntimeError(RuntimeError):
 
 
 def sha256(path: Path) -> str:
+    """Hash a runtime artifact without loading it entirely into memory.
+
+    Args:
+        path: Runtime artifact or lock file to hash.
+    Returns:
+        SHA256 hex digest.
+    Raises:
+        OSError: The file cannot be read.
+    """
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_lock(path: Path) -> dict:

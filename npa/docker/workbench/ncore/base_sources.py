@@ -50,9 +50,25 @@ def digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _stream_digest(stream) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(1024 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def file_digest(path: Path) -> str:
+    """Hash all file bytes with bounded memory on supported Python versions.
+
+    Args:
+        path: File to hash.
+    Returns:
+        SHA256 hex digest.
+    Raises:
+        OSError: The file cannot be read.
+    """
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return _stream_digest(stream)
 
 
 def safe_path(name: str) -> str:
@@ -547,7 +563,7 @@ def inventory(archive_path: Path) -> dict:
         for ordinal, name in enumerate(manifest["Layers"]):
             name = safe_path(name)
             with outer.extractfile(name) as blob:
-                compressed_sha = hashlib.file_digest(blob, "sha256").hexdigest()
+                compressed_sha = _stream_digest(blob)
             if (
                 name.startswith("blobs/sha256/")
                 and name.split("/")[-1] != compressed_sha
@@ -557,7 +573,7 @@ def inventory(archive_path: Path) -> dict:
                 magic = blob.read(2)
                 blob.seek(0)
                 stream = gzip.GzipFile(fileobj=blob) if magic == b"\x1f\x8b" else blob
-                diff_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+                diff_sha = _stream_digest(stream)
             if diff_ids[ordinal] != "sha256:" + diff_sha:
                 raise ValueError("layer diff_id mismatch")
             row = {
