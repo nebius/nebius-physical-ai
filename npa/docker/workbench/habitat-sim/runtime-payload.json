@@ -21,7 +21,7 @@
     "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "1b1d7af997f35ba1ff2f4db39507ff11ac4306b6fcfc74a32385c9fde8bc5120",
     "/usr/share/doc/npa-habitat-sim/source-manifest.json": "44918d8afc1241183e2b5d2f763dd48aec705f6da847be3f65d79c6fa9e5e743",
     "/usr/share/doc/npa-habitat-sim/licenses.json": "dd528ce0b4489e9c92f077e8d4222332a7c00f27701acfdbfd0369d96359770f",
-    "/usr/share/doc/npa-habitat-sim/apt-build.lock": "c0ee84583934fda73391bff1debc0d4fb3d8370f46223beb9b4e4c544bb62ebf",
+    "/usr/share/doc/npa-habitat-sim/apt-build.lock": "c88925cf63d383581266c0ed7a16f71890f5404cc66d8c7f556c8d0914d788c4",
     "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "4bb99869a74cf5cedf359d173b72e5c0ec2dea6530b7191af136844dd651fcb7",
     "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": "82c97b7345a5044f4867efcabefa62f79391b675d92773816c59b29f98bb6548",
     "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": "4a9df04b64c91d017686b2974fbe173c1d51e700817a90222cc3deb81547a370",
