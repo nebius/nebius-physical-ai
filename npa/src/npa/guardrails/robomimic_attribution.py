@@ -232,6 +232,44 @@ def _signed_source_pin(inrelease: bytes) -> tuple[str, int, str]:
     return rows[0]
 
 
+def _create_keyring(gpg: str, key_home: Path, key_paths: list[Path]) -> Path:
+    imported = subprocess.run(
+        [
+            gpg,
+            "--no-options",
+            "--batch",
+            "--quiet",
+            "--homedir",
+            str(key_home),
+            "--import",
+            *(str(path) for path in key_paths),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if imported.returncode:
+        raise ValueError("official signing keys could not be imported")
+    exported = subprocess.run(
+        [
+            gpg,
+            "--no-options",
+            "--batch",
+            "--quiet",
+            "--homedir",
+            str(key_home),
+            "--export",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if exported.returncode or not exported.stdout:
+        raise ValueError("official signing keyring could not be created")
+    keyring = key_home / "trustedkeys.gpg"
+    keyring.write_bytes(exported.stdout)
+    keyring.chmod(0o600)
+    return keyring
+
+
 def _verify_openpgp_signature(proof_directory: Path) -> None:
     gpg = shutil.which("gpg")
     gpgv = shutil.which("gpgv")
@@ -241,47 +279,18 @@ def _verify_openpgp_signature(proof_directory: Path) -> None:
     for key in _SIGNING_KEYS:
         _proof_payload(proof_directory, key)
         key_paths.append(proof_directory / key.name)
-    inrelease_path = proof_directory / _INRELEASE.name
 
     with tempfile.TemporaryDirectory(dir=proof_directory) as temporary:
         key_home = Path(temporary)
         key_home.chmod(0o700)
-        imported = subprocess.run(
-            [
-                gpg,
-                "--no-options",
-                "--batch",
-                "--quiet",
-                "--homedir",
-                str(key_home),
-                "--import",
-                *(str(path) for path in key_paths),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        if imported.returncode:
-            raise ValueError("official signing keys could not be imported")
-        exported = subprocess.run(
-            [
-                gpg,
-                "--no-options",
-                "--batch",
-                "--quiet",
-                "--homedir",
-                str(key_home),
-                "--export",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if exported.returncode or not exported.stdout:
-            raise ValueError("official signing keyring could not be created")
-        keyring = key_home / "trustedkeys.gpg"
-        keyring.write_bytes(exported.stdout)
-        keyring.chmod(0o600)
+        keyring = _create_keyring(gpg, key_home, key_paths)
         verified = subprocess.run(
-            [gpgv, "--keyring", str(keyring), str(inrelease_path)],
+            [
+                gpgv,
+                "--keyring",
+                str(keyring),
+                str(proof_directory / _INRELEASE.name),
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
@@ -382,7 +391,20 @@ def _proof_record(proof: _PublicProof) -> dict[str, Any]:
 def verify_public_license_lock(
     lock: bytes, proof_directory: Path
 ) -> dict[str, Any]:
-    """Verify the exact lock against pinned, mutually confirming Debian bytes."""
+    """Verify the exact lock against pinned, mutually confirming Debian bytes.
+
+    Args:
+        lock: Complete candidate lock bytes.
+        proof_directory: Existing caller-owned directory with mode ``0700``.
+
+    Returns:
+        Public hashes, sizes, and URLs for the verified provenance inputs.
+
+    Raises:
+        OSError: An official proof cannot be downloaded, cached, or read.
+        ValueError: Any byte, Git-bound identity, signature, source, or mode
+            check fails.
+    """
     _verify_lock_identity(lock)
     _require_private_directory(proof_directory)
 
