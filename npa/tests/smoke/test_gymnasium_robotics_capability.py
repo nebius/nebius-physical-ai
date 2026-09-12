@@ -3,7 +3,10 @@ from __future__ import annotations
 import ast
 import hashlib
 from pathlib import Path
-import re
+import runpy
+import sys
+import types
+from unittest import mock
 
 import pytest
 
@@ -26,38 +29,23 @@ def _constant(name: str) -> object:
     return _constant_from(SMOKE, name)
 
 
+def _smoke_namespace() -> dict[str, object]:
+    dependency_stubs = {
+        name: types.ModuleType(name)
+        for name in ("gymnasium", "gymnasium_robotics", "mujoco", "numpy")
+    }
+    with mock.patch.dict(sys.modules, dependency_stubs):
+        return runpy.run_path(
+            str(SMOKE), run_name="npa_gymnasium_capability_smoke_test"
+        )
+
+
 def _transition_guard():
-    tree = ast.parse(SMOKE.read_text(encoding="utf-8"))
-    body = [
-        node
-        for node in tree.body
-        if (
-            isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "MIN_TRANSITION_DELTA"
-                for target in node.targets
-            )
-        )
-        or (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "_require_state_transition"
-        )
-    ]
-    namespace: dict[str, object] = {}
-    exec(compile(ast.Module(body=body, type_ignores=[]), str(SMOKE), "exec"), namespace)
-    return namespace["_require_state_transition"]
+    return _smoke_namespace()["_require_state_transition"]
 
 
 def _digest_parser():
-    tree = ast.parse(SMOKE.read_text(encoding="utf-8"))
-    body = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_digest_from_reference"
-    ]
-    namespace: dict[str, object] = {"re": re}
-    exec(compile(ast.Module(body=body, type_ignores=[]), str(SMOKE), "exec"), namespace)
-    return namespace["_digest_from_reference"]
+    return _smoke_namespace()["_digest_from_reference"]
 
 
 def test_fixed_capability_identity_and_trajectory() -> None:
