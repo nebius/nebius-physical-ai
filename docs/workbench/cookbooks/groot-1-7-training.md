@@ -1,5 +1,7 @@
 # GR00T N1.7 operational training pipeline
 
+[Cookbooks](README.md)
+
 Use `groot-1-7-finetune.yaml` to validate the complete real-data path from a
 GR00T-format LeRobot dataset through distributed optimizer work, an immutable
 checkpoint, aligned offline inference, synchronized RRD/MCAP diagnostics, S3

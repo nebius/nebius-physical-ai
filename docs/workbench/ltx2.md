@@ -1,5 +1,7 @@
 # LTX-2.5 Workbench support
 
+[Workbench docs](README.md)
+
 NPA packages Lightricks' LTX-2.5 video/audio model as a BYOF solution whose
 image contains **no LTX-2.5 bytes at all** — no `ltx-core`, no `ltx-pipelines`,
 no weights, no CUDA wheels. On first use the container fetches upstream's pinned

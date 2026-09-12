@@ -1,5 +1,7 @@
 # SDK Error Reference
 
+[Docs](../README.md)
+
 The serverless SDK exposes typed exceptions from
 `npa.clients.serverless`. Existing exception class names are stable and
 `str(exc)` returns only the message for backward compatibility.

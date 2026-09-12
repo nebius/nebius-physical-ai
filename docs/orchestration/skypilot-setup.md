@@ -1,5 +1,7 @@
 # SkyPilot Isolated Venv Setup
 
+[Docs](../README.md)
+
 SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.

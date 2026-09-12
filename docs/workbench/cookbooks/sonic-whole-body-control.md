@@ -1,5 +1,7 @@
 # SONIC Whole-Body Control
 
+[Cookbooks](README.md)
+
 SONIC / GEAR-SONIC is NVIDIA GEAR's humanoid whole-body-control stack. It is a
 standalone Workbench tool for low-level motor control, motion tracking,
 teleoperation, sim2sim validation, and deployment of full-body humanoid

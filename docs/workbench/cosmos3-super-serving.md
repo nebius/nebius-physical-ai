@@ -1,5 +1,7 @@
 # Cosmos3-Super serving on the workbench (`npa-cosmos3-serving`)
 
+[Workbench docs](README.md)
+
 `npa workbench cosmos3 generate` runs Cosmos 3 generation as a batch job: one
 invocation, one artifact, and a full model load every time. For the 64B
 `Cosmos3-Super` checkpoint that load costs minutes, so a synthetic-data

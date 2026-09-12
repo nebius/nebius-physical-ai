@@ -1,5 +1,7 @@
 # BDD100K SkyPilot Pipeline
 
+[Cookbooks](README.md)
+
 **Workflow:** [bdd100k-pipeline.yaml](../../../workflows/testing/bdd100k-pipeline.yaml)
 (`npa.workflow/v0.0.1`) — a readable stage graph of `toolRef`s. See
 [npa-workflow-guide.md](../npa-workflow-guide.md). `run_bdd100k_pipeline.py` renders that

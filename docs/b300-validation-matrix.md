@@ -1,5 +1,7 @@
 # Historical B300 validation matrix
 
+[Docs](README.md)
+
 > **Historical record from May 2026.** The findings below describe the images
 > and workloads tested then. Use the current
 > [image and GPU compatibility matrix](workbench/image-gpu-compatibility-matrix.md)

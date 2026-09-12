@@ -1,5 +1,7 @@
 # Workbench CLI / SDK / YAML Walkthrough
 
+[Workbench docs](README.md)
+
 > Audience: anyone calling an existing Workbench tool.
 > Prerequisites: complete [getting-started.md](getting-started.md) first.
 

@@ -1,5 +1,7 @@
 # sm_120 Image Catalog
 
+[Workbench docs](README.md)
+
 This catalog records the first-party images used for RTX PRO 6000 Blackwell
 (`sm_120`) validation. Published redistributable releases use the public GHCR
 channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.

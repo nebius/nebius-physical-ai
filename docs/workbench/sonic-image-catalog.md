@@ -1,5 +1,7 @@
 # SONIC Image Catalog
 
+[Workbench docs](README.md)
+
 The machine-readable source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`. Resolvers, workflow
 materializers, and publishers all consume that manifest.
@@ -34,16 +36,10 @@ docker manifest inspect \
   ghcr.io/nebius/nebius-physical-ai/npa-sonic:<tag>
 ```
 
-It is the default only for supported RTX PRO Kubernetes routing. Select it
-explicitly when useful:
-
-```bash
-npa workbench workflow submit \
-  workflows/testing/sonic-train.yaml \
-  --gpu-target gpu-rtx6000 \
-  --image-variant sonic-k8s-host-mounted \
-  --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
-```
+It is the default only for supported RTX PRO Kubernetes routing. Prepare the
+spec's actual GPU resource profile and required host mounts using the
+[training runbook](cookbooks/sonic-train-runbook.md). `--gpu-target` selects image
+routing; it does not rewrite `npa.workflow` resource profiles.
 
 ## Quarantined images
 
@@ -76,18 +72,6 @@ proxies and records `geometry_mode=primitive-proxy-no-lfs-payload`. This prevent
 unclassified robot assets from silently entering the image; it is not a visual
 or mesh-fidelity validation claim.
 
-```python
-sonic.submit_workflow(
-    Path("workflows/testing/sonic-train.yaml"),
-    run_id="sonic-smoke",
-    registry="<your-registry>/<namespace>",
-    gpu_target="gpu-rtx6000",
-    s3_endpoint="https://storage.eu-north1.nebius.cloud",
-    s3_bucket="<bucket>",
-    secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
-)
-```
-
 There is therefore no built-in compute-only image for the default serverless
 L40S path, nor for H100/H200. `npa workbench sonic train --runtime serverless`
 fails before provisioning unless the operator passes an independently built and
@@ -96,13 +80,13 @@ as that substitute: it depends on Kubernetes GPU Operator driver mounts.
 
 ## Build and publication
 
-The retargeting workflow uses `NPA_RETARGETING_IMAGE` for the CPU preprocess
+Legacy raw SkyPilot materializers use `NPA_RETARGETING_IMAGE` for the CPU preprocess
 image. The committed default is
 `ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1`, a pushed
 image that installs this repository's `npa` package, CPU preprocess
 dependencies, and pinned upstream SONIC data-process scripts.
 
-MJLab workflows use `NPA_WORKBENCH_IMAGE` for the generic Workbench CLI image.
+Those materializers use `NPA_WORKBENCH_IMAGE` for MJLab's generic Workbench CLI image.
 The committed default remains
 `ghcr.io/nebius/nebius-physical-ai/npa-genesis:0.4.6`.
 

@@ -1,23 +1,21 @@
 # Train a Reachy 2 Humanoid Policy from a Public Dataset
 
-**The hook:** Reachy 2 is the open-source humanoid from Pollen Robotics (now
-part of Hugging Face) — a friendly upper-body robot with two arms, a head, and
-a mobile base. In this guide you take a **public Reachy dataset off the Hugging
-Face Hub** and train an imitation policy on it with LeRobot, no robot hardware
-required.
+[Guides](README.md)
 
-It's the fastest way to feel what teaching a humanoid to manipulate is like.
+Train a LeRobot imitation policy from a Reachy 2 dataset on Nebius, then
+inspect its checkpoint. Choose a real Hub dataset with observation and action
+schemas supported by your policy; the dataset ID below is a placeholder.
 
 ## Ingredients
 
 - **Robot:** [Reachy 2](https://huggingface.co/docs/lerobot/main/en/reachy2)
   (Pollen Robotics). Fully supported by LeRobot for teleop, training, and eval.
-- **Sim / engine:** LeRobot training + evaluation; pair it with the
-  [sim-to-real loop](pusht-sim-to-real.md) for closed-loop rollouts.
+- **Sim / engine:** LeRobot training and task-compatible evaluation. The
+  [Sim2Real workflow](sim2real-workflow.md) has additional simulator and data requirements.
 - **Public dataset:** Reachy datasets published on the Hub under
   [`pollen-robotics`](https://huggingface.co/pollen-robotics) and
-  [`lerobot`](https://huggingface.co/lerobot). Any `LeRobotDataset` works — the
-  examples below show the swap.
+  [`lerobot`](https://huggingface.co/lerobot). Use a `LeRobotDataset` whose
+  robot, camera, and action schemas match your training configuration.
 - **You need:** Nebius creds + a GPU (see [getting-started](../getting-started.md)).
 
 ## The shape of the workflow
@@ -37,6 +35,10 @@ Diffusion Policy, and SmolVLA — start with `act` for a quick single-task
 baseline.
 
 ## Fast path
+
+These examples assume a configured LeRobot workbench. Use the
+[runtime guide](../runtime-modes.md) to deploy one; select an existing workbench
+with `-p <project-alias> -n <workbench-name>` before `train`.
 
 **1. See the tool:**
 
@@ -85,9 +87,8 @@ npa workbench lerobot list-checkpoints
   `~/.npa/config.yaml`.)
 - **Try a stronger policy:** `--policy-type smolvla` for a language-conditioned
   VLA baseline, or `diffusion` for smooth continuous actions.
-- **Close the loop:** feed your checkpoint into the
-  [sim-to-real loop](pusht-sim-to-real.md) to evaluate rollouts and collect
-  feedback, then visualize with Rerun.
+- **Build a full pipeline:** adapt the [Sim2Real workflow](sim2real-workflow.md)
+  after checking its [customer input contracts](sim2real-customer-assets.md).
 - **Benchmark the GPUs:** see the
   [LeRobot GPU benchmarks](../cookbooks/lerobot-gpu-benchmarks.md) across L40S,
   H200, B300, and RTX PRO 6000.
@@ -96,8 +97,9 @@ npa workbench lerobot list-checkpoints
 
 Got a real Reachy 2? LeRobot records directly to the same format with
 `lerobot-record --robot.type=reachy2 ...`, then you push to the Hub or stage to
-S3 and train with the exact commands above. The workbench never cares whether
-the data came from a real robot, a teleop session, or a simulator.
+S3 and train with the commands above. Training still requires matching
+observation, action, camera, and robot schemas, regardless of how the data was
+collected.
 
 ## Dig deeper
 

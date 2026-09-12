@@ -1,11 +1,11 @@
 # Pick-and-Place with a Franka Arm in Genesis
 
-**The hook:** spin up thousands of Franka Emika Panda arms in parallel inside
-the Genesis physics engine, train one of them to pick up a cube and drop it in a
-target zone, then record demonstrations you can turn into a LeRobot dataset —
-the same format the famous DROID Franka dataset uses.
+[Guides](README.md)
 
-This is the classic "hello robot" of manipulation, done at GPU scale.
+Train and evaluate a PPO teacher for Franka cube pick-and-place in Genesis,
+then record demonstrations for LeRobot. The recorded H200 run produced real
+checkpoint weights but zero successful held-out episodes; use evaluation to
+determine whether a checkpoint is suitable for demonstrations.
 
 ## Ingredients
 

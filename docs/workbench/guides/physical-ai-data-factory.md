@@ -1,5 +1,7 @@
 # NVIDIA Physical AI Data Factory on NPA (no OSMO)
 
+[Guides](README.md)
+
 This guide runs the **NVIDIA Physical AI Data Factory** blueprint natively on
 Nebius + SkyPilot. It is delivered as a single npa.workflow spec
 (`workflows/testing/physical-ai-data-factory.yaml`) that

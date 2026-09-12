@@ -1,5 +1,7 @@
 # Caching runtime-downloaded model weights and reviewed SDKs
 
+[Workbench docs](README.md)
+
 The workbench images bake **no model weights**. Every NVIDIA Cosmos checkpoint and
 guardrail, GR00T, the Cosmos-Curate towers, the Qwen VLMs, Wan 2.2 and LTX are
 license-gated or too large to redistribute, so

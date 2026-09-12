@@ -1,5 +1,7 @@
 # Cookbook: scenario-gen and dataset-of-record live smokes
 
+[Cookbooks](README.md)
+
 Two CPU-only smoke workflows that exercise the `scenario_gen` and `dataset`
 workbench tools end-to-end against real S3, with no GPU and no LanceDB/FiftyOne
 dependency. Use them to validate the tools on a configured environment before

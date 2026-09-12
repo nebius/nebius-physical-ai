@@ -1,5 +1,7 @@
 # SONIC Export and Eval Runbook
 
+[Cookbooks](README.md)
+
 This runbook covers the end-to-end SONIC locomotion path:
 
 ```text
@@ -17,7 +19,7 @@ template is retired).
   ```bash
   npa skypilot bootstrap
   export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-  "$NPA_SKYPILOT_BIN" check
+  npa skypilot verify --cluster <npa-cluster-name>
   ```
 
 - The policy checkpoint is readable from the SkyPilot task. Use an `s3://`
@@ -39,15 +41,16 @@ template is retired).
 
 ## One Command
 
-Submit through the generic workflow command. The SONIC materializer fills the
-first-party image and S3 endpoint as literal YAML values before SkyPilot sees
-the workflow:
+Submit through the generic workflow command. NPA resolves its toolRefs, config,
+and images before handing rendered tasks to SkyPilot. Stage a compatible
+checkpoint and select its URI explicitly:
 
 ```bash
 npa workbench workflow submit \
   workflows/testing/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
-  --var bucket=<bucket> \
+  --project <alias> --infra k8s/<cluster> --runtime \
+  --var bucket=<bucket> --var checkpoint_uri=s3://<bucket>/<checkpoint-path> \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```

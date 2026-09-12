@@ -1,5 +1,7 @@
 # Sim2Real — Customer asset handoff
 
+[Guides](README.md)
+
 **Audience:** What the customer **uploads** (trigger, scene, robot) vs NPA stock smoke paths.
 
 **Data types (schemas, LeRobot vs NPA JSON):** [sim2real-data-contracts.md](./sim2real-data-contracts.md) — read that first if URIs are confusing.
@@ -132,7 +134,7 @@ evaluation, and final reports enforce the same embodiment and dimensions without
 silent Franka fallback. See [the RobotSpec guide](./sim2real-robot-spec.md).
 
 Wire all customer asset seams at submit (CLI flag, SDK kwarg, and YAML env are 1:1 —
-see [runbook README](../../../npa/workflows/workbench/sim2real/README.md#one-byo-seam-one-value)):
+see [runbook README](sim2real-data-contracts.md)):
 
 ```bash
 # Trigger only (Monday stock run)

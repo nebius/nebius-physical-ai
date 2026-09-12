@@ -1,6 +1,8 @@
 <!-- register: operator runbook | reader: PAIDF workshop authors and provider-integration contributors | consumed: workshop preparation and derivative-run execution -->
 # Reuse one PAIDF campaign across provider workshops
 
+[Guides](README.md)
+
 Build the expensive source, Cosmos generation, and evaluation stages once. Freeze their exact manifests as a base campaign. Each Encord, FiftyOne, Foxglove, Rerun, or simulation-provider workshop then becomes a derivative run that reads the base and writes to its own prefix.
 
 This is a small contract layer, not a provider plugin system. Provider execution remains in the relevant SDK, CLI, or workflow code.

@@ -1,5 +1,7 @@
 # LeRobot Benchmark on Workbench Serverless
 
+[Cookbooks](README.md)
+
 This runbook shows how to run LeRobot training benchmarks on Nebius Physical AI
 Workbench with Serverless Jobs.
 

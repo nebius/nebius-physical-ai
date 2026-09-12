@@ -1,5 +1,7 @@
 # Workbench Guides
 
+[Workbench docs](../README.md)
+
 Choose a robot, generation, reconstruction, or data workflow to run on Nebius.
 Complete the [npa quickstart](../../quickstart.md) first, then follow the chosen
 guide's input, access, and GPU requirements through to its output artifacts.
@@ -29,44 +31,20 @@ local checks, smoke runs, and live outcomes.
 | Guide | Robot | Sim / engine | Public dataset | GPU |
 | --- | --- | --- | --- | --- |
 | [Pick-and-place with a Franka arm](franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) | H200 for headless training; see rendering caveat |
-| [Teach a robot to push a T](pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` | H100 |
+| [Inspect the PushT SDK](pusht-sim-to-real.md) | sim pusher | Structural smoke; training guide linked separately | `lerobot/pusht` | See chosen training path |
 | [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | yes |
-| [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | H100 |
+| [Unitree G1 with SONIC](g1-humanoid-walk-sonic.md) | Unitree G1 | SONIC / MuJoCo | NVIDIA GEAR-SONIC checkpoint | RTX PRO 6000 training; B200 MuJoCo evaluation |
 | [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | RT-core: L40S / RTX PRO 6000 |
 | [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | RT-core: RTX PRO 6000 / L40S |
 | [Build a parameterized living-lab digital twin](living-lab-nurec-fanout.md) (default 16-GPU) | n/a (multi-zone scene capture) | NVIDIA NuRec / NRE (16-way default fan-out, parameterizable) | `nvidia/PhysicalAI-NuRec-PPISP` | 16 x RTX PRO 6000 default (8 x 2) |
 
-## How these guides work
-
-Every guide follows the same shape so you always know where you are:
-
-- **The hook** — what you'll build and why it's fun.
-- **Ingredients** — robot, sim, dataset, and what you need installed.
-- **Fast path** — the shortest command that produces a result.
-- **Go bigger** — scale the fast path into a larger GPU run.
-- **Look at it** — visualize the result (Rerun, FiftyOne, reports).
-- **Dig deeper** — links to the full cookbook and the skill behind it.
-
 ## Before you start
 
-Install `npa` once (Python 3.10+). The virtual environment can live anywhere:
-
-```bash
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-
-npa --version
-```
-
-The guides assume you have completed
-[../../quickstart.md](../../quickstart.md) and
-[../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
-`npa configure`). Each guide calls out exactly when credentials are required.
+Complete [installation and project setup](../../quickstart.md), then
+[Workbench setup](../getting-started.md) for GPU workflows. Run commands from
+the clone root with its environment active. Replace placeholders with your
+actual project, inputs, and output prefix; examples that only plan or smoke-test
+are labeled as such.
 
 ## Recorded backend checks
 
@@ -92,7 +70,10 @@ ran to completion. `gpu-rtx6000` is **not** a serverless platform (use the
 managed-Kubernetes path). For real Isaac Lab training prefer an RT-core VM /
 managed-K8s + BYOF; for a serverless capacity retry use `--gpu-type gpu-l40s-d`.
 
-SONIC G1 (MuJoCo) is documented from its cookbook and not yet re-run here.
+These are historical records, not current capacity recommendations. Newer
+[Genesis training evidence](franka-pick-and-place-genesis.md#go-bigger) records
+real serverless PPO training and a held-out quality result. Current SONIC
+capabilities and B200 MuJoCo evidence are in the [image catalog](../sonic-image-catalog.md).
 
 <a id="bring-your-own-everything"></a>
 

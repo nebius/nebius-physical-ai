@@ -1,5 +1,7 @@
 # VLM-Eval Loop Runbook
 
+[Cookbooks](README.md)
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.

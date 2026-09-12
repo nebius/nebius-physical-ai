@@ -1,5 +1,7 @@
 # Nebius Physical AI Workbench — Pipeline Authoring Guide
 
+[Docs](README.md)
+
 > Living document. Updated as new pipeline patterns are introduced.
 > Last updated: 2026-08-03
 

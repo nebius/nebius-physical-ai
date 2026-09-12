@@ -1,5 +1,7 @@
 # The self-hosted `npa` agent
 
+[Docs](README.md)
+
 `npa agent` deploys a **browser workbench VM** into one of your Nebius projects:
 an HTTPS UI behind basic-auth login, grounded chat with a Nebius Token Factory
 default (`nvidia/Nemotron-3_5-Lightning` for text and `MiniMaxAI/MiniMax-M3`

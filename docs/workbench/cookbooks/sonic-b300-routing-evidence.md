@@ -1,5 +1,7 @@
 # SONIC B300 routing evidence workflow
 
+[Cookbooks](README.md)
+
 `sonic-b300-routing-evidence.yaml` is a released, CPU-only workflow that executes
 the installed SONIC accelerator resolver. It fails closed unless both `b300` and
 `gpu-b300-sxm` resolve to `B300:1`, while retaining L40S, H100, and B200

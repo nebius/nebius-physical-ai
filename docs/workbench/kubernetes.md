@@ -1,5 +1,7 @@
 # Workbench On Kubernetes
 
+[Workbench docs](README.md)
+
 This guide is the Kubernetes-specific path after
 [Workbench Getting Started](getting-started.md). Use it when a Workbench
 workflow or service should run on a Nebius Managed Kubernetes cluster through
@@ -92,7 +94,7 @@ Use the NPA-managed SkyPilot virtualenv. Do not rely on an unrelated `sky` from
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa skypilot status
-"${NPA_SKYPILOT_BIN}" check
+npa skypilot verify --cluster <npa-cluster-name> --output-format json
 ```
 
 The validated SkyPilot version is `0.12.2`. NPA defaults managed jobs to a
@@ -107,11 +109,15 @@ or workflow stages to call the same service endpoint:
 
 ```bash
 npa workbench detection-training deploy \
+  --project <project-alias> --cluster-name <npa-cluster-name> \
   --output-path "s3://${NPA_S3_BUCKET}/detection-training/" \
-  --storage-endpoint storage.eu-north1.nebius.cloud \
   --namespace workbench \
   --gpu-type h100
 ```
+
+Storage credentials and endpoint resolve from the selected project. Configure
+`DETECTION_TRAINING_TOKEN` in the private environment for the default token
+authentication.
 
 Inside Kubernetes, use the cluster-local service endpoint printed by the deploy
 command, for example:

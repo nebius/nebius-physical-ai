@@ -1,5 +1,7 @@
 # Solutions Framework Validation
 
+[Workbench docs](README.md)
+
 ## Overview
 
 The solutions framework is the Nebius Physical AI organization model for

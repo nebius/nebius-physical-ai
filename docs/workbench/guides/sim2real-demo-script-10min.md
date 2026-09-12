@@ -1,5 +1,7 @@
 # Sim-to-Real Pipeline — 10-Minute Demo Script
 
+[Guides](README.md)
+
 > **Presentation-only legacy script.** Do not use the private operator-pack
 > commands below to launch a qualification run. The sole production entrypoint
 > is `npa workbench workflow submit workflows/main/sim2real.yaml --runtime`; follow

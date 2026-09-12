@@ -1,5 +1,7 @@
 # Run lifecycle: identity, gates, and status
 
+[Docs](README.md)
+
 What `npa workbench workflow submit` verifies before it launches, how a run keeps
 its identity across interruptions, and how to read the status it reports back.
 
@@ -23,10 +25,15 @@ Validation and planning do not launch a workload. Image checks can create and
 delete a temporary Kubernetes probe pod when bootstrap evidence is absent:
 
 ```bash
-npa workbench workflow validate-spec    <spec.yaml>
-npa workbench workflow plan-spec        <spec.yaml> --run-id "$RUN_ID"
-npa workbench workflow preflight-images <spec.yaml> --registry "$REGISTRY"
+npa workbench workflow validate-spec <spec.yaml>
+npa workbench workflow plan-spec <spec.yaml> --run-id <run-id> --var bucket=<bucket>
+npa workbench workflow preflight-images <spec.yaml> \
+  --project <alias> --infra k8s/<cluster> --var bucket=<bucket>
 ```
+
+Use the same target and overrides throughout; public images need no `--registry`.
+The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows the
+complete sequence.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. `submit` runs the same

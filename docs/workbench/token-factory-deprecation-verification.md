@@ -1,5 +1,7 @@
 # Token Factory default migration verification
 
+[Workbench docs](README.md)
+
 Verified on 2026-09-04/05 UTC against the public Token Factory API with one
 configured account and synthetic inputs. The deprecation claim is true, with
 an observed exception for Llama 3.3.

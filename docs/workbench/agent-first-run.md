@@ -1,5 +1,7 @@
 # Use Workbench with a coding agent
 
+[Workbench docs](README.md)
+
 Use your existing coding agent with terminal access to this checkout. Install
 `npa` and the Nebius CLI using the [quickstart](../quickstart.md). Describe the
 task you want to complete, then select individual tools or compose a workflow.

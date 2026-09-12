@@ -1,5 +1,7 @@
 # NVIDIA Content Agents rigid-object workflow
 
+[Workbench docs](README.md)
+
 NPA packages NVIDIA Content Agents as a Tier 1 declarative workflow for one
 self-contained, non-articulated USD object. It runs the upstream Material Agent,
 Physics Agent, OVRTX renderer, and Validation Agent, then publishes a rigid-ready

@@ -1,5 +1,7 @@
 # Export MCAP and open it in Foxglove Web
 
+[Workbench docs](README.md)
+
 The NPA agent preserves two distinct operations over one canonical artifact:
 
 - **Download MCAP** resolves the active run's canonical S3 recording and downloads

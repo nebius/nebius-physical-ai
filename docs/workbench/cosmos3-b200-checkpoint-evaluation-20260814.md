@@ -1,5 +1,7 @@
 # Cosmos3 B200 checkpoint evaluation — 2026-08-14
 
+[Workbench docs](README.md)
+
 Status: **complete**. The campaign generated and reviewed 72 still images on one
 reserved-capacity NVIDIA B200 in Nebius: 40 images in the five
 checkpoint primary matrix and 32 new images for the two-checkpoint consistency

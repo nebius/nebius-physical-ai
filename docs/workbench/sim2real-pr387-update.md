@@ -1,5 +1,7 @@
 # PR #387: unique scope after the current-main audit
 
+[Workbench docs](README.md)
+
 The rebased PR retains the Sim2Real submit check that rejects rollout,
 validation, or gold requests exceeding their deterministic sealed splits before
 GPU work. Focused regression tests cover all three consumers and the supported

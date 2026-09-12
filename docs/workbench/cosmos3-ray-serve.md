@@ -1,5 +1,7 @@
 # Cosmos3-Nano native Ray Serve
 
+[Workbench docs](README.md)
+
 `npa-cosmos3-ray-serve` is the persistent, batch-capable counterpart to the
 single-run `npa workbench cosmos3 generate` path. It loads Cosmos3-Nano once and
 uses NVIDIA cosmos-framework 1.2.2's native `OmniModelDeployment`, including its

@@ -1,5 +1,7 @@
 # Opt-in CPU RayCluster on Fleet
 
+[Docs](README.md)
+
 Use `npa fleet` to provision a fixed CPU RayCluster alongside an existing
 Managed Kubernetes declaration. Ray's native Jobs and Core APIs run application
 code. Fleet owns the Kubernetes infrastructure and the vendored KubeRay

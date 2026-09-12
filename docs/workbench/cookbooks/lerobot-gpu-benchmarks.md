@@ -1,5 +1,7 @@
 # LeRobot GPU Benchmarks: Reproducing the Research via Nebius Workbench
 
+[Cookbooks](README.md)
+
 This cookbook documents how to reproduce the May 2026 LeRobot GPU benchmark
 research by @tle and @mnrozhkov with Nebius Physical AI Workbench. It is written
 for robotics teams evaluating Nebius GPU options, partners coordinating case

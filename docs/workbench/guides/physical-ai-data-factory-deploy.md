@@ -1,5 +1,10 @@
 # Deploy the Physical AI Data Factory (from zero)
 
+[Guides](README.md) · [Quick start](#quick-start-copy-paste) · [Failure recovery](#if-submit-fails) · [View outputs](#8-view-results-in-the-npa-agent)
+
+Follow the quick start once. The numbered sections below explain its individual
+steps and optional variants; they are not a second setup sequence.
+
 A step-by-step, copy-paste runbook that takes you from an empty machine to a
 running **NVIDIA Physical AI Data Factory** blueprint on Nebius + SkyPilot, with
 results viewable in the NPA agent (Main stages, embedded Rerun, and an explicitly
@@ -1076,7 +1081,9 @@ POST /api/sim-viz/load-artifact   # {"run_id":"<run-id>","key":"reports/sim2real
 
 ---
 
-## 8. Tear everything down
+<a id="8-tear-everything-down"></a>
+
+## 9. Tear everything down
 
 Cleanup has three owners — the agent VM, the cluster, and the storage/IAM that
 `npa configure` provisioned. Preview the unified, project-scoped teardown first;
@@ -1135,14 +1142,11 @@ npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 7. If this validation created a private image registry, delete its exact
-#    immutable artifact DAG and registry. For an NPA-created disposable project,
-#    remove only its unique provider default topology; either command refuses
-#    mixed/shared evidence.
-npa registry delete --project "$PROJECT" --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
-npa network delete-project-default --project "$PROJECT" \
-  --project-id <project-id> --tenant-id <tenant-id> --yes
+# 7. Retire any separately created private registry through its provider.
+#    NPA has no top-level registry command. For an NPA-created disposable
+#    project, remove only its unique provider default topology.
+npa network delete-project-default --project "$PROJECT" --project-id <project-id> \
+  --tenant-id <tenant-id> --yes
 
 # 8. Optional: delete only a proven NPA-created, provider-empty project.
 npa destroy --project "$PROJECT" --all --delete-project --yes --json
@@ -1244,7 +1248,9 @@ Notes:
   actual deferred removal requires `--remove-environment --yes` and never
   includes source, `.git`, credentials, or unrelated caches.
 
-## 9. Where to go next
+<a id="9-where-to-go-next"></a>
+
+## 10. Where to go next
 
 - Conceptual blueprint, stage-by-stage mapping, and S3 layout:
   [physical-ai-data-factory.md](physical-ai-data-factory.md).

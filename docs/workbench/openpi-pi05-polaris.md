@@ -1,5 +1,7 @@
 # OpenPI pi0.5 Polaris: direct, serve, train, and evaluate
 
+[Workbench docs](README.md)
+
 The connected OpenPI workflow family has two deliberately separate surfaces:
 
 - `byof-openpi.yaml` packages and byte-scans the immutable upstream

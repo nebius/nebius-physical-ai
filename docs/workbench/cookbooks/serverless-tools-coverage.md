@@ -1,5 +1,7 @@
 # Workbench Tools - Serverless Coverage
 
+[Cookbooks](README.md)
+
 ## Overview
 
 The Workbench supports `--runtime serverless` on these non-LeRobot tools, each backed by Nebius Serverless Jobs:

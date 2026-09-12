@@ -1,5 +1,7 @@
 # Isaac Lab Bring Your Own Fork Cookbook
 
+[Cookbooks](../README.md)
+
 This cookbook shows how to run a custom Isaac Lab fork, custom RSL-RL fork, or
 custom training wrapper on Workbench without changing the checked-in platform
 workflow. The worked example in this directory uses a synthetic image layer and

@@ -1,5 +1,7 @@
 # Verify shared storage across a Fleet
 
+[Docs](README.md)
+
 `npa fleet verify-storage` proves that the filesystem declared by an existing
 Fleet works on every CPU and GPU worker. It checks the host mount first, then
 uses a temporary ReadWriteMany PVC and pods pinned to each exact worker to

@@ -1,5 +1,7 @@
 # Isaac Lab 3 workbench
 
+[Workbench docs](README.md)
+
 NPA pins the newest released point in the Isaac Lab 3 beta line:
 `v3.0.0-beta2.patch1` (`isaaclab==3.0.0b2.post1`) at commit
 `ffff603eafc6b74264a5261cc0183d6a65390d78`, paired with Isaac Sim

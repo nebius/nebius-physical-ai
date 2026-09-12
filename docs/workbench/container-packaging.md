@@ -1,5 +1,7 @@
 # Workbench Container Packaging
 
+[Workbench docs](README.md)
+
 Canonical contract for packaging workbench containers correctly, securely, and
 with the right runtime features exposed. Machine-readable rules live in
 `npa/docker/workbench/packaging-contract.yaml` (enforced by unit tests).

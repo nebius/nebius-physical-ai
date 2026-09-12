@@ -1,5 +1,7 @@
 # LanceDB Vector Search
 
+[Cookbooks](README.md)
+
 LanceDB gives the Workbench a CPU-only vector-search and data-lake layer for
 robotics datasets. The v1 integration wraps the OSS Python package in a small
 NPA service that stores Lance data in a local path or an S3-compatible object

@@ -1,5 +1,7 @@
 # Cosmos 3 generation on the workbench (`npa-cosmos3`)
 
+[Workbench docs](README.md)
+
 Cosmos 3 is NVIDIA's omni model: one checkpoint that both reasons and generates.
 This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a

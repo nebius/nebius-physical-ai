@@ -1,5 +1,7 @@
 # Public Workbench Container Image Catalog
 
+[Workbench docs](README.md)
+
 Repository-selected runtime images use the public mirror by default:
 
 ```text

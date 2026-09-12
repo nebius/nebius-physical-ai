@@ -1,5 +1,7 @@
 # BDD100K Demo — Step-by-Step Walkthrough (Exec + Technical)
 
+[Docs](../README.md)
+
 A presenter-ready script for showing the BDD100K failure-mode detection demo to a
 mixed audience. It pairs a plain-English narrative for execs and C-suite with the
 exact FiftyOne (Voxel51) UI steps and commands for technical viewers.

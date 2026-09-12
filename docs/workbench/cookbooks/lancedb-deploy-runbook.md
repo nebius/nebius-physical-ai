@@ -1,5 +1,7 @@
 # LanceDB Deploy Runbook
 
+[Cookbooks](README.md)
+
 This runbook covers the OSS LanceDB Workbench path. The persistent service is
 CPU-only, but the optional CLIP embedding UDF is GPU-accelerated.
 

@@ -1,5 +1,7 @@
 # Share Rerun recordings safely
 
+[Workbench docs](README.md)
+
 `npa rerun host` and `npa rerun share` create time-boxed `app.rerun.io` links
 for `.rrd` recordings in object storage. Browser loading requires a one-time
 bucket CORS rule because the viewer fetches the recording from a different

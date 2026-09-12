@@ -1,4 +1,7 @@
 # BDD100K Failure-Mode Detection Demo
+
+[Docs](../README.md)
+
 ## Nebius Physical AI Workbench - LanceDB Reproduction
 
 > This demo reproduces LanceDB's autonomous-vehicle perception pipeline on

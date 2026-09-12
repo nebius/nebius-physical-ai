@@ -1,5 +1,7 @@
 # Can the blocked images support every Nebius GPU?
 
+[Workbench docs](README.md)
+
 This analysis began on 2026-08-22 with eight published images carrying a
 `blocked` cell in the
 [image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md):

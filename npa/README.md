@@ -65,117 +65,20 @@ chosen specification, prepare its data and resources, submit it, then inspect
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
 
-The following are individual LeRobot/Genesis commands, including the older
-five-stage distillation helper. Their setup and inputs are tool-specific; they
-are not the canonical 14-stage Sim2Real workflow:
-
-```bash
-# Provision or update a Nebius LeRobot workbench
-npa workbench lerobot -p eu-north1 -n h200 deploy \
-  --project-id project-... \
-  --tenant-id tenant-... \
-  --region eu-north1
-
-# Train/eval/serve a LeRobot policy on the remote workbench
-npa workbench lerobot train --policy-type act --dataset lerobot/aloha_sim_transfer_cube_human --job-name act-demo --output-path s3://my-bucket/checkpoints/act-demo/
-npa workbench lerobot eval --input-path s3://my-bucket/checkpoints/act-demo/ --env aloha
-npa workbench lerobot serve --input-path s3://my-bucket/checkpoints/act-demo/
-npa workbench lerobot infer --observation /tmp/obs.json --output json
-
-# Genesis-side local stages
-npa workbench genesis train-teacher --n-envs 4096
-npa workbench genesis generate-demos --checkpoint ./checkpoints/teacher/model.pt
-npa workbench genesis eval-student --checkpoint ./checkpoints/student/checkpoints/last/pretrained_model
-
-# Convert demos to LeRobotDataset v3
-npa adapter convert --input ./runs/demos --output ./runs/dataset
-
-# Run the full distillation workflow
-npa workbench workflow run distill --local
-npa workbench workflow run distill --remote --project eu-north1 --s3-bucket s3://my-bucket/checkpoints/
-```
-
 ## Workbench Runtimes
 
-Deploy commands support these runtime modes where implemented:
+Choose a runtime supported by the selected tool:
 
-- `vm`: provisions and manages a Nebius VM with Terraform and installs the tool over SSH.
-- `container`: provisions and manages a Nebius VM with Terraform, then starts the tool container over SSH.
-- `byovm`: skips Terraform entirely and deploys the app to an existing SSH-accessible VM.
-- `serverless`: creates a Nebius Serverless AI Endpoint for a containerized serving backend. Cosmos supports this runtime first.
+| Mode | Runs on |
+| --- | --- |
+| Workflow | SkyPilot jobs on the configured cluster; see [Workbench setup](../docs/workbench/getting-started.md) |
+| `vm` / `container` | A Nebius VM managed through Terraform and SSH |
+| `byovm` | An existing SSH-accessible VM supplied by you |
+| `serverless` | Nebius AI Jobs or Endpoints, where the tool supports them |
 
-For Cosmos, `deploy --runtime serverless` creates the Endpoint resource with
-the image, platform, preset, environment, and volumes baked into the resource.
-`serve` is only a pre-warm/health operation; changing the served model or image
-requires redeploying the endpoint.
-
-```bash
-npa workbench cosmos -p eu-north1 -n cosmos-sl deploy \
-  --runtime serverless \
-  --project-id project-... \
-  --image ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
-  --platform gpu-h200-sxm \
-  --preset 1gpu-16vcpu-200gb \
-  --server-port 8080 \
-  --subnet-id vpcsubnet-... \
-  --wait
-
-npa workbench cosmos -p eu-north1 -n cosmos-sl status
-npa workbench cosmos -p eu-north1 -n cosmos-sl serve
-npa workbench cosmos -p eu-north1 -n cosmos-sl infer --prompt "A robot arm stacks colored cubes"
-npa workbench cosmos -p eu-north1 -n cosmos-sl teardown --yes
-```
-
-When a Nebius project has multiple subnets, pass `--subnet-id` on serverless
-deploy. Secrets should come from `~/.npa/credentials.yaml` or environment
-variables; do not pass tokens as command-line arguments.
-
-Use `byovm` when the VM already exists, for example for pre-provisioned
-multi-GPU machines. BYOVM does not create, stop, start, resize, or destroy the
-VM. A BYOVM `--destroy` only removes the local workbench entry from
-`~/.npa/config.yaml`.
-
-BYOVM requires a host and SSH key, either from flags:
-
-```bash
-npa workbench lerobot -p eu-north1 -n my-multi-gpu deploy \
-  --runtime byovm \
-  --host 203.0.113.10 \
-  --ssh-user ubuntu \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --gpu-count 4
-```
-
-or from `~/.npa/credentials.yaml`:
-
-```yaml
-ssh:
-  host: 203.0.113.10
-  user: ubuntu
-  key_path: ~/.ssh/id_ed25519
-```
-
-During BYOVM deploy, `npa` probes the target with `nvidia-smi`, stores the
-detected GPU count and names in `~/.npa/config.yaml`, and writes
-`CUDA_VISIBLE_DEVICES` plus `NPA_GPU_COUNT` into the remote environment. Use
-`--gpu-count <N>` to limit the visible devices on a larger VM.
-
-Status and system information commands use the same saved SSH metadata:
-
-```bash
-npa workbench lerobot -p eu-north1 -n my-multi-gpu status
-npa workbench lerobot -p eu-north1 -n my-multi-gpu system-info
-```
-
-The multi-GPU BYOVM pytest suite is opt-in and expects a live target:
-
-```bash
-export NPA_TEST_BYOVM_HOST=203.0.113.10
-export NPA_TEST_BYOVM_SSH_KEY=~/.ssh/id_ed25519
-export NPA_TEST_BYOVM_GPU_COUNT=4
-export NPA_TEST_BYOVM_S3_PREFIX=s3://my-bucket/test-artifacts/
-pytest tests/test_multi_gpu -m multi_gpu
-```
+See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
+BYOVM, and serverless examples. A mode supported by one tool does not imply
+support in every other tool.
 
 <a id="config"></a>
 
@@ -224,32 +127,10 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
-Artifact utilities also have Python entry points:
-
-```python
-from npa import convert, demo, rerun
-
-# Convert a LeRobot dataset to MP4.
-convert.lerobot_to_mp4(
-    input_path="s3://my-bucket/dataset/",
-    output_path="trajectory.mp4",
-    renderer="matplotlib",
-)
-
-# Stage demo artifacts.
-demo.stage(target_bucket="customer-bucket", target_project="eu-north1")
-
-# Share a Rerun recording.
-result = rerun.host("recording.rrd")
-print(f"View at: {result.share_url}")
-```
-
-Lower-level access for advanced workflows:
-
-```python
-from npa.adapter.lerobot.render import render_lerobot_to_mp4_result
-from npa.clients.http import HTTPClient
-```
+For artifact conversion and sharing, see the
+[CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
+[Foxglove export](../docs/workbench/foxglove-export.md), and
+[Rerun sharing](../docs/workbench/rerun-sharing.md).
 
 ## Package map
 

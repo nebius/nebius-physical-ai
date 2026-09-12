@@ -1,5 +1,7 @@
 # Workbench preemptible VMs
 
+[Workbench docs](README.md)
+
 **Short answer:** yes — Workbench GPU VM deploys support Nebius **preemptible**
 (spot-style) instances. They are **on by default** for most tools. Use
 `--no-preemptible` when you need a VM that stays up until you tear it down.

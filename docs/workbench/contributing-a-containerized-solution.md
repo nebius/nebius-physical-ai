@@ -1,5 +1,7 @@
 # Contributing a Containerized Solution
 
+[Workbench docs](README.md)
+
 Use this checklist to add an open-source solution to NPA. The contributor
 supplies reproducible code and real test evidence. The Nebius Physical AI team
 builds, scans, pushes, and, when approved, publishes the official image.

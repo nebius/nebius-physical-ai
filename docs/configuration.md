@@ -1,38 +1,32 @@
 # Configure credentials and project storage
 
+[Docs](README.md)
+
 Start with [installation and first-run setup](quickstart.md). This reference
 covers authentication, project storage, credential names, and model access.
 
-For credential setup, `npa` has one user-authored file:
+Run `npa configure` for interactive setup. It selects the project and provisions
+storage by default; `--no-provision` saves project and token settings without
+storage. `npa configure --show` displays the current configuration.
 
-```text
-~/.npa/credentials.yaml
-```
+| Setting | Where it belongs |
+| --- | --- |
+| User secrets and project credentials | `~/.npa/credentials.yaml`, mode `0600` |
+| Temporary credential overrides | Private process environment |
+| Managed project, endpoint, SSH, and Terraform metadata | `~/.npa/config.yaml`; let NPA write it |
+| Alternate configuration directory | `NPA_CONFIG_DIR`; `NPA_CREDENTIALS_PATH` is unsupported |
 
-Do not choose between multiple NPA credential files. Put user-level secrets in
-`~/.npa/credentials.yaml` only. Deploy commands may create or update
-`~/.npa/config.yaml` for machine-managed project, workbench, endpoint, SSH,
-storage, and Terraform state metadata; do not manually populate
-`~/.npa/config.yaml` as part of credential setup.
+Command-specific flags take precedence over their documented defaults. A project
+alias is a local configuration name; it does not select a Nebius authentication
+profile. Use the exact project ID and region when binding a new alias.
 
-Environment variables can override file values for a single shell. They are
-useful for temporary tests, but the canonical repeatable setup is
-`~/.npa/credentials.yaml`. `NPA_CREDENTIALS_PATH` is not supported.
-`NPA_CONFIG_DIR` overrides the shared NPA configuration directory, including
-the location of `credentials.yaml`.
-
-Remote Workbench commands resolve configuration from explicit CLI flags,
-environment variables, the credential store, then machine-managed project and
-Workbench configuration. See each command's help for its supported overrides.
-
-Create and secure the credentials file:
-
-```bash
-mkdir -p ~/.npa
-chmod 700 ~/.npa
-touch ~/.npa/credentials.yaml
-chmod 600 ~/.npa/credentials.yaml
-```
+| Need | Section |
+| --- | --- |
+| Account, project, or SSO setup | [Nebius authentication](#4a-nebius-account-authentication) |
+| Non-interactive setup | [Provisioning](#non-interactive-setup) |
+| Credential names and file layout | [Keys](#4b-required-credential-key-names) · [file example](#4c-populate-npacredentialsyaml) |
+| Copy between projects | [Cross-project storage](#4d-cross-project-storage-workflows) |
+| Model access | [Prepare and verify](#4e-prepare-and-verify-gated-model-access) |
 
 <a id="4a-nebius-account-authentication"></a>
 

@@ -1,5 +1,7 @@
 # Living-lab digital twin: parameterized neural reconstruction (16-GPU default)
 
+[Guides](README.md)
+
 A "living lab" is a research space observed by many cameras. This workflow turns
 real multi-view captures of such a space into a **multi-zone digital twin**:
 independent NVIDIA NuRec / NRE neural reconstructions, one per RTX PRO 6000

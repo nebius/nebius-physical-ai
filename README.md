@@ -28,46 +28,16 @@ observability, and cluster orchestration.**
 
 ## What is `npa`?
 
-`npa` is the CLI and SDK for **Nebius Physical AI**. Workbench is its primary
-solution: one command surface that composes data curation, simulation, synthetic
-data, policy training, evaluation, export, observability, and declarative
-workflows on Nebius object storage, managed Kubernetes, vLLM-compatible serving,
-and GPU clusters (H100 · H200 · L40S · B300 · RTX PRO 6000).
+`npa` runs robotics and physical-AI workloads on Nebius: data curation,
+simulation, synthetic data, policy training, and evaluation. Workbench tools
+run in containers and exchange inputs, checkpoints, and results through S3.
+Use the CLI, a tool's Python interface, or a declarative workflow.
 
-You bring a robot, a dataset, or a pipeline idea. `npa` brings the containers,
-the orchestration, and the preflight checks that catch a missing token before it
-stalls your run.
-
-Workbench is meant to be operated by **your own coding agent**. Connect the
-agent to this checkout with terminal access, attach your cloud and model
-credentials through its private environment or secret manager, and ask it to
-configure, validate, provision, submit, and inspect workflows with you. The
-prompts in the [coding-agent guide](docs/workbench/agent-first-run.md) are a
-starting point; you do not need to learn every `npa` command before running
-something real.
-
-|                       |                                                                                                              |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **What you can do**   | Curate datasets · train and evaluate policies · render synthetic data · run sim-to-real loops · serve models  |
-| **Who it's for**      | Robotics teams, physical-AI researchers, and partners shipping on Nebius                                      |
-| **Where it runs**     | Nebius S3, managed Kubernetes, and GPU clusters                                                               |
-| **How you extend it** | Declarative `npa.workflow/v0.0.1` YAML specs and reusable Workbench tool refs                                 |
-
-For an existing Fleet, run `npa fleet verify-storage --spec <fleet.yaml>` to
-verify the shared filesystem on every CPU and GPU worker, including host mount
-capacity, cross-node PVC reads and writes, and cleanup. The command and Python
-SDK share one implementation; see [Fleet storage verification](docs/fleet-storage-verification.md)
-for selectors, private evidence, and automation-safe JSON.
-
-For an existing 8-GPU RTX rendering Fleet, run
-`npa fleet verify-graphics --spec <fleet.yaml>`. It fresh-verifies each
-registered target, observes cluster stability, and then proves CUDA vectorAdd,
-GLX, EGL, and Vulkan on every RTX worker. Exact receipts stay owner-private;
-text and JSON output contain only counts, failure categories, and evidence
-hashes. See the [GPU driver strategy](docs/workbench/mk8s-gpu-driver-strategy.md#qualifying-an-existing-rtx-fleet).
-
-> Partners integrate independently. Teams assemble from open blueprints.
-> Nebius owns the infrastructure layer and compute substrate.
+Bring your dataset, robot, or pipeline idea. Start with the
+[quickstart](docs/quickstart.md), or give your coding agent the
+[first-run prompts](docs/workbench/agent-first-run.md) and terminal access to
+this checkout. Keep credentials in its private environment or the NPA
+credential store.
 
 ### How workflows run
 
@@ -91,13 +61,6 @@ Foxglove viewer. This diagram describes workflow execution; the
 [Workbench Ray guide](docs/workbench/ray.md) routes direct native Jobs/Core,
 Train, Serve, and KubeRay use to the supported paths.
 
-The [daily dev VM test guide](docs/testing/dev-vm-daily.md) covers the daily and
-manual GitHub workflow, a dedicated VM with public SSH, pinned host keys, and
-isolated test execution. The workflow connects directly from GitHub without a
-VPN or an identity-federation service. The guide also covers selecting an
-external public address pool and updating trusted SSH settings after an address
-change.
-
 Python and HTTP coverage varies by tool. The
 [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) explains
 typed clients, callback wrappers, and their return values.
@@ -108,11 +71,9 @@ typed clients, callback wrappers, and their return values.
 
 [Use Workbench with a coding agent](docs/workbench/agent-first-run.md).
 
-Three steps from a clone to a real result on Nebius.
-
 ### 1. Install `npa`
 
-Python **3.10+**. `npa` is not on PyPI — install it editable from the clone:
+Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Install from this repository:
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
@@ -123,91 +84,56 @@ pip install -e npa
 npa --version
 ```
 
-> **Windows:** use WSL2 Ubuntu. Per-platform steps are in
-> [docs/install.md](docs/install.md).
->
-> **Managed deployments** (such as `npa agent fresh-setup`) also need
-> **Terraform 1.x** on `PATH` — `pip install -e npa` does not install it. Check
-> with `terraform version`; agent bootstrap installs the tested 1.13.3 baseline
-> only when Terraform is missing entirely.
+See [installation](docs/install.md) for platform details and tools such as
+Terraform and `kubectl`, which are installed separately.
 
 ### 2. Connect to Nebius
 
-[Sign up](https://docs.nebius.com/signup-billing/sign-up), create a
-[tenant and project](https://docs.nebius.com/iam/manage-projects), install the
-Nebius CLI, then let `npa configure` write `~/.npa/credentials.yaml` and
-`~/.npa/config.yaml` for you:
+Install the tested Nebius CLI, then select your project:
 
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
   | NEBIUS_CLI_VERSION=0.12.254 bash
-export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
+export PATH="${HOME}/.nebius/bin:${PATH}"
 npa configure
+npa workbench health preflight --checks nebius --json
 ```
 
-`npa` is tested with Nebius CLI `0.12.254` (recommended) and `0.12.227`
-(compatible, with a warning). Anything else is blocked *before* provider calls,
-and the error prints the exact install command to run.
-
-`npa configure` also prompts for optional model and inference tokens, linking
-each setup guide inline: [Hugging Face](docs/workbench/huggingface-token.md) ·
-[NVIDIA NGC](docs/workbench/ngc-api-key.md) ·
-[Nebius Token Factory](docs/workbench/token-factory-key.md).
-Its Hugging Face and NGC access summary is informative: missing, rejected,
-gated, or temporarily unreachable providers do not prevent otherwise-valid
-configuration from being saved. Use `npa workbench health access` when access
-must be an enforcing gate.
-
-Interactive configuration provisions object storage by default. First-time
-storage setup needs admin permission on the target project to create the
-service account, access key, and bucket-scoped IAM permissions.
-
-For project creation, SSO, non-interactive provisioning, credential names, and
-recovery, see [configuration](docs/configuration.md). Use the
-[coding-agent setup prompt](docs/workbench/agent-first-run.md#configure-the-project-and-model-access)
-to prepare the credentials and resources required by your selected task.
+Interactive configuration provisions object storage by default; first-time
+storage setup needs admin permission on the target project. Use
+`npa configure --no-provision` to save project and token settings without
+storage provisioning. [Configuration](docs/configuration.md) covers account
+setup, SSO, model tokens, and non-interactive use.
 
 ### 3. Run your first workload
 
-Choose a GPU workload from the [guides](docs/workbench/guides/README.md), such
-as a robot policy or [NVIDIA Cosmos](docs/quickstart.md#standalone-cosmos-3-generation).
-You can also select individual tools from the [tool reference](docs/cli/workbench.md)
-and compose them into a workflow. Use the [coding-agent guide](docs/workbench/agent-first-run.md)
-to check the inputs, credentials, and resources your task needs.
+Choose a guide below, prepare its input and model access, then complete
+[Workbench setup](docs/workbench/getting-started.md). Follow the guide through
+submission and inspect its generated media, checkpoint, or report.
 
-For a worked video-augmentation example, use
-[PAIDF + Cosmos 3](docs/workbench/guides/paidf-cosmos3.md): supply a
-local H.264 MP4 or private S3 MP4 URI, generate source-conditioned variants,
-evaluate them, and curate accepted outputs. The
-[PAIDF workflow prompt](docs/workbench/agent-first-run.md#run-paidf-with-cosmos-3)
-guides your agent through project storage, model access, GPU planning, image
-checks, submission, recovery, and output inspection. The PAIDF guide's command
-examples validate and plan the workflow without running it.
-
-Check the raw generated media as well as the published PAIDF composite, which
-blends source and generated frames (80% source by default). A quality rejection
-after bounded refinement skips labeling and curation; inspect the report before
-retrying. The original [Physical AI Data Factory](docs/workbench/guides/physical-ai-data-factory-deploy.md)
-continues to use Cosmos Transfer 2.5.
+For video augmentation, [PAIDF + Cosmos 3](docs/workbench/guides/paidf-cosmos3.md)
+accepts your source clip and records generation, evaluation, and curation
+results. The [coding-agent prompt](docs/workbench/agent-first-run.md#run-paidf-with-cosmos-3)
+covers execution; the guide's examples validate and plan only.
 
 ---
 
 ## Pick your first win
 
-Short, copy-paste walkthroughs. Pick whichever sounds fun — they are independent.
+Choose by the result you need; each guide states its inputs and validation scope.
 
-| I want to…                                     | Go here                                                                                | Needs                    |
+| I want to… | Go here | Needs |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------- |
-| Pick and place with a Franka arm                 | [Franka + Genesis](docs/workbench/guides/franka-pick-and-place-genesis.md)                | GPU cluster                |
-| Teach a robot to push a T                        | [PushT sim-to-real](docs/workbench/guides/pusht-sim-to-real.md)                           | GPU cluster                |
-| Train a Reachy 2 humanoid policy                 | [Reachy 2 + LeRobot](docs/workbench/guides/reachy2-lerobot-policy.md)                     | GPU cluster                |
-| Make a Unitree G1 walk                           | [G1 + SONIC](docs/workbench/guides/g1-humanoid-walk-sonic.md)                             | GPU cluster                |
-| Train a quadruped to run                         | [Quadruped + Isaac Lab](docs/workbench/guides/quadruped-isaac-lab.md)                     | RT-core GPU                |
-| Run the flagship GPU workload                    | [NVIDIA Cosmos](docs/quickstart.md#standalone-cosmos-3-generation)                 | GPU cluster                |
-| Augment robot video with PAIDF + Cosmos 3        | [PAIDF with Cosmos 3](docs/workbench/guides/paidf-cosmos3.md)                             | GPU cluster + S3           |
-| Run a real data pipeline, not a robot            | [Physical AI Data Factory](docs/workbench/guides/physical-ai-data-factory-deploy.md)      | GPU cluster + S3           |
-| Rebuild a real scene in 3D                       | [Neural reconstruction](docs/workbench/guides/neural-reconstruction.md)                   | RT-core GPU                |
-| Get a browser workbench with a Rerun viewer      | [Deploy the `npa` agent](docs/agent.md)                                                  | Terraform + S3 (~20 min)   |
+| Pick and place with a Franka arm | [Franka + Genesis](docs/workbench/guides/franka-pick-and-place-genesis.md) | GPU cluster |
+| Inspect the PushT SDK | [PushT SDK smoke](docs/workbench/guides/pusht-sim-to-real.md) | Local dataset inspection |
+| Train a Reachy 2 humanoid policy | [Reachy 2 + LeRobot](docs/workbench/guides/reachy2-lerobot-policy.md) | GPU cluster |
+| Choose a G1 locomotion path | [G1 + SONIC](docs/workbench/guides/g1-humanoid-walk-sonic.md) | GPU cluster |
+| Train a quadruped to run | [Quadruped + Isaac Lab](docs/workbench/guides/quadruped-isaac-lab.md) | RT-core GPU |
+| Generate images or video | [NVIDIA Cosmos](docs/quickstart.md#standalone-cosmos-3-generation) | GPU cluster |
+| Augment robot video with PAIDF + Cosmos 3 | [PAIDF with Cosmos 3](docs/workbench/guides/paidf-cosmos3.md) | GPU cluster + S3 |
+| Build a labeled dataset | [Physical AI Data Factory](docs/workbench/guides/physical-ai-data-factory-deploy.md) | GPU cluster + S3 |
+| Rebuild a real scene in 3D | [Neural reconstruction](docs/workbench/guides/neural-reconstruction.md) | RT-core GPU |
+| Get a browser workbench with a Rerun viewer | [Deploy the `npa` agent](docs/agent.md) | Terraform + S3 (~20 min) |
 
 Full index: [docs/workbench/guides/README.md](docs/workbench/guides/README.md).
 Longer end-to-end recipes (BDD100K + LanceDB, Isaac-Lab BYOF, LeRobot GPU
@@ -217,42 +143,18 @@ benchmarks): [cookbooks](docs/workbench/cookbooks/README.md).
 
 ## What's in the box
 
-Every tool lives under `npa workbench` (there is no `solutions` namespace).
-A few highlights:
+Use `npa workbench <tool> --help` for a tool's commands and options.
 
-- **`token-factory`** — hosted inference, captioning, and reasoning against your
-  own frames.
-- **`vlm-eval`** — scores rollouts with API or self-hosted vLLM backends; see
-  [`vlm-eval-single.yaml`](workflows/testing/vlm-eval-single.yaml).
-- **`health preflight`** — validates HF / NGC / S3 / Token Factory before a
-  deploy or a GPU job.
-- **`foxglove`** — packs run frames, metrics, and logs into MCAP for the
-  embedded viewer ([CLI](docs/cli/foxglove.md) ·
-  [export contract](docs/workbench/foxglove-export.md)).
-- **`golden-eval`** — defines and runs per-container checks; CI validates their
-  manifest, while execution results depend on the selected test and runtime.
-- **`trigger`** — watches S3-compatible prefixes and retriggers workflows.
-- **`sonic export`** — converts locomotion checkpoints to ONNX.
+| Task | Tools and guides |
+| --- | --- |
+| Simulate and train policies | [Robot guides](docs/workbench/guides/README.md): Genesis, Isaac Lab, LeRobot, GR00T, SONIC, and MJLab |
+| Generate or reconstruct scenes | [Generation and scene tools](docs/workbench/README.md#generation-and-scenes): Cosmos, NuRec, Content Agents, LTX-2, and Wan |
+| Curate and evaluate | [Data and evaluation](docs/workbench/README.md#data-and-evaluation): FiftyOne, LanceDB, detection training, VLM evaluation, and hosted Token Factory inference |
+| Inspect outputs | [Rerun sharing](docs/workbench/rerun-sharing.md), [Foxglove/MCAP](docs/workbench/foxglove-export.md), and the [browser workbench](docs/agent.md) |
+| Manage compute | [Kubernetes](docs/workbench/kubernetes.md), [SkyPilot](docs/orchestration/skypilot-setup.md), and [cluster backends](docs/cluster-backends.md) |
 
-<details>
-<summary><strong>Browse the full command inventory by category</strong></summary>
-
-| Category         | Workbench commands                                                                                                                                                                                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Data curation    | `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list`         |
-| Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; specs such as [`bdd100k-pipeline.yaml`](workflows/testing/bdd100k-pipeline.yaml) |
-| Simulation      | `npa workbench isaac-lab train`, `eval`, `export-lerobot`, `export-onnx`; `npa workbench leisaac launch`, `status`, `destroy` (browser teleoperation); `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run`, `workflow`                                                                    |
-| Eval            | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`, `workflow`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student`; `npa workbench golden-eval run`, `run-all`, `validate` |
-| Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
-| World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
-| Hosted LLM      | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
-| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`workflows/`](workflows/)                                                                                                                                           |
-| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa workbench foxglove convert-run`, `inspect`, `install-sdk`, `config`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
-| Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
-
-</details>
-
-Full CLI reference: [docs/cli/README.md](docs/cli/README.md).
+Browse the [Workbench docs](docs/workbench/README.md) for usage guides or the
+[generated CLI reference](docs/cli/README.md) for the command inventory.
 
 ---
 
@@ -270,14 +172,14 @@ npa workbench workflow validate-spec workflows/testing/vlm-eval-single.yaml
 npa workbench workflow plan-spec workflows/testing/vlm-eval-single.yaml --run-id demo
 ```
 
-|                         |                                                                                    |
+|  |  |
 | ----------------------- | ------------------------------------------------------------------------------------ |
-| **Format**              | `apiVersion: npa.workflow/v0.0.1`                                                    |
-| **CLI**                 | `validate-spec` · `plan-spec` · `run-spec` · `submit`                                |
-| **Workbench workflows** | [`workflows/`](workflows/)   |
-| **Tool catalog**        | [npa-workflow-tool-catalog.md](docs/workbench/npa-workflow-tool-catalog.md)          |
-| **Authoring guide**     | [npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md)                        |
-| **What submit does**    | [Run lifecycle](docs/run-lifecycle.md) — gates, run identity, restart safety, status |
+| **Format** | `apiVersion: npa.workflow/v0.0.1` |
+| **CLI** | `validate-spec` · `plan-spec` · `run-spec` · `submit` |
+| **Workbench workflows** | [`workflows/`](workflows/) |
+| **Tool catalog** | [npa-workflow-tool-catalog.md](docs/workbench/npa-workflow-tool-catalog.md) |
+| **Authoring guide** | [npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) |
+| **What submit does** | [Run lifecycle](docs/run-lifecycle.md) — gates, run identity, restart safety, status |
 
 For execution, follow a complete workload guide with your actual bucket,
 prepared input, credentials, and resources. Use `submit --runtime` for parallel
@@ -295,17 +197,16 @@ lacks bootstrap evidence; see the [run lifecycle](docs/run-lifecycle.md).
 
 ## When you're done, tear it down
 
-Teardown is an **ordered** sequence — cancel jobs, destroy the agent, remove the
-shared controller, destroy the cluster, delete the bucket, remove storage IAM,
-then clear local state. Skipping a step leaves something billing.
+Preview cleanup for your project:
 
 ```bash
-npa cleanup                                  # report + the exact runbook for your machine
-npa destroy --project <alias> --all          # read-only until you add --yes
+npa destroy --project <alias> --all
 ```
 
-Every command, every guard, and how to finish a teardown you can no longer
-address by alias: **[docs/teardown.md](docs/teardown.md)**.
+This is read-only until you pass `--yes`. Review the plan and retain artifacts
+you need before deleting their storage. [Teardown](docs/teardown.md) covers
+canceling jobs before removing owned services and infrastructure. Local
+`npa cleanup` alone does not stop cloud resources.
 
 ---
 
@@ -429,8 +330,8 @@ solutions are additive and never rename or nest it. See
 We welcome PRs, issues, and workflow contributions.
 
 ```bash
-pip install -e "npa[dev]"
-make test
+pip install -e "npa[dev,adapter]"
+make test PYTHON="$(pwd)/.venv/bin/python"
 ```
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the review checklist,

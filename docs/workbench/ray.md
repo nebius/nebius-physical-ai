@@ -1,5 +1,7 @@
 # Use Workbench with Ray
 
+[Workbench docs](README.md)
+
 Workbench uses Ray through a small set of explicit paths. There is no `npa ray`
 command and no NPA wrapper around Ray Jobs. Use the native `ray` CLI for
 application submission and control; use `npa` only for the infrastructure,
