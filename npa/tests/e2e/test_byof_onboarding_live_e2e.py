@@ -697,7 +697,21 @@ def test_libero_b200_qualification_report() -> None:
     runtime_metadata = build["runtime_metadata"]
     assert runtime_metadata["schema"] == "npa.libero.runtime-cache.v1"
     assert runtime_metadata["source_revision"] == source["revision"]
-    assert runtime_metadata["runtime_artifact_count"] == 122
+    expected_runtime_manifest = json.loads(
+        (
+            REPO_ROOT
+            / "npa"
+            / "docker"
+            / "workbench"
+            / "libero"
+            / "runtime-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert expected_runtime_manifest["runtime_artifact_count"] == 135
+    assert (
+        runtime_metadata["runtime_artifact_count"]
+        == expected_runtime_manifest["runtime_artifact_count"]
+    )
     assert runtime_metadata["render_assets_present"] is False
     assert runtime_metadata["git_objects_present"] is False
     assert runtime_metadata["cache_uploaded"] is False

@@ -29,6 +29,7 @@ SMOKE_PATH = IMAGE_ROOT / "libero_smoke.py"
 IMAGE_MANIFEST_PATH = (
     ROOT / "npa" / "src" / "npa" / "deploy" / "libero_image_manifest.json"
 )
+PUBLICATION_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 
 SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 DATASET_REF = "f13aa24a3da8c43c7225569f28c562979fa0e35a"
@@ -93,6 +94,20 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     state = workflow["states"]["byof-run"]
     assert state["toolRef"] == "workbench.byof.repo"
     assert state["terminal"] is True
+
+
+def test_publication_workflow_binds_anonymous_tag_to_pushed_digest() -> None:
+    workflow = PUBLICATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    anonymous = workflow[workflow.index('anonymous_config="$(mktemp -d)"') :]
+
+    resolve = anonymous.index(
+        'anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE"'
+    )
+    readable = anonymous.index(
+        'DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE"'
+    )
+    compare = anonymous.index('test "$anonymous_digest" = "$DIGEST"')
+    assert resolve < readable < compare
 
 
 def test_runtime_manifest_closes_source_data_task_model_and_runtime_identity() -> None:
