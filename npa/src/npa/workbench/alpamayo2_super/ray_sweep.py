@@ -78,6 +78,7 @@ class _InferenceWorker:
         import ray
 
         label = "sample-{}-seed-{}-steps-{}".format(*case_key(case))
+        print(json.dumps({"event": "alpamayo.case_started", **case}), flush=True)
         started = time.monotonic()
         result = run_inference(
             Alpamayo2SuperRequest(
@@ -86,13 +87,17 @@ class _InferenceWorker:
             ),
             model_resolver=self._resolve,
         )
-        return {
+        measurement = {
             **case, **result["metrics"], "sample": result["sample"],
             "elapsed_seconds": time.monotonic() - started,
             "artifacts": result["artifacts"],
             "ray_node_id": ray.get_runtime_context().get_node_id(),
             "ray_actor_id": str(ray.get_runtime_context().get_actor_id()),
         }
+        print(json.dumps({"event": "alpamayo.case_completed", **case,
+                          "elapsed_seconds": measurement["elapsed_seconds"],
+                          "min_ade_m": measurement["min_ade_m"]}), flush=True)
+        return measurement
 
 
 def dispatch_cases(cases: list[dict], actors: list) -> list[dict]:

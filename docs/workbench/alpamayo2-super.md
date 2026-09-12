@@ -75,7 +75,10 @@ node. The catalog rejects multi-node replication of this single-node command.
 
 Ray GPU actors call the shared upstream inference implementation. Each actor
 keeps one case in flight and reuses the downloaded pinned model snapshot. Model
-weights load into a fresh upstream subprocess for each case. Ray CPU tasks
+weights load into a fresh upstream subprocess for each case. Actors emit
+structured progress events in the driver logs: `alpamayo.case_started`
+and `alpamayo.case_completed`. Completion events include measured ADE and elapsed
+time after artifact publication; CLI progress stays on stderr. Ray CPU tasks
 calculate per-scenario/per-setting mean ADE, mean FDE, and population standard
 deviation across seeds. `elapsed_seconds` measures the whole case, including
 model fetch/load, inference, rendering, and artifact upload. It does not isolate
