@@ -1207,7 +1207,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["wait"] = wait_diagnostics
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
-                    os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                    not is_libero
+                    and os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
                     and final.status == "FAILED_PRECHECKS"
                 ):
                     return_code = 0
