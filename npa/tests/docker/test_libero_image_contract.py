@@ -102,6 +102,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         "torch": "2.13.0",
         "torchvision": "0.28.0",
         "transformers": "5.10.0",
+        "wandb": "0.17.9",
     }
     assert {
         name: versions[name] for name in security_refreshed_versions

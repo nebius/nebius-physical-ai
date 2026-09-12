@@ -7,8 +7,8 @@
   "input_sha256": {
     "workflow": "b493c8cc00ce141fec3833a5f787450da49d3b3d67e0755d59b6cc6dcb44d45f",
     "resource_profile": "b3fbd68a600f6ff9d21657930f6711da0111f71a1cbea908b0d48d2b64880a7c",
-    "runtime_manifest": "cc3556e776aeaca5c73e27be3bdcfea24b97848493eb1eae2883e662fd741c76",
-    "runtime_bootstrap": "81b5cb964a5f16a8b38f43f0b54bb08f59f1e2e4901c12ae429e0d4645980979",
+    "runtime_manifest": "c8e621ddf7a2db6ed67f92f8f8c23e3fb3ccd1f48d0736248f56e063af435a1d",
+    "runtime_bootstrap": "6baf4ea435529f6b7d5954d5d37d950003ec64273a304177c1e9db71e9fa4bb9",
     "smoke": "1ac8e9db8e9b4bd9f1cf301620af5cfdf74581bc0424953f0aeac6d50439240d",
     "image_manifest": "25bf6a85ccc98dd85daca710eea98bd3e6bdffed8fa74c89d9e9a06fecbc1681"
   },
