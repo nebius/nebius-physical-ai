@@ -169,6 +169,53 @@ current artifact scans, real capability validation, or release verification.
 
 Three patterns do the real work. Prefer them over asking for an exception.
 
+### Default operator-responsibility policy
+
+Use this default for a public zero-restricted-payload image whose third-party
+artifacts are delivered directly to the operator at runtime:
+
+> The operator initiates runtime fetch with their own credential and is
+> responsible for using the credential and fetched artifact under the exact
+> upstream terms. NPA verifies access to the immutable artifact, stores neither
+> the credential nor restricted bytes in the public image, and makes no claim
+> that the credential authorizes redistribution.
+
+Apply these rules once, consistently, instead of reopening the same question
+for every image:
+
+- A customer-owned Hugging Face or NGC credential plus a successful upstream
+  usable-payload probe is operationally sufficient for NPA to fetch from that
+  exact provider, repository or artifact, revision, and account. It is not
+  legal acceptance or proof of compliance. Do not add an NPA acceptance
+  checkbox or ask the operator to attest again.
+- Preserve the exact operator statement once under one bounded manager task/run
+  ID. If the operator states `noncommercial`, record exactly `noncommercial`;
+  capture the intended activity separately. Child solutions may reference that
+  record when their exact terms are compatible, without another per-image
+  question. The record expires with the task/run and is never global or
+  permanent. Reopen the decision only if the operator changes scope or an exact
+  artifact's authoritative terms require a concrete additional fact.
+- Keep entitlement provider- and artifact-scoped. An HF token says nothing
+  about an unrelated NGC, CUDA, cuDNN, dataset, or asset endpoint; an NGC token
+  says nothing about an unrelated HF repository. Prefer a vendor-gated runtime
+  artifact or an operator-provided runtime when the otherwise selected endpoint
+  provides no verifiable entitlement.
+- Classify the public image from its built bytes. A neutral image is eligible
+  for public classification only when every baked byte has verified
+  redistribution rights, byte-level inspection proves no gated or
+  redistribution-restricted payload is present, and all `secure-image-build`
+  publication gates pass. Runtime-fetch `Ready` grants no redistribution rights.
+- Do not invent output or service restrictions. Escalate only a restriction
+  stated by authoritative terms or concrete conflicting provenance. If the
+  applicable terms contain no output restriction, record `none found` and
+  continue. Running GPL software fetched directly by the operator is not NPA
+  redistribution; GPL source-conveyance duties arise if NPA conveys the GPL
+  bytes.
+
+This policy does not override an explicit vendor click-through, license key,
+paid/enterprise entitlement, prohibited service use, or output restriction. Use
+the vendor's own mechanism once and reuse its result within the exact scope.
+
 **Runtime fetch under the customer's own credentials.** Never bake gated or
 redistribution-restricted weights merely because a token can gate image access.
 The image ships the downloader; the operator supplies their own HF/NGC
@@ -176,9 +223,12 @@ credential at runtime and fetches an exact immutable revision when the selected
 asset requires authorization. Do not require a token for genuinely public,
 anonymous weights. For Hugging Face, the token and its actual upstream repository
 permission are the only local access gate: probe every required repository before
-provisioning, with no NPA terms boolean or model-check bypass. An HF or NGC token
-proves authorization to fetch; it is not EULA acceptance and does not change
-redistribution rights.
+provisioning, with no NPA terms boolean or model-check bypass. Token presence
+alone proves neither access nor acceptance. For a gated artifact, a successful
+provider-side payload probe is operationally sufficient for NPA to fetch that
+exact artifact; it is not legal acceptance, proof of compliance, or permission
+to redistribute. Compliant use remains the credential owner's responsibility,
+and NPA does not collect a duplicate attestation.
 
 **Build-your-own.** For a runtime we may not redistribute, ship the Dockerfile
 and the build tooling, not the built image. Each operator builds into their own

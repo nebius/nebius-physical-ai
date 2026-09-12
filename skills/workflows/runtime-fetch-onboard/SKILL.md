@@ -7,9 +7,9 @@ description: Use when legal, license, or gated-access restrictions prevent bakin
 
 Keep an onboarding moving when third-party bytes cannot be redistributed in a
 container. Choose either a redistributable launcher that fetches immutable
-upstream components at runtime under the operator's own access and terms, or an
-operator-built derivative that remains confined to a private registry when
-restricted inputs must be baked.
+upstream components at runtime under the operator's own access and the
+applicable upstream terms, or an operator-built derivative that remains
+confined to a private registry when restricted inputs must be baked.
 
 Runtime fetch is a delivery design, not a license bypass. It can solve a
 redistribution restriction. It cannot create permission to use software, offer
@@ -39,17 +39,47 @@ narrowest compliant shape:
 | SDK or runtime | Neutral bootstrap, or build instructions only | SDK/runtime from the vendor, or build the derivative in the operator's registry | Public image is possible only when built layers contain no restricted vendor bytes |
 | Base image | Dockerfile/build recipe | Operator pulls and builds in an operator-controlled registry | Build-your-own; do not publish the derived image unless redistribution is independently allowed |
 | Outputs, service use, or field of use | Only the permitted capability | Nothing can package this away | Defer or reject the prohibited capability and record the human/vendor decision needed |
-| No verified right to fetch or use | Nothing dependent on the artifact | Nothing | Block and escalate; a token, private registry, or runtime download does not supply permission |
+| No verified right to fetch or use | Nothing dependent on the artifact | Nothing | Block only the dependent capability until the exact upstream access probe or documented product mechanism succeeds; token presence alone is not evidence |
 
 If only one capability is restricted, defer that capability rather than
 discarding unrelated capabilities that can be packaged and proven safely.
+
+## Reusable Operator Decision
+
+Apply this default once for every runtime-fetch onboarding:
+
+- The operator supplies and controls the credential, invokes the fetch, and is
+  responsible for using the credential and fetched artifact under upstream
+  terms. The token itself does not accept terms or prove compliance.
+- Preserve the operator's exact field-of-use statement once under one bounded
+  manager task/run ID. If the operator states `noncommercial`, record exactly
+  that; capture intended activity separately. Child solutions reference the
+  record when their exact terms are compatible, without a per-image
+  restatement. It expires with that task/run and is never global or permanent.
+- For gated HF or NGC delivery, `Ready` requires a successful payload-byte or
+  exact registry-artifact probe for the provider, account credential
+  fingerprint, artifact, immutable revision, and terms revision. `Ready` is
+  operationally sufficient for NPA to proceed with that exact fetch without a
+  duplicate NPA acceptance prompt.
+- Re-probe when access evidence changes. Reopen the use question only if the
+  operator changes scope or authoritative terms require a concrete additional
+  fact not captured in the record. Do not ask again for hypothetical legal
+  uncertainty.
+- Decide publication from the built image bytes. A neutral image is eligible
+  for public classification only after every baked byte has verified
+  redistribution rights, its scans prove restricted runtime payloads absent,
+  and all `secure-image-build` gates pass. The operator-owned runtime cache and
+  fetched artifacts may remain restricted. Access never implies redistribution
+  or rights for another provider or artifact.
 
 ## Fast Onboarding Path
 
 1. Copy and complete
    [the runtime-fetch contract](references/onboarding-contract.md). Record the
    source, baked runtime, weights, datasets/assets, cache, and outputs
-   separately, with official terms links and exact immutable identities.
+   separately, with official terms links and exact immutable identities. Link
+   one redacted run-level operator scope record instead of collecting the same
+   declaration for every solution.
 2. Select one of three shapes: weights/data runtime fetch, whole-source/SDK
    runtime fetch, or build-your-own into an operator-controlled registry.
 3. For either runtime-fetch shape, build from a digest-pinned redistributable
@@ -81,16 +111,17 @@ discarding unrelated capabilities that can be packaged and proven safely.
    out of those surfaces. A build-your-own private image may contain its
    declared restricted inputs in layers, but never the credentials used to
    obtain them; record only non-secret identities and terms as provenance.
-6. Prefer upstream-verifiable entitlement such as a gated-repository token or
-   vendor license key. A token normally proves access only; treat it as terms
-   acceptance only when the provider's gate demonstrably records acceptance of
-   the exact applicable terms. Do not require a credential for a genuinely
-   public, anonymous artifact; still pin and verify its immutable identity. Do
-   not invent a generic `ACCEPT_TERMS=YES` variable. Where repository product
-   policy requires explicit operator acceptance, fail before network access
-   until that exact scoped mechanism is satisfied. For gated Hugging Face
-   artifacts, the operator's token and the upstream repository permission are
-   the access gate; do not add an NPA-side EULA or terms-acceptance boolean.
+6. Prefer upstream-verifiable access such as a gated-repository payload probe,
+   exact registry-artifact probe, or vendor license key. Token presence alone
+   proves identity, not access or acceptance; a successful exact probe is the
+   NPA operational gate, not a legal conclusion. Do not require a credential
+   for a genuinely public, anonymous artifact; still pin and verify its
+   immutable identity. Do not invent a generic `ACCEPT_TERMS=YES` variable.
+   Where repository product policy requires explicit operator acceptance, fail
+   before network access until that exact scoped mechanism is satisfied. For
+   gated Hugging Face artifacts, the operator's token and actual upstream
+   repository permission are the access gate; do not add an NPA-side EULA or
+   terms-acceptance boolean.
 7. For either runtime-fetch shape, use the repository model-cache surface for
    durable reuse. Key cache identity by provider, artifact, revision/digest,
    and format. Gated or non-redistributable bytes require an operator-owned,
@@ -202,13 +233,15 @@ downstream consumer exists.
 
 ## Stop Conditions
 
-Stop and escalate when official sources conflict, operator-specific facts decide
-eligibility, the provider exposes no lawful runtime delivery path, service use
-is restricted, output terms prohibit the intended next stage, or a byte-level
-scan cannot prove the runtime-fetch image free of restricted payloads or the
-build-your-own image fully inventoried and free of build secrets. Continue
-every independent packaging, documentation, planning, and test task that does
-not depend on that decision.
+Stop and escalate when official sources conflict, an unrecorded operator fact
+materially decides eligibility, the recorded use scope conflicts with exact
+authoritative terms, the provider exposes no permitted runtime delivery path,
+service use is restricted, output terms prohibit the intended next stage, or a
+byte-level scan cannot prove the runtime-fetch image free of restricted payloads
+or the build-your-own image fully inventoried and free of build secrets. Do not
+escalate a scope already recorded for the run or a speculative restriction that
+the authoritative terms do not state. Continue every independent packaging,
+documentation, planning, and test task that does not depend on that decision.
 
 ## Verify
 

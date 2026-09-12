@@ -59,7 +59,7 @@ def test_skill_uses_runtime_fetch_as_remediation_not_a_license_bypass() -> None:
         "base image",
         "outputs, service use, or field of use",
         "no verified right to fetch or use",
-        "block and escalate",
+        "block only the dependent capability",
         "defer that capability",
     )
     for phrase in required:
@@ -79,8 +79,8 @@ def test_skill_keeps_restricted_bytes_and_secrets_out_of_images() -> None:
         "isaac default and explicit opt-out",
         "never put credentials",
         "secret acceptance material",
-        "a token normally proves access only",
-        "demonstrably records acceptance",
+        "token presence alone proves identity, not access or acceptance",
+        "successful exact probe is the npa operational gate",
         "do not require a credential for a genuinely public, anonymous artifact",
         "genuinely anonymous artifacts need no secret reference",
         "do not invent a generic `accept_terms=yes` variable",
@@ -144,6 +144,7 @@ def test_copyable_contract_covers_all_artifact_boundaries_and_results() -> None:
         "applicable refusal before network",
         "not applicable only for anonymous access with no documented acceptance gate",
         "immutable delivery digest",
+        "full-sha public development digest and anonymous pull before gpu validation",
         "accepted:",
         "deferred:",
         "rejected:",
@@ -151,8 +152,49 @@ def test_copyable_contract_covers_all_artifact_boundaries_and_results() -> None:
         "operator-owned build-time credential source",
         "credential phase",
         "exact delivery and checksum verification",
+        "exact operator statement",
+        "scope record",
+        "scope lifetime",
+        "inherited by",
+        "operator responsibility",
+        "reopen conditions",
+        "exact access evidence",
     ):
         assert phrase in text, phrase
+
+
+def test_operator_scope_is_recorded_once_and_ready_avoids_duplicate_prompts() -> None:
+    text = _normalized(SKILL)
+    required = (
+        "## reusable operator decision",
+        "operator supplies and controls the credential",
+        "token itself does not accept terms or prove compliance",
+        "exact field-of-use statement once",
+        "one bounded manager task/run id",
+        "record exactly that",
+        "child solutions reference the record",
+        "never global or permanent",
+        "operationally sufficient for npa to proceed",
+        "without a duplicate npa acceptance prompt",
+        "reopen the use question only if the operator changes scope",
+        "do not ask again for hypothetical legal uncertainty",
+        "decide publication from the built image bytes",
+        "every baked byte has verified redistribution rights",
+        "all `secure-image-build` gates pass",
+        "access never implies redistribution",
+    )
+    for phrase in required:
+        assert phrase in text, phrase
+
+    for unsafe in (
+        "the token accepts terms",
+        "token proves compliance",
+        "noncommercial clears every license",
+        "runtime fetch makes use legal",
+        "ready permits redistribution",
+        "one declaration applies globally",
+    ):
+        assert unsafe not in text, unsafe
 
 
 def test_skill_separates_runtime_fetch_from_operator_build_credentials() -> None:

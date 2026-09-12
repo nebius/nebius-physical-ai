@@ -14,6 +14,21 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Service use allowed | `yes`, `no`, or `human decision required` with official source |
 | Field/output restrictions | `<obligation or none found>` |
 
+## Shared operator decision
+
+Record this once in the redacted manager task or run record, then reference it
+from every compatible child solution. Never store a credential value, account
+identifier, or unnecessary personal data.
+
+| Field | Required value |
+| --- | --- |
+| Exact operator statement | `<verbatim field-of-use statement; for example: noncommercial>` |
+| Scope record | `<one bounded, redacted manager task/run identifier>` |
+| Scope lifetime | `expires with the named task/run; never global or permanent` |
+| Inherited by | `<child solutions whose exact terms are compatible>` |
+| Operator responsibility | `operator supplies and controls credentials and is responsible for use under upstream terms` |
+| Reopen conditions | `operator changes scope or exact authoritative terms impose a concrete incompatible requirement` |
+
 ## Six boundaries
 
 | Boundary | Exact artifact and immutable identity | Official license/terms | Baked, runtime-fetched, or excluded | Evidence |
@@ -35,7 +50,11 @@ placeholder. Keep it free of credentials and live infrastructure identifiers.
 | Authorization source | `<runtime secret name, operator-owned build-time credential source, or anonymous>` |
 | Credential phase | `runtime`, `build-only`, or `none` |
 | Acceptance mechanism | `<vendor entitlement, exact product mechanism, or none>` |
+| Exact access evidence | `<redacted access-evidence record ID for the provider/artifact/revision/terms revision; anonymous; or not applicable>` |
 | Cleanup | `<exact task-owned image/cache/workload cleanup>` |
+
+Credential-fingerprint matching stays internal to the access checker. Never
+copy a token fingerprint into design evidence, a commit, or PR text.
 
 Complete exactly one of the following packaging-shape sections. Do not invent
 runtime-cache evidence for a build-your-own image, and do not use private
