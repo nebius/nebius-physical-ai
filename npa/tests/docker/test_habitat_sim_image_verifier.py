@@ -146,7 +146,11 @@ def _record_hash(payload: bytes) -> str:
 
 
 def _elf64(
-    *, needed: tuple[str, ...] = (), soname: str = "", runpath: str = ""
+    *,
+    needed: tuple[str, ...] = (),
+    soname: str = "",
+    rpath: str = "",
+    runpath: str = "",
 ) -> bytes:
     strings = bytearray(b"\0")
 
@@ -157,12 +161,15 @@ def _elf64(
 
     needed_offsets = [add(value) for value in needed]
     soname_offset = add(soname) if soname else None
+    rpath_offset = add(rpath) if rpath else None
     runpath_offset = add(runpath) if runpath else None
     string_offset = 0x200
     dynamic_rows = [(5, 0x400000 + string_offset), (10, len(strings))]
     dynamic_rows.extend((1, offset) for offset in needed_offsets)
     if soname_offset is not None:
         dynamic_rows.append((14, soname_offset))
+    if rpath_offset is not None:
+        dynamic_rows.append((15, rpath_offset))
     if runpath_offset is not None:
         dynamic_rows.append((29, runpath_offset))
     dynamic_rows.append((0, 0))
@@ -513,6 +520,93 @@ def test_native_needed_resolution_and_dpkg_ownership_are_closed(tmp_path) -> Non
     assert tool["needed"] == {
         "libfixture.so.1": "usr/lib/x86_64-linux-gnu/libfixture.so.1"
     }
+    assert tool["rpath"] == [] and tool["runpath"] == []
+    assert tool["effective_search_path"][:2] == [
+        "lib/x86_64-linux-gnu",
+        "usr/lib/x86_64-linux-gnu",
+    ]
+    assert tool["needed_resolution"]["libfixture.so.1"] == {
+        "path": "usr/lib/x86_64-linux-gnu/libfixture.so.1",
+        "lookup_path": "usr/lib/x86_64-linux-gnu/libfixture.so.1",
+        "search_index": 1,
+    }
+
+
+def test_runpath_precedes_rpath_and_resolution_is_serialized(tmp_path) -> None:
+    entries = _required_entries()
+    status = next(
+        index for index, row in enumerate(entries) if row[0].endswith("dpkg/status")
+    )
+    entries[status] = file(
+        "var/lib/dpkg/status",
+        entries[status][1] + b"Package: fixture-tool\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: fixture-source\n\n",
+    )
+    entries.extend(
+        [
+            file("usr/share/doc/fixture-tool/copyright", b"fixture license\n"),
+            file(
+                "var/lib/dpkg/info/fixture-tool.list",
+                b"/opt/runtime/libfixture.so.1\n/usr/bin/fixture-tool\n",
+            ),
+            file("opt/runtime/libfixture.so.1", _elf64(soname="libfixture.so.1")),
+            file(
+                "usr/bin/fixture-tool",
+                _elf64(
+                    needed=("libfixture.so.1",),
+                    rpath="/opt/ignored",
+                    runpath="/opt/runtime",
+                ),
+            ),
+        ]
+    )
+    report = _verify(tmp_path, [entries])
+    assert report["valid"] is True
+    tool = next(
+        row
+        for row in report["native_elf_closure"]
+        if row["path"] == "usr/bin/fixture-tool"
+    )
+    assert tool["rpath"] == ["/opt/ignored"]
+    assert tool["runpath"] == ["/opt/runtime"]
+    assert tool["effective_search_path"][0] == "opt/runtime"
+    assert "opt/ignored" not in tool["effective_search_path"]
+
+
+def test_multiple_compatible_native_targets_fail_as_ambiguous(tmp_path) -> None:
+    entries = _required_entries()
+    status = next(
+        index for index, row in enumerate(entries) if row[0].endswith("dpkg/status")
+    )
+    entries[status] = file(
+        "var/lib/dpkg/status",
+        entries[status][1] + b"Package: fixture-lib\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: fixture-source\n\n"
+        b"Package: fixture-tool\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: fixture-source\n\n",
+    )
+    entries.extend(
+        [
+            file("usr/share/doc/fixture-lib/copyright", b"fixture license\n"),
+            file("usr/share/doc/fixture-tool/copyright", b"fixture license\n"),
+            file(
+                "var/lib/dpkg/info/fixture-lib.list",
+                b"/usr/lib/x86_64-linux-gnu/libfixture.so.1\n"
+                b"/usr/local/lib/libfixture.so.1\n",
+            ),
+            file("var/lib/dpkg/info/fixture-tool.list", b"/usr/bin/fixture-tool\n"),
+            file(
+                "usr/lib/x86_64-linux-gnu/libfixture.so.1",
+                _elf64(soname="libfixture.so.1"),
+            ),
+            file(
+                "usr/local/lib/libfixture.so.1",
+                _elf64(soname="libfixture.so.1"),
+            ),
+            file("usr/bin/fixture-tool", _elf64(needed=("libfixture.so.1",))),
+        ]
+    )
+    assert "native_elf_dependency_ambiguous" in _codes(_verify(tmp_path, [entries]))
 
 
 def test_unresolved_or_unowned_native_elf_fails_closed(tmp_path) -> None:
@@ -528,6 +622,20 @@ def test_native_needed_name_cannot_escape_the_library_search(tmp_path) -> None:
     entries.append(file("usr/bin/unowned", _elf64(needed=("../missing.so",))))
     with pytest.raises(ValueError, match="habitat_elf_needed_name"):
         _verify(tmp_path, [entries])
+
+
+def test_source_projection_rejects_undeclared_links(tmp_path) -> None:
+    entries = _required_entries()
+    entries.append(
+        file(
+            "usr/src/habitat-sim/undeclared-link",
+            kind=tarfile.SYMTYPE,
+            link="LICENSE",
+        )
+    )
+    assert "source_projection_population_mismatch" in _codes(
+        _verify(tmp_path, [entries])
+    )
 
 
 def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> None:

@@ -11,7 +11,9 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import time
 from typing import BinaryIO, Callable
@@ -205,8 +207,13 @@ def _extract_assets(archive_path: Path, root: Path) -> dict[str, dict[str, objec
 def fetch_scene_assets(
     root: Path,
     opener: Callable[..., BinaryIO] = urllib.request.urlopen,
+    *,
+    create_root: bool = True,
 ) -> tuple[Path, Path, dict[str, object], dict[str, dict[str, object]]]:
-    root.mkdir(parents=True, exist_ok=False, mode=0o700)
+    if create_root:
+        root.mkdir(parents=True, exist_ok=False, mode=0o700)
+    elif not root.is_dir() or root.is_symlink():
+        raise SmokeFailure("run-owned scene cache is not a real directory")
     os.chmod(root, 0o700)
     archive_path = root / "habitat-test-scenes.zip.part"
     archive: dict[str, object] | None = None
@@ -673,13 +680,74 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _remove_runtime_cache(cache: Path) -> None:
+def _claim_runtime_cache(cache: Path) -> tuple[int, int, str]:
+    """Create and identify the cache that this invocation may remove."""
+
+    created = False
+    try:
+        cache.mkdir(parents=False, exist_ok=False, mode=0o700)
+        created = True
+        os.chmod(cache, 0o700)
+        identity = cache.stat(follow_symlinks=False)
+        marker = cache / ".npa-run-owner"
+        marker.write_text(secrets.token_hex(32), encoding="ascii")
+        marker.chmod(0o600)
+        return identity.st_dev, identity.st_ino, sha256_file(marker)
+    except FileExistsError as error:
+        raise SmokeFailure("run-owned scene cache path already exists") from error
+    except Exception:
+        if created:
+            shutil.rmtree(cache)
+        raise
+
+
+def _cache_identity_matches(cache: Path, identity: tuple[int, int, str]) -> bool:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    directory_fd = os.open(cache, directory_flags)
+    try:
+        observed = os.fstat(directory_fd)
+        if (
+            (observed.st_dev, observed.st_ino) != identity[:2]
+            or observed.st_uid != os.geteuid()
+            or observed.st_mode & 0o077 != 0
+        ):
+            return False
+        marker_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        marker_fd = os.open(".npa-run-owner", marker_flags, dir_fd=directory_fd)
+        try:
+            marker = os.fstat(marker_fd)
+            payload = os.read(marker_fd, 129)
+            after = os.fstat(marker_fd)
+            named = os.stat(
+                ".npa-run-owner", dir_fd=directory_fd, follow_symlinks=False
+            )
+            return (
+                stat.S_ISREG(marker.st_mode)
+                and marker.st_uid == os.geteuid()
+                and marker.st_mode & 0o077 == 0
+                and marker.st_size == len(payload) == 64
+                and marker == after == named
+                and hashlib.sha256(payload).hexdigest() == identity[2]
+            )
+        finally:
+            os.close(marker_fd)
+    except OSError:
+        return False
+    finally:
+        os.close(directory_fd)
+
+
+def _remove_runtime_cache(
+    cache: Path, identity: tuple[int, int, str] | None = None
+) -> None:
     """Remove the run-owned scene cache and verify the postcondition."""
 
-    if not cache.exists():
+    if not os.path.lexists(cache):
         return
+    if identity is not None and not _cache_identity_matches(cache, identity):
+        raise SmokeFailure("run-owned scene cache identity changed; refusing cleanup")
     shutil.rmtree(cache)
-    if cache.exists():
+    if os.path.lexists(cache):
         raise SmokeFailure("run-owned scene cache cleanup did not complete")
 
 
@@ -693,11 +761,12 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(output_dir, 0o700)
     cache = output_dir.parent / f".{output_dir.name}-scene-cache"
+    cache_identity = _claim_runtime_cache(cache)
     try:
         source = _source_provenance()
         image, digest = _immutable_image()
         gpu = query_gpu()
-        scene, navmesh, archive, records = fetch_scene_assets(cache)
+        scene, navmesh, archive, records = fetch_scene_assets(cache, create_root=False)
         if scene.with_suffix(".navmesh") != navmesh:
             raise SmokeFailure(
                 "scene and navmesh names do not satisfy auto-load contract"
@@ -716,7 +785,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     finally:
-        _remove_runtime_cache(cache)
+        _remove_runtime_cache(cache, cache_identity)
 
 
 if __name__ == "__main__":
