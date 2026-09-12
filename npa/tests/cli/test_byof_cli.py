@@ -11,6 +11,7 @@ import stat
 from types import SimpleNamespace
 
 import pytest
+import typer
 import yaml
 from typer.testing import CliRunner
 
@@ -26,6 +27,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     encode_transport,
     load_runtime_authorization,
 )
+from npa.orchestration.npa_workflow import robotwin_preflight
 
 runner = CliRunner()
 
@@ -326,6 +328,78 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
                 raise failure("fixed-test-failure")
 
     assert all(not path.exists() for path in materialized_paths)
+    assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
+    assert PUBLIC_CONTEXT_ENV not in os.environ
+
+
+@pytest.mark.parametrize(
+    "failure_boundary", ["materialize_transport", "load_runtime_authorization"]
+)
+def test_robotwin_worker_transport_failure_detaches_private_exception_graph(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_boundary: str,
+) -> None:
+    runner_module = byof_cli._load_runner()
+    argv, transport = _robotwin_transport_fixture(tmp_path)
+    private_canary = "owner-only-worker-context-canary"
+    private_digest = "b" * 64
+
+    def fail_privately(*_args: object, **_kwargs: object) -> None:
+        try:
+            raise RuntimeError(private_canary)
+        except RuntimeError as cause:
+            raise robotwin_preflight.RobotwinPreflightError(
+                "worker-context-invalid", private_digest
+            ) from cause
+
+    monkeypatch.delenv(PUBLIC_CONTEXT_ENV, raising=False)
+    monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
+    monkeypatch.setattr(robotwin_preflight, failure_boundary, fail_privately)
+
+    with pytest.raises(typer.BadParameter) as failure:
+        with byof_cli._robotwin_runtime_materialization(runner_module, argv):
+            pytest.fail("invalid worker authorization reached the BYOF runner")
+
+    assert str(failure.value) == "RoboTwin worker authorization refused"
+    assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
+    assert private_canary not in str(failure.value)
+    assert private_digest not in str(failure.value)
+    assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
+    assert PUBLIC_CONTEXT_ENV not in os.environ
+
+
+@pytest.mark.parametrize(
+    "failure_boundary", ["materialize_transport", "load_runtime_authorization"]
+)
+def test_robotwin_worker_transport_failure_keeps_private_details_out_of_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_boundary: str,
+) -> None:
+    argv, transport = _robotwin_transport_fixture(tmp_path)
+    private_canary = "owner-only-worker-cli-canary"
+    private_digest = "c" * 64
+
+    def fail_privately(*_args: object, **_kwargs: object) -> None:
+        try:
+            raise RuntimeError(private_canary)
+        except RuntimeError as cause:
+            raise robotwin_preflight.RobotwinPreflightError(
+                "worker-context-invalid", private_digest
+            ) from cause
+
+    monkeypatch.delenv(PUBLIC_CONTEXT_ENV, raising=False)
+    monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
+    monkeypatch.setattr(robotwin_preflight, failure_boundary, fail_privately)
+
+    result = runner.invoke(app, ["workbench", "byof", "run", *argv])
+
+    assert result.exit_code != 0
+    assert "RoboTwin worker authorization refused" in result.output
+    assert private_canary not in result.output
+    assert private_digest not in result.output
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
 
