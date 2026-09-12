@@ -10,6 +10,13 @@ count and GPU preset instead of naming a GPU SKU or assuming eight devices.
 
 ## Modes
 
+GPU reservations and driver selection do not supply worker boot-disk quota.
+When tenant quota preflight refuses a deployment, NPA retains the exact byte
+quantities and also reports required, available, and missing capacity in GiB.
+Increase that tenant allowance, release resources you own, or revise the
+declared requirements, then rerun with preflight enabled. Object storage and
+preemptible GPU placement do not increase network-SSD boot-disk allowance.
+
 | Mode | GPU behavior | Intended use |
 | --- | --- | --- |
 | `auto` | Select the managed-driver image whenever the active recipe/provider supports it. | Safe default. |
