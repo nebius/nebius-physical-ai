@@ -214,15 +214,24 @@ def test_explicit_opt_out_is_auditable_but_never_called_effective(
     assert state["status"] == "explicit_opt_out"
 
 
-def test_guardrail_cache_is_an_nltk_root_before_upstream_import(
+def test_guardrail_tokenizer_is_materialized_before_upstream_import(
     monkeypatch, tmp_path
 ) -> None:
+    from npa.workbench.cosmos import transfer
+
     cache = tmp_path / "hf-cache"
     previous = tmp_path / "existing-nltk-data"
     observed = {}
+    prepared = []
     _reset(monkeypatch, tmp_path)
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     monkeypatch.setenv("HF_HOME", str(cache))
     monkeypatch.setenv("NLTK_DATA", str(previous))
+
+    def prepare(*, hf_home):
+        prepared.append(hf_home)
+
+    monkeypatch.setattr(transfer, "prepare_guardrail_nltk_data", prepare)
 
     class NativeModule:
         @staticmethod
@@ -240,5 +249,22 @@ def test_guardrail_cache_is_an_nltk_root_before_upstream_import(
     guarded.main()
 
     roots = observed["nltk_data"].split(os.pathsep)
+    assert prepared == [str(cache)]
     assert observed["module"] == guarded.DEFAULT_INFERENCE_MODULE
-    assert roots == [str(cache.resolve()), str(previous)]
+    assert roots == [
+        str(transfer._guardrail_nltk_data_path(str(cache))),
+        str(previous),
+    ]
+
+
+def test_missing_token_refuses_before_upstream_import(monkeypatch, tmp_path) -> None:
+    _reset(monkeypatch, tmp_path)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(
+        guarded.importlib,
+        "import_module",
+        lambda _name: pytest.fail("upstream must not import without model access"),
+    )
+
+    with pytest.raises(RuntimeError, match="HF_TOKEN is required"):
+        guarded.main()

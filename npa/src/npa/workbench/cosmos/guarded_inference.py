@@ -52,24 +52,32 @@ def _new_state(requested: bool | None = None) -> dict[str, Any]:
 _STATE = _new_state()
 
 
-def _authorize_guardrail_cache_root() -> None:
-    """Let NLTK read Blocklist data from the configured model cache.
+def _prepare_guardrail_tokenizer() -> None:
+    """Materialize pinned Blocklist data before the upstream NLTK import.
 
-    NLTK 3.10's path traversal hardening only permits data below roots that
-    were present in ``NLTK_DATA`` when NLTK was imported. Cosmos-Guardrail1
-    stores its Blocklist corpus below ``HF_HOME``, so register that exact
-    operator-configured cache root before importing the upstream framework.
+    Hugging Face snapshots expose files as links into their blob store. NLTK
+    3.10's path hardening deliberately refuses those links at open time, even
+    below an allowed root. Reuse the shared Cosmos materializer, which pins the
+    Guardrail1 revision, copies only the tokenizer subtree to regular files,
+    and verifies every byte before cache reuse.
     """
 
-    hf_home = os.environ.get("HF_HOME", "").strip()
-    if not hf_home:
-        return
-    cache_root = str(Path(hf_home).resolve())
-    existing = [
-        value for value in os.environ.get("NLTK_DATA", "").split(os.pathsep) if value
-    ]
-    if cache_root not in existing:
-        os.environ["NLTK_DATA"] = os.pathsep.join([cache_root, *existing])
+    if not os.environ.get("HF_TOKEN", "").strip():
+        raise RuntimeError(
+            "HF_TOKEN is required when Cosmos 3 guardrails are enabled; "
+            "no tokenizer download was attempted"
+        )
+    from npa.workbench.cosmos.transfer import (
+        _guardrail_nltk_data_path,
+        prepare_guardrail_nltk_data,
+    )
+
+    hf_home = os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+    prepare_guardrail_nltk_data(hf_home=hf_home)
+    safe_data = str(_guardrail_nltk_data_path(hf_home))
+    os.environ["NLTK_DATA"] = os.pathsep.join(
+        part for part in (safe_data, os.environ.get("NLTK_DATA", "")) if part
+    )
 
 
 def _append_unique(target: list[str], values: list[str]) -> None:
@@ -297,11 +305,11 @@ def main() -> None:
     module_name = os.environ.get(INFERENCE_MODULE_ENV, DEFAULT_INFERENCE_MODULE)
     if module_name not in ALLOWED_INFERENCE_MODULES:
         raise RuntimeError(f"unsupported Cosmos 3 inference module: {module_name}")
-    if _STATE["requested"]:
-        _authorize_guardrail_cache_root()
-    # Importing the native script performs its required process initialization.
-    module = importlib.import_module(module_name)
     try:
+        if _STATE["requested"]:
+            _prepare_guardrail_tokenizer()
+        # Importing the native script performs its required process initialization.
+        module = importlib.import_module(module_name)
         if _STATE["requested"]:
             _install_fail_closed_guardrails()
         module.main()
