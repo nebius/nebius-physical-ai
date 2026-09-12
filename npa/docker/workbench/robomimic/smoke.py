@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from robomimic.config import config_factory
 from robomimic.utils.file_utils import policy_from_checkpoint
+from verify_image import verified_source_identity
 
 
 SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
@@ -313,13 +314,10 @@ def main() -> None:
 
     source_root = Path("/opt/robomimic")
     component_root = Path("/opt/npa/robomimic")
-    source_metadata = json.loads(
-        Path("/opt/byof/npa_source_metadata.json").read_text(encoding="utf-8")
+    source_identity = verified_source_identity(
+        Path("/opt/byof/npa_source_metadata.json")
     )
-    if (
-        source_metadata.get("ref") != SOURCE_REVISION
-        or source_metadata.get("observed_head") != SOURCE_REVISION
-    ):
+    if source_identity["revision"] != SOURCE_REVISION:
         raise RuntimeError("unexpected immutable robomimic source identity")
     baked_lock = component_root / "baked-requirements.lock"
     baked_lock_bytes = baked_lock.read_bytes()
@@ -516,10 +514,11 @@ def main() -> None:
         "capability": "lift_ph_lowdim_checkpoint_reload_action",
         "capabilities_exercised": CAPABILITIES,
         "source": {
-            "repository": "ARISE-Initiative/robomimic",
+            "repository": source_identity["repository"],
             "revision": SOURCE_REVISION,
-            "observed_head": source_metadata["observed_head"],
-            "tree_archive_sha256": source_metadata["tree_archive_sha256"],
+            "observed_head": source_identity["observed_head"],
+            "git_tree_sha1": source_identity["git_tree_sha1"],
+            "tree_archive_sha256": source_identity["tree_archive_sha256"],
             "version": "0.5.0",
         },
         "boundaries": {

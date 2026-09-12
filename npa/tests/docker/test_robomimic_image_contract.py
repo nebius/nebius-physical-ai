@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
 import tarfile
 
 import pytest
@@ -186,6 +187,66 @@ def test_immutable_build_locks_bind_exact_source_and_debian_bytes() -> None:
         "member_count": 226,
         "regular_file_count": 201,
     }
+    assert VERIFIER.verified_source_identity(IMAGE_ROOT / "source-manifest.json") == {
+        "repository": "ARISE-Initiative/robomimic",
+        "revision": "d309eaecc18acf4152a830a895a6984b8ac71b05",
+        "observed_head": "d309eaecc18acf4152a830a895a6984b8ac71b05",
+        "git_tree_sha1": "4c8ebe35dbef16126dadf59cf8b771b9203753ab",
+        "tree_archive_sha256": (
+            "8dd695200bba3ca6043693a7db4b15713a740d5d6a91787984d4c0053f77fd8b"
+        ),
+    }
+
+
+def test_debian_install_verifier_accepts_exact_status_and_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = {
+        "name": "example-package",
+        "version": "1:2.3-4",
+        "notice_path": "/usr/share/doc/example-package/copyright",
+    }
+    notice = tmp_path / package["notice_path"].removeprefix("/")
+    notice.parent.mkdir(parents=True)
+    notice.write_text("reviewed notice\n", encoding="utf-8")
+    monkeypatch.setattr(VERIFIER, "_debian_lock", lambda _: {"packages": [package]})
+    monkeypatch.setattr(
+        VERIFIER.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, f"ii |{package['version']}", ""
+        ),
+    )
+
+    proof = VERIFIER.verify_debian_install(
+        debian_lock_path=tmp_path / "lock", notice_root=tmp_path
+    )
+
+    assert proof["package_count"] == 1
+    assert proof["notices_present"] == 1
+
+
+def test_debian_install_verifier_rejects_old_literal_tab_shape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = {
+        "name": "example-package",
+        "version": "1:2.3-4",
+        "notice_path": "/usr/share/doc/example-package/copyright",
+    }
+    monkeypatch.setattr(VERIFIER, "_debian_lock", lambda _: {"packages": [package]})
+    monkeypatch.setattr(
+        VERIFIER.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, f"ii \\t{package['version']}", ""
+        ),
+    )
+
+    with pytest.raises(VERIFIER.VerificationError, match="package mismatch"):
+        VERIFIER.verify_debian_install(
+            debian_lock_path=tmp_path / "lock", notice_root=tmp_path
+        )
 
 
 @pytest.mark.parametrize(

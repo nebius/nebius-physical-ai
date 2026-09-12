@@ -139,6 +139,26 @@ def _source_manifest(path: Path) -> dict[str, Any]:
     return _checked_source_manifest(_json_object(path))
 
 
+def verified_source_identity(path: Path) -> dict[str, str]:
+    """Return the public proof fields from the exact reviewed source manifest.
+
+    Args:
+        path: Installed copy of the committed source manifest.
+    Returns:
+        Stable source identity fields for the smoke artifact.
+    Raises:
+        VerificationError: The manifest bytes or contents do not match the lock.
+    """
+    manifest = _source_manifest(path)
+    return {
+        "repository": "ARISE-Initiative/robomimic",
+        "revision": manifest["revision"],
+        "observed_head": manifest["revision"],
+        "git_tree_sha1": manifest["git_tree_sha1"],
+        "tree_archive_sha256": manifest["archive"]["sha256"],
+    }
+
+
 def _checked_debian_source(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "id",
@@ -533,7 +553,9 @@ def prepare_build_inputs(
     return proof
 
 
-def verify_debian_install(*, debian_lock_path: Path) -> dict[str, Any]:
+def verify_debian_install(
+    *, debian_lock_path: Path, notice_root: Path = Path("/")
+) -> dict[str, Any]:
     lock = _debian_lock(debian_lock_path)
     for package in lock["packages"]:
         try:
@@ -541,7 +563,7 @@ def verify_debian_install(*, debian_lock_path: Path) -> dict[str, Any]:
                 [
                     "dpkg-query",
                     "--show",
-                    "--showformat=${db:Status-Abbrev}\\t${Version}",
+                    "--showformat=${db:Status-Abbrev}|${Version}",
                     package["name"],
                 ],
                 check=True,
@@ -552,11 +574,11 @@ def verify_debian_install(*, debian_lock_path: Path) -> dict[str, Any]:
             raise VerificationError(
                 f"locked Debian package is not installed: {package['name']}"
             ) from exc
-        if observed != f"ii \\t{package['version']}":
+        if observed != f"ii |{package['version']}":
             raise VerificationError(
                 f"installed Debian package mismatch: {package['name']}"
             )
-        notice = Path(package["notice_path"])
+        notice = notice_root / Path(package["notice_path"]).relative_to("/")
         if not notice.is_file() or notice.stat().st_size == 0:
             raise VerificationError(f"Debian package notice is absent: {package['name']}")
     return {
