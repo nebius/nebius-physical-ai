@@ -98,18 +98,16 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"(?:^(?!usr/local/lib/python[0-9.]+/(?:site-packages/|"
             r"ensurepip/_bundled/setuptools-[^/]+\.whl!/)"
-            r"distutils-precedence\.pth$).*\.(?:safetensors|ckpt|pth|hdf5|h5|onnx)$|"
-            r"(?:^|/)(?:pytorch_model|model|weights?|checkpoint)[^/]*"
-            r"\.(?:bin|pth|pt)$)",
-            re.I,
+            r"distutils-precedence\.pth$)(?i:.*\.(?:safetensors|ckpt|pth|hdf5|h5|onnx))$|"
+            r"(?i:(?:^|/)(?:pytorch_model|model|weights?|checkpoint)[^/]*"
+            r"\.(?:bin|pth|pt)$))"
         ),
     ),
     (
         "libero_task_or_render_asset",
         re.compile(
-            r"(?:libero/libero/(?:assets|bddl_files|init_files)(?:/|$)|"
-            r"^(?!etc/security/namespace\.init$).*\.(?:bddl|init)$)",
-            re.I,
+            r"(?i:libero/libero/(?:assets|bddl_files|init_files)(?:/|$))|"
+            r"^(?!etc/security/namespace\.init$)(?i:.*\.(?:bddl|init))$"
         ),
     ),
     (
@@ -741,7 +739,7 @@ def _layer_graph_findings(
     flattened, hardlink_findings = _resolve_hardlinks(state)
     findings.extend(hardlink_findings)
     byof = flattened.get("opt/byof")
-    if byof is not None and byof != (
+    if byof != (
         "symlink",
         "/workspace/.cache/npa/libero/current/source",
     ):
@@ -846,7 +844,17 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
     }
     allowed.update(descriptor_members)
     findings.extend(descriptor_findings)
+    seen: set[str] = set()
     for member, normalized, descriptor in records:
+        if normalized in seen:
+            findings.append(
+                walker.Finding(
+                    "duplicate_outer_archive_member",
+                    normalized,
+                    "docker-save archive contains a duplicate normalized path",
+                )
+            )
+        seen.add(normalized)
         if descriptor[0] != "directory" and normalized not in allowed:
             findings.append(
                 walker.Finding(
@@ -866,6 +874,133 @@ def _docker_save_outer_findings(path: Path) -> list[walker.Finding]:
     return findings
 
 
+OCI_INDEX_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    }
+)
+OCI_MANIFEST_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    }
+)
+OCI_CONFIG_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.config.v1+json",
+        "application/vnd.oci.empty.v1+json",
+        "application/vnd.docker.container.image.v1+json",
+    }
+)
+OCI_LAYER_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.in-toto+json",
+        "application/vnd.oci.image.layer.v1.tar",
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        "application/vnd.oci.image.layer.v1.tar+zstd",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
+        "application/vnd.docker.image.rootfs.diff.tar.gzip",
+    }
+)
+OCI_DESCRIPTOR_MEDIA_TYPES = {
+    "manifest": OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES,
+    "config": OCI_CONFIG_MEDIA_TYPES,
+    "layer": OCI_LAYER_MEDIA_TYPES,
+    "subject": OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES,
+}
+
+
+def _verified_oci_descriptor(
+    archive: tarfile.TarFile, descriptor: object, role: str
+) -> tuple[str, bytes | None, list[walker.Finding]]:
+    if not isinstance(descriptor, dict):
+        raise RuntimeError(f"OCI {role} descriptor is not an object")
+    media_type = str(descriptor.get("mediaType") or "")
+    if media_type not in OCI_DESCRIPTOR_MEDIA_TYPES[role]:
+        raise RuntimeError(f"OCI {role} descriptor has unsupported media type")
+    digest = str(descriptor.get("digest") or "")
+    size = descriptor.get("size")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+        raise RuntimeError("OCI descriptor has no immutable SHA-256")
+    if not isinstance(size, int) or size < 0:
+        raise RuntimeError("OCI descriptor has no valid byte size")
+    member_name = "blobs/sha256/" + digest.removeprefix("sha256:")
+    try:
+        member = archive.getmember(member_name)
+    except KeyError:
+        return (
+            member_name,
+            None,
+            [
+                walker.Finding(
+                    "missing_oci_descriptor_member",
+                    member_name,
+                    "OCI descriptor target is absent from docker-save archive",
+                )
+            ],
+        )
+    if not member.isfile():
+        return (
+            member_name,
+            None,
+            [
+                walker.Finding(
+                    "invalid_oci_descriptor_member",
+                    member_name,
+                    "OCI descriptor target is not a regular file",
+                )
+            ],
+        )
+    blob_stream = archive.extractfile(member)
+    if blob_stream is None:
+        raise RuntimeError("OCI descriptor target is unreadable")
+    blob = blob_stream.read()
+    if len(blob) != size or hashlib.sha256(blob).hexdigest() != digest.removeprefix(
+        "sha256:"
+    ):
+        return (
+            member_name,
+            None,
+            [
+                walker.Finding(
+                    "oci_descriptor_identity_mismatch",
+                    member_name,
+                    "OCI descriptor digest or size does not match stored bytes",
+                )
+            ],
+        )
+    return member_name, blob, []
+
+
+def _oci_descriptor_children(blob: bytes, media_type: str) -> list[tuple[str, object]]:
+    if media_type not in OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES:
+        return []
+    document = json.loads(blob)
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise RuntimeError("OCI descriptor document is malformed")
+    declared_media_type = document.get("mediaType")
+    if declared_media_type is not None and declared_media_type != media_type:
+        raise RuntimeError("OCI descriptor document media type differs from descriptor")
+    if media_type in OCI_INDEX_MEDIA_TYPES:
+        manifests = document.get("manifests")
+        if not isinstance(manifests, list):
+            raise RuntimeError("OCI manifests descriptor collection is malformed")
+        return [("manifest", item) for item in manifests]
+    config = document.get("config")
+    layers = document.get("layers")
+    if not isinstance(config, dict) or not isinstance(layers, list):
+        raise RuntimeError("OCI image manifest descriptor collection is malformed")
+    children = [("config", config)]
+    children.extend(("layer", item) for item in layers)
+    subject = document.get("subject")
+    if subject is not None:
+        children.append(("subject", subject))
+    return children
+
+
 def _oci_descriptor_members(
     archive: tarfile.TarFile,
 ) -> tuple[set[str], list[walker.Finding]]:
@@ -879,97 +1014,24 @@ def _oci_descriptor_members(
     index = json.load(io.TextIOWrapper(stream, encoding="utf-8"))
     if index.get("schemaVersion") != 2 or not isinstance(index.get("manifests"), list):
         raise RuntimeError("docker-save OCI index is malformed")
-    manifest_media_types = {
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.docker.distribution.manifest.v2+json",
-    }
-    if any(
-        not isinstance(item, dict)
-        or str(item.get("mediaType") or "") not in manifest_media_types
-        for item in index["manifests"]
-    ):
-        raise RuntimeError("OCI index contains a non-manifest root descriptor")
-    pending = list(index["manifests"])
+    pending = [("manifest", item) for item in index["manifests"]]
     allowed: set[str] = set()
     findings: list[walker.Finding] = []
     expanded: set[str] = set()
     while pending:
-        descriptor = pending.pop()
-        if not isinstance(descriptor, dict):
-            raise RuntimeError("OCI descriptor is not an object")
-        digest = str(descriptor.get("digest") or "")
-        size = descriptor.get("size")
-        media_type = str(descriptor.get("mediaType") or "")
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-            raise RuntimeError("OCI descriptor has no immutable SHA-256")
-        if not isinstance(size, int) or size < 0:
-            raise RuntimeError("OCI descriptor has no valid byte size")
-        member_name = "blobs/sha256/" + digest.removeprefix("sha256:")
-        try:
-            member = archive.getmember(member_name)
-        except KeyError:
-            findings.append(
-                walker.Finding(
-                    "missing_oci_descriptor_member",
-                    member_name,
-                    "OCI descriptor target is absent from docker-save archive",
-                )
-            )
-            continue
-        if not member.isfile():
-            findings.append(
-                walker.Finding(
-                    "invalid_oci_descriptor_member",
-                    member_name,
-                    "OCI descriptor target is not a regular file",
-                )
-            )
-            continue
-        blob_stream = archive.extractfile(member)
-        if blob_stream is None:
-            raise RuntimeError("OCI descriptor target is unreadable")
-        blob = blob_stream.read()
-        if len(blob) != size or hashlib.sha256(blob).hexdigest() != digest.removeprefix(
-            "sha256:"
-        ):
-            findings.append(
-                walker.Finding(
-                    "oci_descriptor_identity_mismatch",
-                    member_name,
-                    "OCI descriptor digest or size does not match stored bytes",
-                )
-            )
+        role, descriptor = pending.pop()
+        member_name, blob, descriptor_findings = _verified_oci_descriptor(
+            archive, descriptor, role
+        )
+        findings.extend(descriptor_findings)
+        if blob is None:
             continue
         allowed.add(member_name)
         if member_name in expanded:
             continue
         expanded.add(member_name)
-        if media_type not in manifest_media_types:
-            continue
-        document = json.loads(blob)
-        keys = (
-            ("manifests",)
-            if "index" in media_type or "manifest.list" in media_type
-            else ("config", "layers", "subject")
-        )
-        for key in keys:
-            value = document.get(key)
-            if isinstance(value, list):
-                if key == "manifests" and any(
-                    not isinstance(item, dict)
-                    or str(item.get("mediaType") or "") not in manifest_media_types
-                    for item in value
-                ):
-                    raise RuntimeError(
-                        "OCI index contains a non-manifest child descriptor"
-                    )
-                pending.extend(value)
-            elif isinstance(value, dict):
-                pending.append(value)
-            elif key in {"manifests", "config", "layers"}:
-                raise RuntimeError(f"OCI {key} descriptor collection is malformed")
+        media_type = str(descriptor.get("mediaType"))
+        pending.extend(_oci_descriptor_children(blob, media_type))
     return allowed, findings
 
 
