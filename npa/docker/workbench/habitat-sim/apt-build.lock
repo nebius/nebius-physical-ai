@@ -23,6 +23,10 @@ compatibility:
   installed_perl_base: 5.34.0-3ubuntu1.8
   candidate_perl_base: 5.34.0-3ubuntu1.8
   candidate_perl: 5.34.0-3ubuntu1.8
+  candidate_python3: 3.10.6-1~22.04.1
+  candidate_libpython3_dev: 3.10.6-1~22.04.1
+  candidate_python3_dev: 3.10.6-1~22.04.1
+  candidate_python3_venv: 3.10.6-1~22.04.1
 packages:
   - {binary: build-essential, version: 12.9ubuntu3, source: build-essential, sha256: 1e464c41488d154b9f5ca19d2e9ac8b18913ae16e3dca713c3ba0223fae2cccc}
   - {binary: ca-certificates, version: 20260601~22.04.1, source: ca-certificates, sha256: 6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245}
@@ -33,9 +37,11 @@ packages:
   - {binary: libglm-dev, version: 0.9.9.8+ds-2, source: glm, sha256: e01d71215c18bde79da26c9b37ded4a6bb346bcfea7ff459bf39a6b53f7bb88e}
   - {binary: libglvnd-dev, version: 1.4.0-1, source: libglvnd, sha256: af38c9f0f7f65735d89094cb5bc32afa58012e4bd48bae995653c465dc110165}
   - {binary: libjpeg-dev, version: 8c-2ubuntu10, source: libjpeg8-empty, sha256: dbd821a31a4c5a7231962f24dfe4d30a6455663cb03ba43c7f1e4338cb7fd0a3}
+  - {binary: libpython3-dev, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: 7692175a21453d3cf15b66ed5a9a661b160113a99cb24eeb6a3b9acd43afa642}
   - {binary: libomp-dev, version: "1:14.0-55~exp2", source: llvm-defaults, sha256: 445f75e6fd75fe5606e7a2855b8bf13ddb4301ae4ed6d364d30b5e403f86e634}
   - {binary: pkg-config, version: 0.29.2-1ubuntu3, source: pkg-config, sha256: 69da4190d948d0bf7444ead040791b7924bd1a08a10ec13cd7f0bb9baab09c53}
-  - {binary: python3-dev, version: 3.10.6-1~22.04, source: python3-defaults, sha256: ea5153fe147e966f78210ecda65bd0f90cf0906e32fc1c28c0277b272d36dc7d}
+  - {binary: python3, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: 43dbcc12d790ed9360be4a1dc690ac0a7464a5e7c3170785886df84811a3f5a5}
+  - {binary: python3-dev, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: f7d6f5a0eb31d36f7fcba156b16da91035128c0edd1e643f07e7bbbecf5c6c7f}
   - {binary: python3-venv, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: ee8d678c61b0721aff196ab1320e41cf4f5ebe3fcd22363b82e22c733b105866}
 transitive_contract: >-
   The signed immutable snapshot resolves the complete dependency graph. The build
