@@ -572,6 +572,13 @@ def test_robomimic_signed_snapshot_and_source_mismatch_fail_closed(
         robomimic_attribution._verify_snapshot_source(
             inrelease.replace(proof.sha256.encode(), b"0" * 64), source_index
         )
+    with pytest.raises(ValueError, match="signed source-index pin mismatch"):
+        robomimic_attribution._verify_snapshot_source(
+            inrelease.replace(
+                b" main/source/Sources.xz", b" other-main/source/Sources.xz"
+            ),
+            source_index,
+        )
 
     changed_release, changed_source = _synthetic_debian_source_proof(
         version="0.11.7-3"

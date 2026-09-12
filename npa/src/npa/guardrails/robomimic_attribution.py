@@ -221,11 +221,10 @@ def _signed_source_pin(inrelease: bytes) -> tuple[str, int, str]:
             continue
         if in_sha256 and raw_line and not raw_line.startswith(" "):
             in_sha256 = False
-        if in_sha256 and raw_line.strip().endswith(target):
+        if in_sha256:
             fields = raw_line.split()
-            if len(fields) != 3:
-                raise ValueError("signed source-index record is malformed")
-            rows.append((fields[0], int(fields[1]), fields[2]))
+            if len(fields) == 3 and fields[2] == target:
+                rows.append((fields[0], int(fields[1]), fields[2]))
     expected = (_SOURCES.sha256, _SOURCES.size, target)
     if rows != [expected]:
         raise ValueError("signed source-index pin mismatch")
