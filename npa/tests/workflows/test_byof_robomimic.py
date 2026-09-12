@@ -1499,6 +1499,52 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     ast.parse(_smoke_python())
 
 
+def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
+    tmp_path: Path,
+) -> None:
+    class OversizedResponse:
+        def __init__(self) -> None:
+            self.chunks = iter((b"abc", b"d"))
+
+        def __enter__(self) -> OversizedResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            return next(self.chunks)
+
+    source_tree = ast.parse(_smoke_python())
+    download_function = next(
+        node
+        for node in source_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_download_dataset"
+    )
+    response = OversizedResponse()
+    connection_closed: list[bool] = []
+    connection = SimpleNamespace(close=lambda: connection_closed.append(True))
+    namespace = {
+        "Path": Path,
+        "hashlib": hashlib,
+        "DATASET_REVISION": "immutable-revision",
+        "DATASET_PATH": "immutable/path.hdf5",
+        "DATASET_SHA256": "0" * 64,
+        "DATASET_BYTES": 3,
+        "_open_allowed_https": lambda *_args, **_kwargs: (connection, response),
+    }
+    exec(
+        compile(ast.Module(body=[download_function], type_ignores=[]), SMOKE, "exec"),
+        namespace,
+    )
+
+    with pytest.raises(RuntimeError, match="exceeds its locked byte count"):
+        namespace["_download_dataset"](tmp_path / "inputs")
+
+    assert connection_closed == [True]
+    assert list((tmp_path / "inputs").iterdir()) == []
+
+
 def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
     task = documents[1]
