@@ -84,7 +84,7 @@ def _profile_receipt_validator() -> str:
         if document is not None
     ]
     run = str(documents[1]["run"])
-    marker = 'export NPA_BYOF_POD_IMAGE_ID="$("${RUNTIME_PYTHON}" -I - <<\'PY\'\n'
+    marker = 'export NPA_BYOF_POD_IMAGE_ID="$(/usr/bin/python3 -I -B - <<\'PY\'\n'
     return run.split(marker, 1)[1].split('\nPY\n)"', 1)[0]
 
 
@@ -168,6 +168,37 @@ def test_owner_receipt_refuses_a_different_runtime_digest(
 
     monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
     with pytest.raises(AssertionError, match="imageID differs"):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=env,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+    assert not list(evidence.iterdir())
+
+
+def test_owner_receipt_refuses_a_pod_from_a_different_namespace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    env = _receipt_env(evidence)
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["metadata"]["namespace"] = "wrong-namespace"
+
+    def fake_kubectl(
+        _env: dict[str, str],
+        _namespace: str,
+        *args: str,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        assert args[:2] == ("get", "pods")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", fake_kubectl)
+    with pytest.raises(AssertionError, match="manager-authorized namespace"):
         live._gymnasium_pod_image_receipt(
             _RunningProcess(),
             env=env,

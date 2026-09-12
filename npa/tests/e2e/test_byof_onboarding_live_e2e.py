@@ -973,6 +973,9 @@ def _gymnasium_pod_image_receipt(
             continue
         pod = pods[0]
         metadata = pod.get("metadata", {})
+        assert str(metadata.get("namespace", "")) == namespace, (
+            "the exact run Pod must belong to the manager-authorized namespace"
+        )
         phase = pod.get("status", {}).get("phase")
         assert phase in {"Pending", "Running"}
         spec = pod.get("spec", {})

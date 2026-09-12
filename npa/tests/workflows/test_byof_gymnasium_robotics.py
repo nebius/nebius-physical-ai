@@ -136,7 +136,13 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "/opt/npa/gymnasium-robotics/verify_image.py" in profile
     assert "/opt/npa/gymnasium-robotics/runtime-bootstrap.py" in profile
     assert "NPA_GYMNASIUM_RUNTIME_CACHE" in profile
-    assert "current/runtime/bin/python" in profile
+    assert "current/runtime/bin/python" not in profile
+    assert "${NPA_GYMNASIUM_RUNTIME_CACHE}/current" not in profile
+    assert "RUNTIME_PYTHON" not in profile
+    assert "/usr/bin/python3 -I -B" in profile
+    assert "/usr/local/bin/npa-gymnasium-entrypoint prepare-runtime" in profile
+    assert "/bin/bash -lc \"${BYOF_SMOKE_COMMAND}\"" in profile
+    assert "-u AWS_SECRET_ACCESS_KEY" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
 
