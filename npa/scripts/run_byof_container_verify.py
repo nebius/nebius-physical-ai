@@ -2738,7 +2738,6 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 return cleanup_result
 
             if libero_binding is not None:
-                active_signal_cleanup = cleanup_after_signal
                 previous_handlers = None
             else:
                 previous_handlers = install_teardown_signal_handlers(
@@ -2755,6 +2754,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     )
                     _verify_libero_controller_unchanged(libero_binding)
                 submission_started = True
+                active_signal_cleanup = cleanup_after_signal
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,

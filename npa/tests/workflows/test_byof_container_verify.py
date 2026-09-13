@@ -1750,7 +1750,7 @@ def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> Non
     pre_submit = submit_function[:submit_call]
     last_nonblank_lines = [
         line.strip() for line in pre_submit.splitlines() if line.strip()
-    ][-6:]
+    ][-7:]
 
     assert last_nonblank_lines == [
         "if libero_binding is not None:",
@@ -1759,6 +1759,7 @@ def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> Non
         ")",
         "_verify_libero_controller_unchanged(libero_binding)",
         "submission_started = True",
+        "active_signal_cleanup = cleanup_after_signal",
     ]
 
     job_id = submit_function.index("scheduler_job_id = _exact_scheduler_job_id(")
@@ -1783,10 +1784,28 @@ def test_libero_cleanup_transaction_is_installed_before_every_preflight() -> Non
 
 
 @pytest.mark.parametrize(
-    "failure_stage", ["write", "storage", "provider", "payload", "controller"]
+    ("failure_stage", "failure_recheck"),
+    [
+        ("write", None),
+        ("storage", None),
+        ("provider", None),
+        ("payload", 1),
+        ("payload", 2),
+        ("controller", 1),
+        ("controller", 2),
+    ],
+    ids=[
+        "write",
+        "storage",
+        "provider",
+        "payload-first",
+        "payload-second",
+        "controller-first",
+        "controller-second",
+    ],
 )
 def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
-    monkeypatch, tmp_path, failure_stage
+    monkeypatch, tmp_path, failure_stage, failure_recheck
 ) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
@@ -1802,6 +1821,23 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     )
     events: list[str] = []
     installed: list[object] = []
+    submission_calls: list[str] = []
+    scheduler_cleanup_ids: list[str] = []
+    bound_objects = {
+        "namespace",
+        "payload-service-account",
+        "payload-role",
+        "payload-role-binding",
+        "controller-service-account",
+        "controller-role",
+        "controller-role-binding",
+    }
+    guard = SimpleNamespace(
+        run_id=args.run_id,
+        timeout=max(int(args.submit_timeout), 1),
+        isolated_config_dir=isolated,
+        mark_launched=lambda **_k: None,
+    )
 
     monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
     monkeypatch.setattr(
@@ -1816,18 +1852,47 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
         lambda callback: installed.append(callback) or None,
     )
     monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
+    monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
 
-    def complete(cleanup, **_kwargs):
-        events.append("cleanup")
-        cleanup.resources_removed.append("all-bound-access")
-        cleanup.verified = True
-        cleanup.remote_absence_verified = True
-        return cleanup, True, True
+    def cleanup_access(*_args, **_kwargs):
+        events.append("access")
+        bound_objects.clear()
+        return _verified_cleanup(module, "all-bound-access")
 
-    monkeypatch.setattr(module, "_complete_libero_cleanup", complete)
+    monkeypatch.setattr(module, "_cleanup_libero_access_objects", cleanup_access)
+    monkeypatch.setattr(
+        module, "_stop_sky_api", lambda **_k: events.append("api")
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_local_state",
+        lambda **_k: events.append("local")
+        or _verified_cleanup(module, "libero-local"),
+    )
+
+    def cleanup_scheduler(job_id, **_kwargs):
+        scheduler_cleanup_ids.append(job_id)
+        return module.CleanupResult()
+
+    monkeypatch.setattr(
+        module, "_cancel_then_teardown_managed_job", cleanup_scheduler
+    )
+
+    def submit(*_args, **_kwargs):
+        submission_calls.append("submit")
+        pytest.fail("submission must not start after a failed integrity recheck")
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
 
     def fail() -> None:
         raise RuntimeError(f"fixture {failure_stage} failure")
+
+    recheck_calls = {"payload": 0, "controller": 0}
+
+    def recheck(stage: str) -> None:
+        recheck_calls[stage] += 1
+        if failure_stage == stage and recheck_calls[stage] == failure_recheck:
+            fail()
 
     if failure_stage == "write":
         monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a: fail())
@@ -1835,26 +1900,29 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
         monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: fail())
     elif failure_stage == "provider":
         monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: fail())
-    elif failure_stage == "payload":
-        monkeypatch.setattr(
-            module, "_verify_libero_payload_unchanged", lambda *_a, **_k: fail()
-        )
-        monkeypatch.setattr(
-            module, "_verify_libero_controller_unchanged", lambda *_a, **_k: None
-        )
     else:
         monkeypatch.setattr(
-            module, "_verify_libero_payload_unchanged", lambda *_a, **_k: None
+            module,
+            "_verify_libero_payload_unchanged",
+            lambda *_a, **_k: recheck("payload"),
         )
         monkeypatch.setattr(
-            module, "_verify_libero_controller_unchanged", lambda *_a, **_k: fail()
+            module,
+            "_verify_libero_controller_unchanged",
+            lambda *_a, **_k: recheck("controller"),
         )
 
-    with pytest.raises(RuntimeError, match=f"fixture {failure_stage} failure"):
-        module._submit_and_wait(args)
+    if failure_recheck == 2:
+        assert module._submit_and_wait(args) == 1
+    else:
+        with pytest.raises(RuntimeError, match=f"fixture {failure_stage} failure"):
+            module._submit_and_wait(args)
 
     assert len(installed) == 1
-    assert events == ["cleanup"]
+    assert submission_calls == []
+    assert events == ["access", "api", "local"]
+    assert not bound_objects
+    assert all(job_id == "" for job_id in scheduler_cleanup_ids)
 
 
 def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
