@@ -82,6 +82,25 @@ def _replace_descriptor(content: bytes, descriptor: bytes) -> bytes:
     return bytes(raw)
 
 
+def _replace_local_header_field(
+    content: bytes, *, offset: int, replacement: bytes
+) -> bytes:
+    """Replace bytes in the first local header without changing central metadata."""
+
+    raw = bytearray(content)
+    raw[offset : offset + len(replacement)] = replacement
+    return bytes(raw)
+
+
+def _zip_with_member(name: str, *, extra: bytes = b"") -> bytes:
+    stream = io.BytesIO()
+    info = zipfile.ZipInfo(name)
+    info.extra = extra
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(info, b"" if name.endswith("/") else b"neutral")
+    return stream.getvalue()
+
+
 def _tar_bytes(
     files: dict[str, bytes],
     *,
@@ -563,6 +582,55 @@ def test_zip_data_descriptor_field_mismatch_refuses(
         SCAN._validated_zip_infos(
             "nested.zip", _replace_descriptor(content, bytes(descriptor))
         )
+
+
+@pytest.mark.parametrize(
+    "field_offset", [14, 18, 22], ids=["crc", "compressed-size", "file-size"]
+)
+def test_zip_descriptor_local_size_or_crc_mismatch_refuses(field_offset: int) -> None:
+    content = _descriptor_zip(signed=True)
+    mutated = _replace_local_header_field(
+        content,
+        offset=field_offset,
+        replacement=struct.pack("<L", 1),
+    )
+
+    with pytest.raises(ValueError, match="zip local descriptor metadata"):
+        SCAN._validated_zip_infos("nested.zip", mutated)
+
+
+@pytest.mark.parametrize("name", ["neutral.txt", "directory/"])
+def test_zip_local_filename_mismatch_refuses(name: str) -> None:
+    content = (
+        _descriptor_zip(signed=True)
+        if name == "neutral.txt"
+        else _zip_with_member(name)
+    )
+    replacement = b"x" if name[0] != "x" else b"y"
+    mutated = _replace_local_header_field(content, offset=30, replacement=replacement)
+
+    with pytest.raises(ValueError, match="zip local filename does not match"):
+        SCAN._validated_zip_infos("nested.zip", mutated)
+
+
+def test_zip_local_filename_encoding_disagreement_refuses() -> None:
+    content = _descriptor_zip(signed=True)
+    flags = struct.unpack_from("<H", content, 6)[0]
+    mutated = _replace_local_header_field(
+        content,
+        offset=6,
+        replacement=struct.pack("<H", flags ^ 0x800),
+    )
+
+    with pytest.raises(ValueError, match="unsupported zip local header"):
+        SCAN._validated_zip_infos("nested.zip", mutated)
+
+
+def test_zip_local_extra_field_ambiguity_refuses() -> None:
+    content = _zip_with_member("neutral.txt", extra=struct.pack("<HH", 0xCAFE, 0))
+
+    with pytest.raises(ValueError, match="unsupported zip extra field"):
+        SCAN._validated_zip_infos("nested.zip", content)
 
 
 @pytest.mark.parametrize(

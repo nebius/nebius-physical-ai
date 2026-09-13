@@ -327,6 +327,16 @@ def _validate_zip_data_descriptor(
         raise ValueError(f"zip data descriptor does not match central directory: {path}")
 
 
+def _zip_central_filename_bytes(path: str, info: zipfile.ZipInfo) -> bytes:
+    """Recover the exact supported central-directory filename encoding."""
+
+    encoding = "utf-8" if info.flag_bits & 0x800 else "cp437"
+    try:
+        return info.orig_filename.encode(encoding)
+    except UnicodeEncodeError as error:
+        raise ValueError(f"unsupported zip filename encoding: {path}") from error
+
+
 def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
     """Parse one prefix/suffix-free non-ZIP64 stream with no local-data gaps."""
 
@@ -388,7 +398,22 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
             or local_flags & 1
         ):
             raise ValueError(f"unsupported zip local header: {path}")
-        data_start = cursor + 30 + filename_size + extra_size
+        filename_start = cursor + 30
+        filename_end = filename_start + filename_size
+        data_start = filename_end + extra_size
+        if data_start > central_offset:
+            raise ValueError(f"unaccounted zip bytes: {path}")
+        if content[filename_start:filename_end] != _zip_central_filename_bytes(
+            path, info
+        ):
+            raise ValueError(
+                f"zip local filename does not match central directory: {path}"
+            )
+        # This scanner supports classic non-ZIP64 archives without extra-field
+        # semantics. Exact equality would still leave an unparsed field able to
+        # carry contradictory metadata, so reject unparsed fields entirely.
+        if extra_size or info.extra:
+            raise ValueError(f"unsupported zip extra field: {path}")
         data_end = data_start + info.compress_size
         next_offset = (
             ordered[index + 1].header_offset
@@ -397,6 +422,10 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
         )
         descriptor = content[data_end:next_offset]
         if local_flags & 0x08:
+            if (local_crc, local_compressed_size, local_size) != (0, 0, 0):
+                raise ValueError(
+                    f"zip local descriptor metadata is not zero: {path}"
+                )
             _validate_zip_data_descriptor(path, descriptor, info)
         elif descriptor or (
             local_crc != info.CRC
