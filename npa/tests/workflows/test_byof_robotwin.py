@@ -132,7 +132,13 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert config["task"] == "beat_block_hammer"
     assert config["wait_timeout"] == -1
 
-    assert lock["status"] == "incomplete"
+    assert lock["status"] == "bootstrap-complete-runtime-disabled"
+    assert lock["bootstrap"]["status"] == "complete"
+    assert lock["bootstrap"]["payload_class"] == "zero-vendor-payload"
+    assert lock["bootstrap"]["apt"]["binary_package_count"] == 75
+    assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
+    assert lock["runtime_delivery"]["status"].startswith("disabled-")
+    assert lock["runtime_delivery"]["network_side_effects_permitted"] is False
     assert lock["weights"] == []
     assert lock["runtime_artifacts"] == []
     assert {item.get("version") for item in lock["sources"]} == {
@@ -293,7 +299,7 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c",
+                "runtime_lock_sha256": "d67c861a2b24f5df1a2069d86f6db2a6d384f011fffd65acb4b5d261ef66a358",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",

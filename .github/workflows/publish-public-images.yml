@@ -132,7 +132,7 @@ jobs:
           for tool in build_tools:
               if tool == "robotwin":
                   raise SystemExit(
-                      "robotwin: Phase A immutable base/apt/runtime locks are incomplete; "
+                      "robotwin: native-content policy and built-byte evidence are incomplete; "
                       "public development build is quarantined"
                   )
               key = tool if tool in entries else f"sim2real-{tool}"

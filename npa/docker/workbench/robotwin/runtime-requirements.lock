@@ -1,5 +1,10 @@
-# INCOMPLETE — PUBLICATION AND RUNTIME FETCH REFUSED
-#
-# A later manager-approved transaction must replace this file with direct,
-# hash-locked official artifact URLs for the complete CPython 3.10/Linux amd64
-# CUDA 12.8/SM120 closure. Mutable index resolution is forbidden.
+# npa.robotwin.public-bootstrap-runtime-lock.v1
+status=complete-empty
+artifact-count=0
+
+# The public bootstrap intentionally installs no Python distribution, CUDA,
+# cuDNN, CuRobo, RoboTwin, simulator, model, asset, cache, or output payload.
+# Ubuntu's snapshot-locked python3-minimal package is part of apt-packages.lock
+# and exists only to run NPA's standard-library refusal bootstrap. The future
+# workload runtime remains disabled and requires a separate complete artifact
+# lock plus the four independent human/runtime-use decisions.

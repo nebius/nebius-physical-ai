@@ -149,9 +149,9 @@ def test_mutated_authorization_refuses_before_lock_access(
         runtime.run(lock_path=LOCK, environ=environment)
 
 
-def test_valid_context_reaches_only_the_incomplete_lock_refusal(tmp_path: Path) -> None:
+def test_valid_context_reaches_only_the_disabled_delivery_refusal(tmp_path: Path) -> None:
     watched = [tmp_path / name for name in ("source", "assets", "cache", "output")]
-    with pytest.raises(runtime.Refusal, match="runtime-lock-incomplete"):
+    with pytest.raises(runtime.Refusal, match="runtime-delivery-disabled"):
         runtime.run(lock_path=LOCK, environ=_environment())
     assert not any(path.exists() for path in watched)
 

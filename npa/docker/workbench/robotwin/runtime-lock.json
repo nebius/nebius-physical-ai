@@ -1,7 +1,7 @@
 {
   "schema_version": "npa.robotwin.runtime-lock.v1",
-  "status": "incomplete",
-  "reason": "CUDA/cuDNN delivery and use, the CuRobo service/output boundary beyond the recorded noncommercial evaluation scope, the simulator/Python closure, and aggregate RoboTwin asset/output treatment remain incomplete.",
+  "status": "bootstrap-complete-runtime-disabled",
+  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Runtime delivery remains disabled: CUDA/cuDNN delivery and use, CuRobo service/derivative/output boundaries beyond the recorded noncommercial evaluation scope, a complete runtime artifact lock, genuine manager authorization/access evidence, and aggregate RoboTwin asset/output treatment remain unresolved.",
   "packaging_shape": "whole-source-sdk-runtime-fetch",
   "operator_scope": {
     "statement": "noncommercial",
@@ -84,7 +84,7 @@
     "token_is_terms_acceptance": false
   },
   "cache": {
-    "status": "disabled-until-lock-complete",
+    "status": "disabled-until-runtime-delivery-approved",
     "tier": "node-local-ephemeral",
     "owner_access": "single-customer-single-workload",
     "identity_key": [
@@ -101,5 +101,87 @@
   "outputs": {
     "inside_runtime_cache": false,
     "authorized_destination_only": true
+  },
+  "bootstrap": {
+    "status": "complete",
+    "payload_class": "zero-vendor-payload",
+    "base": {
+      "reference": "docker.io/library/ubuntu:22.04",
+      "tag_index_digest": "sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7",
+      "platform": "linux/amd64",
+      "manifest_digest": "sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986",
+      "manifest_size_bytes": 424,
+      "config_digest": "sha256:bf7f4568d95723d2148bb19c688526d1404ef3302ef024bc1513ad8f533d46c8",
+      "config_size_bytes": 2052,
+      "layers": [
+        {
+          "digest": "sha256:20c3783cc497b5b0df1fc5f92bd64c3d2fbb24057c88692c8fda205b6ea8a2f2",
+          "size_bytes": 29750251,
+          "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+        }
+      ],
+      "official_image": "https://hub.docker.com/_/ubuntu",
+      "official_metadata": "https://github.com/docker-library/repo-info/blob/c435ffb46ce70e116a1608c5f4f61336670ffdd5/repos/ubuntu/remote/22.04.md",
+      "upstream_source": "https://git.launchpad.net/cloud-images/+oci/ubuntu-base",
+      "intellectual_property_policy": "https://ubuntu.com/legal/intellectual-property-policy",
+      "classification": "public-unmodified-official-base-layer",
+      "trademark_treatment": "reference-only-no-canonical-endorsement",
+      "upstream_source_revision": "a83417371289ef90e16cdacabc2a27d52ea58fe8"
+    },
+    "apt": {
+      "distribution": "Ubuntu 22.04 (jammy)",
+      "snapshot": "20260912T000000Z",
+      "snapshot_base_url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "components": [
+        "main"
+      ],
+      "suites": [
+        "jammy",
+        "jammy-updates",
+        "jammy-security"
+      ],
+      "architecture": "amd64",
+      "archive_keyring_sha256": "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0",
+      "apt_lock_sha256": "0d7bb81b52d86d541a0487f4cbb2b84fcc773fce5fe58f48d90e370098b2763d",
+      "binary_package_count": 75,
+      "binary_archive_bytes": 24248018,
+      "source_package_count": 57,
+      "source_artifact_count": 177,
+      "source_artifact_bytes": 267801902,
+      "license_audit": "75/75 package copyright files hash-bound; 0 missing; all packages are from Ubuntu main",
+      "component_policy": "https://documentation.ubuntu.com/project/how-ubuntu-is-made/concepts/package-archive/",
+      "license_review_policy": "https://documentation.ubuntu.com/project/maintainers/AA/aa-new-review/"
+    },
+    "python_runtime": {
+      "purpose": "NPA standard-library refusal bootstrap only",
+      "requirements_lock_sha256": "cce5aad788880905cc7b6755c66d294577a68b3b8ea8eeb5b1eb96a997b041f2",
+      "application_artifact_count": 0
+    },
+    "forbidden_payloads": [
+      "RoboTwin",
+      "CuRobo",
+      "CUDA",
+      "cuDNN",
+      "PyTorch CUDA",
+      "SAPIEN",
+      "MPLib",
+      "Warp",
+      "weights",
+      "models",
+      "datasets",
+      "RoboTwin assets",
+      "runtime caches",
+      "credentials",
+      "manager context",
+      "outputs"
+    ]
+  },
+  "runtime_delivery": {
+    "status": "disabled-pending-human-decisions-and-complete-artifact-lock",
+    "artifact_lock_status": "not-resolved",
+    "authorization_receipt_status": "not-implemented",
+    "source_access_status": "not-probed",
+    "asset_access_status": "not-probed",
+    "network_side_effects_permitted": false
   }
 }
