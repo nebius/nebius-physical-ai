@@ -474,7 +474,7 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
         {
             "file_format_version": "1.0.1",
             "ICD": {
-                "library_path": "/tmp/untrusted.so",
+                "library_path": "/opt/untrusted.so",
                 "api_version": "1.4.312",
             },
         },
