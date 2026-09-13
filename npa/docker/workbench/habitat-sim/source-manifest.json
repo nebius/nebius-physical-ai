@@ -1,8 +1,8 @@
 {
   "schema_version": "npa.habitat-sim.source-manifest.v1",
   "expected_projection": {
-    "file_count": 8135,
-    "inventory_sha256": "ea722cdf72a64b0d4cc0b329007dd5a17daabb7565605c07d9550b715ebd0501"
+    "file_count": 8147,
+    "inventory_sha256": "7c623dbc40bb00a000d756df0c931f948e0bc77d46f233deb3a5358bb836fdd0"
   },
   "source": {
     "repository": "https://github.com/facebookresearch/habitat-sim",
@@ -19,6 +19,66 @@
         "path": "data/pbr/PbrImages.conf",
         "bytes": 327,
         "sha256": "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
+      },
+      {
+        "path": "data/pbr/anniversary_lounge.pbr_config.json",
+        "bytes": 716,
+        "sha256": "8dda877423f42922fb279d30e5143df41bdb22e836df88326773d444b03d0c06"
+      },
+      {
+        "path": "data/pbr/autoshop_01.pbr_config.json",
+        "bytes": 709,
+        "sha256": "7f0f1b94d23ac6c7b6938993d0f7cc4c045a104171e46937c8b0dfecb2e97e5c"
+      },
+      {
+        "path": "data/pbr/blue_photo_studio.pbr_config.json",
+        "bytes": 715,
+        "sha256": "e85b29608a1d610e95969f3b7266fe46a85419f0d04a57ff899a55044480c074"
+      },
+      {
+        "path": "data/pbr/bluts/brdflut_ldr_512x512.png",
+        "bytes": 92377,
+        "sha256": "a67189439f81536426e6bdccf1819852ccf76dbec6a0a8309d8f3f986861de94"
+      },
+      {
+        "path": "data/pbr/brown_photostudio.pbr_config.json",
+        "bytes": 718,
+        "sha256": "d3fdf77171b51707f08bada04c9d03fbaaef9aa132137ca0c359ea1766cc5ae3"
+      },
+      {
+        "path": "data/pbr/env_maps/anniversary_lounge_1k.hdr",
+        "bytes": 1612616,
+        "sha256": "7ca7917180c19864e7c4dba97a2c4660eb91c22307e4afed6f044759bc285721"
+      },
+      {
+        "path": "data/pbr/env_maps/autoshop_01_1k.hdr",
+        "bytes": 1581959,
+        "sha256": "8bdadcf34de814dee528c4b5010a74769a9ec1cc5ad5652a97d7fc8c703ede01"
+      },
+      {
+        "path": "data/pbr/env_maps/blue_photo_studio_1k.hdr",
+        "bytes": 1657733,
+        "sha256": "65f086b4e9b64f4e2d01e3268a30fd982572be81d88c0477349e3a704032294f"
+      },
+      {
+        "path": "data/pbr/env_maps/brown_photostudio_02_1k.hdr",
+        "bytes": 1648273,
+        "sha256": "77a64d58dd57475d2f0def31b1d4a8749dd7f223b5cb8875d67bb03972c61a04"
+      },
+      {
+        "path": "data/pbr/env_maps/lythwood_room_1k.hdr",
+        "bytes": 1399983,
+        "sha256": "e60da9023ebeb6f933b8e2611803113032bd848038f7a92b747875f243865361"
+      },
+      {
+        "path": "data/pbr/license.txt",
+        "bytes": 1416,
+        "sha256": "63c9792282c792c05c4b39704b52329b59cace1957b06db4c731b5bd58428238"
+      },
+      {
+        "path": "data/pbr/lythwood_room.pbr_config.json",
+        "bytes": 711,
+        "sha256": "e3285233b9b185d4c1e05011602132720779532d8acd3023b0818a623c2f2f36"
       }
     ],
     "final_projection": [
@@ -35,7 +95,19 @@
       "src/utils",
       "src_python",
       "data/default.physics_config.json",
-      "data/pbr/PbrImages.conf"
+      "data/pbr/PbrImages.conf",
+      "data/pbr/anniversary_lounge.pbr_config.json",
+      "data/pbr/autoshop_01.pbr_config.json",
+      "data/pbr/blue_photo_studio.pbr_config.json",
+      "data/pbr/bluts/brdflut_ldr_512x512.png",
+      "data/pbr/brown_photostudio.pbr_config.json",
+      "data/pbr/env_maps/anniversary_lounge_1k.hdr",
+      "data/pbr/env_maps/autoshop_01_1k.hdr",
+      "data/pbr/env_maps/blue_photo_studio_1k.hdr",
+      "data/pbr/env_maps/brown_photostudio_02_1k.hdr",
+      "data/pbr/env_maps/lythwood_room_1k.hdr",
+      "data/pbr/license.txt",
+      "data/pbr/lythwood_room.pbr_config.json"
     ]
   },
   "dependencies": [

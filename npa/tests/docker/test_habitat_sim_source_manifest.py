@@ -41,6 +41,60 @@ filename = env_maps/lythwood_room_1k.hdr
 [file]
 filename = env_maps/blue_photo_studio_1k.hdr
 """
+PBR_PROJECTION = {
+    "data/pbr/PbrImages.conf": (
+        327,
+        "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce",
+    ),
+    "data/pbr/anniversary_lounge.pbr_config.json": (
+        716,
+        "8dda877423f42922fb279d30e5143df41bdb22e836df88326773d444b03d0c06",
+    ),
+    "data/pbr/autoshop_01.pbr_config.json": (
+        709,
+        "7f0f1b94d23ac6c7b6938993d0f7cc4c045a104171e46937c8b0dfecb2e97e5c",
+    ),
+    "data/pbr/blue_photo_studio.pbr_config.json": (
+        715,
+        "e85b29608a1d610e95969f3b7266fe46a85419f0d04a57ff899a55044480c074",
+    ),
+    "data/pbr/bluts/brdflut_ldr_512x512.png": (
+        92377,
+        "a67189439f81536426e6bdccf1819852ccf76dbec6a0a8309d8f3f986861de94",
+    ),
+    "data/pbr/brown_photostudio.pbr_config.json": (
+        718,
+        "d3fdf77171b51707f08bada04c9d03fbaaef9aa132137ca0c359ea1766cc5ae3",
+    ),
+    "data/pbr/env_maps/anniversary_lounge_1k.hdr": (
+        1612616,
+        "7ca7917180c19864e7c4dba97a2c4660eb91c22307e4afed6f044759bc285721",
+    ),
+    "data/pbr/env_maps/autoshop_01_1k.hdr": (
+        1581959,
+        "8bdadcf34de814dee528c4b5010a74769a9ec1cc5ad5652a97d7fc8c703ede01",
+    ),
+    "data/pbr/env_maps/blue_photo_studio_1k.hdr": (
+        1657733,
+        "65f086b4e9b64f4e2d01e3268a30fd982572be81d88c0477349e3a704032294f",
+    ),
+    "data/pbr/env_maps/brown_photostudio_02_1k.hdr": (
+        1648273,
+        "77a64d58dd57475d2f0def31b1d4a8749dd7f223b5cb8875d67bb03972c61a04",
+    ),
+    "data/pbr/env_maps/lythwood_room_1k.hdr": (
+        1399983,
+        "e60da9023ebeb6f933b8e2611803113032bd848038f7a92b747875f243865361",
+    ),
+    "data/pbr/license.txt": (
+        1416,
+        "63c9792282c792c05c4b39704b52329b59cace1957b06db4c731b5bd58428238",
+    ),
+    "data/pbr/lythwood_room.pbr_config.json": (
+        711,
+        "e3285233b9b185d4c1e05011602132720779532d8acd3023b0818a623c2f2f36",
+    ),
+}
 
 
 def _archive(path: Path, entries: list[tuple[str, bytes, bytes, str]]) -> None:
@@ -65,9 +119,9 @@ def test_source_manifest_pins_every_official_archive_and_projection() -> None:
         assert len(row["archive_sha256"]) == 64
         assert row["license"] and len(row["license_sha256"]) == 64
     assert MANIFEST["expected_projection"] == {
-        "file_count": 8135,
+        "file_count": 8147,
         "inventory_sha256": (
-            "ea722cdf72a64b0d4cc0b329007dd5a17daabb7565605c07d9550b715ebd0501"
+            "7c623dbc40bb00a000d756df0c931f948e0bc77d46f233deb3a5358bb836fdd0"
         ),
     }
 
@@ -77,21 +131,29 @@ def test_required_pbr_configuration_is_bound_to_the_official_source() -> None:
     assert hashlib.sha256(PBR_CONFIG).hexdigest() == (
         "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
     )
-    assert MANIFEST["source"]["required_projection_files"] == [
-        {
-            "path": "data/pbr/PbrImages.conf",
-            "bytes": 327,
-            "sha256": (
-                "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
-            ),
-        }
-    ]
+    observed = {
+        row["path"]: (row["bytes"], row["sha256"])
+        for row in MANIFEST["source"]["required_projection_files"]
+    }
+    assert observed == PBR_PROJECTION
+
+
+def test_pbr_configuration_references_the_complete_render_resource_set() -> None:
+    referenced = {
+        "data/pbr/" + line.split("=", 1)[1].strip()
+        for line in PBR_CONFIG.decode().splitlines()
+        if line.startswith("filename = ")
+    }
+    render_resources = {
+        path for path in PBR_PROJECTION if path.endswith((".png", ".hdr"))
+    }
+    assert referenced == render_resources
 
 
 def test_required_pbr_configuration_refuses_omission_or_wrong_content(
     tmp_path: Path,
 ) -> None:
-    required = MANIFEST["source"]["required_projection_files"]
+    required = [MANIFEST["source"]["required_projection_files"][0]]
     root = tmp_path / "source"
     root.mkdir()
     with pytest.raises(PREPARER.SourceError, match="PbrImages.conf"):
@@ -107,7 +169,46 @@ def test_required_pbr_configuration_refuses_omission_or_wrong_content(
     PREPARER._verify_required_source_files(root, required)
 
 
-def test_parent_projection_keeps_only_required_pbr_configuration(tmp_path: Path) -> None:
+def test_required_pbr_projection_refuses_each_omission_or_wrong_content(
+    tmp_path: Path,
+) -> None:
+    payloads = {path: f"fixture:{path}".encode() for path in PBR_PROJECTION}
+    required = [
+        {
+            "path": path,
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        for path, payload in payloads.items()
+    ]
+    root = tmp_path / "source"
+    for path, payload in payloads.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    PREPARER._verify_required_source_files(root, required)
+    for row in required:
+        target = root / row["path"]
+        expected = target.read_bytes()
+        target.unlink()
+        with pytest.raises(PREPARER.SourceError, match="required source projection"):
+            PREPARER._verify_required_source_files(root, required)
+        target.write_bytes(b"x" * len(expected))
+        with pytest.raises(PREPARER.SourceError, match="required source projection"):
+            PREPARER._verify_required_source_files(root, required)
+        target.write_bytes(expected)
+
+
+@pytest.mark.parametrize("path", ["../escape", "data/pbr/../escape", "/data/pbr/file"])
+def test_pbr_projection_refuses_traversal(path: str, tmp_path: Path) -> None:
+    row = {"path": path, "bytes": 1, "sha256": hashlib.sha256(b"x").hexdigest()}
+    with pytest.raises(PREPARER.SourceError):
+        PREPARER._required_pbr_paths([row])
+
+
+def test_parent_projection_keeps_complete_required_pbr_projection(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "source"
     for name in ("LICENSE", "MANIFEST.in", "README.md", "pyproject.toml", "setup.py"):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
@@ -115,16 +216,24 @@ def test_parent_projection_keeps_only_required_pbr_configuration(tmp_path: Path)
     for name in ("src/deps/basis-universal/transcoder", "src_python"):
         (root / name).mkdir(parents=True)
     data = root / "data"
-    (data / "pbr/env_maps").mkdir(parents=True)
+    data.mkdir()
     (data / "default.physics_config.json").write_bytes(b"{}")
-    (data / "pbr/PbrImages.conf").write_bytes(PBR_CONFIG)
+    for row in MANIFEST["source"]["required_projection_files"]:
+        target = root / row["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"projected fixture")
     (data / "pbr/env_maps/forbidden.hdr").write_bytes(b"not projected")
     (data / "scene_datasets").mkdir()
 
-    PREPARER._prune_parent(root)
+    PREPARER._prune_parent(root, MANIFEST["source"]["required_projection_files"])
 
-    assert (data / "pbr/PbrImages.conf").read_bytes() == PBR_CONFIG
-    assert not (data / "pbr/env_maps").exists()
+    observed = {
+        path.relative_to(root).as_posix()
+        for path in (data / "pbr").rglob("*")
+        if path.is_file()
+    }
+    assert observed == set(PBR_PROJECTION)
+    assert not (data / "pbr/env_maps/forbidden.hdr").exists()
     assert not (data / "scene_datasets").exists()
 
 
@@ -265,7 +374,7 @@ def test_final_source_projection_preserves_the_manifest_directory_layout() -> No
         "pyproject.toml",
         "setup.py",
         "data/default.physics_config.json",
-        "data/pbr/PbrImages.conf",
+        *PBR_PROJECTION,
         "src/CMakeLists.txt",
         "src/cmake",
         "src/deps",
@@ -276,6 +385,6 @@ def test_final_source_projection_preserves_the_manifest_directory_layout() -> No
     }
     assert "mkdir -p /opt/source-projection/data/pbr" in dockerfile
     assert (
-        "cp /opt/habitat-sim/data/pbr/PbrImages.conf "
-        "/opt/source-projection/data/pbr/"
-    ) in dockerfile
+        "cp -a /opt/habitat-sim/data/pbr/. /opt/source-projection/data/pbr/"
+        in dockerfile
+    )

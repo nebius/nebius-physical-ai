@@ -71,6 +71,32 @@ def test_runtime_asset_is_not_misclassified_as_baked() -> None:
     assert "credentials" in text and "generated outputs" in text
 
 
+def test_pbr_projection_keeps_mit_and_cc0_dispositions_separate() -> None:
+    licenses = json.loads((PACKAGE / "licenses.json").read_text())
+    source = json.loads((PACKAGE / "source-manifest.json").read_text())
+    pbr = licenses["pbr_source_projection"]
+    configuration = set(pbr["habitat_configuration"]["files"])
+    lut = set(pbr["brdf_lut"]["files"])
+    environment_maps = set(pbr["environment_maps"]["files"])
+    required = {row["path"] for row in source["source"]["required_projection_files"]}
+    assert pbr["habitat_configuration"]["license"] == "MIT"
+    assert pbr["brdf_lut"]["license"] == "MIT"
+    assert pbr["environment_maps"]["license"] == "CC0-1.0"
+    assert configuration | lut | environment_maps | {"data/pbr/license.txt"} == required
+    assert not configuration & lut
+    assert not configuration & environment_maps
+    assert not lut & environment_maps
+    assert pbr["upstream_notice"] == {
+        "path": "data/pbr/license.txt",
+        "bytes": 1416,
+        "sha256": "63c9792282c792c05c4b39704b52329b59cace1957b06db4c731b5bd58428238",
+    }
+    notices = (PACKAGE / "THIRD_PARTY_NOTICES.md").read_text()
+    assert "BRDF lookup texture — MIT" in notices
+    assert "Poly Haven environment maps — CC0 1.0" in notices
+    assert "/usr/src/habitat-sim/data/pbr/license.txt" in notices
+
+
 def test_rsync_reciprocal_source_is_accompanied_not_merely_offered() -> None:
     licenses = json.loads((PACKAGE / "licenses.json").read_text())
     rsync = next(row for row in licenses["ubuntu_sources"] if row["name"] == "rsync")

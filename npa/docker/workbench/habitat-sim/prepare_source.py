@@ -153,7 +153,53 @@ def _verify_required_source_files(
             raise SourceError(f"required source projection file changed: {relative}")
 
 
-def _prune_parent(root: Path) -> None:
+def _required_pbr_paths(required: list[dict[str, object]]) -> set[PurePosixPath]:
+    selected: set[PurePosixPath] = set()
+    for item in required:
+        relative = PurePosixPath(str(item["path"]))
+        try:
+            pbr_relative = relative.relative_to("data/pbr")
+        except ValueError as error:
+            raise SourceError(
+                "required PBR projection path is outside data/pbr"
+            ) from error
+        if (
+            not pbr_relative.parts
+            or ".." in pbr_relative.parts
+            or pbr_relative in selected
+        ):
+            raise SourceError("required PBR projection path is empty or duplicated")
+        selected.add(pbr_relative)
+    if not selected:
+        raise SourceError("required PBR projection must not be empty")
+    return selected
+
+
+def _prune_pbr(root: Path, required: list[dict[str, object]]) -> None:
+    pbr = root / "data/pbr"
+    selected = _required_pbr_paths(required)
+    for path in pbr.rglob("*"):
+        relative = PurePosixPath(path.relative_to(pbr).as_posix())
+        if path.is_file() and relative not in selected:
+            path.unlink()
+    directories = sorted(
+        (path for path in pbr.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for path in directories:
+        if not any(path.iterdir()):
+            path.rmdir()
+    observed = {
+        PurePosixPath(path.relative_to(pbr).as_posix())
+        for path in pbr.rglob("*")
+        if path.is_file()
+    }
+    if observed != selected:
+        raise SourceError("required PBR projection changed during pruning")
+
+
+def _prune_parent(root: Path, required: list[dict[str, object]]) -> None:
     allowed_top = {
         "LICENSE",
         "MANIFEST.in",
@@ -171,10 +217,7 @@ def _prune_parent(root: Path) -> None:
     for path in list(data.iterdir()):
         if path.name not in {"default.physics_config.json", "pbr"}:
             shutil.rmtree(path) if path.is_dir() else path.unlink()
-    pbr = data / "pbr"
-    for path in list(pbr.iterdir()):
-        if path.name != "PbrImages.conf":
-            shutil.rmtree(path) if path.is_dir() else path.unlink()
+    _prune_pbr(root, required)
     for relative in ("src/deps/rlr-audio-propagation", "src/deps/glfw"):
         shutil.rmtree(root / relative, ignore_errors=True)
     basis = root / "src/deps/basis-universal"
@@ -257,7 +300,8 @@ def stage(
         _extract(parent_archive, output, source.get("excluded_archive_links", []))
         _verify_license(output, source)
         _verify_required_source_files(output, source["required_projection_files"])
-        _prune_parent(output)
+        _prune_parent(output, source["required_projection_files"])
+        _verify_required_source_files(output, source["required_projection_files"])
         _verify_internal_vendored(output, manifest["internal_vendored"])
         for dependency in manifest["dependencies"]:
             archive = _download(dependency, temp)

@@ -6,6 +6,7 @@ import base64
 import copy
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,12 @@ LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
 INTOTO = "application/vnd.in-toto+json"
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 CONTRACT = json.loads((PACKAGE / "runtime-payload.json").read_text())
+VERIFIER_SPEC = importlib.util.spec_from_file_location(
+    "habitat_image_verifier", PACKAGE / "verify_image.py"
+)
+assert VERIFIER_SPEC is not None and VERIFIER_SPEC.loader is not None
+VERIFIER = importlib.util.module_from_spec(VERIFIER_SPEC)
+VERIFIER_SPEC.loader.exec_module(VERIFIER)
 SOURCE_REVISION = "a" * 40
 
 
@@ -220,10 +227,16 @@ def _elf64(
 def _fixture() -> tuple[dict[str, object], list[tuple]]:
     contract = copy.deepcopy(CONTRACT)
     contract["expected_missing_python_record_count"] = 0
+    projected_pbr = {
+        row["path"]: f"pbr fixture:{row['path']}\n".encode()
+        for row in json.loads((PACKAGE / "source-manifest.json").read_text())["source"][
+            "required_projection_files"
+        ]
+    }
     source_files = {
         "LICENSE": b"source-license",
         "data/default.physics_config.json": b"{}\n",
-        "data/pbr/PbrImages.conf": b"pbr fixture\n",
+        **projected_pbr,
     }
     projection = {
         "schema_version": "npa.habitat-sim.source-projection.v1",
@@ -256,15 +269,17 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         "usr/share/doc/npa-habitat-sim/apt-runtime.lock": apt_lock,
         "usr/share/doc/npa-habitat-sim/requirements-runtime.lock": python_lock,
         "usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": b"redistribution\n",
+        "usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md": b"notices\n",
     }
     contract["required_final_file_sha256"] = {
         "/" + path: _digest(payload)
         for path, payload in controls.items()
         if not path.endswith("source-projection.json")
     }
-    contract["required_final_file_sha256"][
-        "/usr/src/habitat-sim/data/pbr/PbrImages.conf"
-    ] = _digest(source_files["data/pbr/PbrImages.conf"])
+    for path, payload in projected_pbr.items():
+        contract["required_final_file_sha256"][f"/usr/src/habitat-sim/{path}"] = (
+            _digest(payload)
+        )
     entries = [file(path, payload) for path, payload in controls.items()]
     entries.extend(
         file("usr/src/habitat-sim/" + path, payload)
@@ -361,7 +376,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 23
+    assert report["regular_files_read"] == 36
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
@@ -377,7 +392,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
         "copyright_path": "usr/share/doc/python3/copyright",
         "copyright_sha256": _digest(b"python license\n"),
     }
-    assert report["projected_source_file_count"] == 3
+    assert report["projected_source_file_count"] == 15
     assert report["python_distribution_count"] == 4
     assert report["python_record_files_verified"] == 1
     assert len(report["python_venv_inventory"]) == 9
@@ -459,9 +474,7 @@ def test_python_venv_inventory_rejects_record_rewrite_and_unrecorded_bytes(
     original = b"VALUE = 'reviewed'\n"
     changed = b"VALUE = 'changed'\n"
     path = "opt/venv/lib/python3.10/site-packages/fixture/runtime.py"
-    record_path = (
-        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
-    )
+    record_path = "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
     native = _elf64(soname="native.so")
     entries = _required_entries()
     record_index = next(
@@ -492,9 +505,7 @@ def test_python_venv_inventory_rejects_record_rewrite_and_unrecorded_bytes(
     rewritten_report = _verify(
         tmp_path,
         [rewritten],
-        expected_python_venv_inventory_sha256=baseline[
-            "python_venv_inventory_sha256"
-        ],
+        expected_python_venv_inventory_sha256=baseline["python_venv_inventory_sha256"],
     )
     assert "python_venv_inventory_lock_mismatch" in _codes(rewritten_report)
 
@@ -523,9 +534,7 @@ def test_python_distribution_record_population_and_unhashed_entries_are_closed(
         _verify(tmp_path, [missing_record])
     )
 
-    record_path = (
-        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
-    )
+    record_path = "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
     native = _elf64(soname="native.so")
     unhashed = _required_entries()
     record_index = next(
@@ -551,9 +560,7 @@ def test_hashless_generated_bytecode_is_bound_by_the_exact_venv_inventory(
         "opt/venv/lib/python3.10/site-packages/fixture/__pycache__/"
         "runtime.cpython-310.pyc"
     )
-    record_path = (
-        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
-    )
+    record_path = "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD"
     native = _elf64(soname="native.so")
     entries = _required_entries()
     record_index = next(
@@ -575,9 +582,7 @@ def test_hashless_generated_bytecode_is_bound_by_the_exact_venv_inventory(
     report = _verify(
         tmp_path,
         [entries],
-        expected_python_venv_inventory_sha256=baseline[
-            "python_venv_inventory_sha256"
-        ],
+        expected_python_venv_inventory_sha256=baseline["python_venv_inventory_sha256"],
     )
     assert "python_venv_inventory_lock_mismatch" in _codes(report)
 
@@ -787,10 +792,19 @@ def test_source_projection_rejects_undeclared_links(tmp_path) -> None:
     )
 
 
-def test_source_projection_refuses_missing_or_changed_pbr_configuration(
+@pytest.mark.parametrize(
+    "target",
+    [
+        "usr/src/habitat-sim/data/pbr/PbrImages.conf",
+        "usr/src/habitat-sim/data/pbr/bluts/brdflut_ldr_512x512.png",
+        "usr/src/habitat-sim/data/pbr/env_maps/anniversary_lounge_1k.hdr",
+        "usr/src/habitat-sim/data/pbr/license.txt",
+    ],
+)
+def test_source_projection_refuses_missing_or_changed_required_pbr_file(
     tmp_path,
+    target: str,
 ) -> None:
-    target = "usr/src/habitat-sim/data/pbr/PbrImages.conf"
     omitted = tmp_path / "omitted"
     omitted.mkdir()
     without_pbr = [row for row in _required_entries() if row[0] != target]
@@ -927,13 +941,14 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         "/usr/share/doc/npa-habitat-sim/source-manifest.json": PACKAGE
         / "source-manifest.json",
         "/usr/share/doc/npa-habitat-sim/licenses.json": PACKAGE / "licenses.json",
-        "/usr/share/doc/npa-habitat-sim/apt-build.lock": PACKAGE
-        / "apt-build.lock",
+        "/usr/share/doc/npa-habitat-sim/apt-build.lock": PACKAGE / "apt-build.lock",
         "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": PACKAGE / "apt-runtime.lock",
         "/usr/share/doc/npa-habitat-sim/requirements-runtime.lock": PACKAGE
         / "requirements-runtime.lock",
         "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": PACKAGE
         / "REDISTRIBUTION.md",
+        "/usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md": PACKAGE
+        / "THIRD_PARTY_NOTICES.md",
     }
     projected_source = {
         f"/usr/src/habitat-sim/{row['path']}": row["sha256"]
@@ -958,6 +973,37 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         assert expected[image_path] == digest
     for image_path, digest in projected_source.items():
         assert expected[image_path] == digest
+
+
+def test_host_verifier_refuses_incomplete_or_wrong_pbr_byte_contract() -> None:
+    manifest = json.loads((PACKAGE / "source-manifest.json").read_text())
+    VERIFIER._validate_source_contract(copy.deepcopy(CONTRACT), manifest)
+    for row in manifest["source"]["required_projection_files"]:
+        path = f"/usr/src/habitat-sim/{row['path']}"
+        omitted = copy.deepcopy(CONTRACT)
+        omitted["required_final_file_sha256"].pop(path)
+        with pytest.raises(ValueError, match="PBR byte contract"):
+            VERIFIER._validate_source_contract(omitted, manifest)
+        changed = copy.deepcopy(CONTRACT)
+        changed["required_final_file_sha256"][path] = "0" * 64
+        with pytest.raises(ValueError, match="PBR byte contract"):
+            VERIFIER._validate_source_contract(changed, manifest)
+
+
+def test_host_verifier_refuses_unrequired_pbr_path_or_missing_notice() -> None:
+    manifest = json.loads((PACKAGE / "source-manifest.json").read_text())
+    extra = copy.deepcopy(CONTRACT)
+    extra["required_final_file_sha256"][
+        "/usr/src/habitat-sim/data/pbr/undeclared.bin"
+    ] = "0" * 64
+    with pytest.raises(ValueError, match="PBR byte contract"):
+        VERIFIER._validate_source_contract(extra, manifest)
+    missing_notice = copy.deepcopy(CONTRACT)
+    missing_notice["required_final_file_sha256"].pop(
+        "/usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md"
+    )
+    with pytest.raises(ValueError, match="PBR notice contract"):
+        VERIFIER._validate_source_contract(missing_notice, manifest)
 
 
 def test_runtime_payload_pins_the_selected_ubuntu_base_diff_id() -> None:
