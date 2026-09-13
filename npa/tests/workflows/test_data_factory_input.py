@@ -134,6 +134,29 @@ def test_default_selection_is_pinned_real_starter() -> None:
     assert result.config_overrides()["seed_fixture"] == "false"
 
 
+def test_nvidia_vda_plan_uses_its_workflow_specific_artifact_prefix() -> None:
+    result = dfi.plan_paidf_input(
+        run_id="paidf-one",
+        bucket="bucket",
+        artifact_prefix="nvidia-paidf-vda-cosmos-transfer25/paidf-one",
+    )
+
+    assert result.provenance["staged_canonical_s3_uri"] == (
+        "s3://bucket/nvidia-paidf-vda-cosmos-transfer25/paidf-one/input/"
+    )
+    assert result.provenance["provenance_uri"].endswith("/input/provenance.json")
+
+
+@pytest.mark.parametrize(
+    "prefix", ["../escape", "nested//empty", "s3://bucket/key", "nested\\escape"]
+)
+def test_custom_artifact_prefix_rejects_unsafe_object_keys(prefix: str) -> None:
+    with pytest.raises(dfi.PaidfInputError, match="safe relative"):
+        dfi.plan_paidf_input(
+            run_id="paidf-one", bucket="bucket", artifact_prefix=prefix
+        )
+
+
 @pytest.mark.parametrize(
     ("video", "uri", "fixture"),
     [
