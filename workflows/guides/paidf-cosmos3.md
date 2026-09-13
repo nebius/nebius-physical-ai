@@ -72,8 +72,24 @@ python3.12 --version
 
 Also install `kubectl` using the
 [Kubernetes Linux instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)
-and `aws` using the
+and the bundled **AWS CLI v2** using the
 [AWS CLI installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+Verify the selected executable before configuring storage or provisioning:
+
+```bash
+command -v aws
+aws --version
+```
+
+Require version output beginning with `aws-cli/2.`. If an older executable is
+selected, put the v2 installer's bin directory first on `PATH` and refresh the
+shell's command cache with `hash -r`. An alias or shell function can still shadow
+it; invoke the v2 executable directly until that customization is corrected.
+The Linux installer accepts
+`--install-dir` and `--bin-dir` for an installation in directories you own.
+Use that same executable for S7 and the artifact commands below. Python import
+errors from a host-installed CLI require correcting that installation first.
+
 For a Linux distribution without Python 3.12 packages, use
 [uv's Python installation instructions](https://docs.astral.sh/uv/guides/install-python/#installing-a-specific-version)
 to install version `3.12`, and verify that `python3.12 --version` succeeds.

@@ -152,6 +152,9 @@ Install the tools your workload uses:
   select a compatible binary outside `PATH`.
   Agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
 - **kubectl** is required for Kubernetes operations.
+- **AWS CLI v2** is used by direct S3 artifact upload/download examples. Use the
+  [bundled installer](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+  and confirm that the selected `aws --version` begins with `aws-cli/2.`.
 - **socat** is required by SkyPilot Kubernetes on Debian/Ubuntu:
   `sudo apt-get install -y socat`.
 - **Docker** is needed for local container runs and image builds. Supported NPA
