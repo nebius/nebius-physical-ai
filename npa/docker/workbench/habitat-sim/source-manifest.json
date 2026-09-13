@@ -1,8 +1,8 @@
 {
   "schema_version": "npa.habitat-sim.source-manifest.v1",
   "expected_projection": {
-    "file_count": 7909,
-    "inventory_sha256": "00b3daad92208771e8a42f520e8340483ef2928bb46dbd2a13a428905200ba8f"
+    "file_count": 8134,
+    "inventory_sha256": "67ebb18e937adae735d9fe429f5fa33760934c6602f8ba4ce560a4f55d97bc5d"
   },
   "source": {
     "repository": "https://github.com/facebookresearch/habitat-sim",
@@ -137,6 +137,20 @@
       "license_sha256": "1004bbac632fc4db96fc26ae79b6e2ceaf6f0e0910335545b0d9e9a267a8e24e"
     },
     {
+      "name": "imath",
+      "repository": "https://github.com/AcademySoftwareFoundation/Imath",
+      "revision": "d690a3fcff4e877ead5ae56c7e964595ade8a35e",
+      "upstream_tag": "v3.1.9",
+      "archive_url": "https://codeload.github.com/AcademySoftwareFoundation/Imath/tar.gz/d690a3fcff4e877ead5ae56c7e964595ade8a35e",
+      "archive_bytes": 598874,
+      "archive_sha256": "8655ebd702791fd7dec8b4e2aa829a0cbddbec48c84a970f09eef21d9ced8e18",
+      "target": "src/deps/imath",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE.md",
+      "license_bytes": 1497,
+      "license_sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601"
+    },
+    {
       "name": "pybind11",
       "repository": "https://github.com/pybind/pybind11",
       "revision": "a2e59f0e7065404b44dfe92a28aca47ba1378dc4",
@@ -210,6 +224,7 @@
     "magnum-integration": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
     "magnum-plugins": ["CMakeLists.txt", "COPYING", "modules", "src", "toolchains"],
     "openexr": ["CMakeLists.txt", "LICENSE.md", "PATENTS", "cmake", "share", "src"],
+    "imath": ["CMakeLists.txt", "LICENSE.md", "cmake", "config", "src"],
     "pybind11": ["CMakeLists.txt", "LICENSE", "include", "tools"],
     "rapidjson": ["CMakeLists.txt", "CMakeModules", "RapidJSON.pc.in", "RapidJSONConfig.cmake.in", "RapidJSONConfigVersion.cmake.in", "include", "license.txt"],
     "recastnavigation": ["CMakeLists.txt", "Detour", "DetourCrowd", "DetourTileCache", "License.txt", "Recast", "recastnavigation-config.cmake.in", "recastnavigation.pc.in", "version.h.in"],

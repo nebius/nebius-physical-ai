@@ -50,10 +50,17 @@ def test_source_license_manifest_matches_exact_selected_dependencies() -> None:
         (source["source"]["repository"], source["source"]["revision"]),
         *((item["repository"], item["revision"]) for item in source["dependencies"]),
     }
-    assert len(expected) == 14
+    assert len(expected) == 15
     license_names = {row["name"] for row in licenses["source_licenses"]}
     assert {item["name"] for item in source["dependencies"]} <= license_names
     assert "habitat-sim" in license_names
+    assert next(
+        row for row in licenses["source_licenses"] if row["name"] == "imath"
+    ) == {
+        "name": "imath",
+        "license": "BSD-3-Clause",
+        "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601",
+    }
 
 
 def test_runtime_asset_is_not_misclassified_as_baked() -> None:

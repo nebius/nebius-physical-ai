@@ -38,18 +38,50 @@ def test_source_manifest_pins_every_official_archive_and_projection() -> None:
     assert source["repository"] == "https://github.com/facebookresearch/habitat-sim"
     assert source["revision"] == "57ee4941dc4765240f0f91f70b2c97a919bf9038"
     rows = [source, *MANIFEST["dependencies"]]
-    assert len(rows) == 14
+    assert len(rows) == 15
     for row in rows:
         assert row["archive_url"].startswith("https://codeload.github.com/")
         assert row["archive_bytes"] > 0
         assert len(row["archive_sha256"]) == 64
         assert row["license"] and len(row["license_sha256"]) == 64
     assert MANIFEST["expected_projection"] == {
-        "file_count": 7909,
+        "file_count": 8134,
         "inventory_sha256": (
-            "00b3daad92208771e8a42f520e8340483ef2928bb46dbd2a13a428905200ba8f"
+            "67ebb18e937adae735d9fe429f5fa33760934c6602f8ba4ce560a4f55d97bc5d"
         ),
     }
+
+
+def test_openexr_imath_fetchcontent_source_is_exact_and_projected() -> None:
+    imath = next(row for row in MANIFEST["dependencies"] if row["name"] == "imath")
+    assert imath == {
+        "name": "imath",
+        "repository": "https://github.com/AcademySoftwareFoundation/Imath",
+        "revision": "d690a3fcff4e877ead5ae56c7e964595ade8a35e",
+        "upstream_tag": "v3.1.9",
+        "archive_url": (
+            "https://codeload.github.com/AcademySoftwareFoundation/Imath/tar.gz/"
+            "d690a3fcff4e877ead5ae56c7e964595ade8a35e"
+        ),
+        "archive_bytes": 598874,
+        "archive_sha256": (
+            "8655ebd702791fd7dec8b4e2aa829a0cbddbec48c84a970f09eef21d9ced8e18"
+        ),
+        "target": "src/deps/imath",
+        "license": "BSD-3-Clause",
+        "license_path": "LICENSE.md",
+        "license_bytes": 1497,
+        "license_sha256": (
+            "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601"
+        ),
+    }
+    assert MANIFEST["dependency_projection"]["imath"] == [
+        "CMakeLists.txt",
+        "LICENSE.md",
+        "cmake",
+        "config",
+        "src",
+    ]
 
 
 def test_source_preparer_refuses_redirect_and_removes_partial(

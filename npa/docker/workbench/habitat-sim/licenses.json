@@ -13,6 +13,7 @@
     {"name": "magnum-integration", "license": "MIT", "sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7"},
     {"name": "magnum-plugins", "license": "MIT", "sha256": "14a9f46d58ddd7cca897c758d49af76cd88f3aa9a8904383fd10ef2e4940a2b7"},
     {"name": "openexr", "license": "BSD-3-Clause", "sha256": "1004bbac632fc4db96fc26ae79b6e2ceaf6f0e0910335545b0d9e9a267a8e24e"},
+    {"name": "imath", "license": "BSD-3-Clause", "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601"},
     {"name": "pybind11", "license": "BSD-3-Clause", "sha256": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb"},
     {"name": "rapidjson", "license": "MIT", "sha256": "a140e5d46fe734a1c78f1a3c3ef207871dd75648be71fdda8e309b23ab8b1f32"},
     {"name": "recastnavigation", "license": "Zlib", "sha256": "ffad87821cce7cfd3be00b63ffadd01b04e83a4c6a0bcc68f06362ffd42d705e"},
