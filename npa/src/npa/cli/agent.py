@@ -2135,6 +2135,12 @@ def _agent_s3_client():
             "endpoint_url": settings["endpoint"],
             "aws_access_key_id": settings["access_key"],
             "region_name": settings["region"],
+            # Discovery runs on the interactive UI path. An unreachable object
+            # store must produce an API error promptly instead of pinning the
+            # single backend worker behind the SDK's long adaptive retries.
+            "connect_timeout": 3.0,
+            "read_timeout": 8.0,
+            "retries": {{"total_max_attempts": 1, "mode": "standard"}},
         }}
         secret_param = "aws" + "_secret_access_key"
         client_kwargs[secret_param] = settings["secret_key"]

@@ -198,6 +198,32 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert "POST /api/agent/gpu-allocation/consent" in body
 
 
+def test_rendered_agent_s3_client_bounds_interactive_discovery(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_s3_timeout_backend"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://storage.example.test")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    captured: dict[str, object] = {}
+
+    def build_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(module, "build_s3_client", build_client)
+
+    _client, settings = module._agent_s3_client()
+
+    assert settings["bucket"] == "test-bucket"
+    assert captured["connect_timeout"] == 3.0
+    assert captured["read_timeout"] == 8.0
+    assert captured["retries"] == {"total_max_attempts": 1, "mode": "standard"}
+
+
 def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
     monkeypatch, tmp_path
 ) -> None:

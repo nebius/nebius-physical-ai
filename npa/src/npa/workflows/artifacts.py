@@ -714,20 +714,58 @@ def authorize_artifact_inventory_key(
     return normalized_key
 
 
+def _resolve_s3_timeout(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    timeout = float(value)
+    if timeout <= 0:
+        raise ValueError(f"{name} must be positive")
+    return timeout
+
+
 def build_s3_client(
     *,
     endpoint_url: str,
     aws_access_key_id: str,
     aws_secret_access_key: str,
     region_name: str = "eu-north1",
+    connect_timeout: float | None = None,
+    read_timeout: float | None = None,
+    retries: dict[str, Any] | None = None,
 ):
+    """Build an S3 client with optional bounded transport behavior.
+
+    Args:
+        endpoint_url: S3-compatible endpoint URL.
+        aws_access_key_id: S3 access-key identifier.
+        aws_secret_access_key: S3 secret access key.
+        region_name: S3 signing region.
+        connect_timeout: Optional positive connection timeout in seconds.
+        read_timeout: Optional positive socket-read timeout in seconds.
+        retries: Optional botocore retry configuration.
+
+    Returns:
+        A configured boto3 S3 client.
+
+    Raises:
+        ValueError: If a supplied timeout is not positive.
+    """
+    resolved_connect_timeout = _resolve_s3_timeout(connect_timeout, "connect_timeout")
+    resolved_read_timeout = _resolve_s3_timeout(read_timeout, "read_timeout")
+    config_kwargs: dict[str, Any] = {"signature_version": "s3v4"}
+    if resolved_connect_timeout is not None:
+        config_kwargs["connect_timeout"] = resolved_connect_timeout
+    if resolved_read_timeout is not None:
+        config_kwargs["read_timeout"] = resolved_read_timeout
+    if retries is not None:
+        config_kwargs["retries"] = retries
     import boto3
 
     kwargs: dict[str, Any] = {
         "aws_access_key_id": aws_access_key_id or None,
         "aws_secret_access_key": aws_secret_access_key or None,
         "region_name": region_name,
-        "config": BotoConfig(signature_version="s3v4"),
+        "config": BotoConfig(**config_kwargs),
     }
     if endpoint_url.strip():
         kwargs["endpoint_url"] = endpoint_url.strip()
