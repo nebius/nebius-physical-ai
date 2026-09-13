@@ -59,7 +59,10 @@ def evaluate_cmd(
     execution_device: str = typer.Option(
         "cuda:0",
         "--execution-device",
-        help="Arena physics/policy device: cuda:0, or cpu while RTX renders the viewport.",
+        help=(
+            "Arena physics/policy device. Use cuda:0 for GPU evaluation; cpu is a "
+            "diagnostic-only upstream path and may be impractically slow for complex GR1 tasks."
+        ),
     ),
     num_episodes: int = typer.Option(1, "--num-episodes", min=1),
     num_envs: int = typer.Option(1, "--num-envs", min=1),
