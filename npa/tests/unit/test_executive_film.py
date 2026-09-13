@@ -33,6 +33,15 @@ def test_storyboard_has_exact_runtime_and_a_panel_for_every_label(film):
             assert y + height <= story["height"]
 
 
+@pytest.mark.parametrize("size", [0, 17, 1024 * 1024 + 17])
+def test_asset_hash_supports_python_310_and_chunk_boundaries(film, tmp_path, monkeypatch, size):
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    payload = (bytes(range(256)) * (size // 256 + 1))[:size]
+    source = tmp_path / "asset.bin"
+    source.write_bytes(payload)
+    assert film._hash(source) == hashlib.sha256(payload).hexdigest()
+
+
 def test_changed_asset_is_rejected_before_media_probe(film, tmp_path, monkeypatch):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"changed after approval")
