@@ -273,13 +273,17 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "Require both digest-bound attestation results",
     }
     for step in attestations.values():
-        assert step["if"] == "matrix.tool != 'ncore' && matrix.tool != 'libero'"
+        assert step["if"] == "matrix.tool != 'ncore'"
     assert attestations["Attest exact pushed digest provenance"]["with"][
         "push-to-registry"
-    ] is True
+    ] == "${{ matrix.tool != 'libero' }}"
     assert attestations["Attest exact pushed digest SBOM"]["with"][
         "push-to-registry"
-    ] is True
+    ] == "${{ matrix.tool != 'libero' }}"
+    result_gate = attestations["Require both digest-bound attestation results"]["run"]
+    assert 'test -s "$PROVENANCE_BUNDLE" && test -s "$SBOM_BUNDLE"' in result_gate
+    assert 'if [ "$TOOL" != libero ]; then' in result_gate
+    assert 'test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"' in result_gate
     verify = text[text.index("Verify pushed bytes") :]
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
