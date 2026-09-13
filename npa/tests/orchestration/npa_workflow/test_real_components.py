@@ -169,6 +169,44 @@ def test_blueprint_records_official_upstream_boundary_first() -> None:
     ]
 
 
+def test_blueprint_overlays_reviewed_source_on_baked_component_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    monkeypatch.setenv(
+        "NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/reviewed-source"
+    )
+    spec = load_spec(BLUEPRINT)
+    plan = build_plan(
+        spec, run_id="overlay-contract", assume_decision="promote_checkpoint"
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="overlay-contract",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [
+        task
+        for task in yaml.safe_load_all(rendered)
+        if task and (task.get("resources") or {}).get("image_id")
+    ]
+
+    assert tasks
+    assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)
+    assert all(
+        task["envs"]["NPA_SRC_S3_URI"]
+        == "s3://example-bucket/npa-src/npa/reviewed-source"
+        for task in tasks
+    )
+
+
 def test_augment_runs_real_cosmos_transfer() -> None:
     spec = _spec()
     states = _states()

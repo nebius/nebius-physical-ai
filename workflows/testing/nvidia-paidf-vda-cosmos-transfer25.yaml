@@ -86,6 +86,10 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "nvidia-paidf-vda-cosmos-transfer25/{{run.id}}"
+  # Reuse accepted workbench images while executing the submitted checkout's
+  # reviewed adapters. This keeps model/runtime dependencies image-pinned and
+  # prevents an older baked Token Factory client from shadowing branch fixes.
+  source_overlay: true
   # Planning preview only. The runtime orchestrator still reads the real decision
   # artifact after each gate; this default makes bare plan-spec show the happy path.
   plan_assume_decision: promote_checkpoint
