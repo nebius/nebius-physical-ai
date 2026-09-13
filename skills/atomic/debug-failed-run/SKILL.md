@@ -116,6 +116,18 @@ shortage:
   single node, so `NAME:2` can never schedule across 2 nodes × 1 GPU. `gpus`
   prints the requestable quantity per node.
 
+`requested GPU task has no compatible free placement` means the live inventory
+cannot satisfy the complete request. Check per-node GPU, CPU, memory, pod slots,
+placement rules, and active workloads.
+
+`shared GPU capacity is indeterminate because active GPU pods await placement`
+means active GPU demand has not yet been assigned to a node. The preflight stops
+before launch even when the hardware supports the requested shape. Wait for
+authoritative scheduling, or cancel only pending workloads the operator owns,
+then recheck capacity. Earlier setup success does not reserve the GPU for a
+later workflow stage. Preserve this placement category in diagnostics without
+publishing raw provider errors, node names, or workload identities.
+
 ## 6. When the run looks fine but the controller does not
 
 ```bash

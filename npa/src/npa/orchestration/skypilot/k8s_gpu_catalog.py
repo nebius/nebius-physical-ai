@@ -40,6 +40,18 @@ class KubernetesGpuCatalogError(RuntimeError):
     """Raised when the live Kubernetes GPU catalog cannot be discovered."""
 
 
+class PendingGpuPlacementError(KubernetesGpuCatalogError):
+    """Active unbound GPU demand makes shared placement indeterminate.
+
+    Args:
+        *args: Internal diagnostic details retained by RuntimeError.
+    Returns:
+        An exception identifying pending GPU placement.
+    Raises:
+        None.
+    """
+
+
 class UnsatisfiableAcceleratorError(ValueError):
     """Raised when a requested accelerator cannot be scheduled on the cluster."""
 
@@ -755,7 +767,7 @@ def preflight_kubernetes_gpu_gang(
     if inventory.error:
         raise KubernetesGpuCatalogError(inventory.error)
     if inventory.unbound_pending_gpu_pods:
-        raise KubernetesGpuCatalogError(
+        raise PendingGpuPlacementError(
             "free shared GPU capacity is indeterminate: Kubernetes has "
             f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
             f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
