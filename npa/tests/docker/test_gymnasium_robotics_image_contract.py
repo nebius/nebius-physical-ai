@@ -103,6 +103,24 @@ def test_apt_reads_only_the_ephemeral_world_readable_ca_secret() -> None:
     assert "ADD /run/npa-host-ca-bundle.crt" not in dockerfile
 
 
+def test_pre_network_locks_are_readable_independent_of_checkout_modes() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text(encoding="utf-8")
+    assert (
+        "COPY --chmod=0444 "
+        "docker/workbench/gymnasium-robotics/apt-runtime.lock.json "
+        "./apt-runtime.lock.json"
+    ) in dockerfile
+    assert (
+        "COPY --chmod=0444 "
+        "docker/workbench/gymnasium-robotics/corresponding-source.lock.json "
+        "./corresponding-source.lock.json"
+    ) in dockerfile
+    assert (
+        "COPY --chmod=0555 docker/workbench/gymnasium-robotics/build.sh ./build.sh"
+        in dockerfile
+    )
+
+
 def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()

@@ -6,9 +6,9 @@ ARG BASE_IMAGE=ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37
 FROM ${BASE_IMAGE} AS runtime
 
 WORKDIR /opt/npa/gymnasium-robotics
-COPY docker/workbench/gymnasium-robotics/apt-runtime.lock.json ./apt-runtime.lock.json
-COPY docker/workbench/gymnasium-robotics/corresponding-source.lock.json ./corresponding-source.lock.json
-COPY docker/workbench/gymnasium-robotics/build.sh ./build.sh
+COPY --chmod=0444 docker/workbench/gymnasium-robotics/apt-runtime.lock.json ./apt-runtime.lock.json
+COPY --chmod=0444 docker/workbench/gymnasium-robotics/corresponding-source.lock.json ./corresponding-source.lock.json
+COPY --chmod=0555 docker/workbench/gymnasium-robotics/build.sh ./build.sh
 RUN chmod 0755 ./build.sh && ./build.sh verify-bootstrap-locks
 RUN --mount=type=secret,id=npa_host_ca_bundle,required=true,target=/run/npa-host-ca-bundle.crt,mode=0444 \
     ./build.sh install-bootstrap
