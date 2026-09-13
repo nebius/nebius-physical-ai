@@ -3,12 +3,16 @@
 This directory defines an unbuilt, quarantined public-eligibility candidate. It
 does not record a built image, a registry publication, or functional acceptance.
 
-The image may contain only the exact MIT Habitat-Sim source projection and
+The image may contain only the exact Habitat-Sim source projection and
 redistributable source, Ubuntu, and Python closure recorded by the adjacent
-manifests. That closure includes the exact BSD-3-Clause Imath v3.1.9 source
-required by vendored OpenEXR; CMake is forced to use the local projection with
-FetchContent network access disabled. The official Meta Habitat test-scene
-archive is never an image input.
+manifests. The Habitat code and PBR configuration are MIT. The PBR resource
+projection also contains the upstream BRDF LUT under its MIT grant and five
+Poly Haven environment maps under CC0 1.0, together with the exact upstream
+`data/pbr/license.txt` notice. The image carries the corresponding notice at
+`/usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md`. That closure includes
+the exact BSD-3-Clause Imath v3.1.9 source required by vendored OpenEXR; CMake
+is forced to use the local projection with FetchContent network access
+disabled. The official Meta Habitat test-scene archive is never an image input.
 At runtime the smoke downloads that archive from its official HTTPS locator,
 checks its complete SHA-256, extracts only the pinned Skokloster Castle GLB and
 navmesh members after their metadata and SHA-256 checks, and deletes the archive.

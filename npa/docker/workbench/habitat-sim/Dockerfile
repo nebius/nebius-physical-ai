@@ -180,7 +180,7 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
        /opt/habitat-sim/README.md /opt/habitat-sim/pyproject.toml \
        /opt/habitat-sim/setup.py /opt/source-projection/ && \
     cp /opt/habitat-sim/data/default.physics_config.json /opt/source-projection/data/ && \
-    cp /opt/habitat-sim/data/pbr/PbrImages.conf /opt/source-projection/data/pbr/ && \
+    cp -a /opt/habitat-sim/data/pbr/. /opt/source-projection/data/pbr/ && \
     cp -a /opt/habitat-sim/src/CMakeLists.txt /opt/habitat-sim/src/cmake \
        /opt/habitat-sim/src/esp /opt/habitat-sim/src/shaders \
        /opt/habitat-sim/src/utils \
@@ -262,6 +262,7 @@ COPY src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py
 COPY src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py
 COPY docker/workbench/habitat-sim/entrypoint.sh /usr/local/bin/npa-habitat-entrypoint
 COPY docker/workbench/habitat-sim/REDISTRIBUTION.md /usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md
+COPY docker/workbench/habitat-sim/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md
 RUN chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
     chown -R root:root /opt/venv /opt/npa-runtime /usr/src/habitat-sim \
       /usr/share/doc/npa-habitat-sim && \

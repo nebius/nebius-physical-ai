@@ -23,6 +23,41 @@
     {"name": "tinyxml2", "license": "Zlib", "location": "source headers"},
     {"name": "basis-universal-transcoder", "license": "Apache-2.0", "location": "source headers"}
   ],
+  "pbr_source_projection": {
+    "upstream_notice": {
+      "path": "data/pbr/license.txt",
+      "bytes": 1416,
+      "sha256": "63c9792282c792c05c4b39704b52329b59cace1957b06db4c731b5bd58428238"
+    },
+    "habitat_configuration": {
+      "license": "MIT",
+      "files": [
+        "data/pbr/PbrImages.conf",
+        "data/pbr/anniversary_lounge.pbr_config.json",
+        "data/pbr/autoshop_01.pbr_config.json",
+        "data/pbr/blue_photo_studio.pbr_config.json",
+        "data/pbr/brown_photostudio.pbr_config.json",
+        "data/pbr/lythwood_room.pbr_config.json"
+      ]
+    },
+    "brdf_lut": {
+      "license": "MIT",
+      "files": ["data/pbr/bluts/brdflut_ldr_512x512.png"],
+      "license_url": "https://github.com/SaschaWillems/Vulkan-glTF-PBR/blob/master/LICENSE"
+    },
+    "environment_maps": {
+      "license": "CC0-1.0",
+      "files": [
+        "data/pbr/env_maps/anniversary_lounge_1k.hdr",
+        "data/pbr/env_maps/autoshop_01_1k.hdr",
+        "data/pbr/env_maps/blue_photo_studio_1k.hdr",
+        "data/pbr/env_maps/brown_photostudio_02_1k.hdr",
+        "data/pbr/env_maps/lythwood_room_1k.hdr"
+      ],
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_license_url": "https://polyhaven.com/license"
+    }
+  },
   "python_wheels": [
     {"name": "attrs", "version": "26.1.0", "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309", "license": "MIT", "license_sha256": ["882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f"], "role": "runtime"},
     {"name": "boto3", "version": "1.43.91", "sha256": "5ff948cfac8bff72227930e0894a8542731e1998634d1ffd8a074c20a90af919", "license": "Apache-2.0", "license_sha256": ["0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594", "04fb1e61484a7810f1ba09bb42bc01ca58c9af33927d7c5a21556e4c4d1c7fa4"], "role": "runtime"},
