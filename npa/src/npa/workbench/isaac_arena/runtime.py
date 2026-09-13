@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -67,6 +68,8 @@ _MIN_CHANGED_FRAME_PAIRS = 2
 _MIN_CHANGED_PIXEL_RATIO = 0.005
 _MIN_FRAME_MEAN_ABS_DELTA = 1.0
 _CHANGED_PIXEL_LUMA_DELTA = 8
+_NVIDIA_DRIVER_VERSION = re.compile(r"^[0-9]{3}\.[0-9]+\.[0-9]+$")
+_VULKAN_MANIFEST_VERSION = re.compile(r"^[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}$")
 
 
 _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
@@ -399,6 +402,18 @@ def capabilities() -> dict[str, Any]:
                 "access": "The operator must be authorized by the upstream service; NPA supplies no Lightwheel credential or license grant.",
                 "stability": "Selectors and service responses are external runtime state, not pinned NPA payload.",
             },
+            {
+                "name": "NVIDIA viewport graphics userspace",
+                "purpose": "Provide headless EGL/Vulkan only when a viewport run's target exposes CUDA but omits graphics userspace.",
+                "license": "NVIDIA driver package terms",
+                "baked": False,
+                "delivery": "runtime_fetch_exact_driver_match",
+                "source": "Ubuntu signed NVIDIA driver archive",
+                "installed_on_node": False,
+                "redistribution": False,
+                "scope": "viewport runs and run-private scratch only; native graphics is preferred",
+                "headless_icd": "NPA derives a canonical EGL ICD manifest from the validated package manifest; it never mutates the packaged bytes or target.",
+            },
         ],
         "embodiment_constraints": {
             "registered": [
@@ -462,6 +477,12 @@ def capabilities() -> dict[str, Any]:
             "viewport_video": {
                 "npa_status": ["implemented", "upstream_alpha"],
                 "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
+                "graphics_userspace": (
+                    "Native NVIDIA EGL/Vulkan is preferred. If CUDA is healthy but those libraries are absent, "
+                    "NPA extracts (never installs) the exact loaded-driver version from Ubuntu's signed archive "
+                    "into run-private scratch. It validates the package's ICD metadata, derives a private canonical "
+                    "headless EGL ICD, validates Vulkan, and publishes only package/manifest identity and SHA-256."
+                ),
                 "acceptance": {
                     "codec": "h264",
                     "minimum_dimensions": [320, 240],
@@ -648,6 +669,266 @@ def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
     return env
 
 
+def _graphics_probe(
+    env: dict[str, str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    """Return whether NVIDIA's headless EGL/Vulkan path is usable."""
+
+    libraries = runner(
+        [
+            sys.executable,
+            "-c",
+            "import ctypes; ctypes.CDLL('libEGL_nvidia.so.0')",
+        ],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if libraries.returncode != 0:
+        return False
+    try:
+        vulkan = runner(
+            ["vulkaninfo", "--summary"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    report = f"{vulkan.stdout or ''}\n{vulkan.stderr or ''}".lower()
+    return vulkan.returncode == 0 and "nvidia" in report
+
+
+def _checked_command(
+    argv: list[str],
+    *,
+    error: str,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str]:
+    completed = runner(
+        argv,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        **kwargs,
+    )
+    if completed.returncode != 0:
+        raise IsaacArenaError(error)
+    return completed
+
+
+def _prepare_viewport_graphics(
+    root: Path,
+    env: dict[str, str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    """Validate native graphics or load an exact driver-matched private copy.
+
+    Some CUDA-focused managed images expose the kernel/compute driver but omit
+    NVIDIA's Vulkan and EGL userspace.  For viewport recording only, load
+    the exact matching package from Ubuntu's signed archive into run-private
+    scratch.  Never install it on the node or retain/redistribute its bytes.
+    """
+
+    if _graphics_probe(env, runner=runner):
+        return {
+            "mode": "native",
+            "validated": True,
+            "runtime_fetch": False,
+            "baked": False,
+            "redistribution": False,
+        }
+
+    driver = _checked_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=driver_version",
+            "--format=csv,noheader",
+        ],
+        error="viewport graphics require a readable NVIDIA driver version",
+        runner=runner,
+        env=env,
+    )
+    versions = {
+        line.strip() for line in (driver.stdout or "").splitlines() if line.strip()
+    }
+    if (
+        len(versions) != 1
+        or _NVIDIA_DRIVER_VERSION.fullmatch(next(iter(versions), "")) is None
+    ):
+        raise IsaacArenaError(
+            "viewport graphics require one exact NVIDIA driver version"
+        )
+    driver_version = versions.pop()
+    driver_branch = driver_version.split(".", 1)[0]
+    package = f"libnvidia-gl-{driver_branch}-server"
+
+    _checked_command(
+        [
+            "sudo",
+            "apt-get",
+            "-o",
+            "Acquire::AllowInsecureRepositories=false",
+            "-o",
+            "APT::Get::AllowUnauthenticated=false",
+            "update",
+            "-qq",
+        ],
+        error="viewport graphics package metadata refresh failed",
+        runner=runner,
+        env=env,
+    )
+    policy = _checked_command(
+        ["apt-cache", "policy", package],
+        error="viewport graphics package metadata is unavailable",
+        runner=runner,
+        env=env,
+    )
+    match = re.search(r"^\s*Candidate:\s*(\S+)\s*$", policy.stdout or "", re.MULTILINE)
+    candidate = match.group(1) if match else ""
+    if not candidate.startswith(f"{driver_version}-"):
+        raise IsaacArenaError(
+            "viewport graphics archive does not contain the exact loaded driver version"
+        )
+
+    download_dir = root / "download"
+    extract_dir = root / "extracted"
+    download_dir.mkdir(parents=True, exist_ok=False)
+    extract_dir.mkdir(parents=True, exist_ok=False)
+    _checked_command(
+        [
+            "apt-get",
+            "-o",
+            "Acquire::AllowInsecureRepositories=false",
+            "-o",
+            "APT::Get::AllowUnauthenticated=false",
+            "download",
+            f"{package}={candidate}",
+        ],
+        error="viewport graphics package download failed",
+        runner=runner,
+        env=env,
+        cwd=download_dir,
+    )
+    debs = sorted(download_dir.glob("*.deb"))
+    if len(debs) != 1 or not debs[0].is_file() or debs[0].stat().st_size == 0:
+        raise IsaacArenaError("viewport graphics download did not yield one package")
+    deb = debs[0]
+    fields = {}
+    for field in ("Package", "Version", "Architecture"):
+        value = _checked_command(
+            ["dpkg-deb", "--field", str(deb), field],
+            error="viewport graphics package metadata validation failed",
+            runner=runner,
+            env=env,
+        ).stdout.strip()
+        fields[field] = value
+    if fields != {
+        "Package": package,
+        "Version": candidate,
+        "Architecture": "amd64",
+    }:
+        raise IsaacArenaError("viewport graphics package identity does not match")
+    deb_sha256 = _sha256(deb)
+    _checked_command(
+        ["dpkg-deb", "--extract", str(deb), str(extract_dir)],
+        error="viewport graphics package extraction failed",
+        runner=runner,
+        env=env,
+    )
+
+    library_dir = extract_dir / "usr" / "lib" / "x86_64-linux-gnu"
+    packaged_icd = (
+        extract_dir / "usr" / "share" / "vulkan" / "icd.d" / "nvidia_icd.json"
+    )
+    if (
+        not (library_dir / "libEGL_nvidia.so.0").exists()
+        or not packaged_icd.is_file()
+        or packaged_icd.is_symlink()
+        or packaged_icd.stat().st_size > 4096
+    ):
+        raise IsaacArenaError(
+            "viewport graphics package is missing headless EGL/Vulkan metadata"
+        )
+    try:
+        manifest = json.loads(packaged_icd.read_text(encoding="utf-8"))
+        file_format_version = manifest["file_format_version"]
+        packaged_entrypoint = manifest["ICD"]["library_path"]
+        api_version = manifest["ICD"]["api_version"]
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise IsaacArenaError(
+            "viewport graphics package has invalid Vulkan metadata"
+        ) from exc
+    if (
+        file_format_version not in {"1.0.0", "1.0.1"}
+        or packaged_entrypoint not in {
+            "libGLX_nvidia.so.0",
+            "libEGL_nvidia.so.0",
+        }
+        or _VULKAN_MANIFEST_VERSION.fullmatch(str(api_version)) is None
+        or not (library_dir / packaged_entrypoint).exists()
+    ):
+        raise IsaacArenaError(
+            "viewport graphics package has unsupported Vulkan metadata"
+        )
+    # NVIDIA documents both GLX and EGL as Vulkan ICD entrypoints, with EGL for
+    # headless environments.  Canonicalize only those validated scalar fields;
+    # never copy arbitrary content from the downloaded manifest.
+    headless_icd = root / "nvidia-headless-icd.json"
+    headless_icd.write_text(
+        json.dumps(
+            {
+                "file_format_version": file_format_version,
+                "ICD": {
+                    "library_path": "libEGL_nvidia.so.0",
+                    "api_version": api_version,
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    headless_icd.chmod(0o600)
+    previous_library_path = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = str(library_dir) + (
+        f":{previous_library_path}" if previous_library_path else ""
+    )
+    env["VK_ICD_FILENAMES"] = str(headless_icd)
+    env["VK_DRIVER_FILES"] = str(headless_icd)
+    if not _graphics_probe(env, runner=runner):
+        raise IsaacArenaError("driver-matched viewport graphics validation failed")
+    return {
+        "mode": "runtime_package_extract",
+        "validated": True,
+        "driver_version": driver_version,
+        "driver_branch": driver_branch,
+        "package": package,
+        "package_version": candidate,
+        "package_sha256": deb_sha256,
+        "package_manifest_sha256": _sha256(packaged_icd),
+        "headless_icd_sha256": _sha256(headless_icd),
+        "headless_icd_override": True,
+        "icd_entrypoint": "libEGL_nvidia.so.0",
+        "source": "Ubuntu signed NVIDIA driver archive",
+        "runtime_fetch": True,
+        "installed_on_node": False,
+        "baked": False,
+        "published": False,
+        "redistribution": False,
+    }
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -809,10 +1090,14 @@ def _prepare_replay_execution_input(
                     "actions", data=execution_actions, compression="gzip"
                 )
                 if "initial_state" not in source_episode:
-                    raise IsaacArenaError("replay HDF5 episode contains no initial_state")
+                    raise IsaacArenaError(
+                        "replay HDF5 episode contains no initial_state"
+                    )
                 source_episode.copy("initial_state", output_episode)
     except (KeyError, OSError) as exc:
-        raise IsaacArenaError("replay input cannot be normalized for execution") from exc
+        raise IsaacArenaError(
+            "replay input cannot be normalized for execution"
+        ) from exc
     destination.chmod(0o600)
     return destination, {
         "strategy": "actions_initial_state_only_hold_final_action",
@@ -1094,6 +1379,9 @@ def evaluate(
     request: IsaacArenaRequest,
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    graphics_preparer: Callable[[Path, dict[str, str]], dict[str, Any]] = (
+        _prepare_viewport_graphics
+    ),
 ) -> dict[str, Any]:
     """Run upstream Arena and publish its raw artifacts plus verified summary."""
 
@@ -1137,6 +1425,10 @@ def evaluate(
                 "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
                 "execution_device": request.execution_device,
                 "viewport_renderer_gpu_required": request.record_video,
+                "viewport_graphics": {
+                    "mode": "deferred" if request.record_video else "not_requested",
+                    "validated": False,
+                },
                 "isaac_runtime_fetch": True,
                 "lightwheel_sdk": {
                     "version": LIGHTWHEEL_SDK_VERSION,
@@ -1164,10 +1456,15 @@ def evaluate(
         if request.dry_run:
             return {**base, "status": "dry_run", "artifacts": {}}
 
+        sim_env = _subprocess_env(viewport_only=request.record_video)
+        if request.record_video:
+            base["runtime"]["viewport_graphics"] = graphics_preparer(
+                private_dir / "viewport-graphics", sim_env
+            )
         completed = runner(
             argv,
             cwd=ISAAC_ARENA_ROOT,
-            env=_subprocess_env(viewport_only=request.record_video),
+            env=sim_env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

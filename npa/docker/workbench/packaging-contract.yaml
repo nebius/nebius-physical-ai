@@ -509,7 +509,12 @@ images:
       media are removed. Isaac Sim/Lab, Lightwheel registry assets, operator
       replay data, RSL-RL checkpoints, generated evaluation artifacts,
       credentials, and populated caches remain runtime-only. NPA provides no
-      Lightwheel asset credential or redistribution grant. The inherited
+      Lightwheel asset credential or redistribution grant. Viewport runs first
+      validate native NVIDIA headless EGL/Vulkan; when a CUDA-only target omits
+      them, the worker downloads the exact loaded-driver version from Ubuntu's
+      signed archive, validates its ICD metadata, and derives a canonical private
+      EGL ICD in run-private scratch without installing, retaining, or
+      redistributing the package. The inherited
       non-root SkyPilot bootstrap contract is
       retained. Built-image byte/layer scanning and real B200 plus RTX PRO 6000
       evaluation are required before release promotion.

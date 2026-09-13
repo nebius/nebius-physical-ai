@@ -21,6 +21,7 @@ from npa.workbench.isaac_arena.runtime import (
     capabilities,
     evaluate,
     _input_evidence,
+    _prepare_viewport_graphics,
     _prepare_replay_execution_input,
     _probe_mp4,
 )
@@ -93,6 +94,15 @@ def test_capabilities_are_complete_and_honest() -> None:
     )
     assert lightwheel_assets["baked"] is False
     assert lightwheel_assets["redistribution"] is False
+    viewport_graphics = next(
+        item
+        for item in payload["runtime_dependencies"]
+        if item["name"] == "NVIDIA viewport graphics userspace"
+    )
+    assert viewport_graphics["delivery"] == "runtime_fetch_exact_driver_match"
+    assert viewport_graphics["installed_on_node"] is False
+    assert viewport_graphics["redistribution"] is False
+    assert "EGL ICD" in viewport_graphics["headless_icd"]
     assert payload["outputs"]["rerun_rrd"] is False
 
     cli = CliRunner().invoke(app, ["workbench", "isaac-arena", "capabilities"])
@@ -105,6 +115,10 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
     assert result["schema"] == ARTIFACT_SCHEMA
     assert result["status"] == "dry_run"
     assert result["upstream"]["revision"] == ISAAC_ARENA_REVISION
+    assert result["runtime"]["viewport_graphics"] == {
+        "mode": "not_requested",
+        "validated": False,
+    }
     argv = result["argv"]
     assert argv[0] == "/isaac-sim/python.sh"
     assert argv[1].endswith("isaaclab_arena/evaluation/policy_runner.py")
@@ -239,6 +253,17 @@ def _fake_moving_upstream(
     )
 
 
+def _fake_viewport_graphics(_root: Path, env: dict[str, str]) -> dict[str, object]:
+    assert env["NPA_ISAAC_ARENA_VIEWPORT_ONLY"] == "1"
+    return {
+        "mode": "native",
+        "validated": True,
+        "runtime_fetch": False,
+        "baked": False,
+        "redistribution": False,
+    }
+
+
 def _make_replay(path: Path, *, steps: int = 4) -> None:
     import h5py
     import numpy as np
@@ -258,9 +283,7 @@ def _make_replay(path: Path, *, steps: int = 4) -> None:
         robot = initial.create_group("robot")
         robot.create_dataset("joint_pos", data=np.array([0.1, 0.2]))
         states = episode.create_group("states")
-        states.create_dataset(
-            "joint_pos", data=np.arange(steps * 2).reshape(steps, 2)
-        )
+        states.create_dataset("joint_pos", data=np.arange(steps * 2).reshape(steps, 2))
         observations = episode.create_group("obs")
         observations.create_dataset(
             "large_unused_tensor", data=np.ones((steps, 8), dtype=np.float32)
@@ -315,6 +338,223 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
         )
 
 
+def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        stdout = "GPU0: NVIDIA" if argv[0] == "vulkaninfo" else ""
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    env: dict[str, str] = {}
+    result = _prepare_viewport_graphics(tmp_path / "graphics", env, runner=fake_runner)
+
+    assert result == {
+        "mode": "native",
+        "validated": True,
+        "runtime_fetch": False,
+        "baked": False,
+        "redistribution": False,
+    }
+    assert len(calls) == 2
+    assert all("apt-get" not in call for call in calls)
+    assert "VK_ICD_FILENAMES" not in env
+
+
+def test_viewport_graphics_extracts_exact_driver_match_privately(
+    tmp_path: Path,
+) -> None:
+    driver_version = "580.173.02"
+    candidate = f"{driver_version}-0ubuntu0.24.04.1"
+    commands: list[list[str]] = []
+
+    def fake_runner(
+        argv: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(argv)
+        env = kwargs.get("env")
+        if argv[0].endswith("python") or argv[0].endswith("python3"):
+            ready = isinstance(env, dict) and "VK_ICD_FILENAMES" in env
+            return subprocess.CompletedProcess(
+                argv, 0 if ready else 1, stdout="", stderr=""
+            )
+        if argv[0] == "vulkaninfo":
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="GPU0: NVIDIA", stderr=""
+            )
+        if argv[0] == "nvidia-smi":
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=f"{driver_version}\n", stderr=""
+            )
+        if argv[:2] == ["apt-cache", "policy"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=f"  Candidate: {candidate}\n", stderr=""
+            )
+        if "download" in argv and argv[0] == "apt-get":
+            download_dir = Path(str(kwargs["cwd"]))
+            (download_dir / "graphics.deb").write_bytes(b"signed-driver-package")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv[:2] == ["dpkg-deb", "--field"]:
+            values = {
+                "Package": "libnvidia-gl-580-server",
+                "Version": candidate,
+                "Architecture": "amd64",
+            }
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=values[argv[-1]], stderr=""
+            )
+        if argv[:2] == ["dpkg-deb", "--extract"]:
+            extracted = Path(argv[-1])
+            library_dir = extracted / "usr/lib/x86_64-linux-gnu"
+            library_dir.mkdir(parents=True)
+            (library_dir / "libGLX_nvidia.so.0").write_bytes(b"glx")
+            (library_dir / "libEGL_nvidia.so.0").write_bytes(b"egl")
+            icd = extracted / "usr/share/vulkan/icd.d/nvidia_icd.json"
+            icd.parent.mkdir(parents=True)
+            icd.write_text(
+                json.dumps(
+                    {
+                        "file_format_version": "1.0.1",
+                        "ICD": {
+                            "library_path": "libGLX_nvidia.so.0",
+                            "api_version": "1.4.312",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    env = {"LD_LIBRARY_PATH": "/existing"}
+    result = _prepare_viewport_graphics(tmp_path / "graphics", env, runner=fake_runner)
+
+    assert result["mode"] == "runtime_package_extract"
+    assert result["driver_version"] == driver_version
+    assert result["package_version"] == candidate
+    assert result["package_sha256"] == (
+        "624a9cf63b28a6d18e71b9099f6f4be41b00e46b40d2a953ec9a547d15c95992"
+    )
+    assert result["installed_on_node"] is False
+    assert result["published"] is False
+    assert result["redistribution"] is False
+    assert result["headless_icd_override"] is True
+    assert result["icd_entrypoint"] == "libEGL_nvidia.so.0"
+    assert len(result["package_manifest_sha256"]) == 64
+    assert len(result["headless_icd_sha256"]) == 64
+    assert env["LD_LIBRARY_PATH"].endswith(":/existing")
+    assert env["VK_ICD_FILENAMES"] == env["VK_DRIVER_FILES"]
+    generated_icd = Path(env["VK_ICD_FILENAMES"])
+    assert generated_icd.stat().st_mode & 0o777 == 0o600
+    assert json.loads(generated_icd.read_text(encoding="utf-8")) == {
+        "file_format_version": "1.0.1",
+        "ICD": {
+            "library_path": "libEGL_nvidia.so.0",
+            "api_version": "1.4.312",
+        },
+    }
+    update = next(command for command in commands if "update" in command)
+    download = next(command for command in commands if "download" in command)
+    assert update[:2] == ["sudo", "apt-get"]
+    assert download[0] == "apt-get"
+    assert "Acquire::AllowInsecureRepositories=false" in update
+    assert "APT::Get::AllowUnauthenticated=false" in update
+    assert "Acquire::AllowInsecureRepositories=false" in download
+    assert "APT::Get::AllowUnauthenticated=false" in download
+    assert f"libnvidia-gl-580-server={candidate}" in download
+    assert not any("install" in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {},
+        {
+            "file_format_version": "1.0.1",
+            "ICD": {
+                "library_path": "/tmp/untrusted.so",
+                "api_version": "1.4.312",
+            },
+        },
+        {
+            "file_format_version": "1.0.1",
+            "ICD": {
+                "library_path": "libGLX_nvidia.so.0",
+                "api_version": "$(untrusted)",
+            },
+        },
+    ],
+)
+def test_viewport_graphics_rejects_untrusted_packaged_icd(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    driver_version = "580.173.02"
+    candidate = f"{driver_version}-0ubuntu0.24.04.1"
+
+    def fake_runner(
+        argv: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if argv[0].endswith("python") or argv[0].endswith("python3"):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+        if argv[0] == "nvidia-smi":
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=f"{driver_version}\n", stderr=""
+            )
+        if argv[:2] == ["apt-cache", "policy"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=f"  Candidate: {candidate}\n", stderr=""
+            )
+        if "download" in argv and argv[0] == "apt-get":
+            download_dir = Path(str(kwargs["cwd"]))
+            (download_dir / "graphics.deb").write_bytes(b"signed-driver-package")
+        if argv[:2] == ["dpkg-deb", "--field"]:
+            values = {
+                "Package": "libnvidia-gl-580-server",
+                "Version": candidate,
+                "Architecture": "amd64",
+            }
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=values[argv[-1]], stderr=""
+            )
+        if argv[:2] == ["dpkg-deb", "--extract"]:
+            extracted = Path(argv[-1])
+            library_dir = extracted / "usr/lib/x86_64-linux-gnu"
+            library_dir.mkdir(parents=True)
+            (library_dir / "libGLX_nvidia.so.0").write_bytes(b"glx")
+            (library_dir / "libEGL_nvidia.so.0").write_bytes(b"egl")
+            icd = extracted / "usr/share/vulkan/icd.d/nvidia_icd.json"
+            icd.parent.mkdir(parents=True)
+            icd.write_text(json.dumps(manifest), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    with pytest.raises(IsaacArenaError, match="Vulkan metadata"):
+        _prepare_viewport_graphics(tmp_path / "graphics", {}, runner=fake_runner)
+
+
+def test_viewport_graphics_rejects_nonmatching_archive_version(
+    tmp_path: Path,
+) -> None:
+    def fake_runner(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if argv[0].endswith("python") or argv[0].endswith("python3"):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+        if argv[0] == "nvidia-smi":
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="580.173.02\n", stderr=""
+            )
+        if argv[:2] == ["apt-cache", "policy"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="  Candidate: 580.999.01-0ubuntu1\n", stderr=""
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    with pytest.raises(IsaacArenaError, match="exact loaded driver version"):
+        _prepare_viewport_graphics(tmp_path / "graphics", {}, runner=fake_runner)
+
+
 @patch(
     "npa.workbench.isaac_arena.runtime._probe_mp4",
     return_value={
@@ -341,6 +581,7 @@ def test_execution_requires_scored_episode_report_and_requested_video(
             record_video=True,
         ),
         runner=_fake_upstream,
+        graphics_preparer=_fake_viewport_graphics,
     )
     assert result["status"] == "ok"
     assert result["summary"] == {
@@ -419,6 +660,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
             replay_target_steps=6,
         ),
         runner=_fake_moving_upstream,
+        graphics_preparer=_fake_viewport_graphics,
     )
     assert result["behavior"]["meaningful"] is True
     assert result["runtime"]["lightwheel_sdk"] == {
@@ -428,6 +670,13 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     }
     assert result["runtime"]["execution_device"] == "cuda:0"
     assert result["runtime"]["viewport_renderer_gpu_required"] is True
+    assert result["runtime"]["viewport_graphics"] == {
+        "mode": "native",
+        "validated": True,
+        "runtime_fetch": False,
+        "baked": False,
+        "redistribution": False,
+    }
     assert result["runtime"]["lightwheel_registry_assets"]["runtime_fetch"] is True
     assert result["runtime"]["lightwheel_registry_assets"]["redistribution"] is False
     assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0

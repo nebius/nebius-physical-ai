@@ -30,6 +30,12 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
 - Isaac Sim/Lab: NVIDIA-proprietary wheels, absent from the image and fetched
   into the operator cache by `/isaac-sim/python.sh` after the shared
   `ACCEPT_EULA` preflight.
+- NVIDIA viewport graphics userspace: prefer and validate the target's native
+  headless EGL/Vulkan. If a CUDA-only target omits it, fetch only the Ubuntu
+  signed `libnvidia-gl-<branch>-server` package whose version exactly matches
+  the loaded driver, validate its identity, SHA-256, and packaged ICD metadata,
+  extract it into run-private scratch, and derive a canonical private EGL ICD.
+  Never install, retain, publish, or redistribute it.
 - Replay HDF5 and RSL-RL checkpoints: operator runtime inputs; never bake or
   publish them. The result records source hashes, not storage locations.
 - Arena 0.3.0 is tested against Isaac Lab 3.0 beta 2. NPA uses the compatible
@@ -141,7 +147,9 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
   input/access failure. Do not bake the returned USD or substitute another
   object while claiming the requested environment.
 - Missing MP4 on RTX: inspect camera enablement, Vulkan/RT drivers, and the
-  upstream viewport recorder; do not downgrade the artifact requirement.
+  upstream viewport recorder. A missing native graphics userspace may use the
+  exact-driver private extraction path; a version mismatch must fail closed.
+  Do not alter the shared node or downgrade the artifact requirement.
 - B200 render failure: the workload is misrouted. Keep B200 state-only and move
   rendering to RTX PRO 6000.
 - Source/runtime incompatibility: retain the exact pins and report the alpha

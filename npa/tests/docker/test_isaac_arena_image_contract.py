@@ -15,13 +15,11 @@ SMOKE_SCRIPT = (
 THIRD_PARTY_NOTICES = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "THIRD_PARTY_NOTICES.md"
 )
+REDISTRIBUTION = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "REDISTRIBUTION.md"
+)
 VIEWPORT_PATCH = (
-    ROOT
-    / "npa"
-    / "docker"
-    / "workbench"
-    / "isaac-arena"
-    / "patch_viewport_only.py"
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "patch_viewport_only.py"
 )
 
 
@@ -78,13 +76,17 @@ def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
     assert "args_cli.enable_cameras = False" not in text
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert "/opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py" in dockerfile
-    assert "/opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py" in dockerfile
+    assert (
+        "/opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py" in dockerfile
+    )
 
 
 def test_isaac_arena_viewport_patch_preserves_render_and_masks_sensors(
     tmp_path: Path,
 ) -> None:
-    spec = importlib.util.spec_from_file_location("arena_viewport_patch", VIEWPORT_PATCH)
+    spec = importlib.util.spec_from_file_location(
+        "arena_viewport_patch", VIEWPORT_PATCH
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -129,6 +131,11 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
     assert "Lightwheel SDK 1.0.3" in notices
     assert "841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd" in notices
     assert "no Lightwheel registry object" in notices
+    assert "NVIDIA viewport graphics userspace (runtime only)" in notices
+    assert "Not included in image layers" in notices
+    redistribution = REDISTRIBUTION.read_text(encoding="utf-8")
+    assert "exactly matches the loaded kernel driver" in redistribution
+    assert "never installs it on the node" in redistribution
 
 
 def test_isaac_arena_image_catalog_identity() -> None:

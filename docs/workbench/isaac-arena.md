@@ -120,6 +120,19 @@ the embodiment's unused observation cameras. Upstream camera-observation video
 is not exposed by this adapter. The patch is context-bound to the pinned source
 and the image build fails if that source block changes.
 
+The viewport path also fails closed on the target graphics stack. NPA first
+probes native NVIDIA EGL and Vulkan. A CUDA-only managed image can expose
+the kernel/compute driver while omitting those libraries; in that case, the
+worker queries the one loaded driver version and downloads only the exactly
+matching `libnvidia-gl-<branch>-server` package from Ubuntu's signed archive.
+It validates package name, version, architecture, SHA-256, and the packaged ICD
+metadata, then derives a canonical run-private EGL ICD because NVIDIA documents
+EGL as the headless Vulkan entrypoint. It validates that path before launching
+Arena. It never installs the package on the node or includes its bytes in the
+public image or run artifacts. The result records safe package/manifest hashes
+and whether native or private-extracted graphics were used. State-only runs do
+none of this.
+
 The Python SDK is the same implementation:
 
 ```python
@@ -185,7 +198,9 @@ external-plugin support claim.
 - `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the nonzero
   operator-owned trajectory for the 250-step task horizon on RTX PRO 6000 and requires a
   motion-validated viewport MP4. It uses CUDA physics while the NPA
-  viewport-only patch avoids constructing unrelated embodiment-camera sensors.
+  viewport-only patch avoids constructing unrelated embodiment-camera sensors;
+  native graphics is preferred and the exact-driver private extraction above is
+  used only when required by the target.
   The result records both the execution device and measured GPU identity.
 
 Validate and plan before submission, substitute an operator-owned bucket, and

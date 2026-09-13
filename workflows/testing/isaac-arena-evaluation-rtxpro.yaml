@@ -22,6 +22,9 @@ config:
   replay_target_steps: "250"
   # The NPA viewport-only source patch keeps Kit and environment rendering
   # enabled without adding the GR1 embodiment's unused observation cameras.
+  # The runtime prefers native NVIDIA EGL/Vulkan and otherwise extracts the
+  # exact loaded-driver package plus a validated private headless EGL ICD into
+  # run-private scratch; it never mutates the node.
   execution_device: cuda:0
   num_episodes: "1"
   num_envs: "1"

@@ -23,6 +23,16 @@ explicit negative value refuses before download. Replay data and RSL-RL
 checkpoints are always operator-supplied runtime inputs and are never copied
 into an image layer.
 
+Viewport recording also validates that the target provides usable NVIDIA
+headless EGL and Vulkan libraries. If a CUDA-capable managed node omits that
+graphics userspace, NPA downloads only the `libnvidia-gl-<branch>-server`
+package whose version exactly matches the loaded kernel driver from Ubuntu's
+signed archive. It validates package identity, architecture, and ICD metadata,
+extracts the package into run-private scratch, and derives a canonical private
+EGL ICD for only that simulator process. NPA never installs it on the node,
+bakes it into an image, publishes it as a run artifact, or redistributes it.
+The package remains governed by NVIDIA's driver terms accepted by the operator.
+
 Some upstream environments resolve USD content from the Lightwheel registry at
 runtime. Those registry objects are separate from the Apache-2.0 SDK. NPA does
 not redistribute them, supply a Lightwheel credential, or grant rights to them;

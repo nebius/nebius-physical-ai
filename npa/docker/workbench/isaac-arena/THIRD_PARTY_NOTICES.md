@@ -47,3 +47,14 @@ Not included in image layers. They download at runtime from NVIDIA under the
 operator's acceptance of the NVIDIA Omniverse, Isaac Sim additional software,
 and NVIDIA software license terms documented by the inherited
 `npa-isaac-lab` bootstrap.
+
+## NVIDIA viewport graphics userspace (runtime only)
+
+Not included in image layers. A viewport evaluation prefers the target's
+native headless EGL and Vulkan stack. If those libraries are absent while CUDA
+is healthy, NPA downloads the exact loaded-driver version of Ubuntu's signed
+`libnvidia-gl-<branch>-server` package, validates its package and ICD metadata,
+and extracts it into run-private scratch without installing it. NPA derives a
+canonical private EGL ICD because NVIDIA documents EGL as the headless Vulkan
+entrypoint. The package is not retained or redistributed, and remains governed
+by NVIDIA's driver terms.
