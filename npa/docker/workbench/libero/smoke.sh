@@ -29,6 +29,8 @@ printf '%s\n' \
   > "$LIBERO_CONFIG_PATH/config.yaml"
 status=0
 "$runtime_root/venv/bin/python" /opt/npa/libero/libero_smoke.py || status=$?
-cleanup_runtime_scratch
 trap - EXIT INT TERM
+if ! cleanup_runtime_scratch; then
+  status=1
+fi
 exit "$status"

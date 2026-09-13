@@ -577,7 +577,7 @@ jobs:
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
         if: matrix.tool != 'libero'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
