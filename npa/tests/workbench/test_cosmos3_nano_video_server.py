@@ -277,9 +277,15 @@ def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(
 
     monkeypatch.setattr(server.subprocess, "Popen", spawn)
     monkeypatch.setattr(httpx.AsyncClient, "get", models)
-    with pytest.raises(type(failure)) as caught:
-        asyncio.run(runtime.start())
-    assert caught.value is failure
+
+    async def check_interruption():
+        # Python 3.10 may recreate CancelledError at the asyncio.run boundary.
+        # Assert identity where the service propagates it to its caller.
+        with pytest.raises(type(failure)) as caught:
+            await runtime.start()
+        assert caught.value is failure
+
+    asyncio.run(check_interruption())
     assert terminated == [True]
     assert len(streams) == 1 and streams[0].closed
     assert runtime._log_stream is None

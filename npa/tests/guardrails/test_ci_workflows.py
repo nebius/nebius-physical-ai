@@ -64,13 +64,29 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
 
 
-def test_pr_test_matrix_uses_one_version_and_main_keeps_compatibility() -> None:
+def test_pr_and_main_test_the_full_python_compatibility_matrix() -> None:
     workflow = _load_workflow("test.yml")
-    versions = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    job = workflow["jobs"]["test"]
+    assert job["strategy"]["matrix"]["python-version"] == ["3.10", "3.12", "3.14"]
+    assert job["strategy"]["fail-fast"] == "false"
+    assert "if" not in job and "continue-on-error" not in job
+    assert workflow["on"]["pull_request"] == ""
 
-    assert "github.event_name == 'pull_request'" in versions
-    assert "[\"3.12\"]" in versions
-    assert "[\"3.10\",\"3.12\",\"3.14\"]" in versions
+
+def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
+    job = _load_workflow("test.yml")["jobs"]["test"]
+    steps = job["steps"]
+    regression = _step("test.yml", "test", "compatibility and image scan")
+    install = _step("test.yml", "test", "CPU checkpoint")
+    assert steps.index(regression) < steps.index(install)
+    assert "if" not in regression and "continue-on-error" not in regression
+    for path in (
+        "npa/tests/guardrails/test_ci_workflows.py",
+        "npa/tests/docker/test_base_image_scan.py",
+        "npa/tests/orchestration/skypilot/test_workflow_logs.py",
+        "npa/tests/workbench/test_cosmos3_nano_video_server.py",
+    ):
+        assert path in regression["run"]
 
 
 def _make_recipe(target: str) -> list[str]:
