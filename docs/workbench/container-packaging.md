@@ -347,11 +347,11 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
-The 2026-09-12 anonymous audit resolved all 33 current public-plan tags and
-matched all 33 accepted release digests, including the exact-digest-promoted
-Isaac Arena release. The Arena development image separately passed the complete
-build/security/attestation pipeline and real B200 plus RTX PRO 6000 evaluation
-before promotion.
+The accepted public-plan audit covers all 33 release tags. The 2026-09-13 Isaac
+Arena update separately resolved its new tag anonymously at the accepted digest
+after the development image passed the complete build/security/attestation
+pipeline, a real four-seed B200 state regression, and a genuine nonzero RTX PRO
+6000 replay with motion-validated video.
 
 See the [public image catalog](container-image-catalog.md) for retained aliases,
 exclusions, and the distinction between current source and released bytes.

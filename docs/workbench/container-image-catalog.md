@@ -62,23 +62,25 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
-## 2026-09-12 Isaac Arena publication
+## 2026-09-13 Isaac Arena replay publication
 
-`npa-isaac-arena:0.3.0-isaaclab3-20260912` promotes, without rebuilding, the
+`npa-isaac-arena:0.3.0-isaaclab3-20260912-r2` promotes, without rebuilding, the
 exact public development manifest
-`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`
-from source revision `22783a16abcd424df540b71e94600d705b317f9b`. The image
+`sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`
+from source revision `7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1`. The image
 passed source/license, complete-layer payload, vulnerability, secret, SBOM,
 provenance, worker-bootstrap, and anonymous-pull gates.
 
-Independent digest-pinned workflows then completed the real upstream
-`policy_runner.py` on B200 `sm_100` and RTX PRO 6000 `sm_120`. Each produced one
-scored 1,050-step episode, JSONL, three linked HTML report pages, a simulator
-log, and an NPA hash manifest. The B200 run intentionally emitted no video. The
-RTX run additionally emitted a 1,024,140-byte H.264 viewport MP4 independently
-decoded as 1280×720 with 70.067 seconds duration. Isaac Sim/Lab remained an
-operator-authorized runtime fetch. Upstream Arena 0.3.0 remains alpha; NPA
-supports the pinned evaluator contract, not the broader unstable API.
+Concurrently launched digest-pinned workflows then completed the real upstream
+`policy_runner.py` on B200 `sm_100` and RTX PRO 6000 `sm_120`. The RTX run used
+a hash-verified nonzero replay trajectory for the 250-step task horizon, moved
+the microwave joint, and produced a 72,519,371-byte H.264 viewport MP4. It
+decoded as 1280×720, 5.04 seconds, and 252 frames; all 19 sampled frame pairs
+changed, with peak changed-pixel ratio 0.5391667 and peak mean luma delta
+12.5636111. The four-seed B200 state regression completed 4,200 steps and
+intentionally emitted no video. Isaac Sim/Lab remained an operator-authorized
+runtime fetch. Upstream Arena 0.3.0 remains alpha; NPA supports the pinned
+evaluator contract, not the broader unstable API.
 
 ## Pending NCore conversion image
 
@@ -237,7 +239,7 @@ published, and anonymously pullable status for this exact digest only.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
-| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912` | 2026-09-12 | Real completed-episode evaluation through the pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. The exact release passed independent B200 state-only and RTX PRO 6000 viewport-video evaluations. Upstream remains alpha; only the pinned evaluator contract is supported. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r2` | 2026-09-13 | Real completed-episode evaluation through the pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. The exact release passed a genuine nonzero RTX PRO 6000 replay with motion-validated viewport video plus an independent B200 state-only regression. Upstream remains alpha; only the pinned evaluator contract is supported. |
 
 ## Candidates outside the supported public release plan
 

@@ -140,7 +140,7 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
 
 def test_isaac_arena_image_catalog_identity() -> None:
     assert CONTAINER_IMAGE_NAMES["isaac-arena"] == "npa-isaac-arena"
-    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260912"
+    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260912-r2"
 
 
 def test_isaac_arena_golden_smoke_uses_hash_pinned_nonzero_replay() -> None:

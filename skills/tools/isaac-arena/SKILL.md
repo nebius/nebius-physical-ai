@@ -64,10 +64,12 @@ npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b2
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
 
-The historical accepted release is `0.3.0-isaaclab3-20260912`, exact manifest
-`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`,
+The accepted release is `0.3.0-isaaclab3-20260912-r2`, exact manifest
+`sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`,
 promoted without rebuilding from development source SHA
-`22783a16abcd424df540b71e94600d705b317f9b`. On a target whose accelerator
+`7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after genuine replay and state-only
+regression qualification. The zero-action predecessor remains historical
+evidence, not meaningful visual evidence. On a target whose accelerator
 spelling has already passed `npa workbench workflow gpus`, set
 `NPA_WORKFLOW_GPU_ACCELERATOR=B200:1` for the state-only spec or
 `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` for the

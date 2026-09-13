@@ -21,10 +21,10 @@ tests, sample checkpoints, demonstration data, and documentation media are
 removed.
 
 The accepted release is
-`npa-isaac-arena:0.3.0-isaaclab3-20260912`, manifest
-`sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f`.
+`npa-isaac-arena:0.3.0-isaaclab3-20260912-r2`, manifest
+`sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`.
 It was promoted without rebuilding from source revision
-`22783a16abcd424df540b71e94600d705b317f9b` after complete payload/security,
+`7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after complete payload/security,
 SBOM, provenance, bootstrap, anonymous-pull, and two-platform workload gates.
 
 The image contains no Isaac Sim/Lab/Omniverse Kit payload, weights, replay data,
@@ -244,10 +244,42 @@ and an independent pod audit found no run-owned worker. Run-created controllers
 were removed; the pre-existing shared controller, clusters, and operator storage
 were retained.
 
-The current release gate requires the genuine replay workflow above on RTX PRO
-6000, plus the established B200 state-only regression because common upstream
-execution and result parsing changed. Record exact live measurements
-here only after both runs and the authenticated Agent UI checks complete.
+The current release passed those gates in two isolated, concurrently launched
+workflows against reserved capacity. `arena-replay-rtx-7dd3a2bf-r1` ran the
+`replay` adapter for 250 steps on RTX PRO 6000. Its source fixture was 365,180
+bytes with SHA-256
+`154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50`:
+80 nonzero action steps, 36 action dimensions, nonzero fraction 1.0, mean
+absolute step delta 0.0183097, and a recorded-success trajectory. The private
+execution copy held the final action for the remaining 170 task steps without
+truncating or publishing the source. Upstream reported one 250-step episode and
+`revolute_joint_moved_rate=1.0`. Success rate 0.0 remains the policy result; it
+is not rewritten merely because meaningful behavior occurred.
+
+The run retained 18 durable objects / 72,726,403 bytes. All six declared task
+artifacts were downloaded again and hash-verified. The input- and run-bound
+MP4 was 72,519,371 bytes, H.264, 1280×720, 5.04 seconds, and 252 frames. Twenty
+independently decoded samples produced 19 changed frame pairs, maximum changed
+pixel ratio 0.5391667, and maximum mean absolute luma delta 12.5636111. These
+measurements exceed the checked-in 0.005 ratio, 1.0 luma-delta, and two-pair
+minimums; the paired static-video rejection test proves decodability alone is
+insufficient.
+
+`arena-state-b200-7dd3a2bf-r1` ran the same digest through the four-seed B200
+state regression. Seeds 42–45 each completed one 1,050-step episode and reported
+`object_moved_rate=1.0`, for 4,200 total steps. Independent validation re-read
+49 durable objects / 502,340 bytes, including 24 task files / 358,401 bytes.
+This zero-action regression truthfully records `meaningful=false` and emits no
+video or `.rrd`.
+
+The authenticated Agent UI discovered the RTX run through its artifact-first
+run list, retained the exact server-issued source tuple, selected the MP4 as a
+video, and returned the same size and SHA-256. Unauthenticated tool, detail,
+load, status, and media requests returned 401; authenticated requests returned
+200, and `bytes=0-1023` returned 206 with `Content-Type: video/mp4` and range
+support. Exact terminal jobs were cancelled before their run-owned controllers
+and local APIs were removed. No run-owned worker or controller remained; the
+shared clusters, operator storage, and reserved GPU nodes were retained.
 
 Arena emits MP4 and HTML/JSON evidence, not a native `.rrd`. The Agent UI must
 use its authenticated video renderer for this workload; an unrelated Rerun

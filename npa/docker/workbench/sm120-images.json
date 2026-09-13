@@ -61,10 +61,10 @@
     },
     {
       "name": "npa-isaac-arena",
-      "tag": "0.3.0-isaaclab3-20260912",
-      "source_tag": "dev-22783a16abcd424df540b71e94600d705b317f9b",
-      "digest": "sha256:f07a7fd0f44e22ba3366437b0d0973869a0590919951d516150094220939416f",
-      "purpose": "Pinned Isaac Lab-Arena 0.3.0 policy evaluation; real sm_120 evaluation includes the required viewport MP4."
+      "tag": "0.3.0-isaaclab3-20260912-r2",
+      "source_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
+      "digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
+      "purpose": "Pinned Isaac Lab-Arena 0.3.0 policy evaluation; real sm_120 replay evaluation includes a required motion-validated viewport MP4."
     }
   ]
 }
