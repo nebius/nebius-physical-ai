@@ -46,6 +46,10 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "useradd --no-log-init --uid 1001 --gid npa-libero-exec" in text
     assert "ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC" in text
     assert "NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute" in text
+    exec_environment = next(
+        line for line in text.splitlines() if "Defaults!NPA_LIBERO_EXEC env_keep" in line
+    )
+    assert exec_environment.count("NPA_LIBERO_BOOTSTRAP_RECEIPT") == 1
     assert "execute-python" not in text
     for credential in (
         "AWS_ACCESS_KEY_ID",
