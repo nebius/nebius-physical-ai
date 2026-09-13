@@ -386,10 +386,17 @@ Resolve Python from your Linux operator environment; `python3.12` must be on
 npa skypilot bootstrap --python "$(command -v python3.12)"
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa skypilot verify --cluster "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG"
+npa provision-if-absent \
+  --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  --context "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG" \
+  --skip-s3 --sky-smoke --sky-bin "$NPA_SKYPILOT_BIN"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 ```
 
-Verification must report Kubernetes enabled for this context. Copy the exact
+Verification must report Kubernetes enabled for this context. The smoke checks
+actual GPU dispatch, including supported accelerator-label setup, and removes
+its temporary workload before succeeding. It also runs against an existing
+cluster; it is not enabled by default in S5's provisioning command. Copy the exact
 GPU spelling from discovery; for example, an RTX PRO 6000 cluster may advertise
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`. Use it with the requested count in the run
 section. See [SkyPilot setup](../../docs/orchestration/skypilot-setup.md).
