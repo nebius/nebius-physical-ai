@@ -2218,7 +2218,7 @@ def execute_and_upload() -> int:
                         "runtime execution left processes behind: "
                         + ",".join(str(pid) for pid in remaining_processes)
                     )
-                os.fchmod(root_fd, 0o750)
+                os.fchmod(root_fd, 0o700)
                 _materialize_supervisor_artifact(
                     root_fd, "npa_runtime_bootstrap.json", bootstrap_payload
                 )

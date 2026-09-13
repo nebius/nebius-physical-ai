@@ -1367,7 +1367,7 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     assert (output / "solution_smoke_stderr.log").is_file()
     assert (output / "npa_runtime_bootstrap.json").read_bytes() == receipt.read_bytes()
     assert (output / "npa_runtime_metadata.json").is_file()
-    assert output.stat().st_mode & 0o7777 == 0o750
+    assert output.stat().st_mode & 0o7777 == 0o700
 
 
 def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(

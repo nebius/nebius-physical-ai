@@ -249,7 +249,7 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert "MAX_OUTPUT_BYTES" in bootstrap
     assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
     assert "_execution_uid_processes()" in bootstrap
-    assert "os.fchmod(root_fd, 0o750)" in bootstrap
+    assert "os.fchmod(root_fd, 0o700)" in bootstrap
     assert "snapshots.append((name, payload, digest))" in bootstrap
     assert profile.count("unset NPA_LIBERO_RUNTIME_USE_DECISION_B64") == 2
     assert (
