@@ -230,9 +230,11 @@ def _raw_member(archive: tarfile.TarFile, name: str) -> bytes:
     return stream.read()
 
 
-def _scan_policy_bytes(
+def _scan_raw_blob_bytes(
     label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
 ) -> None:
+    """Bind opaque or structural bytes without treating their encoding as text."""
+
     digest = hashlib.sha256(content).hexdigest()
     if digest in KNOWN_FORBIDDEN_CONTENT_SHA256:
         raise ValueError(f"forbidden upstream/runtime byte: {label}")
@@ -248,6 +250,18 @@ def _scan_policy_bytes(
             raise ValueError(
                 f"reviewed system bootstrap wheel changed: {allowed_system_wheel_path}"
             )
+
+
+def _scan_decoded_member_bytes(
+    label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
+) -> None:
+    """Apply exact-byte and textual policy to one actionable decoded member."""
+
+    _scan_raw_blob_bytes(
+        label,
+        content,
+        allowed_system_wheel_path=allowed_system_wheel_path,
+    )
     if SECRET_TEXT.search(content):
         raise ValueError(f"forbidden secret signature: {label}")
     if VENDOR_TEXT.search(content):
@@ -430,11 +444,6 @@ def _nested_archive_members(
 
     if depth > 8:
         raise ValueError(f"nested archive depth exceeds scan bound: {path}")
-    _scan_policy_bytes(
-        f"nested archive bytes: {path}",
-        content,
-        allowed_system_wheel_path=allowed_system_wheel_path,
-    )
     lowered = path.lower()
     declared_zip = lowered.endswith((".whl", ".zip"))
     declared_tar = lowered.endswith((".tar", *COMPRESSED_TAR_SUFFIXES))
@@ -464,11 +473,22 @@ def _nested_archive_members(
         or declared_tar
         or content.startswith(ZIP_SIGNATURES)
     )
+    if archive_like:
+        _scan_raw_blob_bytes(
+            f"raw archive member: {path}",
+            content,
+            allowed_system_wheel_path=allowed_system_wheel_path,
+        )
+    else:
+        _scan_decoded_member_bytes(
+            f"decoded member: {path}",
+            content,
+            allowed_system_wheel_path=allowed_system_wheel_path,
+        )
     if archive_like and len(content) > MAX_NESTED_ARCHIVE:
         raise ValueError(f"nested archive exceeds scan bound: {path}")
     if compression_kind is not None:
         expanded = _decompress(path, content, compression_kind)
-        _scan_policy_bytes(f"expanded {compression_kind} stream: {path}", expanded)
         if lowered.endswith(COMPRESSED_TAR_SUFFIXES) and not _looks_like_tar(expanded):
             raise ValueError(f"compressed tar payload is not a tar archive: {path}")
         return _nested_archive_members(
@@ -515,7 +535,7 @@ def _nested_archive_members(
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
-                        _scan_policy_bytes(
+                        _scan_decoded_member_bytes(
                             f"nested archive link: {path}:{safe}", nested_content
                         )
                         continue
@@ -535,9 +555,6 @@ def _nested_archive_members(
                         # not apply generic credential-source regexes to pip's
                         # own authentication implementation.
                         continue
-                    _scan_policy_bytes(
-                        f"nested archive member: {path}:{safe}", nested_content
-                    )
                     count += _nested_archive_members(
                         f"{path}:{safe}", nested_content, depth=depth + 1
                     )
@@ -575,16 +592,13 @@ def _nested_archive_members(
                             raise ValueError(
                                 f"forbidden nested archive bytes: {path}:{safe}"
                             )
-                        _scan_policy_bytes(
-                            f"nested archive member: {path}:{safe}", nested_content
-                        )
                         count += _nested_archive_members(
                             f"{path}:{safe}", nested_content, depth=depth + 1
                         )
                     elif member.issym() or member.islnk():
                         target_text = member.linkname
                         target = target_text.encode("utf-8", errors="surrogateescape")
-                        _scan_policy_bytes(
+                        _scan_decoded_member_bytes(
                             f"nested archive link: {path}:{safe}", target
                         )
                         resolved = _resolved_link_target(
@@ -698,7 +712,7 @@ def _layers(
     whiteouts: list[dict[str, Any]] = []
     for layer_name in names:
         raw = _raw_member(archive, layer_name)
-        _scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)
+        _scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)
         _validated_tar_members(f"raw layer: {layer_name}", raw)
         diff_ids.append("sha256:" + hashlib.sha256(raw).hexdigest())
         current_rootfs: dict[str, bytes] = {}
@@ -738,13 +752,6 @@ def _layers(
                     if payload is None:
                         raise ValueError(f"unreadable layer file: {path}")
                     content = payload.read()
-                    _scan_policy_bytes(
-                        path,
-                        content,
-                        allowed_system_wheel_path=(
-                            path if allowed_system_wheel else None
-                        ),
-                    )
                     nested += _nested_archive_members(
                         path,
                         content,
@@ -764,7 +771,7 @@ def _layers(
                 elif item.issym() or item.islnk():
                     target = item.linkname
                     target_bytes = target.encode("utf-8", errors="surrogateescape")
-                    _scan_policy_bytes(f"link target: {path}", target_bytes)
+                    _scan_decoded_member_bytes(f"link target: {path}", target_bytes)
                     resolved = _resolved_link_target(
                         path, target, relative=item.issym()
                     )
@@ -1011,7 +1018,7 @@ def scan(path: Path) -> dict[str, Any]:
     with path.open("rb") as stream:
         archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     archive_bytes = path.read_bytes()
-    _scan_policy_bytes("complete Docker-save archive", archive_bytes)
+    _scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)
     _validated_tar_members("Docker-save archive", archive_bytes)
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
         outer_members = archive.getmembers()
@@ -1020,7 +1027,7 @@ def scan(path: Path) -> dict[str, Any]:
             raise ValueError("Docker save contains duplicate normalized member paths")
         outer_names = set(outer_by_name)
         manifest_raw = _raw_member(archive, "manifest.json")
-        _scan_policy_bytes("Docker-save manifest", manifest_raw)
+        _scan_decoded_member_bytes("Docker-save manifest", manifest_raw)
         manifest = json.loads(manifest_raw)
         if not isinstance(manifest, list) or len(manifest) != 1:
             raise ValueError("Docker save must contain exactly one image")
@@ -1034,7 +1041,7 @@ def scan(path: Path) -> dict[str, Any]:
             raise ValueError(
                 "Docker save config filename does not bind its exact bytes"
             )
-        _scan_policy_bytes("exact image config", config_raw)
+        _scan_decoded_member_bytes("exact image config", config_raw)
         config = json.loads(config_raw)
         if not isinstance(config, dict):
             raise ValueError("Docker save config must be an object")
@@ -1065,7 +1072,7 @@ def scan(path: Path) -> dict[str, Any]:
                     f"Docker-save parent member is not a directory: {directory}"
                 )
         if "repositories" in outer_names:
-            _scan_policy_bytes(
+            _scan_decoded_member_bytes(
                 "Docker-save repositories", _raw_member(archive, "repositories")
             )
         (

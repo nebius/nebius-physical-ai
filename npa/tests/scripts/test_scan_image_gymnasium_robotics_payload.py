@@ -46,12 +46,14 @@ def _tar_bytes(
     symlinks: dict[str, str] | None = None,
     hardlinks: dict[str, str] | None = None,
     suffix: bytes = b"",
+    gname: str = "",
 ) -> bytes:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w") as archive:
         for name, raw in files.items():
             info = tarfile.TarInfo(name)
             info.size = len(raw)
+            info.gname = gname
             archive.addfile(info, io.BytesIO(raw))
         for name, target in (symlinks or {}).items():
             info = tarfile.TarInfo(name)
@@ -81,13 +83,15 @@ def _docker_save(
     layer_suffix: bytes = b"",
     config_name: str | None = None,
     configured_diff_ids: list[str] | None = None,
+    structural_gname: str = "",
 ) -> tuple[str, list[str]]:
-    base = _tar_bytes({"etc/neutral-base": b"base"})
+    base = _tar_bytes({"etc/neutral-base": b"base"}, gname=structural_gname)
     app = _tar_bytes(
         files,
         symlinks=symlinks,
         hardlinks=hardlinks,
         suffix=layer_suffix,
+        gname=structural_gname,
     )
     diff_ids = [
         "sha256:" + hashlib.sha256(base).hexdigest(),
@@ -121,7 +125,8 @@ def _docker_save(
             actual_name: config,
             "base/layer.tar": base,
             "app/layer.tar": app,
-        }
+        },
+        gname=structural_gname,
     )
     path.write_bytes(outer)
     return hashlib.sha256(config).hexdigest(), diff_ids
@@ -147,6 +152,16 @@ def test_structural_scan_covers_every_layer_and_rootfs_byte(
     assert result["runtime_cache_entry_count"] == 0
     assert result["accepted_manifest_present"] is False
     assert result["release_authorized"] is False
+
+
+def test_structural_container_text_cannot_create_unlocalized_false_positive(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "structural-text.tar"
+    structural_marker = "password" + "=" + ("x" * 16)
+    _docker_save(image, _required(), structural_gname=structural_marker)
+    assert SCAN.SECRET_TEXT.search(image.read_bytes()) is not None
+    assert SCAN.scan(image)["status"] == "passed"
 
 
 def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() -> None:
@@ -354,6 +369,39 @@ def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(
     assert forbidden == forbidden_digest
 
 
+def test_forbidden_content_hash_refuses_at_raw_container_boundary(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "image.tar"
+    _docker_save(image, _required())
+    digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    monkeypatch.setattr(SCAN, "KNOWN_FORBIDDEN_CONTENT_SHA256", frozenset({digest}))
+    with pytest.raises(
+        ValueError,
+        match="forbidden upstream/runtime byte: complete Docker-save archive",
+    ):
+        SCAN.scan(image)
+
+
+def test_forbidden_content_hash_refuses_at_decoded_member_boundary(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"decoded forbidden fixture"
+    digest = hashlib.sha256(content).hexdigest()
+    monkeypatch.setattr(SCAN, "KNOWN_FORBIDDEN_CONTENT_SHA256", frozenset({digest}))
+    image = tmp_path / "image.tar"
+    _docker_save(image, {**_required(), "opt/decoded.bin": content})
+    with pytest.raises(
+        ValueError,
+        match=r"forbidden upstream/runtime byte: decoded member: opt/decoded\.bin",
+    ):
+        SCAN.scan(image)
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -368,7 +416,59 @@ def test_secret_or_vendor_signature_refuses(
 ) -> None:
     image = tmp_path / "image.tar"
     _docker_save(image, {**_required(), "opt/innocent.txt": content})
-    with pytest.raises(ValueError, match="forbidden"):
+    with pytest.raises(ValueError, match="forbidden") as captured:
+        SCAN.scan(image)
+    message = str(captured.value)
+    assert "decoded member: opt/innocent.txt" in message
+    assert content.decode("utf-8") not in message
+
+
+@pytest.mark.parametrize("kind", ["zip", "gzip"])
+def test_decoded_secret_in_nested_content_refuses_with_member_label_only(
+    tmp_path: Path, structural_scan: None, kind: str
+) -> None:
+    content = b"api" + b"_key=" + (b"x" * 16)
+    if kind == "zip":
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("credential.txt", content)
+        nested = stream.getvalue()
+        name = "opt/nested.zip"
+        label = "decoded member: opt/nested.zip:credential.txt"
+    else:
+        nested = gzip.compress(content, mtime=0)
+        name = "opt/nested.gz"
+        label = "decoded member: opt/nested.gz:expanded-gzip"
+    image = tmp_path / "image.tar"
+    _docker_save(image, {**_required(), name: nested})
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN.scan(image)
+    message = str(captured.value)
+    assert label in message
+    assert content.decode("utf-8") not in message
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "message"),
+    [
+        ("opt/malformed.tar", b"not-a-tar", "declared tar does not match bytes"),
+        (
+            "opt/ambiguous.gz",
+            gzip.compress(b"first", mtime=0) + gzip.compress(b"second", mtime=0),
+            "ambiguous compressed stream",
+        ),
+    ],
+)
+def test_malformed_or_ambiguous_nested_archive_refuses(
+    tmp_path: Path,
+    structural_scan: None,
+    name: str,
+    content: bytes,
+    message: str,
+) -> None:
+    image = tmp_path / "image.tar"
+    _docker_save(image, {**_required(), name: content})
+    with pytest.raises(ValueError, match=message):
         SCAN.scan(image)
 
 
