@@ -105,6 +105,11 @@ def test_smoke_writes_runtime_configuration_only_under_output_boundary() -> None
     assert 'LIBERO_CONFIG_PATH="$runtime_root/' not in text
     assert 'rm -f "$LIBERO_CONFIG_PATH/config.yaml"' in text
     assert 'rmdir "$LIBERO_CONFIG_PATH"' in text
+    assert 'LIBERO_EXPERIMENT_DIR="$(mktemp -d /tmp/' in text
+    assert 'rm -rf -- "$LIBERO_EXPERIMENT_DIR"' in text
+    assert 'cfg.experiment_dir = os.environ["LIBERO_EXPERIMENT_DIR"]' in (
+        IMAGE_ROOT / "libero_smoke.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
@@ -338,6 +343,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "checked-in acceptance development SHA does not match" in text
     assert "only the checked-in acceptance manifest may differ" in text
     assert 'git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD' in text
+    assert 'build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")' in text
     assert '"npa/src/npa/deploy/libero_image_manifest.json"' in text
     assert "libero_publication_lineage_values" in text
     assert 'crane tag "$exact" "dev-$DEVELOPMENT_SHA"' in text
@@ -363,6 +369,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "exactly the accepted untagged OCI graph" in text
     assert "tagged_count=" in text
     assert "public-image-${{ inputs.target" in text
+    assert "-registry-mutation\n" in text
+    assert "inputs.release_tag || inputs.development_sha" not in text
+    assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")
     visibility_change = text.index(
@@ -370,7 +379,18 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         final_inventory,
     )
     assert final_inventory < visibility_change
-    assert "libero-public-package-versions.json" in text
+    assert '${TOOL}-public-package-versions.json' in text
+    assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in text
+    assert "reject every unexpected tag" in text
+    assert "Failed LIBERO cleanup retained a package graph" in text
+    for host_gate in (
+        "npa/tests/workflows/test_byof_container_verify.py",
+        "npa/tests/workflows/test_byof_libero.py",
+        "npa/tests/workflows/test_byof_repo.py",
+        "npa/tests/workflows/test_byof_solution_smokes.py",
+        "npa/tests/workflows/test_byof_source_auth.py",
+    ):
+        assert host_gate in text
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
     assert "Retained the unchanged private accepted LIBERO graph" in text
     assert "Deleted the complete exact failed public LIBERO OCI graph" in text

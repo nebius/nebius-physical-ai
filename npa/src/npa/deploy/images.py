@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import struct
 import shlex
 from typing import Any
@@ -46,8 +47,8 @@ LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
-LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_ENV = (
-    "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64"
+LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV = (
+    "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE"
 )
 LIBERO_RUNTIME_DECISION_BOUNDARIES = frozenset(
     {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
@@ -499,9 +500,35 @@ def _verify_libero_manager_signature(payload: dict[str, Any]) -> None:
         raise RuntimeError("LIBERO acceptance requires a closed manager signature")
     if signature_record.get("algorithm") != "ed25519":
         raise RuntimeError("LIBERO acceptance requires an Ed25519 manager signature")
-    encoded_key = os.environ.get(
-        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_ENV, ""
+    key_path_value = os.environ.get(
+        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
     ).strip()
+    try:
+        key_descriptor = os.open(
+            key_path_value,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            "LIBERO manager trust-root file is unavailable"
+        ) from exc
+    try:
+        before = os.fstat(key_descriptor)
+        with os.fdopen(key_descriptor, "rb", closefd=False) as key_stream:
+            encoded_key = key_stream.read()
+        after = os.fstat(key_descriptor)
+    finally:
+        os.close(key_descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or encoded_key != encoded_key.strip()
+    ):
+        raise RuntimeError("LIBERO manager trust-root file is mutable or invalid")
     try:
         public_key = base64.b64decode(encoded_key, validate=True)
         signature = base64.b64decode(
@@ -826,6 +853,7 @@ def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "namespace_sha256",
         "namespace_uid_sha256",
         "namespace_inventory_sha256",
+        "external_rbac_inventory_sha256",
         "rbac_spec_sha256",
         "role_binding_uid_sha256",
         "role_uid_sha256",

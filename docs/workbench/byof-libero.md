@@ -17,12 +17,14 @@ tag or digest and the public image table remains unchanged.
 
 An accepted record is not repository-self-attested. Its canonical JSON bytes
 must carry an Ed25519 signature from the manager-held private key, verified
-against `NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64` supplied by repository
-access control for publication or by the owner-only operator environment for
-qualification. That public key is baked into the accepted candidate as a
-root-owned verification trust root; the image independently verifies the same
-signature before runtime fetch. The private signing key is never stored in this
-repository, workflow inputs, task YAML, image, or runtime cache.
+against an owner-private regular file selected by
+`NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE`; symlinks, non-owner files, and
+group/world permissions fail closed. The publication workflow materializes that
+file from its protected secret immediately before host-side validation. The same
+public key is baked into the accepted candidate as a root-owned verification
+trust root; the image independently verifies the signature before runtime fetch.
+The private signing key is never stored in this repository, workflow inputs,
+task YAML, image, or runtime cache.
 
 ## Six independent boundaries
 
@@ -33,7 +35,7 @@ repository, workflow inputs, task YAML, image, or runtime cache.
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
 | Runtime cache | `/workspace/.cache/npa/libero/<runtime-manifest-sha256>` is manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, mismatched, overbroad, expired, or locally invented acceptance decisions refuse before cache or network effects. Runtime fetch changes delivery, not permission. |
-| Outputs | Exactly nine named qualification files may exist before receipt creation beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Each regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, hashed, conditionally uploaded with an S3 SHA-256 checksum, then GET/read back byte-for-byte. A tenth receipt records all nine identities and is itself uploaded and read back. Credentials, source, models, packages, input data, and caches are never output artifacts. |
+| Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, removes group write from the output directory, and materializes the protected bootstrap/cache receipts itself. Exactly nine named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and all nine snapshots are complete before network output begins. Each snapshot is hashed, conditionally uploaded with an S3 SHA-256 checksum, then GET/read back byte-for-byte. A tenth receipt records all nine identities and is itself uploaded and read back. Credentials, source, models, packages, input data, and caches are never output artifacts. |
 
 The task mentions Google Scanned Objects and a HOPE distractor, but their meshes
 and textures are neither fetched nor needed for stored-observation behavior
@@ -73,7 +75,9 @@ arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Before LIBERO's first package-wide visibility change, the private destination
 must contain exactly the accepted untagged candidate digest and no other image
 or embedded attestation graph. Other first publications still require a nonexistent
-or zero-version destination. The target namespace is globally serialized. A failed first publish
+or zero-version destination, then re-enumerate and tag-filter the complete
+post-push version graph immediately before the visibility mutation. The target
+namespace is globally serialized. A failed first publish
 deletes the still-private package only after proving its exact run tag, removing
 the image and its referrers before any retry.
 If a build runner fails or is cancelled after the package-wide visibility
@@ -188,8 +192,8 @@ complete sentinel rule before replacing it with that one Pod's exact
 can read only itself afterward. The controller Role has no wildcard: it
 enumerates only the namespaced Pod, Pod exec/log, ConfigMap, Secret, and Service
 operations needed by this fixed container job. The host verifies both identities and rejects
-every workload-granting ClusterRoleBinding that reaches the namespace's service
-accounts before submission, then repeats the complete empty
+every workload-granting ClusterRoleBinding or cross-namespace RoleBinding that
+reaches the namespace's service accounts before submission, then repeats the complete empty
 namespace/payload grant and controller checks after infrastructure preflight
 immediately adjacent to submission. It rechecks the bound Role, sole Pod UID,
 job label, image, and no-ClusterRoleBinding result immediately after binding and
@@ -197,7 +201,11 @@ at every scheduler-status observation, together with the controller identity.
 At terminal status the exact Pod may already be absent, but any replacement or
 foreign Pod is a hard failure. Every
 namespace/object UID, inventory, and payload permission is bound to the checked-in
-acceptance record. The payload reads its own Pod and bound JWT and records
+acceptance record. The isolated namespace inventory includes ConfigMaps as well
+as Secrets, Pods, Services, accounts, Roles, and RoleBindings. The canonical
+external RBAC inventory binds every allowed broad discovery/self-review grant,
+including binding and referenced-role UIDs and rules, so later RBAC drift changes
+the accepted infrastructure hash. The payload reads its own Pod and bound JWT and records
 the actual service account, Pod UID, node, and `containerStatuses.imageID`.
 
 The execution and payload-proof kubeconfig contexts remain distinct but must
@@ -209,11 +217,12 @@ ServiceAccounts before the namespace, polls every object to 404, stops the
 isolated API, and only then removes the payload kubeconfig and exact-run local
 SkyPilot state. Any ambiguity is a failed cleanup and preserves recovery state.
 
-The ClusterRoleBinding check covers direct ServiceAccount and User subjects,
+The cluster-wide binding checks cover direct ServiceAccount and User subjects,
 the global and namespace `system:serviceaccounts` groups, and resource-bearing
 grants to `system:authenticated` or `system:unauthenticated`. Only Kubernetes
 non-resource discovery and self-access-review rules are allowed for those broad
-public groups.
+public groups, whether a ClusterRoleBinding or namespaced RoleBinding supplies
+the grant.
 
 The accepted publication-enforcement bundle includes a closed manifest of known
 LIBERO and shared policy tests. A future shared test that protects this contract

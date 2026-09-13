@@ -61,18 +61,12 @@ permissions:
 concurrency:
   # Serialize every mutation of one registry namespace. A failed first publish
   # must finish removing its private package and referrers before any retry.
-  # The trailing selector names are a static compatibility marker; their values
-  # never enter this one namespace-wide mutation key.
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-registry-mutation-inputs.release_tag || inputs.development_sha
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-registry-mutation
   cancel-in-progress: false
 
 jobs:
   resolve:
     runs-on: ubuntu-latest
-    env:
-      # Public verification material comes from repository access control; the
-      # manager-held signing key never enters this workflow or repository.
-      NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
     outputs:
       target: ${{ steps.plan.outputs.target }}
       development_sha: ${{ steps.plan.outputs.development_sha }}
@@ -81,23 +75,11 @@ jobs:
       cleanup_matrix: ${{ steps.plan.outputs.cleanup_matrix }}
       cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
-      - uses: actions/checkout@v6
-        if: ${{ inputs.tool != 'libero' && !contains(inputs.build_development_tools, 'libero') && !contains(inputs.cleanup_development_tools, 'libero') }}
-        with:
-          fetch-depth: 0
-
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        if: ${{ inputs.tool != 'libero' && !contains(inputs.build_development_tools, 'libero') && !contains(inputs.cleanup_development_tools, 'libero') }}
-        with:
-          python-version: "3.11"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         with:
           python-version: "3.11"
 
@@ -105,6 +87,19 @@ jobs:
         run: |
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e "npa[dev]"
+
+      - name: Materialize owner-private LIBERO manager trust root
+        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
+        env:
+          NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="$RUNNER_TEMP/libero-manager-acceptance-public-key.b64"
+          printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" > "$key_file"
+          test "$(base64 -d "$key_file" | wc -c)" = 32
+          chmod 0600 "$key_file"
+          echo "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
 
       - name: Resolve immutable public development plan
         id: plan
@@ -347,7 +342,6 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
-      NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
       LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ matrix.libero_private_image_inventory_sha256 }}
       LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}
       LIBERO_ACCEPTED_CANDIDATE_IMAGE: ${{ matrix.libero_accepted_candidate_image }}
@@ -365,31 +359,32 @@ jobs:
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
-      - uses: actions/checkout@v6
-        if: matrix.tool != 'libero'
-        with:
-          fetch-depth: 0
-
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: matrix.tool == 'libero'
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        if: matrix.tool != 'libero'
-        with:
-          # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: matrix.tool == 'libero'
         with:
-          python-version: "3.12"
+          # Complete-byte paths require the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e "npa[dev]"
+
+      - name: Materialize owner-private LIBERO manager trust root
+        if: matrix.tool == 'libero'
+        env:
+          NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="$RUNNER_TEMP/libero-manager-acceptance-public-key.b64"
+          printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" > "$key_file"
+          test "$(base64 -d "$key_file" | wc -c)" = 32
+          chmod 0600 "$key_file"
+          echo "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
 
       - name: Refuse source, license, packaging, or skill guard drift
         run: |
@@ -410,6 +405,11 @@ jobs:
             npa/tests/docker/test_libero_runtime_bootstrap.py \
             npa/tests/docker/test_libero_image_contract.py \
             npa/tests/docker/test_libero_image_payload_scan.py \
+            npa/tests/workflows/test_byof_container_verify.py \
+            npa/tests/workflows/test_byof_libero.py \
+            npa/tests/workflows/test_byof_repo.py \
+            npa/tests/workflows/test_byof_solution_smokes.py \
+            npa/tests/workflows/test_byof_source_auth.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
@@ -489,12 +489,14 @@ jobs:
           if [ "$status" = 0 ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"
             if [ "$visibility" = public ]; then
+              echo "NPA_FIRST_PUBLICATION_REQUIRED=0" >> "$GITHUB_ENV"
               if [ "$TOOL" = libero ]; then
                 echo "::error::Accepted LIBERO candidate must remain private until this gate completes"
                 exit 1
               fi
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
+              echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
               # Visibility is package-wide. Untagged images and OCI referrers are
               # reachable by digest after this package becomes public, so no private
               # version of any media type may survive the first-publication gate.
@@ -529,6 +531,7 @@ jobs:
               exit 1
             fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
+            echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
             # A new package is created only after every local byte-level gate below
             # passes. The pushed digest is scanned again before the package visibility
             # changes, and any failure triggers exact run-owned version cleanup.
@@ -542,17 +545,9 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-buildx-action@v3
-        if: matrix.tool != 'libero'
-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: matrix.tool == 'libero'
-
-      - uses: imjasonh/setup-crane@v0.4
-        if: matrix.tool != 'libero'
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-        if: matrix.tool == 'libero'
 
       - name: Fetch immutable LIBERO base provenance metadata
         if: matrix.tool == 'libero'
@@ -695,6 +690,8 @@ jobs:
           metadata_args=()
           secret_args=()
           if [[ "$TOOL" == libero ]]; then
+            NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE")"
+            export NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64
             test "$(printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
@@ -897,15 +894,7 @@ jobs:
               --output "/output/${TOOL}-sbom.spdx.json" \
               "$IMAGE"
 
-      - uses: docker/login-action@v3
-        if: matrix.tool != 'libero'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1214,16 +1203,34 @@ jobs:
                 any(.subject[]; .digest.sha256 == $subject)
               ' "$layer" >/dev/null
             done < <(jq -r 'keys[]' "$expected_layers")
+          elif [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]; then
+            # The serialized preflight proved this package absent or empty.
+            # Re-enumerate its complete post-push graph immediately before the
+            # package-wide visibility change and reject every unexpected tag.
+            versions="$RUNNER_TEMP/${TOOL}-final-package-versions.json"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+            jq -e --arg root "$DIGEST" --arg tag "dev-$DEVELOPMENT_SHA" '
+              length >= 1 and
+              all(.[]; (.name | test("^sha256:[0-9a-f]{64}$"))) and
+              ([.[] | select(.name == $root)] | length) == 1 and
+              all(.[];
+                if .name == $root
+                then (.metadata.container.tags // []) == [$tag]
+                else (.metadata.container.tags // []) == []
+                end)
+            ' "$versions" >/dev/null
           fi
           if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
             gh api --method PATCH "$package_api" -f visibility=public >/dev/null
           fi
           test "$(gh api "$package_api" --jq .visibility)" = public
-          if [ "$TOOL" = libero ]; then
-            post_versions="$RUNNER_TEMP/libero-public-package-versions.json"
+          if [ "$TOOL" = libero ] || [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]; then
+            post_versions="$RUNNER_TEMP/${TOOL}-public-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$post_versions"
             test "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$versions")" = \
               "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$post_versions")"
+          fi
+          if [ "$TOOL" = libero ]; then
             test "$(crane digest "$exact")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
           fi
           anonymous_config="$(mktemp -d)"
@@ -1284,21 +1291,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@v0.4
-        if: matrix.tool != 'libero'
-
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-        if: matrix.tool == 'libero'
-
-      - uses: docker/login-action@v3
-        if: matrix.tool != 'libero'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1408,21 +1403,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@v0.4
-        if: matrix.tool != 'libero'
-
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-        if: matrix.tool == 'libero'
-
-      - uses: docker/login-action@v3
-        if: matrix.tool != 'libero'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: matrix.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1456,7 +1439,7 @@ jobs:
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$LIBERO_PACKAGE_WRITER_REPOSITORY"
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+            if ! jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
               --arg tag "$tag" \
               --arg visibility "$visibility" \
               --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
@@ -1469,7 +1452,13 @@ jobs:
                 then ((.metadata.container.tags // []) == [] or (.metadata.container.tags // []) == [$tag])
                 else (.metadata.container.tags // []) == []
                 end)
-            ' "$versions" >/dev/null
+            ' "$versions" >/dev/null; then
+              echo "::error::Failed LIBERO cleanup retained a package graph that differs from manager acceptance"
+              echo "WARNING: failed LIBERO cleanup retained a ${visibility} package; no deletion was attempted." >> "$GITHUB_STEP_SUMMARY"
+              jq -c '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' \
+                "$versions" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             if [ "$visibility" = private ]; then
               echo "Retained the unchanged private accepted LIBERO graph; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -1546,23 +1535,11 @@ jobs:
       EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
-      - uses: actions/checkout@v6
-        if: inputs.tool != 'libero'
-        with:
-          fetch-depth: 0
-
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: inputs.tool == 'libero'
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        if: inputs.tool != 'libero'
-        with:
-          python-version: "3.11"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: inputs.tool == 'libero'
         with:
           python-version: "3.11"
 
@@ -1571,21 +1548,9 @@ jobs:
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e npa
 
-      - uses: imjasonh/setup-crane@v0.4
-        if: inputs.tool != 'libero'
-
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-        if: inputs.tool == 'libero'
-
-      - uses: docker/login-action@v3
-        if: inputs.tool != 'libero'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: inputs.tool == 'libero'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

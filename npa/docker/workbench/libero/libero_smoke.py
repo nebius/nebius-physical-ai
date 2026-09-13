@@ -170,7 +170,8 @@ def prepare_language_model(
 
 
 def runtime_materialized_this_run(output_dir: Path, runtime_root: Path) -> bool:
-    receipt_path = output_dir / "npa_runtime_bootstrap.json"
+    del output_dir
+    receipt_path = Path(os.environ["NPA_LIBERO_BOOTSTRAP_RECEIPT"])
     if not receipt_path.is_file() or receipt_path.is_symlink():
         raise RuntimeError("LIBERO runtime bootstrap receipt is absent")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -180,6 +181,7 @@ def runtime_materialized_this_run(output_dir: Path, runtime_root: Path) -> bool:
         or receipt.get("solution") != "libero"
         or receipt.get("status") != "ready"
         or receipt.get("warm_reuse") is not False
+        or receipt.get("governing_terms_fetched_this_invocation") is not True
         or receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256
         or receipt.get("decision_sha256")
         != os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256")
@@ -354,6 +356,9 @@ def observe_own_pod_image(expected_digest: str) -> dict[str, str]:
         ),
         "rbac_spec_sha256": required_sha256_environment(
             "NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256"
+        ),
+        "external_rbac_inventory_sha256": required_sha256_environment(
+            "NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256"
         ),
         "controller_service_account_separated": True,
     }
@@ -554,7 +559,7 @@ try:
         )
     with open_dict(cfg):
         cfg.device = "cuda"
-        cfg.experiment_dir = str(output_dir / "experiment")
+        cfg.experiment_dir = os.environ["LIBERO_EXPERIMENT_DIR"]
         cfg.train.use_augmentation = False
         cfg.train.batch_size = 8
         cfg.train.num_workers = 0

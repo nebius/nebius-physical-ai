@@ -199,6 +199,7 @@ def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> N
     assert '"rendering_invoked": False' in smoke
     assert "runtime_materialized_this_run" in smoke
     assert 'receipt.get("warm_reuse") is not False' in smoke
+    assert 'receipt.get("governing_terms_fetched_this_invocation") is not True' in smoke
     assert 'receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256' in smoke
     assert 'receipt.get("decision_sha256")' in smoke
     assert ".render(" not in smoke
@@ -227,7 +228,7 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
         "/opt/npa/libero/runtime-bootstrap.py execute",
         "/opt/npa/libero/runtime-bootstrap.py execute-and-upload",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
-        "npa_runtime_bootstrap.json",
+        "/workspace/.cache/npa/libero/run-receipts",
         "/opt/npa/libero/smoke.sh",
         "npa-byof-libero-payload",
     ):
@@ -247,6 +248,9 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert "set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS)" in bootstrap
     assert "MAX_OUTPUT_BYTES" in bootstrap
     assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
+    assert "_execution_uid_processes()" in bootstrap
+    assert "os.fchmod(root_fd, 0o750)" in bootstrap
+    assert "snapshots.append((name, payload, digest))" in bootstrap
     assert profile.count("unset NPA_LIBERO_RUNTIME_USE_DECISION_B64") == 2
     assert (
         "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "
@@ -315,7 +319,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
 
 
 def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
     manifest = json.loads(IMAGE_MANIFEST_PATH.read_text(encoding="utf-8"))
     now = datetime.now(timezone.utc)
@@ -440,9 +444,11 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
+    key_file = tmp_path / "manager-acceptance-public-key.b64"
+    key_file.write_bytes(base64.b64encode(public_key))
+    key_file.chmod(0o600)
     monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
-        base64.b64encode(public_key).decode("ascii"),
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_file)
     )
     acceptance["manager_signature"] = {
         "algorithm": "ed25519",
@@ -473,16 +479,31 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
+    key_file.write_bytes(base64.b64encode(untrusted_key))
+    with pytest.raises(RuntimeError, match="manager trust root differs"):
+        validate_libero_accepted_image_manifest(manifest)
+    key_file.write_bytes(base64.b64encode(public_key))
+
+    key_file.chmod(0o640)
+    with pytest.raises(RuntimeError, match="trust-root file is mutable"):
+        validate_libero_accepted_image_manifest(manifest)
+    key_file.chmod(0o600)
+
+    key_link = tmp_path / "manager-acceptance-public-key-link.b64"
+    key_link.symlink_to(key_file)
+    monkeypatch.setenv(
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_link)
+    )
+    with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
+        validate_libero_accepted_image_manifest(manifest)
+    monkeypatch.setenv(
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_file)
+    )
     monkeypatch.setenv(
         "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
         base64.b64encode(untrusted_key).decode("ascii"),
     )
-    with pytest.raises(RuntimeError, match="manager trust root differs"):
-        validate_libero_accepted_image_manifest(manifest)
-    monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
-        base64.b64encode(public_key).decode("ascii"),
-    )
+    assert validate_libero_accepted_image_manifest(manifest) == acceptance
 
     acceptance["candidate_image"] = (
         "ghcr.io/attacker/example/npa-libero@" + digest
