@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-payload RoboTwin bootstrap with an intentionally closed Phase A gate."""
+"""Zero-payload RoboTwin bootstrap with an intentionally closed runtime gate."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c"
+RUNTIME_LOCK_SHA256 = "d67c861a2b24f5df1a2069d86f6db2a6d384f011fffd65acb4b5d261ef66a358"
 ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
 REQUIRED_DECISIONS = frozenset(
     {
@@ -177,13 +177,17 @@ def _load_lock(path: Path, expected_sha256: str) -> dict[str, Any]:
 
 
 def run(*, lock_path: Path, environ: Mapping[str, str]) -> int:
-    """Refuse before filesystem/network effects until the immutable lock is complete."""
+    """Refuse before effects until runtime delivery and authority are complete."""
 
     authorization = _validate_authorization(environ)
     lock = _load_lock(lock_path, _text(authorization, "runtime_lock_sha256"))
-    if lock.get("status") != "complete":
+    bootstrap = lock.get("bootstrap")
+    if not isinstance(bootstrap, dict) or bootstrap.get("status") != "complete":
         _refuse("runtime-lock-incomplete")
-    _refuse("phase-a-runtime-disabled")
+    delivery = lock.get("runtime_delivery")
+    if not isinstance(delivery, dict) or delivery.get("status") != "complete":
+        _refuse("runtime-delivery-disabled")
+    _refuse("runtime-fetch-not-implemented")
 
 
 def assert_refusal() -> int:

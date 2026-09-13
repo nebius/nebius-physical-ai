@@ -46,7 +46,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "86d343677017e7e4934ed2cf9f42a9c924b07d88e205f03a79bcbbed817a772c",
+        "runtime_lock_sha256": "d67c861a2b24f5df1a2069d86f6db2a6d384f011fffd65acb4b5d261ef66a358",
         "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -267,7 +267,7 @@ def test_robotwin_authorization_refuses_before_any_side_effect(
     assert capsys.readouterr().out == ""
 
 
-def test_robotwin_incomplete_runtime_lock_refuses_before_any_side_effect(
+def test_robotwin_disabled_runtime_delivery_refuses_before_any_side_effect(
     monkeypatch, capsys, tmp_path
 ) -> None:
     from npa.orchestration.npa_workflow.robotwin_preflight import (
@@ -301,7 +301,7 @@ def test_robotwin_incomplete_runtime_lock_refuses_before_any_side_effect(
         ),
     )
 
-    with pytest.raises(ValueError, match="runtime-lock-incomplete"):
+    with pytest.raises(ValueError, match="runtime-delivery-disabled"):
         _load_robotwin_authorization(module, _robotwin_args(module))
     assert capsys.readouterr().out == ""
 

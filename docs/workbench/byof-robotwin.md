@@ -3,8 +3,9 @@
 RoboTwin is represented by a public-eligible, zero-vendor-payload bootstrap
 candidate and a separately gated live workflow. The candidate version is
 `2.0-curobo-v0.7.8-rtfetch-unbuilt`; it is deliberately unbuilt and excluded
-from publication until its base, apt, runtime, legal, byte-scan, and live
-evidence gates are complete.
+from publication. Its neutral base/apt inputs are now immutable, but its native
+byte policy, built-byte scans, runtime delivery, remaining legal decisions, and
+live evidence are not complete.
 
 The eventual hard gate remains narrow and unchanged: the official
 `beat_block_hammer` task with `demo_clean` must find and replay a successful
@@ -22,11 +23,11 @@ with deferred prerequisites in its
 | Boundary | Phase A treatment |
 | --- | --- |
 | Source | `RoboTwin-Platform/RoboTwin@96c1feab536306b50c26af200044fcdf126e8904` and `NVlabs/curobo@d64c4b005459db10c5dd867d8b30a87d5bda9bdb` (v0.7.8) are identities only. Neither source nor git metadata is baked or currently fetched; a future authorized runtime must fetch the exact revisions directly from their official providers and verify payload bytes before provisioning. |
-| Baked runtime | The candidate may eventually contain a digest-pinned Ubuntu 22.04 bootstrap and an exact snapshot/version-locked OS closure. Phase A leaves these locks incomplete and refuses every build. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and Python application packages are absent. |
+| Baked runtime | The recipe pins official Ubuntu 22.04 linux/amd64 manifest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986` and Ubuntu snapshot `20260912T000000Z`. Its signed `main` closure is 75 exact binary packages and 57 source packages; all 75 installed copyright files are hash-bound. The public Python application lock is complete-empty. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and every Python application package remain absent. The trusted build still refuses before Docker because no reviewed native-content policy or built-byte evidence exists. |
 | Weights | Empty. This data-collection gate uses no model or checkpoint. |
 | Data/assets | `TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad` is recorded only as an identity. No archive or extracted asset is currently fetched or baked. A future authorized runtime must probe and fetch the two exact revision-bound archives from the official provider and verify their recorded sizes and SHA-256 values. |
-| Runtime cache | Empty and disabled while the runtime lock is incomplete. The planned default is single-customer, single-workload node-local ephemeral storage keyed by provider, artifact, immutable revision/digest, and format. Population uses owner-only staging, verification, and receipt-last atomic rename. Durable reuse remains disabled until its rights and tenant isolation are approved. |
-| Outputs | No Phase A outputs exist. A future run may write only the destination derived from the manager-authorized root and run ID; source staging is a separate control-plane input, never a second output destination. |
+| Runtime cache | Empty and disabled while runtime delivery is unapproved and has no complete artifact lock. The planned default is single-customer, single-workload node-local ephemeral storage keyed by provider, artifact, immutable revision/digest, and format. Population uses owner-only staging, verification, and receipt-last atomic rename. Durable reuse remains disabled until its rights and tenant isolation are approved. |
+| Outputs | No outputs exist. A future run may write only the destination derived from the manager-authorized root and run ID; source staging is a separate control-plane input, never a second output destination. |
 
 The operator has recorded the exact statement `noncommercial` once for this
 bounded manager run; its separate intended activity is containerization plus
@@ -53,9 +54,11 @@ must never enter argv, YAML, plans, logs, Git, image layers, cache metadata,
 outputs, or PR text. A provider/artifact/revision/terms change requires a new
 probe. Phase A accepts no upstream credential and performs no probe or fetch.
 
-The runtime lock is the immutable delivery manifest. Its source, asset, runtime,
-cache, and output records remain incomplete, so the guarded path refuses before
-network or provisioning. The eventual implementation must download into a
+The runtime lock separates the complete public bootstrap from the disabled
+workload delivery. Source and asset identities are recorded, but runtime
+artifacts, exact access evidence, and the independent decisions remain absent,
+so the guarded path refuses before network or provisioning. The eventual
+implementation must download into a
 unique owner-only temporary path, verify the exact expected file set, sizes,
 hashes, source identity, and notices, and publish an atomic ready marker only
 after verification. A restart may reuse only the same verified identity within
@@ -105,12 +108,13 @@ independently attestable outer identity are designed and reviewed. Non-RoboTwin
 BYOF behavior is unchanged.
 
 The image bootstrap independently validates the transported context and
-run/image/output bindings. Phase A then exits 78 with
-`ROBOTWIN_RUNTIME_REFUSED:runtime-lock-incomplete` before it can create source,
+run/image/output bindings. It then exits 78 with
+`ROBOTWIN_RUNTIME_REFUSED:runtime-delivery-disabled` before it can create source,
 asset, cache, or output paths or access the network. Its CPU golden eval runs
 `robotwin-runtime assert-refusal`; this is packaging/refusal evidence only.
 
-The RoboTwin byte scanner is likewise unavailable in Phase A. Path and regex
+The RoboTwin byte scanner is likewise unavailable before the first reviewed
+private candidate-byte population. Path and regex
 denials remain defense in depth, but they cannot prove absence after arbitrary
 renaming or re-encoding. Even a completed-looking policy file is rejected until
 a separately reviewed implementation binds the shared fresh-native exact-content
@@ -132,12 +136,15 @@ npa/.venv/bin/python -m pytest -q \
   npa/tests/workflows/test_byof_robotwin.py
 ```
 
-Do not build, publish, pull, submit, or attempt live qualification while the
-locks/readiness record remain incomplete. After separate authorization, the
-sequence would be private-stage build and exact-byte scans, exact-digest RTX gate,
-trusted public-development build, anonymous pull proof, and a repeat of the
-same capability on byte-identical public bytes. Only then may an accepted-image
-manifest, GPU digest inventory, or public catalog row be added.
+Do not build while the native-content policy remains unresolved; do not publish,
+pull, submit, or attempt live qualification while the readiness and runtime-use
+gates remain incomplete. The resolved bootstrap inputs do not authorize any
+RoboTwin, CuRobo, CUDA, cuDNN, asset, cache, or output byte. After separate
+authorization, the sequence would be private-stage build and exact-byte scans,
+exact-digest RTX gate, trusted public-development build, anonymous pull proof,
+and a repeat of the same capability on byte-identical public bytes. Only then
+may an accepted-image manifest, GPU digest inventory, or public catalog row be
+added.
 
 The full 50-task sweep, policy training/evaluation, durable shared cache,
 additional object families, and physical-robot deployment remain deferred.
