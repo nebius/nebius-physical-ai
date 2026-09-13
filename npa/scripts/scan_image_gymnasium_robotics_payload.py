@@ -109,6 +109,8 @@ EXPECTED_SYSTEM_WHEEL_FILES = {
     },
 }
 MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
+MAX_NESTED_ARCHIVE_EXPANDED_BYTES = MAX_NESTED_ARCHIVE
+MAX_NESTED_ARCHIVE_WORK_BYTES = 2 * MAX_NESTED_ARCHIVE
 # Runtime acquisition permits 100,000 top-level archive members. Recursive
 # complete-byte scanning uses a stricter limit to bound ZipInfo allocation and
 # sorting at every nesting depth before zipfile.ZipFile is constructed.
@@ -173,9 +175,9 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "1f127f8b67dbee7049c3ceda98d2a7894168ad974aba1278cf084fc687f3477b",
+    "runtime-bootstrap.py": "de45f4f1f2ddb79b98bca477bebb76e1efd922b31aff28b223fae9942787ad4f",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
-    "verify_image.py": "481d0caf756a3da4a5e353207f7cca87da91544dddabea2b3cec67fccb35da9d",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "f4c5df2048d3cec9a515cb504b31e7f213512df04867f75614a3af2673910095",  # gitleaks:allow; public file-content SHA-256
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -323,6 +325,33 @@ def _scan_decoded_member_bytes(
         raise ValueError(f"forbidden vendor payload signature: {label}")
 
 
+class _NestedArchiveBudget:
+    """Track cumulative resource use across one retained archive graph."""
+
+    def __init__(self) -> None:
+        self.expanded_bytes = 0
+        self.member_count = 0
+        self.work_bytes = 0
+
+    def reserve_members(self, path: str, count: int) -> None:
+        self.member_count += count
+        if self.member_count > MAX_NESTED_ARCHIVE_MEMBERS:
+            raise ValueError(f"nested archive member budget exceeded: {path}")
+
+    def account_archive(self, path: str, size: int) -> None:
+        self.work_bytes += size
+        if self.work_bytes > MAX_NESTED_ARCHIVE_WORK_BYTES:
+            raise ValueError(f"nested archive work budget exceeded: {path}")
+
+    def account_expanded(self, path: str, size: int) -> None:
+        self.expanded_bytes += size
+        self.work_bytes += size
+        if self.expanded_bytes > MAX_NESTED_ARCHIVE_EXPANDED_BYTES:
+            raise ValueError(f"nested archive expanded-byte budget exceeded: {path}")
+        if self.work_bytes > MAX_NESTED_ARCHIVE_WORK_BYTES:
+            raise ValueError(f"nested archive work budget exceeded: {path}")
+
+
 def _looks_like_tar(content: bytes) -> bool:
     """Recognize a valid first tar header, including pre-ustar archives."""
 
@@ -338,9 +367,13 @@ def _looks_like_tar(content: bytes) -> bool:
 
 
 def _validated_tar_members(
-    path: str, content: bytes, *, max_members: int
+    path: str,
+    content: bytes,
+    *,
+    max_members: int,
+    budget: _NestedArchiveBudget | None = None,
 ) -> list[tarfile.TarInfo]:
-    """Parse exactly one uncompressed tar stream with only zero end padding."""
+    """Parse one tar stream and account for every structural byte."""
 
     if len(content) < 1024 or len(content) % 512:
         raise ValueError(f"unaccounted tar bytes: {path}")
@@ -354,13 +387,24 @@ def _validated_tar_members(
     except tarfile.TarError as error:
         raise ValueError(f"unreadable nested tar archive: {path}") from error
     cursor = 0
-    for member in members:
+    for index, member in enumerate(members):
         if member.offset != cursor:
             raise ValueError(f"unaccounted tar bytes: {path}")
-        cursor = ((member.offset_data + member.size + 511) // 512) * 512
+        if member.offset_data < member.offset + 512:
+            raise ValueError(f"invalid tar metadata boundary: {path}")
+        _scan_decoded_member_bytes(
+            f"tar metadata: {path}:member-{index}",
+            content[member.offset : member.offset_data],
+        )
+        data_end = member.offset_data + member.size
+        cursor = ((data_end + 511) // 512) * 512
+        if any(content[data_end:cursor]):
+            raise ValueError(f"nonzero tar member padding: {path}:member-{index}")
     tail = content[cursor:]
     if len(tail) < 1024 or any(tail):
         raise ValueError(f"unaccounted tar bytes: {path}")
+    if budget is not None:
+        budget.reserve_members(path, len(members))
     return members
 
 
@@ -430,8 +474,13 @@ def _zip_central_filename_bytes(path: str, info: zipfile.ZipInfo) -> bytes:
         raise ValueError(f"unsupported zip filename encoding: {path}") from error
 
 
-def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
-    """Parse one prefix/suffix-free non-ZIP64 stream with no local-data gaps."""
+def _validated_zip_infos(
+    path: str,
+    content: bytes,
+    *,
+    budget: _NestedArchiveBudget | None = None,
+) -> list[zipfile.ZipInfo]:
+    """Parse one prefix/suffix-free ZIP and account for structural metadata."""
 
     eocd_offset = content.rfind(b"PK\x05\x06", max(0, len(content) - 65_557))
     if eocd_offset < 0 or eocd_offset + 22 > len(content):
@@ -448,6 +497,8 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
     ) = struct.unpack_from("<4s4H2LH", content, eocd_offset)
     if signature != b"PK\x05\x06" or eocd_offset + 22 + comment_size != len(content):
         raise ValueError(f"unaccounted zip bytes: {path}")
+    if comment_size:
+        raise ValueError(f"unsupported zip archive comment: {path}")
     if max(disk_entries, total_entries) > MAX_NESTED_ARCHIVE_MEMBERS:
         raise ValueError(f"zip archive member count exceeds limit: {path}")
     if (
@@ -466,6 +517,14 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
         raise ValueError(f"unreadable nested zip archive: {path}") from error
     if len(infos) != total_entries:
         raise ValueError(f"zip entry count changed: {path}")
+    if any(info.comment for info in infos):
+        raise ValueError(f"unsupported zip member comment: {path}")
+    _scan_decoded_member_bytes(
+        f"zip central directory metadata: {path}",
+        content[central_offset:eocd_offset],
+    )
+    if budget is not None:
+        budget.reserve_members(path, total_entries)
     ordered = sorted(infos, key=lambda item: item.header_offset)
     cursor = 0
     for index, info in enumerate(ordered):
@@ -496,6 +555,10 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
         data_start = filename_end + extra_size
         if data_start > central_offset:
             raise ValueError(f"unaccounted zip bytes: {path}")
+        _scan_decoded_member_bytes(
+            f"zip local header metadata: {path}:member-{index}",
+            content[cursor:data_start],
+        )
         if content[filename_start:filename_end] != _zip_central_filename_bytes(
             path, info
         ):
@@ -584,9 +647,12 @@ def _nested_archive_members(
     *,
     depth: int = 0,
     allowed_system_wheel_path: str | None = None,
+    budget: _NestedArchiveBudget | None = None,
 ) -> int:
     """Inspect retained archives by validated bytes, never only by filename."""
 
+    budget = budget or _NestedArchiveBudget()
+    starting_member_count = budget.member_count
     if depth > 8:
         raise ValueError(f"nested archive depth exceeds scan bound: {path}")
     lowered = path.lower()
@@ -619,6 +685,7 @@ def _nested_archive_members(
         or content.startswith(ZIP_SIGNATURES)
     )
     if archive_like:
+        budget.account_archive(path, len(content))
         _scan_raw_blob_bytes(
             f"raw archive member: {path}",
             content,
@@ -634,38 +701,36 @@ def _nested_archive_members(
         raise ValueError(f"nested archive exceeds scan bound: {path}")
     if compression_kind is not None:
         expanded = _decompress(path, content, compression_kind)
+        budget.account_expanded(path, len(expanded))
         if lowered.endswith(COMPRESSED_TAR_SUFFIXES) and not _looks_like_tar(expanded):
             raise ValueError(f"compressed tar payload is not a tar archive: {path}")
         return _nested_archive_members(
-            f"{path}:expanded-{compression_kind}", expanded, depth=depth + 1
+            f"{path}:expanded-{compression_kind}",
+            expanded,
+            depth=depth + 1,
+            budget=budget,
         )
     if is_zip:
         infos = _validated_zip_infos(path, content)
+        budget.reserve_members(path, len(infos))
         reviewed_system_wheel = allowed_system_wheel_path is not None
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                count = 0
-                expanded_total = 0
                 for member in infos:
                     safe = _safe(member.filename)
-                    count += 1
                     if (
                         FORBIDDEN_PATH.search(safe) and not reviewed_system_wheel
                     ) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
+                    budget.account_expanded(f"{path}:{safe}", member.file_size)
                     if member.is_dir():
                         _validate_zip_directory(archive, member, f"{path}:{safe}")
                         continue
                     if member.file_size > MAX_NESTED_ARCHIVE:
                         raise ValueError(
                             f"nested archive member exceeds scan bound: {path}:{safe}"
-                        )
-                    expanded_total += member.file_size
-                    if expanded_total > MAX_NESTED_ARCHIVE:
-                        raise ValueError(
-                            f"nested archive expansion exceeds scan bound: {path}"
                         )
                     nested_content = archive.read(member)
                     mode = member.external_attr >> 16
@@ -701,38 +766,35 @@ def _nested_archive_members(
                         # not apply generic credential-source regexes to pip's
                         # own authentication implementation.
                         continue
-                    count += _nested_archive_members(
-                        f"{path}:{safe}", nested_content, depth=depth + 1
+                    _nested_archive_members(
+                        f"{path}:{safe}",
+                        nested_content,
+                        depth=depth + 1,
+                        budget=budget,
                     )
-                return count
+                return budget.member_count - starting_member_count
         except zipfile.BadZipFile as error:
             raise ValueError(f"unreadable nested zip archive: {path}") from error
     if content.startswith(ZIP_SIGNATURES) or declared_zip:
         raise ValueError(f"unreadable nested zip archive: {path}")
     if is_tar:
-        _validated_tar_members(
+        members = _validated_tar_members(
             path, content, max_members=MAX_NESTED_ARCHIVE_MEMBERS
         )
+        budget.reserve_members(path, len(members))
         try:
             with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
-                count = 0
-                expanded_total = 0
                 for member in archive:
                     safe = _safe(member.name)
-                    count += 1
                     if FORBIDDEN_PATH.search(safe) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
+                    budget.account_expanded(f"{path}:{safe}", member.size)
                     if member.isfile():
                         if member.size > MAX_NESTED_ARCHIVE:
                             raise ValueError(
                                 f"nested archive member exceeds scan bound: {path}:{safe}"
-                            )
-                        expanded_total += member.size
-                        if expanded_total > MAX_NESTED_ARCHIVE:
-                            raise ValueError(
-                                f"nested archive expansion exceeds scan bound: {path}"
                             )
                         stream = archive.extractfile(member)
                         nested_content = stream.read() if stream is not None else b""
@@ -740,8 +802,11 @@ def _nested_archive_members(
                             raise ValueError(
                                 f"forbidden nested archive bytes: {path}:{safe}"
                             )
-                        count += _nested_archive_members(
-                            f"{path}:{safe}", nested_content, depth=depth + 1
+                        _nested_archive_members(
+                            f"{path}:{safe}",
+                            nested_content,
+                            depth=depth + 1,
+                            budget=budget,
                         )
                     elif member.issym() or member.islnk():
                         target_text = member.linkname
@@ -764,7 +829,7 @@ def _nested_archive_members(
                         raise ValueError(
                             f"unsupported nested archive member type: {path}:{safe}"
                         )
-                return count
+                return budget.member_count - starting_member_count
         except tarfile.TarError as error:
             raise ValueError(f"unreadable nested tar archive: {path}") from error
     if declared_tar:
@@ -862,6 +927,7 @@ def _layers(
     whiteouts: list[dict[str, Any]] = []
     ordered_layer_bytes = 0
     materialized_layer_bytes = 0
+    nested_budget = _NestedArchiveBudget()
     for layer_name in names:
         raw = _raw_member(
             archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
@@ -926,6 +992,7 @@ def _layers(
                         allowed_system_wheel_path=(
                             path if allowed_system_wheel else None
                         ),
+                        budget=nested_budget,
                     )
                     _remove_path(current_rootfs, current_entries, path)
                     current_rootfs[path] = content
