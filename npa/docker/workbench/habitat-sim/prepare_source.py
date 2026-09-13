@@ -136,6 +136,23 @@ def _verify_license(root: Path, item: dict[str, object]) -> None:
         raise SourceError("source license size changed")
 
 
+def _verify_required_source_files(
+    root: Path, required: list[dict[str, object]]
+) -> None:
+    for item in required:
+        relative = PurePosixPath(str(item["path"]))
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise SourceError("required source projection path is unsafe")
+        path = root.joinpath(*relative.parts)
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size != item["bytes"]
+            or _sha(path) != item["sha256"]
+        ):
+            raise SourceError(f"required source projection file changed: {relative}")
+
+
 def _prune_parent(root: Path) -> None:
     allowed_top = {
         "LICENSE",
@@ -152,7 +169,11 @@ def _prune_parent(root: Path) -> None:
             shutil.rmtree(path) if path.is_dir() else path.unlink()
     data = root / "data"
     for path in list(data.iterdir()):
-        if path.name != "default.physics_config.json":
+        if path.name not in {"default.physics_config.json", "pbr"}:
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
+    pbr = data / "pbr"
+    for path in list(pbr.iterdir()):
+        if path.name != "PbrImages.conf":
             shutil.rmtree(path) if path.is_dir() else path.unlink()
     for relative in ("src/deps/rlr-audio-propagation", "src/deps/glfw"):
         shutil.rmtree(root / relative, ignore_errors=True)
@@ -235,6 +256,7 @@ def stage(
         parent_archive = _download(source, temp)
         _extract(parent_archive, output, source.get("excluded_archive_links", []))
         _verify_license(output, source)
+        _verify_required_source_files(output, source["required_projection_files"])
         _prune_parent(output)
         _verify_internal_vendored(output, manifest["internal_vendored"])
         for dependency in manifest["dependencies"]:
