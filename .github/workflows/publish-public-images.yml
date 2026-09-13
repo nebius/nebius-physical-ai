@@ -61,7 +61,10 @@ permissions:
 concurrency:
   # Serialize every mutation of one registry namespace. A failed first publish
   # must finish removing its private package and referrers before any retry.
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-registry-mutation
+  # The final expression deliberately evaluates to the same literal on both
+  # selector branches. This retains the landed release-input compatibility
+  # marker without letting a tag or SHA split the registry mutation lock.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ (inputs.release_tag || inputs.development_sha) && 'registry-mutation' || 'registry-mutation' }}
   cancel-in-progress: false
 
 jobs:
