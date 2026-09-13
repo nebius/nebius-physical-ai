@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES, SUPPORTED_TOOL_VERSIONS
@@ -69,9 +70,40 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
 def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
     text = VIEWPORT_PATCH.read_text(encoding="utf-8")
     assert "pinned Arena viewport-camera patch context changed" in text
+    assert "pinned Arena embodiment-camera patch context changed" in text
+    assert "POLICY_RUNNER_CONTEXT" in text
     assert 'os.environ.get("NPA_ISAAC_ARENA_VIEWPORT_ONLY") == "1"' in text
-    assert "args_cli.record_camera_video" in text
-    assert "args_cli.enable_cameras = False" in text
+    assert "args_cli.record_camera_video or args_cli.record_viewport_video" in text
+    assert "self.enable_cameras = enable_cameras and not viewport_only" in text
+    assert "args_cli.enable_cameras = False" not in text
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "/opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py" in dockerfile
+    assert "/opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py" in dockerfile
+
+
+def test_isaac_arena_viewport_patch_preserves_render_and_masks_sensors(
+    tmp_path: Path,
+) -> None:
+    spec = importlib.util.spec_from_file_location("arena_viewport_patch", VIEWPORT_PATCH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    policy_runner = tmp_path / "policy_runner.py"
+    policy_runner.write_text(module.POLICY_RUNNER_CONTEXT, encoding="utf-8")
+    embodiment_base = tmp_path / "embodiment_base.py"
+    embodiment_base.write_text(
+        module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT,
+        encoding="utf-8",
+    )
+
+    module.patch_sources(policy_runner, embodiment_base)
+
+    assert policy_runner.read_text(encoding="utf-8") == module.POLICY_RUNNER_CONTEXT
+    patched = embodiment_base.read_text(encoding="utf-8")
+    assert "import os" in patched
+    assert 'os.environ.get("NPA_ISAAC_ARENA_VIEWPORT_ONLY") == "1"' in patched
+    assert "self.enable_cameras = enable_cameras and not viewport_only" in patched
 
 
 def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:

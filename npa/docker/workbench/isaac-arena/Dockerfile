@@ -62,9 +62,10 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -f /tmp/isaac-arena.tar.gz \
     && /opt/npa/sim/venv/bin/python /tmp/patch_viewport_only.py \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+      /opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py \
     && rm -f /tmp/patch_viewport_only.py \
     && grep -q 'NPA_ISAAC_ARENA_VIEWPORT_ONLY' \
-      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+      /opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py \
     && rm -rf \
       /opt/isaac-arena/.agents \
       /opt/isaac-arena/.claude \

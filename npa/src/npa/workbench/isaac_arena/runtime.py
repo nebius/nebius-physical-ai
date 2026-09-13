@@ -480,9 +480,9 @@ def capabilities() -> dict[str, Any]:
             "viewport_only_camera_isolation": {
                 "npa_status": ["implemented", "upstream_alpha"],
                 "behavior": (
-                    "Kit camera support remains enabled for viewport capture, while NPA's "
-                    "viewport-only source patch does not instantiate unused embodiment-mounted "
-                    "camera observations."
+                    "Kit and environment render support remain enabled for viewport capture, "
+                    "while NPA's viewport-only source patch masks only unused "
+                    "embodiment-mounted camera observations."
                 ),
             },
             "b200": "State-only evaluation; B200 has no RT cores and carries no video claim.",
