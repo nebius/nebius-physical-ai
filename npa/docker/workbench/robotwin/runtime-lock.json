@@ -142,7 +142,7 @@
       ],
       "architecture": "amd64",
       "archive_keyring_sha256": "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0",
-      "apt_lock_sha256": "0d7bb81b52d86d541a0487f4cbb2b84fcc773fce5fe58f48d90e370098b2763d",
+      "apt_lock_sha256": "554ae7df404eb46788608a5b7d16e20c9d8f055e2678294b2f03b82a9caf666d",
       "binary_package_count": 75,
       "binary_archive_bytes": 24248018,
       "source_package_count": 57,
