@@ -239,15 +239,40 @@ def _nebius_profile_selection(config_path, profile, environment):
     data = _strict_mapping(contents)
     if not data or set(data) - {"default", "profiles"} or not isinstance(data.get("profiles"), dict):
         return None
-    profile = profile or environment.get("NEBIUS_PROFILE") or data.get("default")
-    if profile is None and len(data["profiles"]) == 1:
+    if profile:
+        selection_source = "exec"
+    elif environment.get("NEBIUS_PROFILE"):
+        profile = environment["NEBIUS_PROFILE"]
+        selection_source = "environment"
+    elif data.get("default"):
+        profile = data["default"]
+        selection_source = "default"
+    elif len(data["profiles"]) == 1:
         profile = next(iter(data["profiles"]))
+        selection_source = "single_profile"
+    else:
+        selection_source = "unresolved"
     if not isinstance(profile, str) or not profile:
         return None
     selected = data["profiles"].get(profile)
     if not _supported_service_account_profile(selected):
         return None
-    return (str(config_path), hashlib.sha256(contents).hexdigest(), profile,
+    # The Nebius CLI may rewrite the file while refreshing unrelated profiles
+    # or its active default.  Bind the effective profile and how it was
+    # selected, not unrelated inventory bytes.  A default-selected session
+    # still changes identity when the default changes, while an explicit/env
+    # pin remains stable across unrelated profile updates.
+    identity = json.dumps(
+        {
+            "schema": "npa.nebius.service-account-profile.v1",
+            "selection_source": selection_source,
+            "profile": profile,
+            "configuration": selected,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (str(config_path), hashlib.sha256(identity.encode()).hexdigest(), profile,
             selected["service-account-id"], selected["public-key-id"],
             str(Path(selected["private-key-file-path"])))
 

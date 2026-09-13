@@ -715,10 +715,60 @@ def test_service_account_cache_refresh_creation_pruning_preserves_owned_pid(serv
     assert api.ensure_isolated_api(**runtime)["healthy"]
     assert api._process(original)["pid"] == _record(runtime)["pid"] == original["pid"]
     assert original["identity_files"][str(key)] == hashlib.sha256(key.read_bytes()).hexdigest()
-    assert original["identity_files"][str(provider / "config.yaml")] == hashlib.sha256((provider / "config.yaml").read_bytes()).hexdigest()
+    selected = api._nebius_profile_selection(
+        provider / "config.yaml", None, runtime["environment"]
+    )
+    assert selected is not None
+    assert original["identity_files"][str(provider / "config.yaml")] == selected[1]
     assert "fixture-old-bearer" not in json.dumps(original)
     assert "fixture-new-bearer" not in json.dumps(_record(runtime))
     assert key.read_text() not in json.dumps(original)
+
+
+def test_pinned_service_account_ignores_unrelated_profile_rewrites(
+    service_account_runtime,
+):
+    import yaml
+
+    runtime, provider, _, _ = service_account_runtime
+    runtime["environment"]["NEBIUS_PROFILE"] = "selected"
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+
+    config = provider / "config.yaml"
+    value = yaml.safe_load(config.read_text())
+    value["default"] = "unrelated"
+    value["profiles"]["unrelated"] = {
+        "auth-type": "federation",
+        "federation-id": "fixture-unrelated-federation",
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    assert _record(runtime)["pid"] == original["pid"]
+
+
+def test_default_selected_service_account_rejects_default_profile_change(
+    service_account_runtime,
+):
+    import yaml
+
+    runtime, provider, _, _ = service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+
+    config = provider / "config.yaml"
+    value = yaml.safe_load(config.read_text())
+    value["profiles"]["other"] = {
+        **value["profiles"]["selected"],
+        "service-account-id": "fixture-other-account",
+    }
+    value["default"] = "other"
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert api._process(original, verify_files=False)["pid"] == original["pid"]
 
 
 def test_service_account_private_key_replacement_rejects_owned_api(service_account_runtime):
@@ -838,7 +888,9 @@ def test_effective_nebius_profile_and_config_precedence(service_account_runtime,
     assert before[str(key)] == hashlib.sha256(key.read_bytes()).hexdigest()
     if selection == "config":
         assert str(custom) in before
-        custom.write_text(custom.read_text() + "# durable config changed\n")
+        changed = yaml.safe_load(custom.read_text())
+        changed["profiles"]["selected"]["endpoint"] = "changed.invalid:443"
+        custom.write_text(yaml.safe_dump(changed))
         assert api._identity_files(runtime["environment"]) != before
 
 
