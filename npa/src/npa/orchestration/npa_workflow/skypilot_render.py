@@ -70,6 +70,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.groot": "groot",
 }
 
+HABITAT_SIM_TOOL_REF = "workflow.habitat_sim.smoke"
+HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
@@ -441,6 +444,21 @@ def normalize_resources(
         # does not introduce a new VM-cloud boot-disk contract.
         out.pop("disk_size", None)
     return out
+
+
+def _require_habitat_sim_accelerator(
+    *, tool_ref: str, resources: Mapping[str, Any]
+) -> None:
+    """Reject any final Habitat-Sim placement outside its one-RTX contract."""
+
+    if tool_ref != HABITAT_SIM_TOOL_REF:
+        return
+    effective = str(resources.get("accelerators") or "").strip()
+    if effective != HABITAT_SIM_ACCELERATOR:
+        raise NpaWorkflowRenderError(
+            "Habitat-Sim rendering requires exactly "
+            f"{HABITAT_SIM_ACCELERATOR}; effective accelerator was {effective!r}"
+        )
 
 
 def tool_pip_extra(tool_ref: str) -> str:
@@ -1869,12 +1887,14 @@ def build_skypilot_task_doc(
     """Build one SkyPilot task document from a planned step."""
 
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
+    tool_ref = str(scheduler_task.get("tool_ref") or "")
     resources = normalize_resources(
         scheduler_task.get("resources") or {},
         accelerator_overrides=options.gpu_accelerator_overrides,
     )
+    _require_habitat_sim_accelerator(tool_ref=tool_ref, resources=resources)
     image = resolve_task_image(
-        str(scheduler_task.get("tool_ref") or ""),
+        tool_ref,
         scheduler_task.get("resources") or {},
         options=options,
     )
