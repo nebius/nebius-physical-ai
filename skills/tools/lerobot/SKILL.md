@@ -68,6 +68,18 @@ CUDA base, then run a real ACT training step from the LeRobot venv.
 
 ## Data Contract
 
+For a reproducible demonstration-first transfer experiment, use
+`workflows/testing/lerobot-transfer.yaml` and
+`docs/workbench/guides/lerobot-transfer.md`. The standard runtime owns four waves:
+prepare, paired ACT training, paired native PushT evaluation, and reporting.
+The recipe pins public PushT data, excludes reserved episodes from training and
+normalization, and disables affine image augmentation for absolute actions.
+Select the arm using validation only; derive expert demonstration requests only
+from validation failures. Report held-out success uncertainty without claiming
+physical robot transfer. The default uses B200 for training and evaluation;
+PushT renders on CPU. No new image or
+per-blueprint CLI is required; stage the exact source with `submit --stage-src`.
+
 Input format is `LeRobotDataset` in Hugging Face format. Use the SimToLeRobot adapter to convert Genesis or other simulation outputs.
 
 Output is a policy checkpoint on S3.

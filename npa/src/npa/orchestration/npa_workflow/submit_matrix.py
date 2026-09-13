@@ -72,6 +72,12 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "lerobot-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True, expected_parallel_tasks=2, image_tool="lerobot",
+        notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
+    ),
+    SubmitLiveCase(
         "curobo-benchmark.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
