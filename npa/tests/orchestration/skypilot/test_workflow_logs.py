@@ -24,9 +24,10 @@ def _write_sky(executable: Path, body: str) -> Path:
     )
     executable.chmod(0o700)
     interpreter = executable.with_name("python")
+    # This is the isolated SkyPilot interpreter's compatibility response, not
+    # the host running pytest (which can be newer and lack kubernetes).
     interpreter.write_text(
-        f"#!{sys.executable}\nimport os, sys\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
+        f"#!{sys.executable}\nprint('3.12 33.1.0')\n"
     )
     interpreter.chmod(0o700)
     return executable

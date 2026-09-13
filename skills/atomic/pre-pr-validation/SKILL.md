@@ -90,7 +90,6 @@ is:
 ```bash
 npa/.venv/bin/python -m pytest \
   npa/tests/guardrails/test_image_security_gate.py \
-  npa/tests/docker/test_fiftyone_os_updates.py \
   npa/tests/clients/test_download_containment.py \
   npa/tests/clients/test_ssh_private_staging.py \
   npa/tests/cli/test_agent_source_archive.py \

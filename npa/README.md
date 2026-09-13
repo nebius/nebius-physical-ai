@@ -19,12 +19,6 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
-Contributors should run the [PR validation gates](../skills/atomic/pre-pr-validation/SKILL.md).
-The required [security check](../docs/security/merge-security-gate.md) includes
-source, dependency, and image scans on every PR and merge queue candidate.
-The [image security guide](../docs/security/image-reproducibility.md#cve-scanning)
-documents the shared OS updates and local regression tests.
-
 ## Install
 
 From the repository root, with your virtual environment active:
@@ -196,6 +190,28 @@ PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
+
+Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
+and 3.14. A focused compatibility check runs before the CPU tensor dependencies
+are installed, so async cancellation and isolated SkyPilot fixture regressions
+surface early. Run it locally with:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/guardrails/test_ci_workflows.py \
+  npa/tests/docker/test_base_image_scan.py \
+  npa/tests/orchestration/skypilot/test_workflow_logs.py \
+  npa/tests/workbench/test_cosmos3_nano_video_server.py -q
+```
+
+The required [security check](../docs/security/merge-security-gate.md) calls the
+image security workflow once on every PR, merge queue candidate, and main push.
+It waits for successful image scans before running the runtime security tests.
+The image security workflow scans the pinned Python base after the same OS
+update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
+target without cache so newly published security fixes are included, then fails
+on fixable CRITICAL OS findings. This baseline check does not replace the
+complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment

@@ -11,7 +11,7 @@ ENTRYPOINT = ROOT / "npa" / "docker" / "workbench" / "fiftyone" / "entrypoint.sh
 def test_fiftyone_image_satisfies_skypilot_non_root_setup_contract() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "RUN sh /opt/npa-upgrade-os-packages.sh" in text
+    assert "apt-get upgrade -y --no-install-recommends" in text
     assert "openssh-server" in text
     assert "rsync" in text
     assert "sudo" in text

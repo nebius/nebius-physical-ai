@@ -178,7 +178,7 @@ jobs:
         if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
         env:
-          # Preserve the existing alert configuration when invoked as a reusable workflow.
+          # Preserve the existing alert configuration across reusable invocation.
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
@@ -212,13 +212,10 @@ jobs:
           - name: python-3-11-slim-trixie
             image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
             purge_linux_libc_dev: false
-            upgrade_os_packages: true
+            # FiftyOne applies these OS security updates before installing its
+            # runtime. Scan that baseline while the upstream digest is stale.
+            upgrade_os: true
     steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
       - name: Resolve scan target
         id: scan-target
         shell: bash
@@ -226,35 +223,29 @@ jobs:
           BASE_IMAGE: ${{ matrix.image }}
           SCAN_NAME: ${{ matrix.name }}
           PURGE_LINUX_LIBC_DEV: ${{ matrix.purge_linux_libc_dev }}
-          UPGRADE_OS_PACKAGES: ${{ matrix.upgrade_os_packages }}
+          UPGRADE_OS: ${{ matrix.upgrade_os || false }}
         run: |
           set -euo pipefail
-          if [ "${UPGRADE_OS_PACKAGES}" = "true" ]; then
+          if [ "$PURGE_LINUX_LIBC_DEV" = "true" ] || [ "$UPGRADE_OS" = "true" ]; then
             patched_image="npa-base-scan:${SCAN_NAME}"
             docker build --pull --no-cache \
-              --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg PURGE_LINUX_LIBC_DEV="$PURGE_LINUX_LIBC_DEV" \
+              --build-arg UPGRADE_OS="$UPGRADE_OS" \
               -t "${patched_image}" \
               -f - . <<'DOCKERFILE'
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
           USER root
-          ENV DEBIAN_FRONTEND=noninteractive
-          COPY npa/docker/workbench/fiftyone/upgrade_os_packages.sh /tmp/npa-upgrade-os-packages.sh
-          RUN sh /tmp/npa-upgrade-os-packages.sh \
-              && rm -f /tmp/npa-upgrade-os-packages.sh \
-              && rm -rf /var/lib/apt/lists/*
-          DOCKERFILE
-            echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
-          elif [ "${PURGE_LINUX_LIBC_DEV}" = "true" ]; then
-            patched_image="npa-base-scan:${SCAN_NAME}"
-            docker build \
-              --build-arg BASE_IMAGE="${BASE_IMAGE}" \
-              -t "${patched_image}" \
-              -f - . <<'DOCKERFILE'
-          ARG BASE_IMAGE
-          FROM ${BASE_IMAGE}
-          USER root
-          RUN dpkg --purge --force-depends linux-libc-dev \
+          ARG PURGE_LINUX_LIBC_DEV=false
+          ARG UPGRADE_OS=false
+          RUN if [ "$UPGRADE_OS" = "true" ]; then \
+                apt-get update \
+                && apt-get upgrade -y --no-install-recommends; \
+              fi \
+              && if [ "$PURGE_LINUX_LIBC_DEV" = "true" ]; then \
+                dpkg --purge --force-depends linux-libc-dev; \
+              fi \
               && rm -rf /var/lib/apt/lists/*
           DOCKERFILE
             echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
@@ -290,12 +281,8 @@ jobs:
         if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
         env:
+          # Preserve the existing alert configuration across reusable invocation.
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-image-${{ matrix.name }}
-          # Build-only switches must not create a second, stale alert configuration.
-          matrix: >-
-            {"image": ${{ toJSON(matrix.image) }},
-             "name": ${{ toJSON(matrix.name) }},
-             "purge_linux_libc_dev": ${{ toJSON(matrix.purge_linux_libc_dev) }}}

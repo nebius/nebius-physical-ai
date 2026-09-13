@@ -93,8 +93,8 @@ blocking scans without uploading SARIF; main and scheduled runs retain the
 existing SARIF categories, analysis keys and reporting matrix fields so results
 update the historical alert configurations. The action's
 [analysis-key override](https://github.com/github/codeql-action/blob/v4/src/environment.ts)
-preserves that identity across direct and reusable invocation. No additional branch-protection context is needed
-when `security-regression` is already required.
+preserves that identity across direct and reusable invocation. No additional
+branch-protection context is needed when `security-regression` is already required.
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
 image lineages. Dockerfile/config misconfigurations fail on HIGH and CRITICAL
@@ -107,24 +107,16 @@ digest-pinned lineage visible while validating the remediation that is present
 in the workbench build. The configured base scan reports fixed CRITICAL OS
 findings; it does not assess all severity levels or application dependencies.
 
-FiftyOne's Python parent still contains `perl-base` version `5.40.1-6`.
-Both its Dockerfile and the minimal CI scan derivative execute
-`npa/docker/workbench/fiftyone/upgrade_os_packages.sh`: refresh apt indexes,
-apply OS upgrades, then require `perl-base >= 5.40.1-6+deb13u1`. Debian identifies
-that security revision as fixing [CVE-2026-8376](https://security-tracker.debian.org/tracker/CVE-2026-8376),
-[CVE-2026-42496](https://security-tracker.debian.org/tracker/CVE-2026-42496), and
-[CVE-2026-13221](https://security-tracker.debian.org/tracker/CVE-2026-13221).
-An unavailable update or stale mirror fails the build. The scan rebuilds without
-cache so a prior successful build cannot conceal newly available updates. It
-still checks the resulting image against the current advisory database without
-CVE suppressions. This proves the patched base target; it does not attest or
-republish an existing FiftyOne release.
+The Python base uses the existing OS update/upgrade preparation that matches
+FiftyOne's Dockerfile. Its matrix routing, update failures, and scan target are
+covered by `npa/tests/docker/test_base_image_scan.py`; the required workflow
+reuses that implementation. Full-image publication scans remain separate.
 
 Run the deterministic update and CI wiring regressions locally:
 
 ```bash
 npa/.venv/bin/python -m pytest \
-  npa/tests/docker/test_fiftyone_os_updates.py \
+  npa/tests/docker/test_base_image_scan.py \
   npa/tests/guardrails/test_image_security_gate.py \
   npa/tests/guardrails/test_security_gate.py -q
 ```
