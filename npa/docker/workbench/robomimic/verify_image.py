@@ -48,6 +48,16 @@ BAKED_DISTRIBUTION_COUNT = 40
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
+# The sealed CUDA/PyTorch closure contains 22 wheel objects, totals
+# 3,855,918,950 bytes, and has a 1,039,389,795-byte largest object. These
+# ceilings leave bounded headroom without accepting an open-ended closure.
+RUNTIME_ARTIFACT_MAX_COUNT = 32
+RUNTIME_OBJECT_MAX_BYTES = 4 * 1024 * 1024 * 1024
+RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
+# Installed wheels expand into more filesystem entries than source objects.
+# The metadata ceiling makes this independently bounded limit conservative for
+# the future exact manager-selected inventory while preventing inode exhaustion.
+RUNTIME_PAYLOAD_MAX_ENTRY_COUNT = 65_536
 
 
 class VerificationError(RuntimeError):
@@ -782,10 +792,40 @@ def _checked_entries(value: Any, *, symlinks: bool) -> dict[str, dict[str, Any]]
     return result
 
 
-def _checked_artifacts(value: Any) -> dict[str, dict[str, str]]:
+def _checked_payload_entries(
+    inventory: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], int]:
+    """Validate payload resource ceilings before inspecting its filesystem."""
+
+    raw_files = inventory.get("files")
+    raw_links = inventory.get("symlinks")
+    if not isinstance(raw_files, list) or not isinstance(raw_links, list):
+        raise VerificationError("runtime inventory entries must be arrays")
+    if len(raw_files) + len(raw_links) > RUNTIME_PAYLOAD_MAX_ENTRY_COUNT:
+        raise VerificationError("runtime payload entry count exceeds limit")
+
+    files = _checked_entries(raw_files, symlinks=False)
+    links = _checked_entries(raw_links, symlinks=True)
+    total_bytes = 0
+    for path, entry in files.items():
+        size = entry["size"]
+        if size > RUNTIME_OBJECT_MAX_BYTES:
+            raise VerificationError(f"runtime payload object exceeds size limit: {path}")
+        if total_bytes > RUNTIME_PAYLOAD_MAX_BYTES - size:
+            raise VerificationError("runtime payload aggregate exceeds size limit")
+        total_bytes += size
+    return files, links, total_bytes
+
+
+def _checked_artifacts(
+    value: Any,
+) -> tuple[dict[str, dict[str, str | int]], int]:
     if not isinstance(value, list):
         raise VerificationError("runtime artifact inventory must be an array")
-    result: dict[str, dict[str, str]] = {}
+    if len(value) > RUNTIME_ARTIFACT_MAX_COUNT:
+        raise VerificationError("runtime artifact object count exceeds limit")
+    result: dict[str, dict[str, str | int]] = {}
+    total_bytes = 0
     for entry in value:
         if not isinstance(entry, dict):
             raise VerificationError(
@@ -796,6 +836,7 @@ def _checked_artifacts(value: Any) -> dict[str, dict[str, str]]:
         filename = entry.get("filename")
         source = entry.get("source")
         digest = entry.get("sha256")
+        size = entry.get("size")
         if (
             not name
             or not isinstance(version, str)
@@ -805,17 +846,26 @@ def _checked_artifacts(value: Any) -> dict[str, dict[str, str]]:
             or not isinstance(source, str)
             or not source.startswith("https://")
             or re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
         ):
             raise VerificationError(f"invalid runtime artifact identity: {entry!r}")
+        if size > RUNTIME_OBJECT_MAX_BYTES:
+            raise VerificationError(f"runtime artifact exceeds size limit: {name}")
+        if total_bytes > RUNTIME_PAYLOAD_MAX_BYTES - size:
+            raise VerificationError("runtime artifact aggregate exceeds size limit")
         if name in result:
             raise VerificationError(f"duplicate runtime artifact: {name}")
+        total_bytes += size
         result[name] = {
             "version": version,
             "filename": filename,
             "source": source,
             "sha256": str(digest),
+            "size": size,
         }
-    return result
+    return result, total_bytes
 
 
 def verify_external_runtime(
@@ -867,7 +917,7 @@ def verify_external_runtime(
         raise VerificationError("runtime ABI inventory mismatch")
     if inventory.get("packages") != lock.get("packages"):
         raise VerificationError("runtime package inventory mismatch")
-    artifacts = _checked_artifacts(inventory.get("artifacts"))
+    artifacts, artifact_payload_bytes = _checked_artifacts(inventory.get("artifacts"))
     locked_packages = lock.get("packages")
     if not isinstance(locked_packages, dict):
         raise VerificationError("runtime lock package map is invalid")
@@ -877,8 +927,7 @@ def verify_external_runtime(
     ):
         raise VerificationError("runtime artifact closure does not match package lock")
 
-    files = _checked_entries(inventory.get("files"), symlinks=False)
-    links = _checked_entries(inventory.get("symlinks"), symlinks=True)
+    files, links, payload_bytes = _checked_payload_entries(inventory)
     if set(files) & set(links):
         raise VerificationError("runtime path declared as both file and symlink")
     payload_root = runtime_root / "payload"
@@ -953,8 +1002,10 @@ def verify_external_runtime(
         "read_only_mount_observed": read_only_mount,
         "package_count": len(lock["packages"]),
         "artifact_count": len(artifacts),
+        "artifact_payload_bytes": artifact_payload_bytes,
         "payload_file_count": len(files),
         "payload_symlink_count": len(links),
+        "payload_bytes": payload_bytes,
     }
 
 
@@ -1083,8 +1134,7 @@ def _copy_runtime_inventory(
     inventory, _inventory_bytes = _bounded_json_object(
         staging / "inventory.json", maximum_size=RUNTIME_METADATA_MAX_BYTES
     )
-    files = _checked_entries(inventory.get("files"), symlinks=False)
-    links = _checked_entries(inventory.get("symlinks"), symlinks=True)
+    files, links, _payload_bytes = _checked_payload_entries(inventory)
     for relative, entry in files.items():
         source_path = source / relative
         destination = staging / relative
