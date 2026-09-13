@@ -47,6 +47,7 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/lo
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
 COPY --chmod=0755 docker/workbench/isaac-arena/smoke_functional.sh /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh
+COPY docker/workbench/isaac-arena/patch_viewport_only.py /tmp/patch_viewport_only.py
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && dpkg-query -W openssh-server rsync sudo >/dev/null \
@@ -59,6 +60,11 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && printf '%s  %s\n' "${ISAAC_ARENA_ARCHIVE_SHA256}" /tmp/isaac-arena.tar.gz | sha256sum -c - \
     && tar -xzf /tmp/isaac-arena.tar.gz --strip-components=1 -C /opt/isaac-arena \
     && rm -f /tmp/isaac-arena.tar.gz \
+    && /opt/npa/sim/venv/bin/python /tmp/patch_viewport_only.py \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && rm -f /tmp/patch_viewport_only.py \
+    && grep -q 'NPA_ISAAC_ARENA_VIEWPORT_ONLY' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
     && rm -rf \
       /opt/isaac-arena/.agents \
       /opt/isaac-arena/.claude \

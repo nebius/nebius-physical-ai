@@ -11,6 +11,12 @@ Isaac Sim, Isaac Lab, Omniverse Kit, model weights, datasets, operator inputs,
 generated evaluations, Lightwheel registry assets, credentials, or populated
 runtime caches.
 
+NPA applies one source-visible, Apache-2.0-compatible integration patch to the
+pinned Arena policy runner. It separates Kit's viewport-rendering enablement
+from construction of embodiment-mounted observation cameras when NPA requests
+only viewport video. The build applies the patch only when its exact upstream
+context matches and removes the build helper afterward.
+
 At first execution, NVIDIA delivers the pinned Isaac Sim/Lab wheels directly
 to the operator's writable cache after the shared `ACCEPT_EULA` preflight. An
 explicit negative value refuses before download. Replay data and RSL-RL

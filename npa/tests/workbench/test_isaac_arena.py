@@ -215,6 +215,9 @@ def _fake_upstream(
 def _fake_moving_upstream(
     argv: list[str], **kwargs: object
 ) -> subprocess.CompletedProcess[str]:
+    env = kwargs.get("env")
+    assert isinstance(env, dict)
+    assert env["NPA_ISAAC_ARENA_VIEWPORT_ONLY"] == "1"
     _fake_upstream(argv, **kwargs)
     output_root = Path(argv[argv.index("--output_base_dir") + 1])
     results = next(output_root.rglob("episode_results_rank0.jsonl"))

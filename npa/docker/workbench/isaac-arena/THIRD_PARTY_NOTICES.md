@@ -8,7 +8,10 @@
 - License text: `/opt/isaac-arena/LICENSE.md`
 
 The upstream documentation and tests are not included in this image. The
-official immutable source archive is checksum-verified during the build.
+official immutable source archive is checksum-verified during the build. NPA
+then applies a narrow Apache-2.0-compatible policy-runner patch that keeps Kit
+viewport support separate from unused embodiment-camera observations; the
+context-bound build helper is removed from the final image.
 
 ## Lightwheel SDK 1.0.3
 

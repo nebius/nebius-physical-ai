@@ -14,6 +14,14 @@ SMOKE_SCRIPT = (
 THIRD_PARTY_NOTICES = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "THIRD_PARTY_NOTICES.md"
 )
+VIEWPORT_PATCH = (
+    ROOT
+    / "npa"
+    / "docker"
+    / "workbench"
+    / "isaac-arena"
+    / "patch_viewport_only.py"
+)
 
 
 def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -> None:
@@ -48,12 +56,22 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "Licensed under the Apache License, Version 2.0" in text
     assert "test ! -e /home/ubuntu/.cache/lightwheel_sdk" in text
     assert "npa workbench isaac-arena evaluate" in text
+    assert "patch_viewport_only.py" in text
+    assert "NPA_ISAAC_ARENA_VIEWPORT_ONLY" in text
     assert "--dry-run" in text
     assert 'test -z "$(find /opt/isaac-arena' in text
     assert text.rstrip().endswith(
         'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]'
     )
     assert "USER ubuntu" in text
+
+
+def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
+    text = VIEWPORT_PATCH.read_text(encoding="utf-8")
+    assert "pinned Arena viewport-camera patch context changed" in text
+    assert 'os.environ.get("NPA_ISAAC_ARENA_VIEWPORT_ONLY") == "1"' in text
+    assert "args_cli.record_camera_video" in text
+    assert "args_cli.enable_cameras = False" in text
 
 
 def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:

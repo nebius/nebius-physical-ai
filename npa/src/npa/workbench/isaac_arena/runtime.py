@@ -477,14 +477,21 @@ def capabilities() -> dict[str, Any]:
                 "npa_status": ["unsupported", "upstream_alpha"],
                 "limitation": "Upstream supports it, but NPA currently requests only the viewport recorder.",
             },
+            "viewport_only_camera_isolation": {
+                "npa_status": ["implemented", "upstream_alpha"],
+                "behavior": (
+                    "Kit camera support remains enabled for viewport capture, while NPA's "
+                    "viewport-only source patch does not instantiate unused embodiment-mounted "
+                    "camera observations."
+                ),
+            },
             "b200": "State-only evaluation; B200 has no RT cores and carries no video claim.",
             "execution_devices": {
                 "cuda:0": "Default GPU physics and policy execution path.",
                 "cpu": (
-                    "CPU physics/policy execution with the assigned RTX GPU retained for "
-                    "viewport rendering. Use this compatibility path when an upstream "
-                    "environment poisons CUDA during GPU-physics initialization; the result "
-                    "still records the independently measured renderer GPU."
+                    "Upstream CPU physics/policy selection is exposed for diagnostics, but it "
+                    "is not the RTX qualification path; complex GR1 environments can be "
+                    "impractically slow and require digest-specific validation."
                 ),
             },
             "agent_ui": "Use the authenticated native video renderer; Arena does not emit a truthful native Rerun .rrd.",
@@ -618,7 +625,7 @@ def build_evaluation_argv(
     return argv
 
 
-def _subprocess_env() -> dict[str, str]:
+def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
     env = dict(os.environ)
     # Inputs are materialized and outputs are published by NPA, so the simulator
     # gets no cloud credentials or HTTP admission secrets.  This also keeps its
@@ -635,6 +642,9 @@ def _subprocess_env() -> dict[str, str]:
         } or upper.endswith(("_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD")):
             env.pop(key, None)
     env.setdefault("ACCEPT_EULA", "Y")
+    env.pop("NPA_ISAAC_ARENA_VIEWPORT_ONLY", None)
+    if viewport_only:
+        env["NPA_ISAAC_ARENA_VIEWPORT_ONLY"] = "1"
     return env
 
 
@@ -1157,7 +1167,7 @@ def evaluate(
         completed = runner(
             argv,
             cwd=ISAAC_ARENA_ROOT,
-            env=_subprocess_env(),
+            env=_subprocess_env(viewport_only=request.record_video),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
