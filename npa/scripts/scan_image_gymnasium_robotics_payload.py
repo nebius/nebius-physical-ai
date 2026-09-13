@@ -109,6 +109,10 @@ EXPECTED_SYSTEM_WHEEL_FILES = {
     },
 }
 MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
+# Runtime acquisition permits 100,000 top-level archive members. Recursive
+# complete-byte scanning uses a stricter limit to bound ZipInfo allocation and
+# sorting at every nesting depth before zipfile.ZipFile is constructed.
+MAX_NESTED_ARCHIVE_MEMBERS = 10_000
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 COMPRESSION_SIGNATURES = {
     "bzip2": b"BZh",
@@ -303,6 +307,26 @@ def _validated_tar_members(path: str, content: bytes) -> list[tarfile.TarInfo]:
     return members
 
 
+def _validate_zip_data_descriptor(
+    path: str, descriptor: bytes, info: zipfile.ZipInfo
+) -> None:
+    """Bind a classic ZIP data descriptor to its central-directory record."""
+
+    if len(descriptor) == 12:
+        fields = descriptor
+    elif len(descriptor) == 16 and descriptor.startswith(b"PK\x07\x08"):
+        fields = descriptor[4:]
+    else:
+        raise ValueError(f"unsupported zip data descriptor: {path}")
+    crc, compressed_size, file_size = struct.unpack("<3L", fields)
+    if (crc, compressed_size, file_size) != (
+        info.CRC,
+        info.compress_size,
+        info.file_size,
+    ):
+        raise ValueError(f"zip data descriptor does not match central directory: {path}")
+
+
 def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
     """Parse one prefix/suffix-free non-ZIP64 stream with no local-data gaps."""
 
@@ -321,6 +345,8 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
     ) = struct.unpack_from("<4s4H2LH", content, eocd_offset)
     if signature != b"PK\x05\x06" or eocd_offset + 22 + comment_size != len(content):
         raise ValueError(f"unaccounted zip bytes: {path}")
+    if max(disk_entries, total_entries) > MAX_NESTED_ARCHIVE_MEMBERS:
+        raise ValueError(f"zip archive member count exceeds limit: {path}")
     if (
         disk != 0
         or central_disk != 0
@@ -371,10 +397,7 @@ def _validated_zip_infos(path: str, content: bytes) -> list[zipfile.ZipInfo]:
         )
         descriptor = content[data_end:next_offset]
         if local_flags & 0x08:
-            if len(descriptor) not in (12, 16) or (
-                len(descriptor) == 16 and not descriptor.startswith(b"PK\x07\x08")
-            ):
-                raise ValueError(f"unsupported zip data descriptor: {path}")
+            _validate_zip_data_descriptor(path, descriptor, info)
         elif descriptor or (
             local_crc != info.CRC
             or local_compressed_size != info.compress_size
