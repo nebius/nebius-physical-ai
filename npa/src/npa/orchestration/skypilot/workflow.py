@@ -818,6 +818,7 @@ class _PreparedWorkflowSubmission:
     source_profile_bytes: bytes
     run_id: str
     submission_backend: str
+    libero_submission: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -838,13 +839,8 @@ def _submission_global_config(authorization_global_config, controller_backend, i
 
 
 def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
-    from npa.execution_preflight import ExecutionPreflightError, LIBERO_PROFILE_NAME
+    from npa.execution_preflight import ExecutionPreflightError
 
-    libero_submission = any(
-        document.get("name") == LIBERO_PROFILE_NAME
-        and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
-        for document in prepared.docs
-    )
     executable_profile_sha256 = hashlib.sha256(prepared.source_profile_bytes).hexdigest()
     env = sky_environment(prepared.runtime_config.isolated_config_dir)
     for key, value in (extra_env or {}).items():
@@ -864,6 +860,9 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
+    prepared.libero_submission = (
+        (_report.get("checks") or {}).get("libero_authorization") == "pass"
+    )
     env.update(injected)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
@@ -871,7 +870,7 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
     _chmod_owner_only(prepared.config_path)
     prepared_profile_bytes = yaml.safe_dump_all(prepared.docs, sort_keys=False).encode()
-    if libero_submission and hashlib.sha256(prepared_profile_bytes).hexdigest() != executable_profile_sha256:
+    if prepared.libero_submission and hashlib.sha256(prepared_profile_bytes).hexdigest() != executable_profile_sha256:
         raise SkyPilotSubmitError("LIBERO executable profile changed after authorization")
     prepared.yaml_path.write_bytes(prepared_profile_bytes)
     _chmod_owner_only(prepared.yaml_path)
@@ -976,14 +975,9 @@ def submit_workflow(
         sky_executable = prepared.sky_executable
         owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
         from npa.execution_preflight import (
-            LIBERO_PROFILE_NAME,
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
         )
-        libero_submission = any(
-            document.get("name") == LIBERO_PROFILE_NAME
-            and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
-            for document in docs
-        )
+        libero_submission = prepared.libero_submission
         cmd = [
             sky_executable,
             "jobs",

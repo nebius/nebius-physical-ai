@@ -144,7 +144,6 @@ RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LANGUAGE",
         "LC_ALL",
         "LC_CTYPE",
-        "PATH",
         "SOURCE_DATE_EPOCH",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
@@ -625,6 +624,37 @@ def _remove_current_cache_link(cache_root: Path, final: Path) -> None:
         current.unlink()
 
 
+def _discard_new_cache_entry(
+    cache_root: Path, final: Path, expected: tuple[int, int]
+) -> None:
+    """Remove only the cache directory created by the current transaction."""
+
+    _remove_current_cache_link(cache_root, final)
+    _require_cache_entry_identity(final, expected)
+    failed = cache_root / f".{final.name}.failed-{os.getpid()}"
+    if failed.exists() or failed.is_symlink():
+        raise BootstrapRefusal("failed-cache quarantine path already exists")
+    final.replace(failed)
+    _require_cache_entry_identity(failed, expected)
+    descendants = sorted(
+        failed.rglob("*"), key=lambda item: len(item.relative_to(failed).parts),
+        reverse=True,
+    )
+    for path in (failed, *reversed(descendants)):
+        info = path.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            os.chmod(path, 0o700)
+    for path in descendants:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or stat.S_ISREG(info.st_mode):
+            path.unlink()
+        elif stat.S_ISDIR(info.st_mode):
+            path.rmdir()
+        else:
+            raise BootstrapRefusal("failed runtime cache contains unsupported data")
+    failed.rmdir()
+
+
 def _ssh_string(value: bytes) -> bytes:
     return struct.pack(">I", len(value)) + value
 
@@ -1070,6 +1100,7 @@ def _runtime_materialization_environment(root: Path) -> dict[str, str]:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "HOME": str(root),
+            "PATH": "/usr/bin:/bin",
         }
     )
     return environment
@@ -1079,25 +1110,25 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
     destination = root / "source"
     destination.mkdir(mode=0o700)
     environment = _runtime_materialization_environment(root)
-    _run(["git", "init", "--quiet"], cwd=destination, environment=environment)
+    _run(["/usr/bin/git", "init", "--quiet"], cwd=destination, environment=environment)
     _run(
-        ["git", "remote", "add", "origin", source["repository"]],
+        ["/usr/bin/git", "remote", "add", "origin", source["repository"]],
         cwd=destination,
         environment=environment,
     )
     _run(
-        ["git", "config", "remote.origin.promisor", "true"],
+        ["/usr/bin/git", "config", "remote.origin.promisor", "true"],
         cwd=destination,
         environment=environment,
     )
     _run(
-        ["git", "config", "remote.origin.partialclonefilter", "blob:none"],
+        ["/usr/bin/git", "config", "remote.origin.partialclonefilter", "blob:none"],
         cwd=destination,
         environment=environment,
     )
     _run(
         [
-            "git",
+            "/usr/bin/git",
             "fetch",
             "--quiet",
             "--depth=1",
@@ -1109,13 +1140,13 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
         environment=environment,
     )
     fetched = subprocess.check_output(
-        ["git", "rev-parse", "FETCH_HEAD^{commit}"],
+        ["/usr/bin/git", "rev-parse", "FETCH_HEAD^{commit}"],
         cwd=destination,
         env=environment,
         text=True,
     ).strip()
     tree = subprocess.check_output(
-        ["git", "rev-parse", "FETCH_HEAD^{tree}"],
+        ["/usr/bin/git", "rev-parse", "FETCH_HEAD^{tree}"],
         cwd=destination,
         env=environment,
         text=True,
@@ -1125,17 +1156,24 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
             "fetched LIBERO source identity differs from the manifest"
         )
     _run(
-        ["git", "sparse-checkout", "init", "--no-cone"],
+        ["/usr/bin/git", "sparse-checkout", "init", "--no-cone"],
         cwd=destination,
         environment=environment,
     )
     _run(
-        ["git", "sparse-checkout", "set", "--no-cone", "--", *source["sparse_paths"]],
+        [
+            "/usr/bin/git",
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "--",
+            *source["sparse_paths"],
+        ],
         cwd=destination,
         environment=environment,
     )
     _run(
-        ["git", "checkout", "--quiet", "--detach", fetched],
+        ["/usr/bin/git", "checkout", "--quiet", "--detach", fetched],
         cwd=destination,
         environment=environment,
     )
@@ -1474,8 +1512,8 @@ def _validate_and_publish_cache(
     decision_sha256: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
+    discard_on_failure: bool = False,
 ) -> dict[str, Any]:
-    published = False
     try:
         with _open_cache_entry(final, expected=identity) as stable_final:
             record = _validate_complete(
@@ -1487,10 +1525,10 @@ def _validate_and_publish_cache(
                 governing_terms_sha256,
             )
             _publish_current_cache_link(cache_root, final, identity)
-            published = True
     except Exception:
-        if published:
-            _remove_current_cache_link(cache_root, final)
+        _remove_current_cache_link(cache_root, final)
+        if discard_on_failure:
+            _discard_new_cache_entry(cache_root, final, identity)
         raise
     return record
 
@@ -1616,6 +1654,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     decision_sha256=decision_sha256,
                     requirements_sha256=requirements_sha256,
                     governing_terms_sha256=governing_terms_sha256,
+                    discard_on_failure=True,
                 )
             except Exception:
                 shutil.rmtree(partial, ignore_errors=True)
@@ -1955,8 +1994,10 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
     endpoint = (
         os.environ.get("AWS_ENDPOINT_URL")
         or os.environ.get("NEBIUS_S3_ENDPOINT")
-        or f"https://s3.{os.environ.get('AWS_DEFAULT_REGION', 'us-central1')}.amazonaws.com"
+        or ""
     ).rstrip("/")
+    if not endpoint:
+        raise BootstrapRefusal("output storage endpoint is required")
     endpoint_parts = urllib.parse.urlsplit(endpoint)
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")

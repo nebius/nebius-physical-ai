@@ -1178,6 +1178,40 @@ def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> 
     assert not (cache / "current").exists()
 
 
+@pytest.mark.parametrize("failure", ["final-validation", "link-publication"])
+def test_failed_post_rename_publication_discards_only_new_cache(
+    monkeypatch, tmp_path, failure
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+
+    if failure == "final-validation":
+        monkeypatch.setattr(
+            module,
+            "_validate_complete",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.BootstrapRefusal("post-rename validation failure")
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            module,
+            "_publish_current_cache_link",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("post-rename link failure")
+            ),
+        )
+
+    with pytest.raises((module.BootstrapRefusal, OSError)):
+        module.ensure(args)
+
+    cache = Path(args.cache_root)
+    assert not (cache / fixture["manifest_sha"]).exists()
+    assert not (cache / "current").exists()
+    assert not list(cache.glob(".*.partial-*"))
+    assert not list(cache.glob(".*.failed-*"))
+
+
 def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     args.output_dir = str(Path(args.cache_root) / "outputs")

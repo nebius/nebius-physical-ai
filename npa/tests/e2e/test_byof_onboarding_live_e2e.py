@@ -681,6 +681,36 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "controller_rbac_spec_sha256",
     ):
         assert re.fullmatch(r"[0-9a-f]{64}", binding[key])
+    manager_live = run_summary["libero_manager_live_evidence"]
+    assert manager_live["schema"] == "npa.libero.manager-live-evidence.v1"
+    assert manager_live["observation_method"] == (
+        "manager_kubernetes_pod_status_and_node_labels"
+    )
+    assert manager_live["gpu_family"] == "B200"
+    assert manager_live["pod_gpu_count"] == 1
+    assert manager_live["node_allocatable_gpu_count"] >= 1
+    assert manager_live["pod_observed_image_digest"] == acceptance["oci_digest"]
+    for key in (
+        "scheduler_job_id_sha256",
+        "payload_pod_name_sha256",
+        "payload_pod_uid_sha256",
+        "skypilot_cluster_name_sha256",
+        "namespace_sha256",
+        "node_name_sha256",
+        "node_uid_sha256",
+        "service_account_uid_sha256",
+        "node_gpu_products_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", manager_live[key])
+    for key in (
+        "scheduler_job_id_sha256",
+        "payload_pod_name_sha256",
+        "payload_pod_uid_sha256",
+        "skypilot_cluster_name_sha256",
+        "namespace_sha256",
+        "service_account_uid_sha256",
+    ):
+        assert manager_live[key] == binding[key]
 
     s3 = s3_client_for_project(e2e_project, allow_host_creds=True)
     prefix = f"oss-solutions/libero/{run_id}/"
@@ -872,6 +902,20 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "rbac_spec_sha256",
     ):
         assert re.fullmatch(r"[0-9a-f]{64}", runtime[key])
+    assert runtime["pod_observed_image_digest"] == manager_live[
+        "pod_observed_image_digest"
+    ]
+    assert runtime["pod_name_sha256"] == manager_live["payload_pod_name_sha256"]
+    assert runtime["pod_uid_sha256"] == manager_live["payload_pod_uid_sha256"]
+    assert runtime["namespace_sha256"] == manager_live["namespace_sha256"]
+    assert runtime["node_name_sha256"] == manager_live["node_name_sha256"]
+    assert runtime["service_account_uid_sha256"] == manager_live[
+        "service_account_uid_sha256"
+    ]
+    smi_list = retrieved["nvidia_smi_list.txt"].decode("utf-8").splitlines()
+    assert len(smi_list) == 1
+    assert re.fullmatch(r"GPU 0: .*B200.*", smi_list[0], flags=re.IGNORECASE)
+    assert b"B200" in retrieved["nvidia_smi.txt"].upper()
 
     build = report["build"]
     assert build["dataset_delivery"] == "runtime_fetch_to_run_scoped_cache"

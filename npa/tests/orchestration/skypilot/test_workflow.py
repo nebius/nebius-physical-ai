@@ -247,7 +247,7 @@ def test_libero_submit_refuses_any_post_authorization_profile_change(
 
     def mutate_after_authorization(documents, **_kwargs):
         documents[0]["run"] = "unreviewed-command"
-        return None, {}, {}
+        return None, {"checks": {"libero_authorization": "pass"}}, {}
 
     monkeypatch.setattr(
         workflow_module, "_execution_preflight", mutate_after_authorization
@@ -270,6 +270,69 @@ def test_libero_submit_refuses_any_post_authorization_profile_change(
             sky_bin=_fake_sky(tmp_path),
             infra="k8s/unit-context",
         )
+
+
+def test_submit_uses_shared_libero_classification_for_secret_channel(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+
+    yaml_path = tmp_path / "renamed-candidate.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {"cloud": "kubernetes"},
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_authorization": "pass"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {name: f"unit-{index}" for index, name in enumerate(
+        LIBERO_SKYPILOT_SECRET_ENV_NAMES
+    )}
+
+    submit_workflow(
+        yaml_path,
+        "libero-exact-profile-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1]
+        for index, value in enumerate(launch)
+        if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    prepared = tmp_path / "sky-state" / "submissions" / "libero-exact-profile-0001" / "workflow.yaml"
+    assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
