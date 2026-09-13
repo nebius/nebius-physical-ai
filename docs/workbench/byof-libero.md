@@ -140,7 +140,8 @@ requires an owner-private regular JSON decision whose SHA-256 is fixed by the
 checked-in acceptance record, not supplied by the caller. The closed record
 binds the official GHCR candidate, OCI/platform/config identities,
 complete-image inventory, Buildx/base/publication receipts, exact source/runtime
-manifest, reviewed infrastructure, run/namespace, issuer, five boundaries,
+manifest, reviewed infrastructure, run/namespace, exact fully rendered
+executable-profile SHA-256, issuer, five boundaries,
 nonce, and a maximum 24-hour decision window. It rejects any `ACCEPT_*` proxy.
 The host sends the complete signed acceptance only through the redacted secret
 channel. Before reading governing terms or creating the cache root, the neutral
@@ -166,6 +167,16 @@ The signed manager acceptance, decision, complete short-lived storage credential
 triplet, and output-storage authorization bytes travel only through the
 scheduler's redacted secret channel, never ordinary rendered workflow state or
 persisted prepared YAML.
+The common SDK submission preflight independently verifies the repository's
+manager-signed acceptance, the paired decision digest, exact run ID, and the
+digest of the profile bytes it is about to submit before it selects or forwards
+any LIBERO secret. The signed infrastructure record also binds the source
+SkyPilot configuration, and LIBERO accepts only the Kubernetes managed-jobs
+backend with an explicit context. A matching task name or
+`BYOF_SOLUTION_NAME` string cannot authorize an alternate profile or a direct
+SDK call. The SDK snapshots the profile once for parsing and hashing, then
+requires the final serialized task bytes to retain that digest before any
+controller or job operation.
 The storage authorization is hash-bound by the checked-in infrastructure bundle,
 binds the exact run prefix and policy receipt, and requires short-lived session
 credentials. Storage secrets are removed from the fetched-code subprocess; only

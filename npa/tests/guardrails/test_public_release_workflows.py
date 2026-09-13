@@ -127,6 +127,18 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_publication_uses_the_locked_cryptography_dependency() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+
+    assert text.count(
+        'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
+    ) == 2
+    assert text.count(
+        "npa/.venv/bin/python -c 'import cryptography; "
+        'assert cryptography.__version__ == "50.0.0"\''
+    ) == 2
+
+
 def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
@@ -253,6 +265,15 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
     assert "Requested development tag is already absent" in text
+    failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
+    script = next(
+        step["run"]
+        for step in failed_cleanup["steps"]
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    assert 'gh api -i "$package_api"' in script
+    assert "grep -q '^HTTP/.* 404 '" in script
+    assert "Failed-build package absence is unverified" in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

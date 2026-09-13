@@ -97,8 +97,8 @@ run: |
   unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
-  nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
-  nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
+  /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
+  /usr/bin/nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
   # The image-owned supervisor retains a shared descriptor-stable cache lock
   # across the unprivileged smoke, immutable uploads, and checksum readback.
   /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-upload
