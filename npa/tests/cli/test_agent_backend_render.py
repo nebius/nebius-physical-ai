@@ -2633,6 +2633,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         now=lambda: "2026-08-06T23:30:00+00:00",
     )
     monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
+    )
     access_payload = module.agent_access(refresh=True)
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
@@ -2650,12 +2653,22 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     def _list_runs(buckets, **kwargs):
         called["buckets"] = list(buckets)
         called["project_map"] = dict(kwargs.get("bucket_projects") or {})
+        called["cold_start_async"] = kwargs.get("cold_start_async")
         return _RunPage()
 
     monkeypatch.setattr(
         module,
         "_agent_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: None
+    )
+    pending = module.artifacts_runs(limit=20)
+    assert pending["pagination_complete"] is False
+    assert pending["source_errors"][0]["code"] == "artifact_access_pending"
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
     )
     monkeypatch.setattr(module, "list_runs_cached_multi", _list_runs)
     scoped = module.artifacts_runs(
@@ -2665,6 +2678,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     )
     assert called["buckets"] == ["bucket-test"]
     assert called["project_map"] == {"bucket-test": "project-test"}
+    assert called["cold_start_async"] is True
     assert scoped["resource_scope"] == {
         "project_id": "project-test",
         "bucket": "bucket-test",
