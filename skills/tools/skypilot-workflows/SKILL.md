@@ -24,6 +24,13 @@ still accepted for customer-provided tasks and guarded tool-specific examples.
 
 ## Invocation
 
+Run isolated workflow setup, submission, monitoring, recovery, and cleanup on
+one Linux operator host with `/proc` mounted. The owned local API verifies
+process and socket identity through Linux procfs; macOS supports local
+validation/planning but cannot execute this isolated runtime. An unsupported
+host fails before creating API state or processes. Use the Linux operator path
+in `docs/orchestration/skypilot-setup.md`; do not remove isolation as a workaround.
+
 SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. Invoke it through `NPA_SKYPILOT_BIN`; never rely on `sky` from `PATH`.
 
 Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`

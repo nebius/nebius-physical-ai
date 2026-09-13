@@ -16,6 +16,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import time
 from typing import Any, Mapping
 from urllib.error import URLError
@@ -39,6 +40,13 @@ class IsolatedApiError(ValueError):
 
 @contextmanager
 def _locked(root: Path):
+    if sys.platform != "linux" or not Path("/proc/self").is_dir():
+        raise IsolatedApiError(
+            "isolated SkyPilot execution requires a Linux operator host with /proc "
+            "for process and socket ownership verification; run setup, submission, "
+            "monitoring, recovery, and cleanup on that same Linux host. "
+            "See docs/orchestration/skypilot-setup.md"
+        )
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     with open(root / "lock", "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as handle:

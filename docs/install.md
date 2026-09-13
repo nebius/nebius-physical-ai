@@ -147,8 +147,10 @@ details.
 Install the tools your workload uses:
 
 - **Terraform 1.x** is required for managed VM/cluster provisioning and agent
-  deployment. The Python package does not install it. Check `terraform version`;
-  agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
+  deployment; the managed cluster recipe requires **1.12.0 or newer**. The Python
+  package does not install it. Check `terraform version`; `NPA_TERRAFORM_BIN` can
+  select a compatible binary outside `PATH`.
+  Agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
 - **kubectl** is required for Kubernetes operations.
 - **socat** is required by SkyPilot Kubernetes on Debian/Ubuntu:
   `sudo apt-get install -y socat`.

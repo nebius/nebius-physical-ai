@@ -75,6 +75,10 @@ NVSwitch operator rejection remains in force.
 
 ## Provision with the health gates on
 
+The managed cluster recipe requires Terraform 1.12.0 or newer. Check the selected
+binary before provisioning; `NPA_TERRAFORM_BIN` can select a compatible private
+installation without replacing the operator's existing Terraform on `PATH`.
+
 ```bash
 npa cluster up \
   --project <alias> \

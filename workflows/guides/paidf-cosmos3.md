@@ -20,6 +20,12 @@ preserves Rerun quality evidence and stops before curation.
 
 You need:
 
+- A Linux operator host with Python 3.12 and `/proc` mounted. Run this guide's
+  setup, submission, monitoring, recovery, and cleanup on that host. The
+  isolated SkyPilot API verifies process and socket ownership through Linux
+  procfs; native macOS cannot execute this workflow. From a Mac, connect to a
+  Linux workstation or VM with `ssh <your-linux-host>` and complete the Linux
+  steps there. Keep credentials and run state on that host throughout the run.
 - A Nebius AI Cloud account with billing enabled. If you are new to Nebius,
   follow the [account and billing setup](https://docs.nebius.com/signup-billing/sign-up).
 - A project in the region where you will run the GPU workload. You can use a
@@ -46,11 +52,14 @@ capacity in your region before provisioning.
 
 ### P1. Install the base tools
 
-On macOS with Homebrew:
+For local validation and planning on macOS with Homebrew:
 
 ```bash
 brew install python@3.12 git kubectl awscli ffmpeg socat netcat jq
 ```
+
+For workflow execution, use the Linux operator host described above. Installing
+these tools on macOS does not supply the Linux process-inspection interface.
 
 On Ubuntu 24.04, install the base packages, including its
 [Python 3.12 package](https://packages.ubuntu.com/noble/python3.12) and venv module:
@@ -72,9 +81,11 @@ to install version `3.12`, and verify that `python3.12 --version` succeeds.
 Use Python 3.12 for both the NPA environment and isolated SkyPilot environment
 in this guide. The supported
 SkyPilot runtime requires Python 3.9–3.12; a newer interpreter can fail at submit.
-For the new-cluster path in S5, also install Terraform 1.x using the
-[platform tool instructions](../../docs/install.md#5-optional-operator-tools)
-and have an SSH public key available. NPA discovers an existing key such as
+For the new-cluster path in S5, install Terraform 1.12.0 or newer using the
+[platform tool instructions](../../docs/install.md#5-tools-for-cloud-workloads)
+and verify `terraform version`. If a compatible binary is installed outside
+`PATH`, set `NPA_TERRAFORM_BIN` to its absolute path. Have an SSH public key
+available. NPA discovers an existing key such as
 `~/.ssh/id_ed25519.pub`; if you need a new key, create it with
 `ssh-keygen -t ed25519` and keep the private key on your machine. Adopting an
 existing cluster does not require Terraform.
@@ -108,17 +119,32 @@ export PROJECT_ID='<your-project-id>'
 export REGION='<your-region>'
 export PROJECT_ALIAS=paidf
 export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
+```
 
+If you already have an authorized human or service-account profile, set
+`NPA_NEBIUS_PROFILE` to its actual name and activate it with
+`nebius profile activate "$NPA_NEBIUS_PROFILE"`.
+
+For a new human profile on a Linux host without a browser, complete the client
+installation in S1 first (it needs no cloud credentials), then follow the
+[headless Nebius authentication procedure](../../skills/atomic/vm-nebius-auth/SKILL.md)
+for this profile. It prints an SSH callback tunnel to run on your workstation
+before opening the login URL there.
+
+On an operator host with a browser, create the new human profile directly:
+
+```bash
 nebius profile create "$NPA_NEBIUS_PROFILE" \
   --endpoint api.nebius.cloud \
   --federation-endpoint auth.nebius.com \
   --parent-id "$PROJECT_ID"
 ```
 
-Authentication opens a browser. Sign in with the account that has access to
-this project. If the named profile already exists, use
-`nebius profile activate "$NPA_NEBIUS_PROFILE"` instead of creating it again.
-See [CLI authentication](https://docs.nebius.com/cli/configure) for service-account
+Sign in with the account that has access to this project. Complete
+authentication on the operator host; copying a workstation's federation-token
+cache does not prove that host can authenticate. Require the S2 online Nebius
+health check to pass before provisioning. See
+[CLI authentication](https://docs.nebius.com/cli/configure) for service-account
 and multi-tenant setup. If you see `invalid IAM subject` or `PermissionDenied`,
 check the selected account and project permissions in the web console.
 
@@ -279,6 +305,22 @@ Check `status` and `preflight.decision`: a dry run can exit zero while reporting
 `blocked`. Resolve the listed `preflight.reasons` first; reserved GPU capacity
 does not replace the boot-disk quota required by the cluster.
 
+The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
+CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
+preview blocks on disk capacity, obtain enough quota or size the disks for your
+workload. Account for compressed and expanded image layers, model weights and
+runtime caches, generated media, the operating system, and free working space.
+For example, this override requests a 512 GiB GPU boot disk:
+
+```bash
+export TF_VAR_gpu_disk_size=512
+```
+
+Rerun the preview and require its GPU disk size and total capacity to match the
+intended topology. Keep the same override for apply; explicit Terraform tfvars
+take precedence over environment variables. Monitor actual node capacity and
+disk pressure during the workflow as described in R4.
+
 Check the project, region, node types, and disk sizes in the plan. When they
 match your intended setup and quota, run the same `provision-if-absent` command
 without `--dry-run --output-format json`. Wait for provisioning and node health
@@ -286,17 +328,18 @@ checks to succeed. Do not proceed with a degraded cluster. This creates cloud
 resources; use the [teardown guide](../../docs/teardown.md) when you finish with
 a cluster you own.
 
-Inspect the resulting cluster and load its kubeconfig:
+Inspect the resulting cluster and set `KUBECONFIG` to the exact path reported
+by provisioning. The default is `~/.npa/clusters/<cluster-name>/kubeconfig`:
 
 ```bash
 npa cluster status --name "$CLUSTER_NAME" --project "$PROJECT_ALIAS"
-export KUBECONFIG="$HOME/.npa/clusters/$CLUSTER_NAME/kubeconfig"
+export KUBECONFIG='<kubeconfig-path-reported-by-NPA>'
 export KUBE_CONTEXT="$(kubectl config current-context)"
 npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
 
-If NPA reports a different kubeconfig path, use that path. Continue with S6.
+Continue with S6 using this kubeconfig path.
 The [Workbench setup guide](../../docs/workbench/getting-started.md#verify-kubernetes-access)
 has more detail about provisioning and cluster access.
 
@@ -324,6 +367,7 @@ export KUBE_CONTEXT='<context-from-the-previous-command>'
 npa cluster kubeconfig \
   --cluster-name "$CLUSTER_NAME" \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
+export KUBECONFIG='<kubeconfig-path-reported-by-NPA>'
 npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
@@ -334,14 +378,14 @@ cluster. Use the values belonging to the selected project throughout.
 
 ### S6. Bootstrap and verify SkyPilot
 
-Resolve Python from your own environment. This works on Linux and macOS without
-assuming a Homebrew installation directory; `python3.12` must be on `PATH`.
+Resolve Python from your Linux operator environment; `python3.12` must be on
+`PATH`. Use that same host for every subsequent run command. Keep the
+`KUBECONFIG` path verified in S5; a context name need not match its directory.
 
 ```bash
 npa skypilot bootstrap --python "$(command -v python3.12)"
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-export KUBECONFIG="$HOME/.npa/clusters/$KUBE_CONTEXT/kubeconfig"
-npa skypilot verify --cluster "$KUBE_CONTEXT"
+npa skypilot verify --cluster "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 ```
 
@@ -480,17 +524,18 @@ configuration, and execution identity.
 ### R1. Select the project, GPU, and caption model
 
 In a new terminal, return to your checkout and activate `.venv`. Restore the
-project alias and cluster context selected above, and set the bucket and
-accelerator from your setup results:
+project alias, verified Nebius profile, cluster context, and exact kubeconfig
+path selected above. The profile name can differ from the NPA project alias.
+Set the bucket and accelerator from your setup results:
 
 ```bash
 source .venv/bin/activate
 export PROJECT_ALIAS=paidf
-export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
-export KUBE_CONTEXT='<your-adopted-context>'
+export NPA_NEBIUS_PROFILE='<your-verified-nebius-profile>'
+export KUBE_CONTEXT='<your-verified-context>'
 export BUCKET='<your-configured-bucket-name>'
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-export KUBECONFIG="$HOME/.npa/clusters/$KUBE_CONTEXT/kubeconfig"
+export KUBECONFIG='<your-verified-kubeconfig-path>'
 export NPA_WORKFLOW_GPU_ACCELERATOR='<discovered-gpu-name>:1'
 SPEC=workflows/main/paidf-cosmos3.yaml
 

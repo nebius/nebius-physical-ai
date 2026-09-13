@@ -6,6 +6,15 @@ SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.
 
+Isolated workflow execution requires a **Linux operator host with `/proc`**.
+NPA verifies the local API's process lifetime, environment, session, and socket
+ownership through Linux procfs. macOS can install NPA and validate or plan a
+workflow, but cannot run this isolated API. Use a Linux workstation or VM for
+setup, submission, monitoring, recovery, and cleanup, keeping its credentials
+and run state there. The GPU workload still runs on the selected Nebius cluster.
+An unsupported host fails before the isolated API creates state or processes;
+removing isolation does not provide an equivalent supported workflow path.
+
 ## Install SkyPilot
 
 Create or reuse the dedicated virtualenv with the validated SkyPilot pin:
