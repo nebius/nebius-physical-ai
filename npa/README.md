@@ -19,6 +19,12 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+Contributors should run the [PR validation gates](../skills/atomic/pre-pr-validation/SKILL.md).
+The required [security check](../docs/security/merge-security-gate.md) includes
+source, dependency, and image scans on every PR and merge queue candidate.
+The [image security guide](../docs/security/image-reproducibility.md#cve-scanning)
+documents the shared OS updates and local regression tests.
+
 ## Install
 
 From the repository root, with your virtual environment active:

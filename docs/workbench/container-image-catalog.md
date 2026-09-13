@@ -242,6 +242,10 @@ The FiftyOne candidate now requires loopback access through verified SSH or
 Kubernetes port-forwarding. Published tags retain their original bytes until a
 validated replacement is promoted; redeploy existing public listeners using the
 updated deployment path. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
+The candidate Dockerfile and its CI base-image scan now share the same OS update
+step and require Debian's fixed Perl security revision. This source and scan
+change does not replace the published FiftyOne digest; see the
+[base-image security gate](../security/image-reproducibility.md#cve-scanning).
 
 FiftyOne is the remaining public-release tag override for an unpromoted worker
 candidate: public execution selects the verified `1.15.0.post1`, while an

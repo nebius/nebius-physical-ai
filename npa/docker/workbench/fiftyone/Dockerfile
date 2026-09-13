@@ -34,9 +34,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 COPY --chmod=0644 docker/workbench/sonic/packaging-requirements.txt /opt/npa-packaging-requirements.txt
 COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py /opt/npa-remove-scikit-image-recipe.py
+COPY --chmod=0644 docker/workbench/fiftyone/upgrade_os_packages.sh /opt/npa-upgrade-os-packages.sh
 
-RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
+RUN sh /opt/npa-upgrade-os-packages.sh \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
