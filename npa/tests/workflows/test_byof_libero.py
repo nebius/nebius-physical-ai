@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 """Static LIBERO neutral-bootstrap and hard-gate contract tests."""
 
 from __future__ import annotations
@@ -584,6 +585,24 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
         libero_publication_enforcement_paths(tmp_path)
     )
     incidental.unlink()
+
+    critical = tmp_path / "npa/tests/guardrails/test_unmarked_libero_critical.py"
+    critical.write_text(
+        "def test_unmarked_libero_critical():\n"
+        "    assert NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="publication-enforcement marker"):
+        libero_publication_enforcement_paths(tmp_path)
+    critical.write_bytes(
+        LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER
+        + b"\n"
+        + critical.read_bytes()
+    )
+    assert critical.relative_to(tmp_path).as_posix() in (
+        libero_publication_enforcement_paths(tmp_path)
+    )
+    critical.unlink()
 
     assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 

@@ -677,14 +677,46 @@ def _trusted_manager_public_key() -> bytes:
     """Load the image-baked trust root without accepting a payload selector."""
 
     try:
-        metadata = MANAGER_ACCEPTANCE_PUBLIC_KEY.lstat()
-        encoded = MANAGER_ACCEPTANCE_PUBLIC_KEY.read_bytes()
+        descriptor = os.open(
+            MANAGER_ACCEPTANCE_PUBLIC_KEY,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
     except OSError as exc:
         raise BootstrapRefusal("manager acceptance trust root is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            encoded = stream.read()
+        after = os.fstat(descriptor)
+    except OSError as exc:
+        raise BootstrapRefusal("manager acceptance trust root is unavailable") from exc
+    finally:
+        os.close(descriptor)
     if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID
-        or stat.S_IMODE(metadata.st_mode) != 0o444
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) != 0o444
+        or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_mode,
+            before.st_uid,
+            before.st_nlink,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_mode,
+            after.st_uid,
+            after.st_nlink,
+        )
         or encoded != encoded.strip()
     ):
         raise BootstrapRefusal("manager acceptance trust root is mutable or invalid")

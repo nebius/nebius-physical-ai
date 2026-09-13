@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 from __future__ import annotations
 
 import importlib.util
@@ -1700,6 +1701,188 @@ def test_libero_cleanup_removes_only_exact_run_local_state(tmp_path) -> None:
     assert result.remote_absence_verified is True
     assert not state_root.exists()
     assert not kubeconfig.exists()
+
+
+def _verified_cleanup(module, resource: str) -> object:
+    result = module.CleanupResult(resources_removed=[resource])
+    result.verified = True
+    result.remote_absence_verified = True
+    return result
+
+
+def test_complete_libero_cleanup_orders_remote_api_and_local_absence(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    events: list[str] = []
+    binding = SimpleNamespace(
+        access_state=SimpleNamespace(kubeconfig=Path("/private/payload-kubeconfig"))
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_access_objects",
+        lambda *_a, **_k: events.append("access")
+        or _verified_cleanup(module, "libero-access"),
+    )
+    monkeypatch.setattr(
+        module, "_stop_sky_api", lambda **_k: events.append("api")
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_local_state",
+        lambda **_k: events.append("local")
+        or _verified_cleanup(module, "libero-local"),
+    )
+
+    result, attempted, stopped = module._complete_libero_cleanup(
+        _verified_cleanup(module, "managed"),
+        binding=binding,
+        timeout=1,
+        sky_bin="sky",
+        isolated_config_dir=Path("/private/exact-run"),
+        config_path=Path("/private/skypilot.yaml"),
+        run_id="exact-run",
+    )
+
+    assert events == ["access", "api", "local"]
+    assert attempted is True
+    assert stopped is True
+    assert result.ok is True
+    assert result.verified is True
+    assert result.remote_absence_verified is True
+    assert result.resources_removed == [
+        "managed",
+        "libero-access",
+        "libero-skypilot-api",
+        "libero-local",
+    ]
+
+
+def test_complete_libero_cleanup_preserves_recovery_state_on_access_failure(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    binding = SimpleNamespace(
+        access_state=SimpleNamespace(kubeconfig=Path("/private/payload-kubeconfig"))
+    )
+    failed = module.CleanupResult(errors=["access absence is unverified"])
+    monkeypatch.setattr(
+        module, "_cleanup_libero_access_objects", lambda *_a, **_k: failed
+    )
+    monkeypatch.setattr(
+        module,
+        "_stop_sky_api",
+        lambda **_k: pytest.fail("API must stay available for recovery"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_local_state",
+        lambda **_k: pytest.fail("local recovery state must be preserved"),
+    )
+
+    result, attempted, stopped = module._complete_libero_cleanup(
+        _verified_cleanup(module, "managed"),
+        binding=binding,
+        timeout=1,
+        sky_bin="sky",
+        isolated_config_dir=Path("/private/exact-run"),
+        config_path=Path("/private/skypilot.yaml"),
+        run_id="exact-run",
+    )
+
+    assert attempted is False
+    assert stopped is False
+    assert result.ok is False
+    assert result.errors == ["access absence is unverified"]
+
+
+def test_libero_signal_callback_completes_every_cleanup_layer(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    args.solution_name = "libero"
+    isolated = tmp_path / args.run_id
+    isolated.mkdir(mode=0o700)
+    args.isolated_config_dir = str(isolated)
+    binding = SimpleNamespace(
+        manager_acceptance_b64="signed-manager-acceptance",
+        evidence={},
+        access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
+    )
+    events: list[str] = []
+    installed: dict[str, object] = {}
+    guard = SimpleNamespace(
+        run_id=args.run_id,
+        timeout=10,
+        isolated_config_dir=isolated,
+        mark_launched=lambda **_k: None,
+    )
+
+    monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
+    monkeypatch.setattr(
+        module, "_libero_global_config_path", lambda selected: selected.config_path
+    )
+    monkeypatch.setattr(
+        module, "_bind_libero_runtime_contract", lambda *_a, **_k: binding
+    )
+    monkeypatch.setattr(
+        module, "_verify_libero_payload_unchanged", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        module, "_verify_libero_controller_unchanged", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        module, "_bind_libero_payload_pod_access", lambda *_a, **_k: binding
+    )
+    monkeypatch.setattr(module, "resolve_secret_envs", lambda *_a, **_k: [])
+    monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
+
+    def install(callback):
+        installed["callback"] = callback
+        return None
+
+    monkeypatch.setattr(module, "install_teardown_signal_handlers", install)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_a, **_k: SimpleNamespace(job_id="73", log_paths={}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cancel_then_teardown_managed_job",
+        lambda *_a, **_k: events.append("managed")
+        or _verified_cleanup(module, "managed"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_access_objects",
+        lambda *_a, **_k: events.append("access")
+        or _verified_cleanup(module, "libero-access"),
+    )
+    monkeypatch.setattr(
+        module, "_stop_sky_api", lambda **_k: events.append("api")
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_local_state",
+        lambda **_k: events.append("local")
+        or _verified_cleanup(module, "libero-local"),
+    )
+
+    def interrupt_wait(*_args, **_kwargs):
+        callback = installed["callback"]
+        assert callable(callback)
+        callback()
+        raise SystemExit(143)
+
+    monkeypatch.setattr(module, "_wait_for_terminal", interrupt_wait)
+
+    with pytest.raises(SystemExit, match="143"):
+        module._submit_and_wait(args)
+
+    assert events == ["managed", "access", "api", "local"]
 
 
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:

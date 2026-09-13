@@ -2210,6 +2210,79 @@ def _cleanup_libero_local_state(
     return cleanup
 
 
+def _complete_libero_cleanup(
+    cleanup: CleanupResult,
+    *,
+    binding: LiberoRuntimeBinding,
+    timeout: int,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | str | None,
+    run_id: str,
+) -> tuple[CleanupResult, bool, bool]:
+    """Finish the ordered LIBERO cleanup transaction after managed absence.
+
+    Returns the combined result, whether API stop was attempted, and whether
+    API stop succeeded.  Local recovery state is removed only after remote
+    managed resources and exact access objects are objectively absent and the
+    isolated SkyPilot API has stopped.
+    """
+
+    managed_absent = bool(
+        cleanup.ok and cleanup.verified and cleanup.remote_absence_verified
+    )
+    if not managed_absent:
+        return cleanup, False, False
+
+    access_cleanup = _cleanup_libero_access_objects(
+        binding.access_state, timeout=max(timeout, 1)
+    )
+    cleanup.extend(access_cleanup)
+    cleanup.verified = cleanup.verified and access_cleanup.verified
+    cleanup.remote_absence_verified = (
+        cleanup.remote_absence_verified
+        and access_cleanup.remote_absence_verified
+    )
+    access_absent = bool(
+        cleanup.ok and cleanup.verified and cleanup.remote_absence_verified
+    )
+    if not access_absent:
+        return cleanup, False, False
+    if isolated_config_dir is None:
+        cleanup.errors.append(
+            "LIBERO isolated state is unavailable; local recovery state preserved"
+        )
+        cleanup.verified = False
+        return cleanup, False, False
+
+    try:
+        _stop_sky_api(
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+        )
+    except SkyPilotConfigError:
+        cleanup.errors.append(
+            "LIBERO SkyPilot API stop failed; local recovery state preserved"
+        )
+        cleanup.verified = False
+        return cleanup, True, False
+    cleanup.resources_removed.append("libero-skypilot-api")
+
+    local_cleanup = _cleanup_libero_local_state(
+        isolated_state_root=isolated_config_dir,
+        payload_kubeconfig=binding.access_state.kubeconfig,
+        run_id=run_id,
+    )
+    cleanup.extend(local_cleanup)
+    cleanup.verified = cleanup.verified and local_cleanup.verified
+    cleanup.remote_absence_verified = (
+        cleanup.remote_absence_verified
+        and local_cleanup.remote_absence_verified
+    )
+    return cleanup, True, True
+
+
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     output_root = _normalize_output_root(args.output_root)
@@ -2272,6 +2345,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 isolated_config_dir, run_id
             )
         api_stop_attempted = False
+        api_stop_succeeded = False
         preserve_api = False
         api_config_path: Path | None = None
         try:
@@ -2382,7 +2456,28 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     )
                 return cleanup_result
 
-            previous_handlers = install_teardown_signal_handlers(cleanup_submission)
+            def cleanup_after_signal() -> CleanupResult:
+                nonlocal cleanup_result
+                nonlocal api_stop_attempted, api_stop_succeeded, preserve_api
+                cleanup_result = cleanup_submission()
+                if libero_binding is not None:
+                    cleanup_result, attempted, stopped = _complete_libero_cleanup(
+                        cleanup_result,
+                        binding=libero_binding,
+                        timeout=max(int(teardown_guard.timeout), 1),
+                        sky_bin=sky_bin,
+                        isolated_config_dir=isolated_config_dir,
+                        config_path=api_config_path,
+                        run_id=run_id,
+                    )
+                    api_stop_attempted = api_stop_attempted or attempted
+                    api_stop_succeeded = api_stop_succeeded or stopped
+                    preserve_api = not stopped
+                return cleanup_result
+
+            previous_handlers = install_teardown_signal_handlers(
+                cleanup_after_signal
+            )
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
@@ -2532,19 +2627,19 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 and cleanup_result.remote_absence_verified
             )
             if cleanup_verified and libero_binding is not None:
-                access_cleanup = _cleanup_libero_access_objects(
-                    libero_binding.access_state,
-                    timeout=max(int(teardown_guard.timeout), 1),
-                )
                 assert cleanup_result is not None
-                cleanup_result.extend(access_cleanup)
-                cleanup_result.verified = (
-                    cleanup_result.verified and access_cleanup.verified
+                cleanup_result, attempted, stopped = _complete_libero_cleanup(
+                    cleanup_result,
+                    binding=libero_binding,
+                    timeout=max(int(teardown_guard.timeout), 1),
+                    sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=api_config_path,
+                    run_id=run_id,
                 )
-                cleanup_result.remote_absence_verified = (
-                    cleanup_result.remote_absence_verified
-                    and access_cleanup.remote_absence_verified
-                )
+                api_stop_attempted = api_stop_attempted or attempted
+                api_stop_succeeded = api_stop_succeeded or stopped
+                preserve_api = not stopped
                 cleanup_verified = bool(
                     cleanup_result.ok
                     and cleanup_result.verified
@@ -2555,62 +2650,43 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     preserve_api = True
             if cleanup_result is not None and not cleanup_verified:
                 return_code = 1
-                if is_libero:
+                if is_libero and not api_stop_succeeded:
                     preserve_api = True
-            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
-                if preserve_api:
+            if preserve_api:
+                if summary is not None:
+                    summary["api_stop"] = {
+                        "ok": False,
+                        "preserved_for_cleanup_recovery": True,
+                    }
+            elif api_stop_attempted:
+                if summary is not None:
+                    summary["api_stop"] = {
+                        "ok": api_stop_succeeded,
+                        "preserved_for_cleanup_recovery": False,
+                    }
+            elif os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
+                api_stop_attempted = True
+                try:
+                    _stop_sky_api(
+                        sky_bin=sky_bin,
+                        isolated_config_dir=isolated_config_dir,
+                        config_path=api_config_path,
+                    )
+                except SkyPilotConfigError:
+                    if summary is None:
+                        raise
+                    summary["api_stop"] = {
+                        "ok": False,
+                        "preserved_for_cleanup_recovery": False,
+                    }
+                    return_code = 1
+                else:
+                    api_stop_succeeded = True
                     if summary is not None:
                         summary["api_stop"] = {
-                            "ok": False,
-                            "preserved_for_cleanup_recovery": True,
-                        }
-                else:
-                    api_stop_attempted = True
-                    try:
-                        _stop_sky_api(
-                            sky_bin=sky_bin,
-                            isolated_config_dir=isolated_config_dir,
-                            config_path=api_config_path,
-                        )
-                    except SkyPilotConfigError:
-                        if summary is None:
-                            raise
-                        summary["api_stop"] = {
-                            "ok": False,
+                            "ok": True,
                             "preserved_for_cleanup_recovery": False,
                         }
-                        return_code = 1
-                    else:
-                        if summary is not None:
-                            summary["api_stop"] = {
-                                "ok": True,
-                                "preserved_for_cleanup_recovery": False,
-                            }
-                        if libero_binding is not None and cleanup_verified:
-                            assert isolated_config_dir is not None
-                            local_cleanup = _cleanup_libero_local_state(
-                                isolated_state_root=isolated_config_dir,
-                                payload_kubeconfig=(
-                                    libero_binding.access_state.kubeconfig
-                                ),
-                                run_id=run_id,
-                            )
-                            assert cleanup_result is not None
-                            cleanup_result.extend(local_cleanup)
-                            cleanup_result.verified = (
-                                cleanup_result.verified and local_cleanup.verified
-                            )
-                            cleanup_result.remote_absence_verified = (
-                                cleanup_result.remote_absence_verified
-                                and local_cleanup.remote_absence_verified
-                            )
-                            cleanup_verified = bool(
-                                cleanup_result.ok
-                                and cleanup_result.verified
-                                and cleanup_result.remote_absence_verified
-                            )
-                            if not cleanup_verified:
-                                return_code = 1
             if summary is not None and cleanup_result is not None:
                 summary["cleanup"] = {
                     "ok": cleanup_verified,

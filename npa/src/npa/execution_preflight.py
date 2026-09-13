@@ -673,8 +673,6 @@ def preflight_skypilot_submission(
         "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
     }
-    if libero_submission:
-        verify_worker_environment(target, [*documents, dict(global_config or {})])
     for document in documents:
         env = document.setdefault("envs", {})
         for name, value in injected.items():
@@ -722,8 +720,11 @@ def preflight_skypilot_submission(
                     reject_inline_storage_secret(child)
 
         reject_inline_storage_secret([*documents, dict(global_config or {})])
-    else:
-        verify_worker_environment(target, [*documents, dict(global_config or {})])
+    # Validate the final in-memory worker documents for every solution at the
+    # same stage.  For LIBERO this is deliberately after credential stripping,
+    # so the checked document is exactly the one persisted for SkyPilot while
+    # its secrets travel only through the separate redacted channel.
+    verify_worker_environment(target, [*documents, dict(global_config or {})])
     session_token = process_env.get("AWS_SESSION_TOKEN", "")
     output_authorization = process_env.get(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""
