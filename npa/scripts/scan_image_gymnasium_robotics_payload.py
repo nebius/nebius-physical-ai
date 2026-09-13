@@ -113,6 +113,16 @@ MAX_NESTED_ARCHIVE = 512 * 1024 * 1024
 # complete-byte scanning uses a stricter limit to bound ZipInfo allocation and
 # sorting at every nesting depth before zipfile.ZipFile is constructed.
 MAX_NESTED_ARCHIVE_MEMBERS = 10_000
+MAX_DOCKER_SAVE_ARCHIVE_BYTES = 1024 * 1024 * 1024
+MAX_DOCKER_SAVE_OUTER_MEMBERS = 4_096
+MAX_DOCKER_SAVE_METADATA_BYTES = 16 * 1024 * 1024
+MAX_ORDERED_LAYERS = 256
+MAX_LAYER_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_ORDERED_LAYER_BYTES = 1024 * 1024 * 1024
+MAX_LAYER_MEMBERS = 100_000
+MAX_TOTAL_LAYER_MEMBERS = 250_000
+MAX_LAYER_MEMBER_BYTES = 256 * 1024 * 1024
+MAX_MATERIALIZED_LAYER_BYTES = 2 * 1024 * 1024 * 1024
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 COMPRESSION_SIGNATURES = {
     "bzip2": b"BZh",
@@ -224,14 +234,55 @@ def _safe(name: str) -> str:
     return str(path)
 
 
-def _raw_member(archive: tarfile.TarFile, name: str) -> bytes:
+def _raw_member(
+    archive: tarfile.TarFile, name: str, *, max_bytes: int
+) -> bytes:
     member = archive.getmember(name)
     if not member.isfile():
         raise ValueError(f"archive member is not a regular file: {name}")
+    if member.size > max_bytes:
+        raise ValueError(f"archive member exceeds scan bound: {name}")
     stream = archive.extractfile(member)
     if stream is None:
         raise ValueError(f"missing archive member: {name}")
-    return stream.read()
+    content = stream.read(max_bytes + 1)
+    if len(content) != member.size or len(content) > max_bytes:
+        raise ValueError(f"archive member exceeds scan bound: {name}")
+    return content
+
+
+def _docker_save_bytes(path: Path) -> bytes:
+    """Read one stable regular Docker-save file within the outer byte bound."""
+
+    before = path.stat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("Docker-save archive is not a regular file")
+    if before.st_size > MAX_DOCKER_SAVE_ARCHIVE_BYTES:
+        raise ValueError("Docker-save archive exceeds scan bound")
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    with path.open("rb") as stream:
+        content = stream.read(MAX_DOCKER_SAVE_ARCHIVE_BYTES + 1)
+    after = path.stat()
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if len(content) > MAX_DOCKER_SAVE_ARCHIVE_BYTES:
+        raise ValueError("Docker-save archive exceeds scan bound")
+    if before_identity != after_identity or len(content) != before.st_size:
+        raise ValueError("Docker-save archive changed while being read")
+    return content
 
 
 def _scan_raw_blob_bytes(
@@ -286,14 +337,20 @@ def _looks_like_tar(content: bytes) -> bool:
     return expected == actual and bool(content[:100].rstrip(b"\0"))
 
 
-def _validated_tar_members(path: str, content: bytes) -> list[tarfile.TarInfo]:
+def _validated_tar_members(
+    path: str, content: bytes, *, max_members: int
+) -> list[tarfile.TarInfo]:
     """Parse exactly one uncompressed tar stream with only zero end padding."""
 
     if len(content) < 1024 or len(content) % 512:
         raise ValueError(f"unaccounted tar bytes: {path}")
     try:
         with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
-            members = archive.getmembers()
+            members = []
+            for member in archive:
+                if len(members) >= max_members:
+                    raise ValueError(f"tar archive member count exceeds limit: {path}")
+                members.append(member)
     except tarfile.TarError as error:
         raise ValueError(f"unreadable nested tar archive: {path}") from error
     cursor = 0
@@ -305,6 +362,42 @@ def _validated_tar_members(path: str, content: bytes) -> list[tarfile.TarInfo]:
     if len(tail) < 1024 or any(tail):
         raise ValueError(f"unaccounted tar bytes: {path}")
     return members
+
+
+def _validate_tar_directory(
+    archive: tarfile.TarFile, member: tarfile.TarInfo, label: str
+) -> None:
+    """Require one tar directory to carry no body or conflicting metadata."""
+
+    if (
+        not member.isdir()
+        or member.size != 0
+        or member.linkname
+        or (member.devmajor or 0) != 0
+        or (member.devminor or 0) != 0
+    ):
+        raise ValueError(f"invalid tar directory: {label}")
+    payload = archive.extractfile(member)
+    if payload is not None and payload.read(1):
+        raise ValueError(f"invalid tar directory: {label}")
+
+
+def _validate_zip_directory(
+    archive: zipfile.ZipFile, member: zipfile.ZipInfo, label: str
+) -> None:
+    """Require one ZIP directory to be stored with no body or file type."""
+
+    mode = member.external_attr >> 16
+    if (
+        not member.is_dir()
+        or member.file_size != 0
+        or member.compress_size != 0
+        or member.CRC != 0
+        or member.compress_type != zipfile.ZIP_STORED
+        or stat.S_IFMT(mode) not in (0, stat.S_IFDIR)
+        or archive.read(member) != b""
+    ):
+        raise ValueError(f"invalid nested ZIP directory: {label}")
 
 
 def _validate_zip_data_descriptor(
@@ -563,6 +656,7 @@ def _nested_archive_members(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
                     if member.is_dir():
+                        _validate_zip_directory(archive, member, f"{path}:{safe}")
                         continue
                     if member.file_size > MAX_NESTED_ARCHIVE:
                         raise ValueError(
@@ -616,7 +710,9 @@ def _nested_archive_members(
     if content.startswith(ZIP_SIGNATURES) or declared_zip:
         raise ValueError(f"unreadable nested zip archive: {path}")
     if is_tar:
-        _validated_tar_members(path, content)
+        _validated_tar_members(
+            path, content, max_members=MAX_NESTED_ARCHIVE_MEMBERS
+        )
         try:
             with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
                 count = 0
@@ -662,7 +758,9 @@ def _nested_archive_members(
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
-                    elif not member.isdir():
+                    elif member.isdir():
+                        _validate_tar_directory(archive, member, f"{path}:{safe}")
+                    else:
                         raise ValueError(
                             f"unsupported nested archive member type: {path}:{safe}"
                         )
@@ -762,10 +860,22 @@ def _layers(
     nested = 0
     diff_ids: list[str] = []
     whiteouts: list[dict[str, Any]] = []
+    ordered_layer_bytes = 0
+    materialized_layer_bytes = 0
     for layer_name in names:
-        raw = _raw_member(archive, layer_name)
+        raw = _raw_member(
+            archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
+        )
+        ordered_layer_bytes += len(raw)
+        if ordered_layer_bytes > MAX_ORDERED_LAYER_BYTES:
+            raise ValueError("ordered layer bytes exceed scan bound")
         _scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)
-        _validated_tar_members(f"raw layer: {layer_name}", raw)
+        layer_members = _validated_tar_members(
+            f"raw layer: {layer_name}", raw, max_members=MAX_LAYER_MEMBERS
+        )
+        if total + len(layer_members) > MAX_TOTAL_LAYER_MEMBERS:
+            raise ValueError("total member count exceeds scan bound")
+        total += len(layer_members)
         diff_ids.append("sha256:" + hashlib.sha256(raw).hexdigest())
         current_rootfs: dict[str, bytes] = {}
         current_entries: dict[str, dict[str, Any]] = {}
@@ -779,7 +889,6 @@ def _layers(
                 if path in member_paths:
                     raise ValueError(f"duplicate normalized layer path: {path}")
                 member_paths.add(path)
-                total += 1
                 leaf = PurePosixPath(path).name
                 if leaf == ".wh..wh..opq":
                     whiteouts.append(_whiteout_metadata(layer, item, path, layer_name))
@@ -800,10 +909,17 @@ def _layers(
                     raise ValueError(f"forbidden image path: {path}")
                 current_order.append(path)
                 if item.isfile():
+                    if item.size > MAX_LAYER_MEMBER_BYTES:
+                        raise ValueError(f"layer member exceeds scan bound: {path}")
+                    materialized_layer_bytes += item.size
+                    if materialized_layer_bytes > MAX_MATERIALIZED_LAYER_BYTES:
+                        raise ValueError("materialized layer bytes exceed scan bound")
                     payload = layer.extractfile(item)
                     if payload is None:
                         raise ValueError(f"unreadable layer file: {path}")
-                    content = payload.read()
+                    content = payload.read(MAX_LAYER_MEMBER_BYTES + 1)
+                    if len(content) != item.size:
+                        raise ValueError(f"layer member exceeds scan bound: {path}")
                     nested += _nested_archive_members(
                         path,
                         content,
@@ -818,6 +934,7 @@ def _layers(
                         "sha256": hashlib.sha256(content).hexdigest(),
                     }
                 elif item.isdir():
+                    _validate_tar_directory(layer, item, f"layer:{path}")
                     current_rootfs.pop(path, None)
                     current_entries[path] = _entry_metadata(item, "directory")
                 elif item.issym() or item.islnk():
@@ -1067,18 +1184,22 @@ def _neutral_candidate(
 
 
 def scan(path: Path) -> dict[str, Any]:
-    with path.open("rb") as stream:
-        archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-    archive_bytes = path.read_bytes()
+    archive_bytes = _docker_save_bytes(path)
+    archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     _scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)
-    _validated_tar_members("Docker-save archive", archive_bytes)
+    outer_members = _validated_tar_members(
+        "Docker-save archive",
+        archive_bytes,
+        max_members=MAX_DOCKER_SAVE_OUTER_MEMBERS,
+    )
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
-        outer_members = archive.getmembers()
         outer_by_name = {_safe(member.name): member for member in outer_members}
         if len(outer_by_name) != len(outer_members):
             raise ValueError("Docker save contains duplicate normalized member paths")
         outer_names = set(outer_by_name)
-        manifest_raw = _raw_member(archive, "manifest.json")
+        manifest_raw = _raw_member(
+            archive, "manifest.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+        )
         _scan_decoded_member_bytes("Docker-save manifest", manifest_raw)
         manifest = json.loads(manifest_raw)
         if not isinstance(manifest, list) or len(manifest) != 1:
@@ -1087,7 +1208,9 @@ def scan(path: Path) -> dict[str, Any]:
         if not isinstance(entry, dict):
             raise ValueError("Docker save manifest entry must be an object")
         config_name = _safe(str(entry["Config"]))
-        config_raw = _raw_member(archive, config_name)
+        config_raw = _raw_member(
+            archive, config_name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+        )
         config_digest = hashlib.sha256(config_raw).hexdigest()
         if config_name != f"{config_digest}.json":
             raise ValueError(
@@ -1103,9 +1226,12 @@ def scan(path: Path) -> dict[str, Any]:
             or runtime_config.get("User") != "ubuntu"
         ):
             raise ValueError("final image must declare the non-root ubuntu user")
-        layers = [_safe(str(name)) for name in entry.get("Layers", [])]
-        if not layers:
+        layer_names = entry.get("Layers")
+        if not isinstance(layer_names, list) or not layer_names:
             raise ValueError("Docker save contains no layers")
+        if len(layer_names) > MAX_ORDERED_LAYERS:
+            raise ValueError("ordered layer count exceeds scan bound")
+        layers = [_safe(str(name)) for name in layer_names]
         if len(layers) != len(set(layers)):
             raise ValueError("Docker save repeats an ordered layer")
         allowed_outer = {"manifest.json", config_name, *layers, "repositories"}
@@ -1119,13 +1245,20 @@ def scan(path: Path) -> dict[str, Any]:
         if unexpected:
             raise ValueError(f"unexpected Docker-save members: {unexpected}")
         for directory in outer_names & allowed_directories:
-            if not outer_by_name[directory].isdir():
+            member = outer_by_name[directory]
+            if not member.isdir():
                 raise ValueError(
                     f"Docker-save parent member is not a directory: {directory}"
                 )
+            _validate_tar_directory(archive, member, f"Docker-save:{directory}")
         if "repositories" in outer_names:
             _scan_decoded_member_bytes(
-                "Docker-save repositories", _raw_member(archive, "repositories")
+                "Docker-save repositories",
+                _raw_member(
+                    archive,
+                    "repositories",
+                    max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES,
+                ),
             )
         (
             rootfs,
