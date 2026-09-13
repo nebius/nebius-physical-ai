@@ -105,6 +105,13 @@ def test_apt_reads_only_the_ephemeral_world_readable_ca_secret() -> None:
 
 def test_pre_network_locks_are_readable_independent_of_checkout_modes() -> None:
     dockerfile = (IMAGE / "Dockerfile").read_text(encoding="utf-8")
+    copy_lines = [
+        line.strip()
+        for line in dockerfile.splitlines()
+        if line.strip().startswith("COPY ")
+    ]
+    assert copy_lines
+    assert all("--chmod=04" in line or "--chmod=05" in line for line in copy_lines)
     assert (
         "COPY --chmod=0444 "
         "docker/workbench/gymnasium-robotics/apt-runtime.lock.json "

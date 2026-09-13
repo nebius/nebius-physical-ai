@@ -61,6 +61,11 @@ EXPECTED_SYSTEM_WHEEL_FILES = {
         "package_sha256": "edfa94cc1f6a33af99cfaf6ebfe35dbcd9c4bdd8555b90c0d8e78479faf5c8f0",
     },
 }
+PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN = (
+    Path("/root/.cache"),
+    Path("/root/.docker"),
+    Path("/root/.ssh"),
+)
 FORBIDDEN_ROOTS = (
     Path("/opt/venv"),
     Path("/usr/local/cuda"),
@@ -69,9 +74,7 @@ FORBIDDEN_ROOTS = (
     Path("/workspace/.cache"),
     Path("/workspace/byof-runs"),
     Path("/home/ubuntu/.cache"),
-    Path("/root/.cache"),
-    Path("/root/.docker"),
-    Path("/root/.ssh"),
+    *PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN,
 )
 EXPECTED_LOCK_FILENAMES = frozenset(
     {
@@ -102,6 +105,18 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _forbidden_roots_visible_to_verifier(root: Path) -> tuple[Path, ...]:
+    """Keep root-private paths for offline roots and defer them on live `/`."""
+
+    if root != Path("/"):
+        return FORBIDDEN_ROOTS
+    return tuple(
+        path
+        for path in FORBIDDEN_ROOTS
+        if path not in PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
+    )
+
+
 def verify(root: Path = Path("/")) -> dict[str, object]:
     def at(path: Path) -> Path:
         return root / path.relative_to("/")
@@ -121,7 +136,7 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         or source.get("delivery", {}).get("data_assets") != "runtime-cache-only"
     ):
         raise ValueError("runtime source identity or delivery boundary changed")
-    for forbidden in FORBIDDEN_ROOTS:
+    for forbidden in _forbidden_roots_visible_to_verifier(root):
         candidate = at(forbidden)
         if candidate.exists() and (not candidate.is_dir() or any(candidate.iterdir())):
             raise ValueError(f"forbidden baked payload or state: {forbidden}")
@@ -161,6 +176,12 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         "shadow_asset_present": False,
         "credential_present": False,
         "release_authorized": False,
+        "privileged_root_paths_deferred_to_complete_byte_scan": [
+            str(path)
+            for path in PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
+        ]
+        if root == Path("/")
+        else [],
     }
 
 

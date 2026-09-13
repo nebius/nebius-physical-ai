@@ -315,6 +315,20 @@ def test_in_pod_verifier_ignores_unreadable_locked_base_files(
     assert VERIFIER.verify(tmp_path)["status"] == "passed"
 
 
+def test_live_non_root_verifier_defers_only_root_private_paths() -> None:
+    visible = VERIFIER._forbidden_roots_visible_to_verifier(Path("/"))
+    assert not set(visible) & set(
+        VERIFIER.PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
+    )
+    assert VERIFIER._forbidden_roots_visible_to_verifier(Path("/offline")) == (
+        VERIFIER.FORBIDDEN_ROOTS
+    )
+    assert all(
+        str(path).startswith("/root/")
+        for path in VERIFIER.PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
+    )
+
+
 def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(
     tmp_path: Path, structural_scan: None
 ) -> None:
