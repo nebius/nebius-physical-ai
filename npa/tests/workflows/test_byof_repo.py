@@ -790,6 +790,71 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["AWS_ACCESS_KEY_ID"] == "key"
 
 
+def test_libero_live_environment_never_loads_saved_project_storage(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {"kubeconfig": "", "context": "", "namespace": ""},
+        )(),
+    )
+    monkeypatch.setattr(
+        module,
+        "storage_env_for_project",
+        lambda *_args, **_kwargs: pytest.fail("saved project credentials are forbidden"),
+    )
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setenv("NPA_S3_BUCKET", "manager-bucket")
+
+    env = module._live_runner_env("saved-project", libero=True)
+
+    assert env["AWS_ACCESS_KEY_ID"] == "manager-access"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "manager-secret"
+    assert env["AWS_SESSION_TOKEN"] == "manager-session"
+    assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert env["NPA_S3_BUCKET"] == "manager-bucket"
+
+
+@pytest.mark.parametrize(
+    "missing", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
+)
+def test_libero_live_environment_rejects_partial_authorized_triplets(
+    monkeypatch, missing
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {"kubeconfig": "", "context": "", "namespace": ""},
+        )(),
+    )
+    values = {
+        "AWS_ACCESS_KEY_ID": "manager-access",
+        "AWS_SECRET_ACCESS_KEY": "manager-secret",
+        "AWS_SESSION_TOKEN": "manager-session",
+    }
+    for name, value in values.items():
+        if name != missing:
+            monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+
+    with pytest.raises(ValueError, match="complete.*triplet"):
+        module._live_runner_env("saved-project", libero=True)
+
+
 def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     monkeypatch, tmp_path
 ) -> None:
@@ -824,6 +889,10 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
         )(),
     )
     monkeypatch.setattr(module, "storage_env_for_project", lambda *_a, **_k: {})
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
 
     def fake_run(cmd, **_kwargs):
         if str(module.CONTAINER_VERIFY_RUNNER) in cmd:

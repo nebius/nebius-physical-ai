@@ -874,7 +874,7 @@ def _prepared_execute(monkeypatch, tmp_path):
 
 
 def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> None:
-    module, _final, _current = _prepared_execute(monkeypatch, tmp_path)
+    module, final, _current = _prepared_execute(monkeypatch, tmp_path)
 
     def smoke(command, **kwargs):
         assert command == ["/opt/npa/libero/smoke.sh"]
@@ -885,7 +885,11 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
 
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
-    assert module.execute() == 23
+    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        assert module.execute(descriptor) == 23
+    finally:
+        os.close(descriptor)
 
 
 @pytest.mark.parametrize("drift", ["current-removed", "cache-replaced"])
@@ -905,8 +909,12 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
 
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
-    with pytest.raises(module.BootstrapRefusal, match="changed|current link"):
-        module.execute()
+    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="changed|current link"):
+            module.execute(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def test_execution_process_inventory_requires_runtime_account(
@@ -1023,7 +1031,10 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
         lambda _manifest: pytest.fail("warm race refusal must remain offline"),
     )
     try:
-        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+        with pytest.raises(
+            module.BootstrapRefusal,
+            match="must be a real directory|rollback was incomplete",
+        ):
             module.ensure(args)
     finally:
         final.unlink(missing_ok=True)
@@ -1053,7 +1064,10 @@ def test_manifest_cache_entry_swap_during_validation_removes_current_link(
 
     monkeypatch.setattr(module, "_validate_complete", swap_after_descriptor_validation)
     try:
-        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+        with pytest.raises(
+            module.BootstrapRefusal,
+            match="must be a real directory|rollback was incomplete",
+        ):
             module.ensure(args)
         assert not (cache_root / "current").exists()
     finally:
@@ -1080,7 +1094,10 @@ def test_cold_cache_entry_swap_after_publication_removes_current_link(
 
     monkeypatch.setattr(module, "_publish_current_cache_link", swap_after_publication)
     try:
-        with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
+        with pytest.raises(
+            module.BootstrapRefusal,
+            match="must be a real directory|rollback was incomplete",
+        ):
             module.ensure(args)
         assert not (cache_root / "current").exists()
     finally:
@@ -1210,6 +1227,107 @@ def test_failed_post_rename_publication_discards_only_new_cache(
     assert not (cache / "current").exists()
     assert not list(cache.glob(".*.partial-*"))
     assert not list(cache.glob(".*.failed-*"))
+
+
+@pytest.mark.parametrize(
+    "fault", ["identity", "current-unlink", "quarantine", "descendant-cleanup"]
+)
+def test_post_rename_rollback_attempts_independent_cleanup_after_fault(
+    monkeypatch, tmp_path, fault
+) -> None:
+    module = _load_module()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    final = cache / ("a" * 64)
+    (final / "nested").mkdir(parents=True)
+    (final / "nested" / "payload").write_bytes(b"accepted-cache-bytes")
+    (final / "nested" / "payload").chmod(0o400)
+    (final / "nested").chmod(0o500)
+    final.chmod(0o500)
+    expected = module._cache_entry_identity(final)
+    assert expected is not None
+    (cache / "current").symlink_to(final.name)
+    parent_descriptor = os.open(
+        cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
+    calls = 0
+
+    if fault == "identity":
+        original = module._cache_entry_identity_at
+
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise module.BootstrapRefusal("injected identity failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_cache_entry_identity_at", fail_once)
+    elif fault == "current-unlink":
+        original = module._remove_current_cache_link
+
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected unlink failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_remove_current_cache_link", fail_once)
+    elif fault == "quarantine":
+        original = module.tempfile.mkdtemp
+
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected quarantine failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module.tempfile, "mkdtemp", fail_once)
+    else:
+        original = module._remove_cache_tree
+
+        def fail_once(path):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ["injected descendant cleanup failure"]
+            return original(path)
+
+        monkeypatch.setattr(module, "_remove_cache_tree", fail_once)
+
+    try:
+        errors = module._rollback_new_cache_entry(
+            cache,
+            final,
+            expected,
+            parent_descriptor=parent_descriptor,
+        )
+    finally:
+        os.close(parent_descriptor)
+
+    assert errors
+    assert not final.exists()
+    assert not (cache / "current").exists()
+    assert not list(cache.glob(".*.failed-*"))
+
+
+def test_inner_execution_rejects_path_substitution_after_outer_descriptor_open(
+    monkeypatch, tmp_path
+) -> None:
+    module, final, _current = _prepared_execute(monkeypatch, tmp_path)
+    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    preserved = final.with_name(".outer-validated-cache")
+    final.rename(preserved)
+    final.mkdir(mode=0o550)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="descriptor identity changed"):
+            module.execute(descriptor)
+    finally:
+        os.close(descriptor)
+        final.rmdir()
+        preserved.rename(final)
 
 
 def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
@@ -1466,10 +1584,15 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     def fake_run(command, **kwargs):
         assert command == [
             "/usr/bin/sudo",
+            "--close-from",
+            str(module.INHERITED_CACHE_DESCRIPTOR + 1),
             "--user=npa-libero-exec",
             "/opt/npa/libero/runtime-bootstrap.py",
             "execute",
         ]
+        assert kwargs["pass_fds"] == (module.INHERITED_CACHE_DESCRIPTOR,)
+        opened = os.fstat(module.INHERITED_CACHE_DESCRIPTOR)
+        assert stat.S_ISDIR(opened.st_mode)
         environment = kwargs["env"]
         assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
         assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment

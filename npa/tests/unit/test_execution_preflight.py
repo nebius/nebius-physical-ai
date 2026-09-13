@@ -558,6 +558,12 @@ def libero_controller_config(service_account: str = "skypilot-service-account") 
 
 @pytest.fixture
 def libero_authorized(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "yaml-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "yaml-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "temporary-session")
+    monkeypatch.setenv(
+        "AWS_ENDPOINT_URL", "https://storage.eu-west1.nebius.cloud"
+    )
     monkeypatch.setattr(
         "npa.execution_preflight._verify_libero_submission_authorization",
         lambda *_args, **_kwargs: {},
@@ -620,6 +626,10 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
     assert provider.s3.calls
     assert injected["AWS_ACCESS_KEY_ID"] == "yaml-access"
     assert injected["AWS_SECRET_ACCESS_KEY"] == "yaml-secret"
+    assert injected["AWS_SESSION_TOKEN"] == "temporary-session"
+    assert provider.connections[0]["access"] == "yaml-access"
+    assert provider.connections[0]["secret"] == "yaml-secret"
+    assert provider.connections[0]["session_token"] == "temporary-session"
     assert "AWS_ACCESS_KEY_ID" not in document["envs"]
     assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
 

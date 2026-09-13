@@ -1805,7 +1805,46 @@ def _resolved_storage_env() -> dict[str, str]:
         return {}
 
 
-def preflight_output_storage(*, output_root: str, run_id: str) -> None:
+def _libero_output_storage_client() -> Any:
+    """Use only the complete manager-authorized temporary storage principal."""
+
+    import boto3
+    from botocore.config import Config
+
+    access = str(os.environ.get("AWS_ACCESS_KEY_ID") or "")
+    secret = str(os.environ.get("AWS_SECRET_ACCESS_KEY") or "")
+    session = str(os.environ.get("AWS_SESSION_TOKEN") or "")
+    if not all((access, secret, session)):
+        raise ValueError(
+            "LIBERO output storage requires one complete authorized credential triplet"
+        )
+    endpoint_names = (
+        "AWS_ENDPOINT_URL_S3",
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+        "NPA_STORAGE_ENDPOINT",
+        "S3_ENDPOINT_URL",
+    )
+    endpoints = {
+        str(os.environ.get(name) or "").strip().rstrip("/")
+        for name in endpoint_names
+        if os.environ.get(name)
+    }
+    if len(endpoints) != 1:
+        raise ValueError("LIBERO output storage requires one exact authorized endpoint")
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoints.pop(),
+        aws_access_key_id=access,
+        aws_secret_access_key=secret,
+        aws_session_token=session,
+        config=Config(s3={"addressing_style": "path"}),
+    )
+
+
+def preflight_output_storage(
+    *, output_root: str, run_id: str, libero: bool = False
+) -> None:
     """Reserve a new S3 run prefix and prove it is writable before compute."""
 
     parsed = urlparse(_normalize_output_root(output_root))
@@ -1815,16 +1854,19 @@ def preflight_output_storage(*, output_root: str, run_id: str) -> None:
     prefix = parsed.path.strip("/")
     run_prefix = "/".join(part for part in (prefix, run_id) if part).rstrip("/") + "/"
     key = run_prefix + ".npa-write-preflight"
-    project = (
-        os.environ.get("NPA_E2E_PROJECT", "").strip()
-        or os.environ.get("NPA_PROJECT", "").strip()
-        or os.environ.get("NPA_BYOF_PROJECT", "").strip()
-    )
-    client = s3_client_for_project(
-        project or None,
-        allow_host_creds=True,
-        endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
-    )
+    if libero:
+        client = _libero_output_storage_client()
+    else:
+        project = (
+            os.environ.get("NPA_E2E_PROJECT", "").strip()
+            or os.environ.get("NPA_PROJECT", "").strip()
+            or os.environ.get("NPA_BYOF_PROJECT", "").strip()
+        )
+        client = s3_client_for_project(
+            project or None,
+            allow_host_creds=True,
+            endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+        )
     created = False
     try:
         existing = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=1)
@@ -2260,7 +2302,7 @@ def _cleanup_libero_access_objects(
     for kind, name, uid, delete, read in operations:
         if not uid:
             cleanup.errors.append(f"LIBERO {kind} cleanup identity is unavailable")
-            return cleanup
+            continue
         try:
             delete(
                 name,
@@ -2270,63 +2312,70 @@ def _cleanup_libero_access_objects(
         except ApiException as exc:
             if exc.status != 404:
                 cleanup.errors.append(f"LIBERO {kind} cleanup could not prove absence")
-                return cleanup
         except Exception:  # noqa: BLE001 - never claim an ambiguous delete
             cleanup.errors.append(f"LIBERO {kind} cleanup raised unexpectedly")
-            return cleanup
         deadline = time.time() + max(timeout, 1)
+        absent = False
         while True:
             try:
                 read(name, state.namespace)
             except ApiException as exc:
                 if exc.status == 404:
+                    absent = True
                     break
                 cleanup.errors.append(f"LIBERO {kind} absence check failed")
-                return cleanup
+                break
             except Exception:  # noqa: BLE001 - absence must be objective
                 cleanup.errors.append(f"LIBERO {kind} absence check raised")
-                return cleanup
+                break
             if time.time() >= deadline:
                 cleanup.errors.append(
                     f"LIBERO {kind} still exists after exact deletion"
                 )
-                return cleanup
-            time.sleep(1)
-        cleanup.resources_removed.append(f"libero-{kind}")
-
-    try:
-        core.delete_namespace(
-            state.namespace,
-            body=delete_options(
-                preconditions=preconditions(uid=state.namespace_uid)
-            ),
-        )
-    except ApiException as exc:
-        if exc.status != 404:
-            cleanup.errors.append("LIBERO namespace exact deletion failed")
-            return cleanup
-    except Exception:  # noqa: BLE001 - preserve local recovery state on ambiguity
-        cleanup.errors.append("LIBERO namespace exact deletion failed")
-        return cleanup
-    deadline = time.time() + max(timeout, 1)
-    while True:
-        try:
-            core.read_namespace(state.namespace)
-        except ApiException as exc:
-            if exc.status == 404:
                 break
-            cleanup.errors.append("LIBERO namespace absence check failed")
-            return cleanup
-        except Exception:  # noqa: BLE001 - absence must be objective
-            cleanup.errors.append("LIBERO namespace absence check raised")
-            return cleanup
-        if time.time() >= deadline:
-            cleanup.errors.append("LIBERO namespace still exists after exact deletion")
-            return cleanup
-        time.sleep(1)
-    cleanup.resources_removed.append("libero-namespace")
-    cleanup.verified = True
-    cleanup.remote_absence_verified = True
+            time.sleep(1)
+        if absent:
+            cleanup.resources_removed.append(f"libero-{kind}")
+
+    namespace_absent = False
+    if not state.namespace_uid:
+        cleanup.errors.append("LIBERO namespace cleanup identity is unavailable")
+    else:
+        try:
+            core.delete_namespace(
+                state.namespace,
+                body=delete_options(
+                    preconditions=preconditions(uid=state.namespace_uid)
+                ),
+            )
+        except ApiException as exc:
+            if exc.status != 404:
+                cleanup.errors.append("LIBERO namespace exact deletion failed")
+        except Exception:  # noqa: BLE001 - preserve ambiguity but keep verifying
+            cleanup.errors.append("LIBERO namespace exact deletion failed")
+        deadline = time.time() + max(timeout, 1)
+        while True:
+            try:
+                core.read_namespace(state.namespace)
+            except ApiException as exc:
+                if exc.status == 404:
+                    namespace_absent = True
+                    break
+                cleanup.errors.append("LIBERO namespace absence check failed")
+                break
+            except Exception:  # noqa: BLE001 - absence must be objective
+                cleanup.errors.append("LIBERO namespace absence check raised")
+                break
+            if time.time() >= deadline:
+                cleanup.errors.append(
+                    "LIBERO namespace still exists after exact deletion"
+                )
+                break
+            time.sleep(1)
+    if namespace_absent:
+        cleanup.resources_removed.append("libero-namespace")
+    cleanup.verified = not cleanup.errors and namespace_absent
+    cleanup.remote_absence_verified = cleanup.verified
     return cleanup
 
 
@@ -2500,6 +2549,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         api_stop_succeeded = False
         preserve_api = False
         api_config_path: Path | None = None
+        libero_binding: LiberoRuntimeBinding | None = None
+        signal_previous_handlers: dict[int, Any] | None = None
+        active_signal_cleanup: Callable[[], CleanupResult] | None = None
+        early_cleanup_result: CleanupResult | None = None
+        submission_started = False
+        submission_absence_proven = False
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
@@ -2530,8 +2585,44 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ["NPA_LIBERO_MANAGER_ACCEPTANCE_B64"] = (
                     libero_binding.manager_acceptance_b64
                 )
+
+                def cleanup_before_submission() -> CleanupResult:
+                    """Retract exact bound access when no scheduler job can exist."""
+
+                    nonlocal early_cleanup_result
+                    nonlocal api_stop_attempted, api_stop_succeeded, preserve_api
+                    if early_cleanup_result is not None:
+                        return early_cleanup_result
+                    managed_absent = CleanupResult()
+                    managed_absent.verified = True
+                    managed_absent.remote_absence_verified = True
+                    early_cleanup_result, attempted, stopped = _complete_libero_cleanup(
+                        managed_absent,
+                        binding=libero_binding,
+                        timeout=max(int(args.submit_timeout), 1),
+                        sky_bin=sky_bin,
+                        isolated_config_dir=isolated_config_dir,
+                        config_path=api_config_path,
+                        run_id=run_id,
+                    )
+                    api_stop_attempted = api_stop_attempted or attempted
+                    api_stop_succeeded = api_stop_succeeded or stopped
+                    preserve_api = not stopped
+                    return early_cleanup_result
+
+                active_signal_cleanup = cleanup_before_submission
+
+                def cleanup_active_transaction() -> CleanupResult:
+                    assert active_signal_cleanup is not None
+                    return active_signal_cleanup()
+
+                signal_previous_handlers = install_teardown_signal_handlers(
+                    cleanup_active_transaction
+                )
             _write_yaml_documents(rendered_yaml, docs)
-            preflight_output_storage(output_root=output_root, run_id=run_id)
+            preflight_output_storage(
+                output_root=output_root, run_id=run_id, libero=is_libero
+            )
             _ensure_infra_enabled(
                 sky_bin=sky_bin,
                 infra=infra,
@@ -2592,14 +2683,23 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     return pending
                 cleanup_started = True
                 try:
-                    cleanup_result = _cancel_then_teardown_managed_job(
-                        scheduler_job_id,
-                        teardown_guard=teardown_guard,
-                        sky_bin=sky_bin,
-                        isolated_config_dir=teardown_guard.isolated_config_dir,
-                        config_path=submitted_config_path,
-                        poll_interval=args.poll_interval,
-                    )
+                    if not scheduler_job_id and submission_absence_proven:
+                        cleanup_result = _verify_managed_clusters_absent(
+                            run_id=run_id,
+                            sky_bin=sky_bin,
+                            isolated_config_dir=teardown_guard.isolated_config_dir,
+                            config_path=submitted_config_path,
+                            timeout=max(int(teardown_guard.timeout), 1),
+                        )
+                    else:
+                        cleanup_result = _cancel_then_teardown_managed_job(
+                            scheduler_job_id,
+                            teardown_guard=teardown_guard,
+                            sky_bin=sky_bin,
+                            isolated_config_dir=teardown_guard.isolated_config_dir,
+                            config_path=submitted_config_path,
+                            poll_interval=args.poll_interval,
+                        )
                 except Exception:  # noqa: BLE001 - never claim ambiguous cleanup
                     cleanup_result = CleanupResult()
                     cleanup_result.outcome = "unsafe"
@@ -2627,9 +2727,13 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     preserve_api = not stopped
                 return cleanup_result
 
-            previous_handlers = install_teardown_signal_handlers(
-                cleanup_after_signal
-            )
+            if libero_binding is not None:
+                active_signal_cleanup = cleanup_after_signal
+                previous_handlers = None
+            else:
+                previous_handlers = install_teardown_signal_handlers(
+                    cleanup_after_signal
+                )
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
@@ -2640,6 +2744,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         libero_binding, require_empty_inventory=True
                     )
                     _verify_libero_controller_unchanged(libero_binding)
+                submission_started = True
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,
@@ -2733,6 +2838,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         )
                     except ValueError:
                         scheduler_job_id = ""
+                if (
+                    transaction is not None
+                    and not transaction.job_id
+                    and transaction.existence == "absent"
+                ):
+                    submission_absence_proven = True
                 if scheduler_job_id and expected_submission_config_path is not None:
                     try:
                         submitted_config_path = _mode_private_regular_file(
@@ -2775,7 +2886,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     summary["libero_runtime_binding"] = libero_binding.evidence
                 return_code = 2
             finally:
-                restore_signal_handlers(previous_handlers)
+                if previous_handlers is not None:
+                    restore_signal_handlers(previous_handlers)
                 if args.cleanup:
                     cleanup_result = cleanup_submission()
             cleanup_verified = bool(
@@ -2858,6 +2970,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:
+            if (
+                libero_binding is not None
+                and not submission_started
+                and early_cleanup_result is None
+                and active_signal_cleanup is not None
+            ):
+                early_cleanup_result = active_signal_cleanup()
+            if signal_previous_handlers is not None:
+                restore_signal_handlers(signal_previous_handlers)
             # Restore KUBECONFIG and stop the Sky API so a temp kubeconfig path
             # written under TemporaryDirectory cannot poison later sky launches.
             if previous_kubeconfig is None:

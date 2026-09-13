@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,7 @@ SEALED_DIRECTORY_MODE = stat.S_IRUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGR
 SEALED_EXECUTABLE_MODE = SEALED_DIRECTORY_MODE
 SEALED_REGULAR_MODE = stat.S_IRUSR | stat.S_IRGRP
 CACHE_ROOT_MODE = SEALED_DIRECTORY_MODE | stat.S_IWUSR
+INHERITED_CACHE_DESCRIPTOR = 200
 ALLOWED_TERMS_HOSTS = frozenset(
     {
         "raw.githubusercontent.com",
@@ -561,6 +563,22 @@ def _cache_entry_identity(path: Path) -> tuple[int, int] | None:
     return info.st_dev, info.st_ino
 
 
+def _cache_entry_identity_at(
+    parent_descriptor: int, name: str
+) -> tuple[int, int] | None:
+    """Inspect one no-follow cache child through the trusted parent descriptor."""
+
+    try:
+        info = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise BootstrapRefusal("cannot inspect the runtime cache entry") from exc
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise BootstrapRefusal("runtime cache entry must be a real directory")
+    return info.st_dev, info.st_ino
+
+
 def _require_cache_entry_identity(path: Path, expected: tuple[int, int]) -> None:
     if _cache_entry_identity(path) != expected:
         raise BootstrapRefusal("runtime cache entry changed during validation")
@@ -624,35 +642,153 @@ def _remove_current_cache_link(cache_root: Path, final: Path) -> None:
         current.unlink()
 
 
-def _discard_new_cache_entry(
-    cache_root: Path, final: Path, expected: tuple[int, int]
-) -> None:
-    """Remove only the cache directory created by the current transaction."""
+def _remove_cache_tree(path: Path) -> list[str]:
+    """Best-effort no-follow removal that attempts every discovered descendant."""
 
-    _remove_current_cache_link(cache_root, final)
-    _require_cache_entry_identity(final, expected)
-    failed = cache_root / f".{final.name}.failed-{os.getpid()}"
-    if failed.exists() or failed.is_symlink():
-        raise BootstrapRefusal("failed-cache quarantine path already exists")
-    final.replace(failed)
-    _require_cache_entry_identity(failed, expected)
-    descendants = sorted(
-        failed.rglob("*"), key=lambda item: len(item.relative_to(failed).parts),
-        reverse=True,
-    )
-    for path in (failed, *reversed(descendants)):
-        info = path.lstat()
-        if stat.S_ISDIR(info.st_mode):
-            os.chmod(path, 0o700)
-    for path in descendants:
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode) or stat.S_ISREG(info.st_mode):
-            path.unlink()
-        elif stat.S_ISDIR(info.st_mode):
-            path.rmdir()
-        else:
-            raise BootstrapRefusal("failed runtime cache contains unsupported data")
-    failed.rmdir()
+    errors: list[str] = []
+    try:
+        descendants = sorted(
+            path.rglob("*"),
+            key=lambda item: len(item.relative_to(path).parts),
+            reverse=True,
+        )
+    except Exception:  # noqa: BLE001 - rollback records every ambiguity
+        return ["descendant inventory failed"]
+    for item in (path, *reversed(descendants)):
+        try:
+            info = item.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                os.chmod(item, 0o700)
+        except FileNotFoundError:
+            continue
+        except Exception:  # noqa: BLE001 - continue with independent descendants
+            errors.append(f"chmod failed:{item.name}")
+    for item in descendants:
+        try:
+            info = item.lstat()
+            if stat.S_ISLNK(info.st_mode) or stat.S_ISREG(info.st_mode):
+                item.unlink()
+            elif stat.S_ISDIR(info.st_mode):
+                item.rmdir()
+            else:
+                errors.append(f"unsupported descendant:{item.name}")
+        except FileNotFoundError:
+            continue
+        except Exception:  # noqa: BLE001 - attempt the rest before reporting
+            errors.append(f"remove failed:{item.name}")
+    try:
+        path.rmdir()
+    except FileNotFoundError:
+        pass
+    except Exception:  # noqa: BLE001 - caller retries once after child failures
+        errors.append(f"remove failed:{path.name}")
+    return errors
+
+
+def _discard_new_cache_entry(
+    cache_root: Path,
+    final: Path,
+    expected: tuple[int, int],
+    *,
+    parent_descriptor: int,
+) -> list[str]:
+    """Isolate and remove only the exact entry created by this transaction."""
+
+    errors: list[str] = []
+    quarantine_root: Path | None = None
+    isolated: Path | None = None
+    try:
+        observed = _cache_entry_identity_at(parent_descriptor, final.name)
+    except Exception:  # noqa: BLE001 - identity ambiguity is a fail-closed result
+        errors.append("final identity acquisition failed")
+        observed = None
+    if observed is None:
+        return errors
+    if observed != expected:
+        errors.append("final identity drifted")
+        return errors
+    try:
+        quarantine_root = Path(
+            tempfile.mkdtemp(
+                prefix=f".{final.name}.failed-{uuid4().hex}-", dir=cache_root
+            )
+        )
+        os.chmod(quarantine_root, 0o700)
+        isolated = quarantine_root / "entry"
+        os.rename(
+            final.name,
+            f"{quarantine_root.name}/entry",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+    except Exception:  # noqa: BLE001 - direct exact-inode removal is the fallback
+        errors.append("quarantine creation or rename failed")
+        if quarantine_root is not None:
+            _remove_cache_tree(quarantine_root)
+        try:
+            if _cache_entry_identity_at(parent_descriptor, final.name) == expected:
+                isolated = final
+            else:
+                return errors
+        except Exception:  # noqa: BLE001 - never remove an unverified replacement
+            errors.append("fallback identity acquisition failed")
+            return errors
+    assert isolated is not None
+    try:
+        if _cache_entry_identity(isolated) != expected:
+            errors.append("isolated cache identity drifted")
+            return errors
+    except Exception:  # noqa: BLE001 - retain isolated evidence on ambiguity
+        errors.append("isolated cache identity acquisition failed")
+        return errors
+    first_pass = _remove_cache_tree(isolated)
+    if isolated.exists():
+        errors.extend(first_pass)
+        errors.extend(_remove_cache_tree(isolated))
+    if quarantine_root is not None and quarantine_root.exists():
+        errors.extend(_remove_cache_tree(quarantine_root))
+    return errors
+
+
+def _rollback_new_cache_entry(
+    cache_root: Path,
+    final: Path,
+    expected: tuple[int, int],
+    *,
+    parent_descriptor: int,
+) -> tuple[str, ...]:
+    """Independently retract publication and the renamed entry, aggregating errors."""
+
+    errors: list[str] = []
+    for _attempt in range(2):
+        try:
+            _remove_current_cache_link(cache_root, final)
+        except Exception:  # noqa: BLE001 - entry cleanup must still run
+            errors.append("current-link removal failed")
+        errors.extend(
+            _discard_new_cache_entry(
+                cache_root,
+                final,
+                expected,
+                parent_descriptor=parent_descriptor,
+            )
+        )
+    try:
+        remaining = _cache_entry_identity_at(parent_descriptor, final.name)
+    except Exception:  # noqa: BLE001
+        errors.append("final absence check failed")
+    else:
+        if remaining == expected:
+            errors.append("renamed cache entry remains")
+        elif remaining is not None:
+            errors.append("different cache entry occupies final name")
+    current = cache_root / "current"
+    try:
+        if current.is_symlink() and os.readlink(current) == final.name:
+            errors.append("current link remains")
+    except Exception:  # noqa: BLE001
+        errors.append("current-link absence check failed")
+    return tuple(dict.fromkeys(errors))
 
 
 def _ssh_string(value: bytes) -> bytes:
@@ -1512,7 +1648,6 @@ def _validate_and_publish_cache(
     decision_sha256: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
-    discard_on_failure: bool = False,
 ) -> dict[str, Any]:
     try:
         with _open_cache_entry(final, expected=identity) as stable_final:
@@ -1527,8 +1662,6 @@ def _validate_and_publish_cache(
             _publish_current_cache_link(cache_root, final, identity)
     except Exception:
         _remove_current_cache_link(cache_root, final)
-        if discard_on_failure:
-            _discard_new_cache_entry(cache_root, final, identity)
         raise
     return record
 
@@ -1625,6 +1758,13 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 tempfile.mkdtemp(prefix=f".{manifest_sha256}.partial-", dir=cache_root)
             )
             os.chmod(partial, 0o700)
+            renamed = False
+            committed = False
+            parent_descriptor = os.open(
+                cache_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            renamed_identity: tuple[int, int] | None = None
             try:
                 _fetch_source(partial, manifest["source"])
                 _validate_task_inputs(partial, manifest)
@@ -1641,9 +1781,20 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     governing_terms_sha256,
                 )
                 _seal_cache_tree(partial)
-                partial.replace(final)
-                locked_identity = _cache_entry_identity(final)
-                if locked_identity is None:
+                renamed_identity = _cache_entry_identity(partial)
+                if renamed_identity is None:
+                    raise BootstrapRefusal("materialized runtime cache is unavailable")
+                os.rename(
+                    partial.name,
+                    final.name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                )
+                renamed = True
+                locked_identity = _cache_entry_identity_at(
+                    parent_descriptor, final.name
+                )
+                if locked_identity is None or locked_identity != renamed_identity:
                     raise BootstrapRefusal("materialized runtime cache is unavailable")
                 record = _validate_and_publish_cache(
                     cache_root=cache_root,
@@ -1654,11 +1805,26 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     decision_sha256=decision_sha256,
                     requirements_sha256=requirements_sha256,
                     governing_terms_sha256=governing_terms_sha256,
-                    discard_on_failure=True,
                 )
-            except Exception:
+                committed = True
+            except Exception as exc:
+                rollback_errors: tuple[str, ...] = ()
+                if renamed and not committed and renamed_identity is not None:
+                    rollback_errors = _rollback_new_cache_entry(
+                        cache_root,
+                        final,
+                        renamed_identity,
+                        parent_descriptor=parent_descriptor,
+                    )
                 shutil.rmtree(partial, ignore_errors=True)
+                if rollback_errors:
+                    raise BootstrapRefusal(
+                        "runtime cache rollback was incomplete: "
+                        + ", ".join(rollback_errors)
+                    ) from exc
                 raise
+            finally:
+                os.close(parent_descriptor)
     return {
         **record,
         "cache_path": str(final),
@@ -1715,7 +1881,7 @@ def _runtime_execution_environment(stable_root: Path) -> dict[str, str]:
     }
 
 
-def execute() -> int:
+def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
     """Run the fixed smoke from one locked, descriptor-stable cache snapshot."""
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
@@ -1737,44 +1903,44 @@ def execute() -> int:
     lock_path = cache_root / ".bootstrap.lock"
     with lock_path.open("rb") as lock:
         fcntl.flock(lock, fcntl.LOCK_SH)
-        descriptor = os.open(
-            final,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        )
         try:
-            opened = os.fstat(descriptor)
-            if (opened.st_dev, opened.st_ino) != identity:
-                raise BootstrapRefusal("runtime cache descriptor identity changed")
-            stable_root = Path("/proc/self/fd") / str(descriptor)
-            _validate_complete(
-                stable_root,
-                manifest,
-                manifest_sha256,
-                decision_sha256,
-                requirements_sha256,
-                governing_terms_sha256,
-            )
-            environment = _runtime_execution_environment(stable_root)
-            completed = subprocess.run(
-                ["/opt/npa/libero/smoke.sh"],
-                check=False,
-                env=environment,
-                pass_fds=(descriptor,),
-            )
-            _validate_complete(
-                stable_root,
-                manifest,
-                manifest_sha256,
-                decision_sha256,
-                requirements_sha256,
-                governing_terms_sha256,
-            )
-            _require_cache_entry_identity(final, identity)
-            if not current.is_symlink() or os.readlink(current) != final.name:
-                raise BootstrapRefusal("runtime current link changed during execution")
-            return completed.returncode
-        finally:
-            os.close(descriptor)
+            opened = os.fstat(cache_descriptor)
+        except OSError as exc:
+            raise BootstrapRefusal(
+                "inherited runtime cache descriptor is unavailable"
+            ) from exc
+        if (opened.st_dev, opened.st_ino) != identity or not stat.S_ISDIR(
+            opened.st_mode
+        ):
+            raise BootstrapRefusal("runtime cache descriptor identity changed")
+        stable_root = Path("/proc/self/fd") / str(cache_descriptor)
+        _validate_complete(
+            stable_root,
+            manifest,
+            manifest_sha256,
+            decision_sha256,
+            requirements_sha256,
+            governing_terms_sha256,
+        )
+        environment = _runtime_execution_environment(stable_root)
+        completed = subprocess.run(
+            ["/opt/npa/libero/smoke.sh"],
+            check=False,
+            env=environment,
+            pass_fds=(cache_descriptor,),
+        )
+        _validate_complete(
+            stable_root,
+            manifest,
+            manifest_sha256,
+            decision_sha256,
+            requirements_sha256,
+            governing_terms_sha256,
+        )
+        _require_cache_entry_identity(final, identity)
+        if not current.is_symlink() or os.readlink(current) != final.name:
+            raise BootstrapRefusal("runtime current link changed during execution")
+        return completed.returncode
 
 
 def _parse_utc(value: object, label: str) -> datetime:
@@ -2281,22 +2447,43 @@ def execute_and_upload() -> int:
                 with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
                     stderr_fd, "wb"
                 ) as stderr:
-                    environment = _runtime_execution_environment(final)
+                    inherited_root = (
+                        Path("/proc/self/fd") / str(INHERITED_CACHE_DESCRIPTOR)
+                    )
+                    environment = _runtime_execution_environment(inherited_root)
                     environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] = str(
                         bootstrap_receipt
                     )
-                    completed = subprocess.run(
-                        [
-                            "/usr/bin/sudo",
-                            "--user=npa-libero-exec",
-                            "/opt/npa/libero/runtime-bootstrap.py",
-                            "execute",
-                        ],
-                        check=False,
-                        env=environment,
-                        stdout=stdout,
-                        stderr=stderr,
-                    )
+                    inherited_is_duplicate = descriptor != INHERITED_CACHE_DESCRIPTOR
+                    if inherited_is_duplicate:
+                        os.dup2(
+                            descriptor,
+                            INHERITED_CACHE_DESCRIPTOR,
+                            inheritable=True,
+                        )
+                    else:
+                        os.set_inheritable(INHERITED_CACHE_DESCRIPTOR, True)
+                    try:
+                        completed = subprocess.run(
+                            [
+                                "/usr/bin/sudo",
+                                "--close-from",
+                                str(INHERITED_CACHE_DESCRIPTOR + 1),
+                                "--user=npa-libero-exec",
+                                "/opt/npa/libero/runtime-bootstrap.py",
+                                "execute",
+                            ],
+                            check=False,
+                            env=environment,
+                            stdout=stdout,
+                            stderr=stderr,
+                            pass_fds=(INHERITED_CACHE_DESCRIPTOR,),
+                        )
+                    finally:
+                        if inherited_is_duplicate:
+                            os.close(INHERITED_CACHE_DESCRIPTOR)
+                        else:
+                            os.set_inheritable(INHERITED_CACHE_DESCRIPTOR, False)
                 smoke_exit_code = completed.returncode
                 remaining_processes = _execution_uid_processes()
                 if remaining_processes:

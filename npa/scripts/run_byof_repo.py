@@ -420,7 +420,7 @@ def _bare_s3_bucket(value: str) -> str:
     return text.split("/", 1)[0].strip()
 
 
-def _live_runner_env(project: str) -> dict[str, str]:
+def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
     env: dict[str, str] = {}
     target = resolve_byof_kubernetes_target(project or None)
     if target.kubeconfig:
@@ -430,16 +430,52 @@ def _live_runner_env(project: str) -> dict[str, str]:
         env["NPA_BYOF_K8S_CONTEXT"] = target.context
     if target.namespace:
         env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
-    try:
-        env.update(
-            storage_env_for_project(
-                project or None,
-                allow_host_creds=True,
-                endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
-            )
+    if libero:
+        exact_names = (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
         )
-    except Exception as exc:
-        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+        exact_values = {name: str(os.environ.get(name) or "") for name in exact_names}
+        if not all(exact_values.values()):
+            raise ValueError(
+                "LIBERO requires one complete manager-authorized storage credential triplet"
+            )
+        endpoint_names = (
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_STORAGE_ENDPOINT",
+            "S3_ENDPOINT_URL",
+        )
+        endpoints = {
+            str(os.environ.get(name) or "").strip().rstrip("/")
+            for name in endpoint_names
+            if os.environ.get(name)
+        }
+        if len(endpoints) != 1:
+            raise ValueError(
+                "LIBERO requires one exact manager-authorized storage endpoint"
+            )
+        env.update(exact_values)
+        env.update(
+            {
+                name: str(os.environ[name])
+                for name in endpoint_names
+                if os.environ.get(name)
+            }
+        )
+    else:
+        try:
+            env.update(
+                storage_env_for_project(
+                    project or None,
+                    allow_host_creds=True,
+                    endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+                )
+            )
+        except Exception as exc:
+            print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
     # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
     for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
@@ -447,7 +483,7 @@ def _live_runner_env(project: str) -> dict[str, str]:
         if bare:
             env["NPA_S3_BUCKET"] = bare
             break
-    if "NPA_S3_BUCKET" not in env:
+    if "NPA_S3_BUCKET" not in env and not libero:
         try:
             from npa.clients.config import _load_yaml, _resolve_project_section
 
@@ -1372,7 +1408,11 @@ def _run_byof(
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            live_env = _live_runner_env(args.project)
+            live_env = (
+                _live_runner_env(args.project, libero=True)
+                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME
+                else _live_runner_env(args.project)
+            )
             if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
                 _, decision_bytes, decision_sha256 = _libero_runtime_decision(
                     args, args._libero_acceptance

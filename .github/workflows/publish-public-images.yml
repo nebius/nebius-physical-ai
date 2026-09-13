@@ -1454,46 +1454,84 @@ jobs:
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$LIBERO_PACKAGE_WRITER_REPOSITORY"
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
+            accepted_rows="$(mktemp)"
             if ! jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
               --arg tag "$tag" \
-              --arg visibility "$visibility" \
               --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
-              ([.[].name] | sort) == $expected and
-              ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[];
-                if $visibility == "private"
-                then (.metadata.container.tags // []) == []
-                elif .name == $root
-                then ((.metadata.container.tags // []) == [] or (.metadata.container.tags // []) == [$tag])
-                else (.metadata.container.tags // []) == []
-                end)
+              ($expected | length > 0 and length == (unique | length) and
+                all(.[]; test("^sha256:[0-9a-f]{64}$"))) and
+              ([.[] | select(.name as $name | $expected | index($name))] |
+                (length == ($expected | length)) and
+                ([.[].name] | sort) == ($expected | sort) and
+                (map(.id) | length == (unique | length)) and
+                all(.[];
+                  (.id | tostring | test("^[1-9][0-9]*$")) and
+                  if .name == $root
+                  then ((.metadata.container.tags // []) == [] or
+                        (.metadata.container.tags // []) == [$tag])
+                  else (.metadata.container.tags // []) == []
+                  end))
             ' "$versions" >/dev/null; then
-              echo "::error::Failed LIBERO cleanup retained a package graph that differs from manager acceptance"
-              echo "WARNING: failed LIBERO cleanup retained a ${visibility} package; no deletion was attempted." >> "$GITHUB_STEP_SUMMARY"
-              jq -c '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' \
-                "$versions" >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::Failed LIBERO cleanup cannot isolate every accepted ownership-bound version"
+              echo "WARNING: unresolved failed LIBERO candidate state was preserved for recovery." >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
+            jq --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              [.[] | select(.name as $name | $expected | index($name)) |
+                {id:(.id | tostring), name,
+                 tags:(.metadata.container.tags // [])}] |
+              sort_by(.name == $root)
+            ' "$versions" > "$accepted_rows"
             if [ "$visibility" = private ]; then
-              echo "Retained the unchanged private accepted LIBERO graph; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
+              echo "Retained the private accepted LIBERO versions; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             test "$visibility" = public || {
               echo "::error::Unsupported failed LIBERO package visibility: $visibility"
               exit 1
             }
-            # Visibility is package-wide. Delete the complete, exact accepted
-            # graph so no untagged platform or attestation digest remains public.
-            gh api --method DELETE "$package_api"
-            response="$(mktemp)"
-            if gh api -i "$package_api" >"$response" 2>&1; then
-              echo "::error::Failed LIBERO package still exists after deletion"
+            unrelated_before="$(mktemp)"
+            jq --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              [.[] | select(.name as $name | $expected | index($name) | not) |
+                {id:(.id | tostring), name,
+                 tags:(.metadata.container.tags // [])}] | sort_by(.id)
+            ' "$versions" > "$unrelated_before"
+            while IFS=$'\t' read -r version_id digest expected_tags; do
+              current_versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+                jq 'add' > "$current_versions"
+              jq -e --arg id "$version_id" --arg digest "$digest" \
+                --argjson tags "$expected_tags" '
+                [.[] | select((.id | tostring) == $id and .name == $digest and
+                  (.metadata.container.tags // []) == $tags)] | length == 1
+              ' "$current_versions" >/dev/null || {
+                echo "::error::Accepted LIBERO version identity changed during cleanup"
+                exit 1
+              }
+              gh api --method DELETE "${package_api}/versions/${version_id}"
+            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$accepted_rows")
+            post_versions="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq 'add' > "$post_versions"
+            jq -e --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              all(.[]; (.name as $name | $expected | index($name) | not))
+            ' "$post_versions" >/dev/null || {
+              echo "::error::Failed LIBERO candidate versions remain after cleanup"
               exit 1
-            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-              echo "::error::Failed LIBERO package absence is unverified"
+            }
+            jq -e --slurpfile before "$unrelated_before" \
+              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              ([.[] | select(.name as $name | $expected | index($name) | not) |
+                {id:(.id | tostring), name,
+                 tags:(.metadata.container.tags // [])}] | . as $after |
+                all($before[0][]; . as $prior |
+                  any($after[]; . == $prior)))
+            ' "$post_versions" >/dev/null || {
+              echo "::error::Unrelated LIBERO package versions changed during cleanup"
               exit 1
-            fi
-            echo "Deleted the complete exact failed public LIBERO OCI graph." >> "$GITHUB_STEP_SUMMARY"
+            }
+            echo "Deleted only the exact accepted failed public LIBERO OCI versions." >> "$GITHUB_STEP_SUMMARY"
             echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
