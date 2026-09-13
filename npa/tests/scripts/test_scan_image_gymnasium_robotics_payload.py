@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 import tarfile
 import zipfile
@@ -38,6 +39,47 @@ assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
 sys.modules[BOOTSTRAP_SPEC.name] = BOOTSTRAP
 BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
+
+
+class _UnseekableBytesIO(io.BytesIO):
+    """Force zipfile to emit a data descriptor instead of backpatching."""
+
+    def seekable(self) -> bool:
+        return False
+
+    def seek(self, *args: object, **kwargs: object) -> int:
+        raise io.UnsupportedOperation("fixture is intentionally unseekable")
+
+
+def _descriptor_zip(*, signed: bool) -> bytes:
+    stream = _UnseekableBytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("neutral.txt", b"neutral archive member")
+    content = stream.getvalue()
+    descriptor_start, central_offset, eocd_offset = _descriptor_offsets(content)
+    assert content[descriptor_start : descriptor_start + 4] == b"PK\x07\x08"
+    if signed:
+        return content
+    raw = bytearray(content)
+    del raw[descriptor_start : descriptor_start + 4]
+    struct.pack_into("<L", raw, eocd_offset - 4 + 16, central_offset - 4)
+    return bytes(raw)
+
+
+def _descriptor_offsets(content: bytes) -> tuple[int, int, int]:
+    eocd_offset = content.rfind(b"PK\x05\x06")
+    central_offset = struct.unpack_from("<L", content, eocd_offset + 16)[0]
+    signed = content[central_offset - 16 : central_offset - 12] == b"PK\x07\x08"
+    return central_offset - (16 if signed else 12), central_offset, eocd_offset
+
+
+def _replace_descriptor(content: bytes, descriptor: bytes) -> bytes:
+    start, central_offset, eocd_offset = _descriptor_offsets(content)
+    raw = bytearray(content)
+    raw[start:central_offset] = descriptor
+    delta = len(descriptor) - (central_offset - start)
+    struct.pack_into("<L", raw, eocd_offset + delta + 16, central_offset + delta)
+    return bytes(raw)
 
 
 def _tar_bytes(
@@ -492,6 +534,86 @@ def test_nested_upstream_path_refuses(
     _docker_save(image, {**_required(), name: nested})
     with pytest.raises(ValueError, match="forbidden nested archive member"):
         SCAN.scan(image)
+
+
+@pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
+def test_zip_data_descriptor_is_bound_to_central_directory(signed: bool) -> None:
+    content = _descriptor_zip(signed=signed)
+
+    infos = SCAN._validated_zip_infos("nested.zip", content)
+
+    assert [info.filename for info in infos] == ["neutral.txt"]
+
+
+@pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
+@pytest.mark.parametrize("field_index", [0, 1, 2], ids=["crc", "compressed", "size"])
+def test_zip_data_descriptor_field_mismatch_refuses(
+    signed: bool, field_index: int
+) -> None:
+    content = _descriptor_zip(signed=signed)
+    start, central_offset, _eocd_offset = _descriptor_offsets(content)
+    descriptor = bytearray(content[start:central_offset])
+    field_offset = (4 if signed else 0) + (field_index * 4)
+    value = struct.unpack_from("<L", descriptor, field_offset)[0]
+    struct.pack_into("<L", descriptor, field_offset, value ^ 1)
+
+    with pytest.raises(
+        ValueError, match="zip data descriptor does not match central directory"
+    ):
+        SCAN._validated_zip_infos(
+            "nested.zip", _replace_descriptor(content, bytes(descriptor))
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("malformed-signature", "unsupported zip data descriptor"),
+        ("truncated", "unsupported zip data descriptor"),
+        ("gap", "unsupported zip data descriptor"),
+        ("ambiguous", "unsupported zip data descriptor"),
+    ],
+)
+def test_malformed_zip_data_descriptor_refuses(mutation: str, message: str) -> None:
+    content = _descriptor_zip(signed=True)
+    start, central_offset, _eocd_offset = _descriptor_offsets(content)
+    descriptor = content[start:central_offset]
+    replacements = {
+        "malformed-signature": b"BAD!" + descriptor[4:],
+        "truncated": descriptor[:-1],
+        "gap": descriptor + b"\0",
+        "ambiguous": b"PK\x07\x08" + descriptor,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        SCAN._validated_zip_infos(
+            "nested.zip", _replace_descriptor(content, replacements[mutation])
+        )
+
+
+def test_zip_member_count_limit_accepts_exact_boundary() -> None:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+        for index in range(SCAN.MAX_NESTED_ARCHIVE_MEMBERS):
+            archive.writestr(f"{index:05d}", b"")
+
+    infos = SCAN._validated_zip_infos("boundary.zip", stream.getvalue())
+
+    assert len(infos) == SCAN.MAX_NESTED_ARCHIVE_MEMBERS
+
+
+def test_zip_member_count_limit_refuses_before_infolist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    count = SCAN.MAX_NESTED_ARCHIVE_MEMBERS + 1
+    content = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, count, count, 0, 0, 0)
+
+    def forbidden_zipfile(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ZipFile must not be constructed for an oversized archive")
+
+    monkeypatch.setattr(SCAN.zipfile, "ZipFile", forbidden_zipfile)
+    with pytest.raises(ValueError, match="zip archive member count exceeds limit"):
+        SCAN._validated_zip_infos("oversized.zip", content)
 
 
 def test_link_to_forbidden_cache_refuses(tmp_path: Path, structural_scan: None) -> None:
