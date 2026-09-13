@@ -849,6 +849,70 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     )
 
 
+def _prepared_execute(monkeypatch, tmp_path):
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    module.ensure(args)
+    monkeypatch.setattr(module, "DEFAULT_MANIFEST", Path(args.manifest))
+    monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
+    monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", args.decision_sha256
+    )
+    final = Path(args.cache_root) / fixture["manifest_sha"]
+    return module, final, Path(args.cache_root) / "current"
+
+
+def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> None:
+    module, _final, _current = _prepared_execute(monkeypatch, tmp_path)
+
+    def smoke(command, **kwargs):
+        assert command == ["/opt/npa/libero/smoke.sh"]
+        assert kwargs["check"] is False
+        assert kwargs["env"]["LIBERO_RUNTIME_ROOT"].startswith("/proc/self/fd/")
+        assert len(kwargs["pass_fds"]) == 1
+        return type("Completed", (), {"returncode": 23})()
+
+    monkeypatch.setattr(module.subprocess, "run", smoke)
+
+    assert module.execute() == 23
+
+
+@pytest.mark.parametrize("drift", ["current-removed", "cache-replaced"])
+def test_execute_rejects_post_smoke_cache_identity_drift(
+    monkeypatch, tmp_path, drift
+) -> None:
+    module, final, current = _prepared_execute(monkeypatch, tmp_path)
+
+    def smoke(_command, **_kwargs):
+        if drift == "current-removed":
+            current.unlink()
+        else:
+            stale = final.with_name(".stale-execution-cache")
+            final.rename(stale)
+            final.mkdir(mode=0o550)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(module.subprocess, "run", smoke)
+
+    with pytest.raises(module.BootstrapRefusal, match="changed|current link"):
+        module.execute()
+
+
+def test_execution_process_inventory_requires_runtime_account(
+    monkeypatch, tmp_path
+) -> None:
+    module, _args, _fixture_values = _fixture(tmp_path)
+
+    def missing(_name):
+        raise KeyError("absent")
+
+    monkeypatch.setattr(module.pwd, "getpwnam", missing)
+
+    with pytest.raises(module.BootstrapRefusal, match="execution account"):
+        module._execution_uid_processes()
+
+
 @pytest.mark.parametrize("python_exit", [0, 23])
 def test_smoke_propagates_status_and_never_writes_into_sealed_cache(
     monkeypatch, tmp_path, python_exit

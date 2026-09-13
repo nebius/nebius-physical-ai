@@ -21,6 +21,7 @@ import hmac
 import http.client
 import json
 import os
+import pwd
 import re
 import shutil
 import stat
@@ -127,6 +128,7 @@ EXPECTED_GOVERNING_TERMS = frozenset(
 )
 MAX_RUNTIME_CACHE_DOWNLOAD_BYTES = 32 * 1024 * 1024 * 1024
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
+RUNTIME_EXECUTION_USER = "npa-libero-exec"
 STORAGE_SECRET_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -2106,7 +2108,12 @@ def _immutable_supervisor_bytes(path: Path, limit: int) -> bytes:
 
 def _execution_uid_processes() -> list[int]:
     try:
-        execution_uid = 1001
+        try:
+            execution_uid = pwd.getpwnam(RUNTIME_EXECUTION_USER).pw_uid
+        except KeyError as exc:
+            raise BootstrapRefusal(
+                "runtime execution account is unavailable"
+            ) from exc
         discovered = []
         for process in Path("/proc").iterdir():
             if not process.name.isdigit():

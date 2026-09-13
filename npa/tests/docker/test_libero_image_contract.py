@@ -374,6 +374,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "'registry-mutation' || 'registry-mutation'"
     ) in text
     assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
+    assert re.search(
+        r"^\s*uses:\s*[^#\n]+@v[0-9]+\s*$", text, re.MULTILINE
+    ) is None
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")
     visibility_change = text.index(
@@ -414,6 +417,37 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34",
     ):
         assert immutable_action in text
+
+
+def test_libero_scratch_cleanup_failure_runs_once_and_fails(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    python = runtime / "venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python.chmod(0o700)
+    (runtime / ".complete.json").write_text("{}\n", encoding="utf-8")
+    (runtime / "source/libero/libero").mkdir(parents=True)
+    output = tmp_path / "output"
+    config = output / ".libero-config"
+    config.mkdir(parents=True)
+    (config / "unexpected").write_text("retain\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [IMAGE_ROOT / "smoke.sh"],
+        env={
+            "LIBERO_RUNTIME_ROOT": str(runtime),
+            "NPA_SMOKE_OUTPUT_DIR": str(output),
+            "PATH": os.environ["PATH"],
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr.count("LIBERO scratch config cleanup failed") == 1
 
 
 def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
