@@ -175,7 +175,12 @@
         "SAVED PREDICTION · PROJECTED CAMERA VIEW"
       ],
       "narration": "Alpamayo connects camera inputs with driving reasoning and predicted motion. Here, a saved result identifies cones and predicts a path through the scene.",
-      "quote": "Nudge left to avoid the cones on the right side."
+      "quote": "Nudge left to avoid the cones on the right side.",
+      "quote_heading": "MODEL-GENERATED RATIONALE",
+      "source_notes": [
+        "Research inference · saved outputs",
+        "Camera imagery: NVIDIA PhysicalAI-AV"
+      ]
     },
     {
       "id": "10-rerun",
@@ -216,7 +221,12 @@
         "CURATE",
         "INFER"
       ],
-      "narration": "SkyPilot runs the GPU work. Workbench connects your tools and artifacts on Nebius."
+      "narration": "SkyPilot runs the GPU work. Workbench connects your tools and artifacts on Nebius.",
+      "pipeline_labels": [
+        "GPU COMPUTE",
+        "SKYPILOT WORKFLOWS",
+        "TRACEABLE ARTIFACTS"
+      ]
     },
     {
       "id": "12-close",
@@ -238,7 +248,17 @@
         "GENERATION",
         "AUTONOMY"
       ],
-      "narration": "From synthetic data to intelligent action. Nebius Physical AI Workbench. Build intelligence that moves."
+      "narration": "From synthetic data to intelligent action. Nebius Physical AI Workbench. Build intelligence that moves.",
+      "cta": "github.com/nebius/nebius-physical-ai"
     }
-  ]
+  ],
+  "footer": "INTELLIGENCE THAT MOVES",
+  "brief": {
+    "prompt": "Create an executive showcase of Nebius Physical AI Workbench, from synthetic data generation to driving inference. Include open-source tools alongside NVIDIA tools, show actual run artifacts, and use the official Nebius logo.",
+    "audience": "C-suite executives evaluating a Physical AI platform",
+    "goal": "Show the breadth of capabilities and invite the viewer to start with one workflow.",
+    "tone": "Confident, visual, accessible and grounded in inspectable evidence.",
+    "call_to_action": "github.com/nebius/nebius-physical-ai",
+    "duration_seconds": 120
+  }
 }

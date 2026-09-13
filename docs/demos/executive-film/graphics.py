@@ -73,12 +73,12 @@ def _logo():
         return source.convert("RGBA").resize((200, 55), Image.Resampling.LANCZOS)
 
 
-def _branding(image, index, total):
+def _branding(image, index, total, footer):
     draw = ImageDraw.Draw(image)
     draw.line((72, 96, 1848, 96), fill=(48, 59, 61, 255), width=1)
     image.alpha_composite(_logo(), (72, 25))
     _text(draw, (1500, 51), "PHYSICAL AI WORKBENCH", 18, _MUTED, 700)
-    _text(draw, (72, 1018), "INTELLIGENCE THAT MOVES", 17, _MUTED, 600)
+    _text(draw, (72, 1018), footer, 17, _MUTED, 600)
     _text(draw, (1718, 1018), f"{index + 1:02d} / {total:02d}", 17, _MUTED)
 
 
@@ -97,7 +97,7 @@ def _base(scene, index, total):
             draw.line((x, 0, x, _HEIGHT), fill=(8, 13, 18, opacity))
         draw.rectangle((0, 0, 1920, 105), fill=(8, 13, 18, 220))
         draw.rectangle((0, 990, 1920, 1080), fill=(8, 13, 18, 220))
-    _branding(image, index, total)
+    _branding(image, index, total, scene.get("footer", "PHYSICAL AI WORKBENCH"))
     return image
 
 
@@ -136,24 +136,22 @@ def _labels(draw, scene):
 def _details(draw, scene):
     layout = scene["layout"]
     if layout == "reason":
-        _text(draw, (72, 646), "MODEL-GENERATED RATIONALE", 18, _ACCENT, 700)
-        _paragraph(draw, (72, 693), scene["quote"], 33, 585, _WHITE)
-    if layout == "reason":
-        _text(draw, (760, 919), "Research inference · saved outputs", 20, _MUTED)
-        _text(draw, (760, 953), "Camera imagery: NVIDIA PhysicalAI-AV", 16, _MUTED)
+        _text(draw, (72, 646), scene.get("quote_heading", ""), 18, _ACCENT, 700)
+        _paragraph(draw, (72, 693), scene.get("quote", ""), 33, 585, _WHITE)
+        for index, note in enumerate(scene.get("source_notes", [])):
+            _text(draw, (760, 919 + index * 34), note, 20 if index == 0 else 16, _MUTED)
     if layout == "evidence":
-        _text(draw, (1050, 1018), "Research inference · saved outputs", 17, _MUTED)
+        _text(draw, (1050, 1018), scene.get("evidence_note", ""), 17, _MUTED)
     if layout == "review":
-        for index, label in enumerate(["EVALUATE", "INSPECT", "CURATE"]):
+        for index, label in enumerate(scene.get("review_steps", [])):
             y = 490 + index * 142
             _text(draw, (1442, y), f"0{index + 1}", 20, _ACCENT)
             _text(draw, (1442, y + 39), label, 34, _WHITE, 700)
     if layout == "pipeline":
-        _text(draw, (72, 949), "GPU COMPUTE", 21, _ACCENT, 700)
-        _text(draw, (420, 949), "SKYPILOT WORKFLOWS", 21, _WHITE, 700)
-        _text(draw, (1030, 949), "TRACEABLE ARTIFACTS", 21, _WHITE, 700)
+        for index, label in enumerate(scene.get("pipeline_labels", [])):
+            _text(draw, ([72, 420, 1030][index], 949), label, 21, _ACCENT if index == 0 else _WHITE, 700)
     if layout == "close":
-        _text(draw, (72, 953), "github.com/nebius/nebius-physical-ai", 24, _WHITE, 600)
+        _text(draw, (72, 953), scene.get("cta", ""), 24, _WHITE, 600)
 
 
 def _draw_overlay(scene, index, total, path):

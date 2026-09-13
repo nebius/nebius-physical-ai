@@ -1,0 +1,116 @@
+{
+  "title": "Inspect the run. Reproduce the result.",
+  "duration": 60,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "footer": "FROM WORKFLOW TO EVIDENCE",
+  "brief": {
+    "prompt": "Make a technical walkthrough showing how to inspect and reproduce a Workbench experiment. Focus on workflow inputs, generation settings, artifact identity and evaluation limits instead of surveying every capability.",
+    "audience": "ML engineers and platform engineering leads",
+    "goal": "Help an engineer know what evidence to inspect before reproducing a workflow.",
+    "tone": "Precise, practical and candid about experimental limits.",
+    "call_to_action": "github.com/nebius/nebius-physical-ai",
+    "duration_seconds": 60
+  },
+  "scenes": [
+    {
+      "id": "01-inputs",
+      "duration": 12,
+      "layout": "comparison",
+      "eyebrow": "DEFINE THE EXPERIMENT",
+      "title": [
+        "Inputs first.",
+        "Then inspect the output."
+      ],
+      "subtitle": "Source-conditioned augmentation: preserve the input and the generated result.",
+      "assets": [
+        "source",
+        "cosmos_a"
+      ],
+      "labels": [
+        "SOURCE INPUT",
+        "COSMOS AUGMENTATION"
+      ],
+      "narration": "Start with the input and the output. For a source-conditioned augmentation, preserve both so you can inspect what changed and reproduce the experiment."
+    },
+    {
+      "id": "02-settings",
+      "duration": 12,
+      "layout": "cinematic",
+      "eyebrow": "RECORD THE GENERATION SETTINGS",
+      "title": [
+        "Keep the recipe",
+        "with the result."
+      ],
+      "subtitle": "Prompt, seed, model, configuration and run evidence belong together.",
+      "assets": [
+        "wan"
+      ],
+      "labels": [
+        "WAN · SAVED GPU GENERATION"
+      ],
+      "narration": "For generated video, keep the prompt, seed, model and configuration with the clip. A compelling output becomes useful evidence when its recipe stays available."
+    },
+    {
+      "id": "03-inspect",
+      "duration": 12,
+      "layout": "screen",
+      "eyebrow": "INSPECT WITH RERUN",
+      "title": [
+        "Review the artifact and its context."
+      ],
+      "subtitle": "Inspect the saved video alongside recorded generation settings.",
+      "assets": [
+        "rerun"
+      ],
+      "labels": [
+        "RERUN · VERIFIED WAN RECORDING"
+      ],
+      "narration": "Open the saved recording in Rerun. Inspect the video alongside its recorded generation settings, and trace the media back to the original run artifact."
+    },
+    {
+      "id": "04-evaluate",
+      "duration": 12,
+      "layout": "comparison",
+      "eyebrow": "CHECK WHAT THE EVIDENCE SUPPORTS",
+      "title": [
+        "A training run",
+        "is not a success claim."
+      ],
+      "subtitle": "Separate experiment completion from measured task success.",
+      "assets": [
+        "robot_training",
+        "robot_eval"
+      ],
+      "labels": [
+        "LEROBOT · TRAINING DATA",
+        "HELD-OUT EVALUATION · NO TASK SUCCESS"
+      ],
+      "narration": "Inspect held-out policy evaluations before making a capability claim. This saved experiment shows no successful evaluation tasks. Use that result to guide the next iteration."
+    },
+    {
+      "id": "05-reproduce",
+      "duration": 12,
+      "layout": "close",
+      "eyebrow": "REPRODUCE A WORKFLOW",
+      "title": [
+        "Choose one workflow.",
+        "Keep its evidence."
+      ],
+      "subtitle": "Use the repository workflow, preserve artifacts, and verify their hashes.",
+      "assets": [
+        "wan",
+        "rerun",
+        "robot_eval"
+      ],
+      "labels": [
+        "GENERATION",
+        "INSPECTION",
+        "EVALUATION"
+      ],
+      "cta": "github.com/nebius/nebius-physical-ai",
+      "narration": "Choose a workflow from the repository. Preserve its configuration and artifacts, verify their hashes, and compare results against the evidence from your own run."
+    }
+  ]
+}

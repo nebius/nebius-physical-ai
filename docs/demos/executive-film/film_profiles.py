@@ -25,7 +25,7 @@ def _scene_inputs(scene, index, total, assets, profile, environment):
     return {
         "scene": {key: value for key, value in scene.items() if key != "narration"},
         "index": index, "total": total, "profile": profile, "environment": environment,
-        "assets": {role: {key: value for key, value in assets[role].items() if key != "path"}
+        "assets": {role: {key: value for key, value in assets[role].items() if key not in {"path", "provenance"}}
                    for role in scene["assets"]},
         "code": {name: _hash(_ROOT / name) for name in
                  ["render.py", "graphics.py", "film_profiles.py", "fonts/Manrope.ttf",

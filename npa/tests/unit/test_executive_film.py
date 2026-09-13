@@ -240,6 +240,28 @@ def test_changed_asset_or_profile_never_reuses_stale_visuals(editing_session):
     assert report["scenes_rendered"] == 2 and report["audio_reused"]
 
 
+def test_footer_changes_invalidate_only_affected_visuals(editing_session):
+    film, args, story, assets, calls = editing_session
+    _edit_run(editing_session)
+    story["scenes"][0]["footer"] = "CUSTOM SCENE FOOTER"
+    report = _edit_run(editing_session)
+    assert report["scenes_rendered"] == report["scenes_reused"] == 1
+    story["footer"] = "NEW FILM FOOTER"
+    report = _edit_run(editing_session)
+    assert report["scenes_rendered"] == report["scenes_reused"] == 1
+    assert report["audio_reused"]
+
+
+def test_provenance_correction_refreshes_manifest_without_reencoding_media(editing_session):
+    film, args, story, assets, calls = editing_session
+    _edit_run(editing_session)
+    assets["robot"]["provenance"] = {"tool": "RoboCasa", "limitations": ["random actions"]}
+    report = _edit_run(editing_session)
+    assert report["scenes_rendered"] == 0 and report["audio_reused"]
+    assert not report["assembly_reused"] and calls["assembly"] == 2
+    assert _edit_run(editing_session)["assembly_reused"]
+
+
 def test_stale_spoken_words_are_rejected_before_rendering(film, tmp_path):
     from film_voice import _verify_narration, _voice_record
 

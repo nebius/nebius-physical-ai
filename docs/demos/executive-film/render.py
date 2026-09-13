@@ -1,4 +1,4 @@
-"""Render an exact two-minute executive film from hash-verified local run artifacts."""
+"""Render a storyboard of any whole-second duration from verified local artifacts."""
 
 import argparse
 import json
@@ -11,6 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from film_brief import _LAYOUTS, _validate_brief
 from film_cache import (
     _build_cached,
     _cache_path,
@@ -65,19 +66,46 @@ def _load_assets(path):
 
 
 def _validate_storyboard(storyboard):
+    _validate_duration(storyboard)
     identifiers = [scene["id"] for scene in storyboard["scenes"]]
     if len(set(identifiers)) != len(identifiers) or any(
         re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name) is None for name in identifiers
     ):
         raise ValueError("Scene IDs must be unique lowercase names without path separators")
-    if any(type(scene["duration"]) is not int or scene["duration"] <= 0
-           for scene in storyboard["scenes"]):
+    for scene in storyboard["scenes"]:
+        if "layout" in scene:
+            _validate_layout(scene)
+
+
+def _validate_layout(scene):
+    count = _LAYOUTS.get(scene["layout"])
+    if count is None:
+        raise ValueError(f"Unknown scene layout: {scene['layout']}")
+    if len(scene["assets"]) != count or len(scene["labels"]) != count:
+        raise ValueError(f"Scene {scene['id']} needs {count} asset roles and labels for {scene['layout']}")
+    for field, maximum in (("source_notes", 2), ("review_steps", 3), ("pipeline_labels", 3)):
+        if len(scene.get(field, [])) > maximum:
+            raise ValueError(f"Scene {scene['id']} supports at most {maximum} {field}")
+
+
+def _validate_duration(storyboard):
+    scenes = storyboard["scenes"]
+    if not scenes:
+        raise ValueError("The storyboard must contain at least one scene")
+    if any(type(scene["duration"]) is not int or scene["duration"] <= 0 for scene in scenes):
         raise ValueError("Scene durations must be positive whole seconds")
+    duration = sum(scene["duration"] for scene in scenes)
+    declared = storyboard.get("duration", duration)
+    if type(declared) is not int or declared != duration:
+        raise ValueError("Storyboard duration must equal the sum of scene durations")
+    if "brief" in storyboard:
+        _validate_brief(storyboard["brief"])
+        if storyboard["brief"]["duration_seconds"] != duration:
+            raise ValueError("Scene durations must match the creative brief duration_seconds")
 
 
 def _validate(storyboard, assets, scene_id=None):
-    if sum(scene["duration"] for scene in storyboard["scenes"]) != 120:
-        raise ValueError("The full storyboard must last exactly 120 seconds")
+    _validate_duration(storyboard)
     selected, _ = _selection(storyboard, scene_id)
     required = {role for _, scene in selected for role in scene["assets"]}
     if required - assets.keys():
@@ -171,14 +199,15 @@ def _render_scene(scene, index, total, assets, directory, profile=None):
     return target
 
 
-def _join(parts, sound, directory, duration=120, offset=0, title="Intelligence that moves"):
+def _join(parts, sound, directory, duration, offset=0, title="Workbench film"):
     links = [directory / f"segment-{index:02d}.mp4" for index in range(len(parts))]
     for source, target in zip(parts, links, strict=True):
         os.link(source, target)
     listing = directory / "segments.txt"
     listing.write_text("".join(f"file {p.name}\n" for p in links))
     target = directory / "workbench-executive-film.mp4"
-    audio_codec = ["-c:a", "copy"] if duration == 120 else ["-c:a", "aac", "-b:a", "256k"]
+    complete_audio = offset == 0 and math.isclose(duration, _duration(sound), abs_tol=0.05)
+    audio_codec = ["-c:a", "copy"] if complete_audio else ["-c:a", "aac", "-b:a", "256k"]
     subprocess.run([
         "ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "1", "-i", str(listing),
         "-ss", str(offset), "-i", str(sound), "-map", "0:v", "-map", "1:a",
@@ -226,6 +255,7 @@ def _captions(scenes, voice_dir, directory):
 
 def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
     video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    brief = storyboard.get("brief", storyboard.get("source_brief"))
     return {"title": storyboard["title"], "duration_seconds": float(probe["format"]["duration"]),
                 "frames": int(video["nb_frames"]), "width": video["width"], "height": video["height"],
                 "fps": video["r_frame_rate"], "sha256": _hash(target),
@@ -234,6 +264,8 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                              "source_manifest_sha256": _hash(_ROOT / "brand/source.json"),
                              "source_page": "https://nebius.com/media-kit"},
                 "storyboard_sha256": _hash(storyboard_path),
+                "creative_brief": brief,
+                "creative_brief_sha256": _fingerprint(brief) if brief else None,
                 "selected_scenes": [scene["id"] for scene in storyboard["scenes"]],
                 "renderer_sha256": {name: digest for name, digest in _LOADED_SOURCES.items() if name.endswith(".py")},
                 "narration_sha256": _hash(directory / "narration.wav"),
@@ -241,7 +273,8 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                 "captions_sha256": _hash(directory / "workbench-executive-film.srt"),
                 "ffmpeg_version": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0],
                 "assets": {role: {"sha256": asset["sha256"], "kind": asset["kind"],
-                                  "crop": asset.get("crop")} for role, asset in assets.items()},
+                                  "crop": asset.get("crop"),
+                                  "provenance": asset.get("provenance")} for role, asset in assets.items()},
                 "editorial": "Separate saved run outputs; editorial assembly applies crops, loops and presentation zooms."}
 
 
@@ -279,7 +312,8 @@ def _arguments():
 
 
 def _selection(storyboard, scene_id):
-    indexed = list(enumerate(storyboard["scenes"]))
+    footer = storyboard.get("footer", storyboard.get("title", "PHYSICAL AI WORKBENCH"))
+    indexed = list(enumerate({"footer": footer, **scene} for scene in storyboard["scenes"]))
     if scene_id is None:
         return indexed, 0
     selected = [(index, scene) for index, scene in indexed if scene["id"] == scene_id]
@@ -326,6 +360,8 @@ def _assemble(args, storyboard, assets, parts, audio, selected, offset, staging)
         os.link(audio / name, staging / name)
     _captions(scenes, args.voice_dir, staging)
     snapshot = {**storyboard, "scenes": scenes, "duration": duration}
+    if "brief" in snapshot and duration != snapshot["brief"]["duration_seconds"]:
+        snapshot["source_brief"] = snapshot.pop("brief")
     recipe = staging / "render-storyboard.json"
     recipe.write_text(json.dumps(snapshot, indent=2) + "\n")
     _evidence(target, snapshot, assets, staging, recipe)
@@ -333,9 +369,10 @@ def _assemble(args, storyboard, assets, parts, audio, selected, offset, staging)
     _assert_sources_unchanged()
 
 
-def _assembly_inputs(args, parts, audio, offset, selected, environment, storyboard):
+def _assembly_inputs(args, parts, audio, offset, selected, environment, storyboard, assets):
     return {"parts": [_hash(path) for path in parts], "sound": _hash(audio / "mix.m4a"),
             "captions": [_hash(args.voice_dir / f"{scene['id']}.srt") for _, scene in selected],
+            "asset_provenance": {role: asset.get("provenance") for role, asset in assets.items()},
             "offset": offset, "storyboard": _fingerprint(storyboard), "environment": environment,
             "code": _LOADED_SOURCES}
 
@@ -367,7 +404,7 @@ def _render_film(args, storyboard, assets, environment):
         results = [result.result() for result in pending]
     parts = [path for path, _ in results]
     assembled, assembly_reused = _build_cached(root, "assembly",
-        _assembly_inputs(args, parts, audio, offset, selected, environment, storyboard),
+        _assembly_inputs(args, parts, audio, offset, selected, environment, storyboard, assets),
         lambda staging: _assemble(args, storyboard, assets, parts, audio, selected, offset, staging))
     destination = args.output_dir / args.profile
     if args.scene:
@@ -405,7 +442,7 @@ def _main():
 if __name__ == "__main__":
     try:
         _main()
-    except (ValueError, FileNotFoundError) as error:
+    except (ValueError, TypeError, FileNotFoundError) as error:
         raise SystemExit(f"Render stopped: {error}") from None
     except subprocess.CalledProcessError as error:
         raise SystemExit(f"Render command failed with exit code {error.returncode}; see its output above") from None
