@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Submit BYOF container-verify SkyPilot workloads (CPU smoke for /opt/byof clone)."""
 
-from __future__ import annotations
-
 import argparse
 import base64
 import binascii
