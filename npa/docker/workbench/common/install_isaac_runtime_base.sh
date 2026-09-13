@@ -90,8 +90,9 @@ system_packages=(
   libx11-6 \
   libxext6 \
   libxrender1 \
-  libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
-          # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
+  # MaterialX render libraries dlopen libXt.so.6. Without it, Kit logs failures
+  # to load the MaterialXRender shared libraries.
+  libxt6 \
   vulkan-tools
 )
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
@@ -281,7 +282,7 @@ bash -n /opt/npa/bin/isaac-python
 # This is the load-bearing legal mechanism, so the build proves the refusal instead of
 # proving a baked install. Exit 78 is EX_CONFIG: the operator must act.
 set +e
-ACCEPT_EULA= env -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
+ACCEPT_EULA='' env -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
   /opt/npa/bin/isaac-bootstrap ensure >/dev/null 2>/tmp/eula-refusal.txt
 refusal_rc=$?
 set -e

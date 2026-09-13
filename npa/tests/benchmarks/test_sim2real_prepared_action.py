@@ -267,6 +267,31 @@ def test_generic_command_cannot_read_operator_control_receipt(
     assert result["exit_code"] != 0
 
 
+def test_isolated_command_refuses_when_unshare_is_unavailable(
+    mocker, prepared: dict[str, object]
+) -> None:
+    """The command runner must fail closed when it cannot create a mount namespace."""
+
+    context = prepared["context"]
+    assert isinstance(context, PreparedActionContext)
+    subprocess_run = mocker.patch(
+        "npa.benchmarks.sim2real_model_agent.subprocess.run"
+    )
+    mocker.patch("npa.benchmarks.sim2real_model_agent.shutil.which", return_value=None)
+
+    result = _run_tool(
+        "run_command",
+        {"command": "echo must-not-run"},
+        context.workspace,
+        context.environment,
+        context.isolation,
+    )
+
+    assert result["exit_code"] == 126
+    assert "requires Linux unshare" in result["stderr"]
+    subprocess_run.assert_not_called()
+
+
 def test_source_mismatch_fails_closed(prepared: dict[str, object]) -> None:
     workspace = prepared["workspace"]
     assert isinstance(workspace, Path)

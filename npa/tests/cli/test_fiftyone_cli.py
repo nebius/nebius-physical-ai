@@ -489,7 +489,8 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert 'Version(metadata.version("pillow")) >= Version("12.3.0")' in install_cmd
     assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in install_cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=5151" in install_cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in install_cmd
+    assert 'service_group="$(id -gn "$service_user")"' in install_cmd
+    assert 'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"' in install_cmd
     assert "lerobot[pusht" not in install_cmd
     assert "Installing LeRobot" not in install_cmd
     assert "TimeoutStopSec=15" in install_cmd
@@ -1052,7 +1053,11 @@ def test_fiftyone_load_dataset_builds_source_specific_command(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "auto"' in cmd
     assert "FIFTYONE_DATASET_NAME=curated" in cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in cmd
+    assert 'npa_fiftyone_env_group="$(id -gn "$npa_fiftyone_env_user")"' in cmd
+    assert (
+        'sudo chown "$npa_fiftyone_env_user:$npa_fiftyone_env_group" '
+        "/etc/npa-fiftyone/env"
+    ) in cmd
     assert "sudo systemctl restart npa-fiftyone-app" in cmd
     assert "NPA_FIFTYONE_APP_READY" in cmd
     for snippet in expected:

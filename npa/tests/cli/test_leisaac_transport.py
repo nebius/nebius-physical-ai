@@ -925,6 +925,13 @@ def test_client_address_requires_nginx_attested_public_ip(headers, expected) -> 
     assert _client_address(headers, SimpleNamespace(host="127.0.0.1")) == expected
 
 
+def _short_event_socket_path(tmp_path: Path) -> Path:
+    """Return a unique test socket path that fits Unix-domain socket limits."""
+
+    digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
+    return Path("/tmp") / f"npa-leisaac-{digest}.sock"
+
+
 def _prepare_runtime(monkeypatch, tmp_path: Path):
     runtime = _runtime_module()
     paths = {
@@ -939,7 +946,7 @@ def _prepare_runtime(monkeypatch, tmp_path: Path):
         "MODE_COMMAND_PATH": tmp_path / "mode-command.json",
         "MODE_STATUS_PATH": tmp_path / "mode-status.json",
         "APPLIED_ACK_PATH": tmp_path / "applied.jsonl",
-        "IPC_EVENT_PATH": tmp_path / "events.sock",
+        "IPC_EVENT_PATH": _short_event_socket_path(tmp_path),
         "RECORDER_ROOT": tmp_path / "recorder",
         "RECORDER_STATUS_PATH": tmp_path / "recorder/status.json",
         "RECORDER_CONTROL_PATH": tmp_path / "recorder/control.jsonl",
