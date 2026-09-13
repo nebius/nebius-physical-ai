@@ -804,3 +804,12 @@ def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:
     }
     assert payload["lightwheel_registry_assets"]["baked"] is False
     assert payload["lightwheel_registry_assets"]["redistribution"] is False
+    assert payload["nvidia_viewport_graphics_userspace"] == {
+        "baked": False,
+        "installation": False,
+        "license": "NVIDIA driver package terms",
+        "redistribution": False,
+        "runtime_fetch": True,
+        "scope": "viewport evaluation only",
+        "source": "exact-driver-matched Ubuntu signed package",
+    }

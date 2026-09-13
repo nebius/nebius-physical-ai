@@ -144,6 +144,15 @@ def terms_cmd() -> None:
                         "operator responsibility; NPA supplies no credential or license grant"
                     ),
                 },
+                "nvidia_viewport_graphics_userspace": {
+                    "license": "NVIDIA driver package terms",
+                    "baked": False,
+                    "runtime_fetch": True,
+                    "redistribution": False,
+                    "scope": "viewport evaluation only",
+                    "source": "exact-driver-matched Ubuntu signed package",
+                    "installation": False,
+                },
                 "operator_inputs": {"baked": False, "redistribution": False},
             },
             indent=2,
