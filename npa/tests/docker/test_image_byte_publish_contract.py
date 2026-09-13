@@ -200,7 +200,14 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
 def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     publish = yaml.safe_load(PUBLISH.read_text())
     build_steps = publish["jobs"]["build-development"]["steps"]
-    setup = next(step for step in build_steps if step.get("uses") == "actions/setup-python@v6")
+    setup = next(
+        step
+        for step in build_steps
+        if step.get("uses", "").startswith("actions/setup-python@")
+    )
+    assert setup["uses"] == (
+        "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
+    )
     assert setup["with"]["python-version"] == (
         "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || "
         "matrix.tool == 'libero') && '3.12' || '3.11' }}"
@@ -209,7 +216,10 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
         if name == "build-development":
             continue
         for step in job.get("steps", []):
-            if step.get("uses") == "actions/setup-python@v6":
+            if step.get("uses", "").startswith("actions/setup-python@"):
+                assert step["uses"] == (
+                    "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
+                )
                 assert step["with"]["python-version"] == "3.11"
     security = yaml.safe_load(SECURITY.read_text())
     job = security["jobs"]["complete-byte-native-integration"]
