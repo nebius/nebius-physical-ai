@@ -42,7 +42,7 @@ def _libero_contract_args(
         ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-manifest.json"
     )
     decision = {
-        "schema": "npa.libero.runtime-use-decision.v2",
+        "schema": "npa.libero.runtime-use-decision.v3",
         "solution": "libero",
         "decision": "authorized",
         "runtime_fetch_authorized": True,
@@ -53,6 +53,7 @@ def _libero_contract_args(
         "publication_bundle_sha256": "2" * 64,
         "infrastructure_bundle_sha256": "3" * 64,
         "runtime_manifest_sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
+        "executable_profile_sha256": "6" * 64,
         "upstream_source_revision": config["repo_ref"],
         "authorized_boundaries": [
             "demonstration",

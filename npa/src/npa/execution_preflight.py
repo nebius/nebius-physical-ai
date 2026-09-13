@@ -7,9 +7,13 @@ or provider exception text. The target itself stays in owner-only runtime state.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass, field
+import hashlib
 import json
 import os
+import re
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlparse
 
@@ -524,13 +528,129 @@ def verify_solution_payload_service_accounts(
     return libero_found
 
 
+def _verify_libero_submission_authorization(
+    documents: Sequence[Mapping[str, Any]],
+    process_env: Mapping[str, str],
+    *,
+    authorization_global_config: Mapping[str, Any],
+    submission_backend: str,
+    infra: str,
+    run_id: str,
+    executable_profile_sha256: str,
+) -> None:
+    """Bind secret forwarding to one signed decision and exact profile bytes."""
+
+    try:
+        _validate_libero_submission_identity(
+            documents,
+            run_id,
+            executable_profile_sha256,
+            submission_backend=submission_backend,
+            infra=infra,
+        )
+        decision, decision_sha256, acceptance = _libero_submission_decision(
+            process_env, run_id
+        )
+    except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO requires a valid signed acceptance and runtime decision",
+        ) from exc
+    if (
+        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", "")
+        != decision_sha256
+        or decision.get("executable_profile_sha256")
+        != executable_profile_sha256
+        or (acceptance.get("infrastructure") or {}).get(
+            "skypilot_config_sha256"
+        )
+        != hashlib.sha256(
+            json.dumps(
+                authorization_global_config,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    ):
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO runtime decision does not authorize the executable submission",
+        )
+
+
+def _validate_libero_submission_identity(
+    documents: Sequence[Mapping[str, Any]],
+    run_id: str,
+    executable_profile_sha256: str,
+    *,
+    submission_backend: str,
+    infra: str,
+) -> None:
+    """Require the decision target to match the submitted run and profile."""
+
+    if (
+        submission_backend != "kubernetes"
+        or not infra.startswith(("k8s/", "kubernetes/"))
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None
+        or re.fullmatch(r"[0-9a-f]{64}", executable_profile_sha256) is None
+    ):
+        raise RuntimeError("LIBERO run or executable-profile identity is invalid")
+    task_run_ids = {
+        str((document.get("envs") or {}).get("NPA_BYOF_RUN_ID") or "")
+        for document in skypilot_task_documents(documents)
+    }
+    if task_run_ids != {run_id}:
+        raise RuntimeError("LIBERO executable profile selects a different run")
+
+
+def _libero_submission_decision(
+    process_env: Mapping[str, str], run_id: str
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Validate the signed repository acceptance and paired runtime decision."""
+
+    encoded_acceptance = process_env.get("NPA_LIBERO_MANAGER_ACCEPTANCE_B64", "")
+    supplied_manifest = json.loads(
+        base64.b64decode(encoded_acceptance, validate=True)
+    )
+    decision_bytes = base64.b64decode(
+        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_B64", ""),
+        validate=True,
+    )
+    from npa.deploy.images import (
+        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV,
+        libero_image_manifest,
+        validate_libero_accepted_image_manifest,
+        validate_libero_runtime_decision,
+    )
+
+    repository_manifest = libero_image_manifest()
+    if supplied_manifest != repository_manifest:
+        raise RuntimeError(
+            "LIBERO supplied acceptance differs from repository acceptance"
+        )
+    acceptance = validate_libero_accepted_image_manifest(
+        repository_manifest,
+        manager_public_key_file=process_env.get(
+            LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
+        ),
+    )
+    decision, decision_sha256 = validate_libero_runtime_decision(
+        decision_bytes, acceptance=acceptance, run_id=run_id
+    )
+    return decision, decision_sha256, acceptance
+
+
 def preflight_skypilot_submission(
     documents: Sequence[dict[str, Any]], *, project: str = "", infra: str = "",
     extra_env: Mapping[str, str] | None = None,
     target: ExecutionTarget | None = None,
     global_config: Mapping[str, Any] | None = None,
+    authorization_global_config: Mapping[str, Any] | None = None,
+    submission_backend: str = "",
     sky_bin: str = "",
     cwd: str | None = None,
+    run_id: str = "",
+    executable_profile_sha256: str = "",
 ) -> tuple[ExecutionTarget, dict[str, Any], dict[str, str]]:
     """Shared raw/rendered SkyPilot CLI+SDK gate before controller or job create.
 
@@ -557,6 +677,16 @@ def preflight_skypilot_submission(
     libero_submission = verify_solution_payload_service_accounts(
         documents, global_config=global_config
     )
+    if libero_submission:
+        _verify_libero_submission_authorization(
+            documents,
+            process_env,
+            authorization_global_config=authorization_global_config or {},
+            submission_backend=submission_backend,
+            infra=infra,
+            run_id=run_id,
+            executable_profile_sha256=executable_profile_sha256,
+        )
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
         raise ExecutionPreflightError("gpu", "alternative resource targets are ambiguous; select one effective resource mapping")
     selected = target.credentials if target is not None else resolve_submit_credentials(
@@ -614,11 +744,11 @@ def preflight_skypilot_submission(
         envs = document.setdefault("envs", {})
         bucket = process_env.get("NPA_S3_BUCKET")
         prefix = process_env.get("NPA_S3_PREFIX")
-        if bucket:
+        if bucket and not libero_submission:
             envs["NPA_S3_BUCKET"] = bucket
             if "S3_BUCKET" in envs:
                 envs["S3_BUCKET"] = bucket
-        if prefix:
+        if prefix and not libero_submission:
             envs["NPA_S3_PREFIX"] = prefix
             if "SONIC_OUTPUT_PREFIX" in envs and str(envs["SONIC_OUTPUT_PREFIX"]).strip("/") != prefix.strip("/"):
                 envs["SONIC_OUTPUT_PREFIX"] = prefix
@@ -678,7 +808,10 @@ def preflight_skypilot_submission(
         for name, value in injected.items():
             if value and (
                 not libero_submission
-                or name not in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+                or (
+                    name not in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+                    and name in env
+                )
             ):
                 env[name] = value
         if libero_submission:

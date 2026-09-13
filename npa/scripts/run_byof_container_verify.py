@@ -791,6 +791,7 @@ def _libero_namespaced_inventory(
         },
         "secrets": set(),
         "configmaps": set(),
+        "services": set(),
     }
     for kind, expected_names in expected.items():
         payload = _kubectl_json(
@@ -984,6 +985,16 @@ def _libero_rbac_evidence(
     }
     if inventory is not None:
         evidence["namespace_inventory_sha256"] = _sha256_json(inventory)
+    else:
+        services = _kubectl_json(
+            ["--context", context, "--namespace", namespace, "get", "services"],
+            purpose="LIBERO namespace services inventory",
+            kubeconfig=kubeconfig,
+        ).get("items")
+        if not isinstance(services, list) or services:
+            raise RuntimeError(
+                "LIBERO namespace must remain free of unreviewed Services"
+            )
     access_state = LiberoAccessState(
         kubeconfig=kubeconfig,
         context=context,
@@ -1043,7 +1054,7 @@ def _bind_libero_runtime_contract(
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO runtime-use decision secret is invalid") from exc
     try:
-        _, decision_sha256 = validate_libero_runtime_decision(
+        decision, decision_sha256 = validate_libero_runtime_decision(
             decision_bytes,
             acceptance=acceptance,
             run_id=run_id,
@@ -1140,6 +1151,14 @@ def _bind_libero_runtime_contract(
         if expected != observed:
             raise ValueError(f"LIBERO checked-in infrastructure differs for {name}")
     for document in documents[1:]:
+        resources = document.get("resources")
+        if (
+            not isinstance(resources, dict)
+            or resources.get("cloud") != "kubernetes"
+            or resources.get("region") not in (None, "", execution_context)
+        ):
+            raise ValueError("LIBERO requires its exact Kubernetes execution profile")
+        resources["region"] = execution_context
         envs = document.setdefault("envs", {})
         for name, value in evidence.items():
             envs[f"NPA_LIBERO_EXPECTED_{name.upper()}"] = value
@@ -1167,6 +1186,13 @@ def _bind_libero_runtime_contract(
     }
     if task_names != {LIBERO_PROFILE_TASK_NAME}:
         raise ValueError("LIBERO requires one exact named SkyPilot task")
+    executable_profile_sha256 = hashlib.sha256(
+        _serialized_task_documents(documents)
+    ).hexdigest()
+    if decision.get("executable_profile_sha256") != executable_profile_sha256:
+        raise ValueError(
+            "LIBERO runtime decision does not authorize the executable profile"
+        )
     manager_acceptance = json.dumps(
         signed_manifest, sort_keys=True, separators=(",", ":")
     ).encode()
@@ -1622,10 +1648,14 @@ def _task_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return docs
 
 
+def _serialized_task_documents(docs: list[dict[str, Any]]) -> bytes:
+    """Return the exact executable SkyPilot profile bytes."""
+
+    return yaml.safe_dump_all(_task_docs(docs), sort_keys=False).encode()
+
+
 def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
-    path.write_text(
-        yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8"
-    )
+    path.write_bytes(_serialized_task_documents(docs))
 
 
 def _default_run_id() -> str:

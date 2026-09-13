@@ -1,7 +1,10 @@
 # npa: publication-enforcement=libero
 """Exercise target resolution and real probe behavior at provider boundaries."""
 
+import base64
+import hashlib
 from io import BytesIO
+import json
 from types import SimpleNamespace
 
 from botocore.exceptions import ClientError
@@ -607,6 +610,14 @@ def libero_controller_config(service_account: str = "skypilot-service-account") 
     }
 
 
+@pytest.fixture
+def libero_authorized(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_submission_authorization",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 @pytest.mark.parametrize(
     "service_account",
     [None, "", "default", "skypilot-service-account", "another-account"],
@@ -643,7 +654,7 @@ def test_libero_preflight_requires_explicit_engine_controller_account(
 
 
 def test_libero_preflight_accepts_split_payload_and_controller_accounts(
-    provider, configured
+    provider, configured, libero_authorized
 ):
     from npa.execution_preflight import preflight_skypilot_submission
 
@@ -664,7 +675,7 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
 
 
 def test_libero_worker_environment_checks_the_final_stripped_document(
-    provider, configured, monkeypatch
+    provider, configured, monkeypatch, libero_authorized
 ) -> None:
     from npa.execution_preflight import preflight_skypilot_submission
 
@@ -694,6 +705,44 @@ def test_libero_worker_environment_checks_the_final_stripped_document(
     assert len(observed) == 1
 
 
+def test_libero_preflight_preserves_the_bound_executable_profile(
+    provider, configured, libero_authorized
+) -> None:
+    import yaml
+
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    run_id = "libero-exact-profile-0001"
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"].pop("AWS_ACCESS_KEY_ID")
+    document["envs"].pop("AWS_SECRET_ACCESS_KEY")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    for name in STORAGE_ENDPOINT_ENV_NAMES:
+        document["envs"][name] = "https://storage.eu-west1.nebius.cloud"
+    before = yaml.safe_dump_all([document], sort_keys=False).encode()
+
+    preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+        authorization_global_config=libero_controller_config(),
+        submission_backend="kubernetes",
+        run_id=run_id,
+        executable_profile_sha256=hashlib.sha256(before).hexdigest(),
+        extra_env={
+            "AWS_ACCESS_KEY_ID": "yaml-access",
+            "AWS_SECRET_ACCESS_KEY": "yaml-secret",
+        },
+    )
+
+    assert yaml.safe_dump_all([document], sort_keys=False).encode() == before
+    assert provider.s3.calls
+
+
 @pytest.mark.parametrize(
     ("secret_name", "expected_error"),
     [
@@ -708,7 +757,7 @@ def test_libero_worker_environment_checks_the_final_stripped_document(
     ],
 )
 def test_libero_preflight_rejects_inline_pod_authorization_or_storage_material(
-    provider, configured, secret_name, expected_error
+    provider, configured, libero_authorized, secret_name, expected_error
 ) -> None:
     from npa.execution_preflight import preflight_skypilot_submission
 
@@ -750,7 +799,7 @@ def test_libero_preflight_requires_both_canonical_identity_signals(
 
 
 def test_libero_preflight_allows_only_manager_authorized_secret_session_pair(
-    provider, configured
+    provider, configured, libero_authorized
 ) -> None:
     from npa.execution_preflight import preflight_skypilot_submission
 
@@ -776,6 +825,189 @@ def test_libero_preflight_allows_only_manager_authorized_secret_session_pair(
             global_config=libero_controller_config(),
             extra_env={"AWS_SESSION_TOKEN": "temporary-session"},
         )
+
+
+def test_libero_submission_authorization_binds_signed_records_to_profile(
+    monkeypatch,
+) -> None:
+    from npa.deploy import images
+    from npa.execution_preflight import _verify_libero_submission_authorization
+
+    run_id = "libero-exact-profile-0001"
+    profile_sha256 = "a" * 64
+    manifest = {"schema": "signed-fixture", "acceptance": {"status": "accepted"}}
+    decision_bytes = b'{"fixture":"decision"}\n'
+    decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
+    decision = {"executable_profile_sha256": profile_sha256}
+    global_config = libero_controller_config()
+    config_sha256 = hashlib.sha256(
+        json.dumps(global_config, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: manifest)
+
+    def validate_acceptance(payload, *, manager_public_key_file=""):
+        observed["acceptance"] = (payload, manager_public_key_file)
+        return {
+            "infrastructure": {
+                "run_id": run_id,
+                "skypilot_config_sha256": config_sha256,
+            }
+        }
+
+    def validate_decision(payload, *, acceptance, run_id):
+        observed["decision"] = (payload, acceptance, run_id)
+        return decision, decision_sha256
+
+    monkeypatch.setattr(
+        images, "validate_libero_accepted_image_manifest", validate_acceptance
+    )
+    monkeypatch.setattr(images, "validate_libero_runtime_decision", validate_decision)
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    process_env = {
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64": base64.b64encode(
+            json.dumps(manifest).encode()
+        ).decode(),
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE": "/owner/trust-root",
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64": base64.b64encode(
+            decision_bytes
+        ).decode(),
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+    }
+
+    _verify_libero_submission_authorization(
+        [document], process_env, run_id=run_id,
+        authorization_global_config=global_config,
+        submission_backend="kubernetes",
+        infra="k8s/unit-context",
+        executable_profile_sha256=profile_sha256,
+    )
+
+    assert observed["acceptance"] == (manifest, "/owner/trust-root")
+    assert observed["decision"] == (
+        decision_bytes,
+        {
+            "infrastructure": {
+                "run_id": run_id,
+                "skypilot_config_sha256": config_sha256,
+            }
+        },
+        run_id,
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "acceptance",
+        "decision-bytes",
+        "decision-digest",
+        "profile",
+        "run",
+        "controller-config",
+        "controller-backend",
+        "infra",
+    ],
+)
+def test_libero_submission_authorization_rejects_every_identity_drift(
+    monkeypatch, drift
+) -> None:
+    from npa.deploy import images
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        _verify_libero_submission_authorization,
+    )
+
+    run_id = "libero-exact-profile-0001"
+    profile_sha256 = "a" * 64
+    manifest = {"schema": "signed-fixture"}
+    decision_bytes = b'{"fixture":"decision"}\n'
+    decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
+    decision = {"executable_profile_sha256": profile_sha256}
+    global_config = libero_controller_config()
+    config_sha256 = hashlib.sha256(
+        json.dumps(global_config, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        images,
+        "validate_libero_accepted_image_manifest",
+        lambda *_args, **_kwargs: {
+            "infrastructure": {
+                "run_id": run_id,
+                "skypilot_config_sha256": config_sha256,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        images,
+        "validate_libero_runtime_decision",
+        lambda *_args, **_kwargs: (decision, decision_sha256),
+    )
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = (
+        "libero-different-run-0001" if drift == "run" else run_id
+    )
+    process_env = {
+        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64": base64.b64encode(
+            json.dumps({} if drift == "acceptance" else manifest).encode()
+        ).decode(),
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64": (
+            "self-attested"
+            if drift == "decision-bytes"
+            else base64.b64encode(decision_bytes).decode()
+        ),
+        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": (
+            "b" * 64 if drift == "decision-digest" else decision_sha256
+        ),
+    }
+    if drift == "profile":
+        decision["executable_profile_sha256"] = "b" * 64
+    if drift == "controller-config":
+        global_config = {**global_config, "jobs": {"controller": {}}}
+
+    with pytest.raises(ExecutionPreflightError, match="authorization"):
+        _verify_libero_submission_authorization(
+            [document], process_env, run_id=run_id,
+            authorization_global_config=global_config,
+            submission_backend=(
+                "nebius" if drift == "controller-backend" else "kubernetes"
+            ),
+            infra="nebius" if drift == "infra" else "k8s/unit-context",
+            executable_profile_sha256=profile_sha256,
+        )
+
+
+def test_libero_self_attested_secret_names_never_reach_storage(
+    provider, configured
+) -> None:
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        preflight_skypilot_submission,
+    )
+
+    run_id = "libero-self-attested-0001"
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    with pytest.raises(ExecutionPreflightError, match="authorization"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+            authorization_global_config=libero_controller_config(),
+            submission_backend="kubernetes",
+            run_id=run_id,
+            executable_profile_sha256="a" * 64,
+            extra_env={
+                "NPA_LIBERO_MANAGER_ACCEPTANCE_B64": "self-attested",
+                "NPA_LIBERO_RUNTIME_USE_DECISION_B64": "self-attested",
+                "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": "a" * 64,
+            },
+        )
+    assert not provider.s3.calls
 
 
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])

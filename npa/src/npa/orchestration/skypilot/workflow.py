@@ -814,12 +814,16 @@ class _PreparedWorkflowSubmission:
     config_path: Path
     sky_executable: str
     global_config: dict[str, Any]
+    authorization_global_config: dict[str, Any]
+    source_profile_bytes: bytes
+    run_id: str
+    submission_backend: str
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(runtime, controller_backend, infra):
+def _submission_global_config(authorization_global_config, controller_backend, infra):
     config = _controller_config_for_execution(
-        _load_base_config(runtime.global_config_path),
+        authorization_global_config,
         controller_backend=controller_backend, infra=infra,
     )
     context = _controller_region_from_infra(infra, controller_backend)
@@ -834,8 +838,14 @@ def _submission_global_config(runtime, controller_backend, infra):
 
 
 def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
-    from npa.execution_preflight import ExecutionPreflightError
+    from npa.execution_preflight import ExecutionPreflightError, LIBERO_PROFILE_NAME
 
+    libero_submission = any(
+        document.get("name") == LIBERO_PROFILE_NAME
+        and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
+        for document in prepared.docs
+    )
+    executable_profile_sha256 = hashlib.sha256(prepared.source_profile_bytes).hexdigest()
     env = sky_environment(prepared.runtime_config.isolated_config_dir)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
@@ -845,6 +855,10 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
         selected, _report, injected = _execution_preflight(
             prepared.docs, project=project, infra=infra, extra_env=env,
             target=target, global_config=prepared.global_config,
+            authorization_global_config=prepared.authorization_global_config,
+            submission_backend=prepared.submission_backend,
+            run_id=prepared.run_id,
+            executable_profile_sha256=executable_profile_sha256,
             sky_bin=prepared.sky_executable,
             cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
         )
@@ -856,7 +870,10 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     prepared.env = env
     prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
     _chmod_owner_only(prepared.config_path)
-    prepared.yaml_path.write_text(yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8")
+    prepared_profile_bytes = yaml.safe_dump_all(prepared.docs, sort_keys=False).encode()
+    if libero_submission and hashlib.sha256(prepared_profile_bytes).hexdigest() != executable_profile_sha256:
+        raise SkyPilotSubmitError("LIBERO executable profile changed after authorization")
+    prepared.yaml_path.write_bytes(prepared_profile_bytes)
     _chmod_owner_only(prepared.yaml_path)
 
 
@@ -867,21 +884,24 @@ def _prepare_workflow_submission(
 ):
     runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
                              isolated_config_dir=isolated_config_dir)
-    docs = _load_yaml_documents(Path(yaml_path))
+    source_profile_bytes, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
     directory = _submission_dir(run_id, runtime.isolated_config_dir)
     try:
         rendered = directory / "workflow.yaml"
-        shutil.copy2(yaml_path, rendered)
+        rendered.write_bytes(source_profile_bytes)
         _chmod_owner_only(rendered)
         executable = str(ensure_skypilot_version(runtime.sky_bin))
-        global_config = _submission_global_config(runtime, controller_backend, infra)
+        authorization_global_config = _load_base_config(runtime.global_config_path)
+        global_config = _submission_global_config(authorization_global_config, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
         generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
         _chmod_owner_only(generated)
         prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
-                                                generated, executable, global_config)
+                                                generated, executable, global_config,
+                                                authorization_global_config, source_profile_bytes,
+                                                run_id, controller_backend)
         _preflight_prepared_submission(prepared, project=project, infra=infra,
                                       extra_env=extra_env, target=execution_target)
         return prepared
@@ -959,7 +979,11 @@ def submit_workflow(
             LIBERO_PROFILE_NAME,
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
         )
-
+        libero_submission = any(
+            document.get("name") == LIBERO_PROFILE_NAME
+            and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
+            for document in docs
+        )
         cmd = [
             sky_executable,
             "jobs",
@@ -976,11 +1000,7 @@ def submit_workflow(
         if infra:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
-        if any(
-            document.get("name") == LIBERO_PROFILE_NAME
-            and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
-            for document in docs
-        ):
+        if libero_submission:
             # This is mandatory even for direct SDK callers.  The preflight has
             # removed these values from prepared YAML, so omitting ``--secret``
             # must never silently launch a credentialless or inline-secret task.
@@ -2371,12 +2391,16 @@ def _json_payload_from_output(output: str) -> Any | None:
     return parse_single_json_document(output)
 
 
-def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as handle:
-        docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
+def _load_yaml_documents(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    profile_bytes = path.read_bytes()
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(profile_bytes.decode("utf-8"))
+        if doc is not None
+    ]
     if not all(isinstance(doc, dict) for doc in docs):
         raise ValueError("SkyPilot YAML documents must be mappings")
-    return docs
+    return profile_bytes, docs
 
 
 def _execution_preflight(*args, **kwargs):

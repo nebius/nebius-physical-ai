@@ -311,7 +311,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
     )
     decision = {
-        "schema": "npa.libero.runtime-use-decision.v2",
+        "schema": "npa.libero.runtime-use-decision.v3",
         "solution": "libero",
         "decision": "authorized",
         "runtime_fetch_authorized": True,
@@ -320,6 +320,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "publication_bundle_sha256": "a" * 64,
         "infrastructure_bundle_sha256": "b" * 64,
         "runtime_manifest_sha256": runtime_manifest_sha256,
+        "executable_profile_sha256": "0" * 64,
         "upstream_source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
         "authorized_boundaries": [
             "demonstration",
@@ -335,13 +336,6 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "nonce": "unique-libero-test-nonce-0000000001",
     }
-    decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
-    decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
-    monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        module.base64.b64encode(decision_bytes).decode("ascii"),
-    )
-    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
     output_prefix = f"s3://fixture-bucket/byof/{run_id}/"
     access_key = "fixture-temporary-access"
     secret_key = "fixture-temporary-secret"
@@ -446,6 +440,51 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             {"kubernetes": {"allowed_nodes": {"names": ["worker"]}}}
         ),
     }
+    expected_envs = {"S3_OUTPUT_PREFIX": output_prefix}
+    expected_envs.update(
+        {
+            f"NPA_LIBERO_EXPECTED_{key.upper()}": value
+            for key, value in expected_evidence.items()
+        }
+    )
+    expected_envs.update(
+        {
+            "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": "c" * 64,
+            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
+            "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": "a" * 64,
+            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": "b" * 64,
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256": storage_sha256,
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256": module.hashlib.sha256(
+                output_prefix.encode()
+            ).hexdigest(),
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256": policy_sha256,
+        }
+    )
+
+    def runtime_documents(envs, *, bound=False):
+        resources = {"cloud": "kubernetes"}
+        if bound:
+            resources["region"] = "execution-context"
+        return [
+            {"execution": "serial"},
+            {
+                "name": "byof-solution-smoke-libero-b200-gpu",
+                "resources": resources,
+                "envs": envs,
+            },
+        ]
+
+    expected_documents = runtime_documents(expected_envs, bound=True)
+    decision["executable_profile_sha256"] = module.hashlib.sha256(
+        module._serialized_task_documents(expected_documents)
+    ).hexdigest()
+    decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
+    decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
+    monkeypatch.setenv(
+        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+        module.base64.b64encode(decision_bytes).decode("ascii"),
+    )
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
     acceptance = {
         "acceptance_id": decision["acceptance_id"],
         "development_sha": "a" * 40,
@@ -485,13 +524,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     args = SimpleNamespace(
         solution_name="libero", direct_launch=False, cleanup=True, image=candidate
     )
-    documents = [
-        {"execution": "serial"},
-        {
-            "name": "byof-solution-smoke-libero-b200-gpu",
-            "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-        },
-    ]
+    documents = runtime_documents({"S3_OUTPUT_PREFIX": output_prefix})
 
     binding = module._bind_libero_runtime_contract(
         args,
@@ -508,25 +541,11 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         execution_kubeconfig=execution_kubeconfig,
         execution_context="execution-context",
     )
-    expected_envs = {
-        f"NPA_LIBERO_EXPECTED_{key.upper()}": value
-        for key, value in expected_evidence.items()
-    }
-    expected_envs.update(
-        {
-            "S3_OUTPUT_PREFIX": output_prefix,
-            "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": "c" * 64,
-            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
-            "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": "a" * 64,
-            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": "b" * 64,
-            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256": storage_sha256,
-            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256": module.hashlib.sha256(
-                output_prefix.encode()
-            ).hexdigest(),
-            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256": policy_sha256,
-        }
-    )
     assert documents[1]["envs"] == expected_envs
+    assert documents[1]["resources"] == {
+        "cloud": "kubernetes",
+        "region": "execution-context",
+    }
     assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in documents[1]["envs"]
     assert json.loads(module.base64.b64decode(binding.manager_acceptance_b64)) == (
         signed_manifest
@@ -551,13 +570,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="observe different external RBAC"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -581,13 +594,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="checked-in acceptance"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -609,13 +616,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         with pytest.raises(ValueError):
             module._bind_libero_runtime_contract(
                 args,
-                [
-                    {"execution": "serial"},
-                    {
-                        "name": "byof-solution-smoke-libero-b200-gpu",
-                        "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                    },
-                ],
+                runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
                 global_config={"kubernetes": {"allowed_nodes": allowed}},
                 infra="k8s/execution-context",
                 run_id=run_id,
@@ -626,13 +627,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="checked-in infrastructure differs"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -652,13 +647,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="different clusters"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -676,13 +665,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="exact run namespace"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -700,13 +683,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="explicitly separated"):
         module._bind_libero_runtime_contract(
             args,
-            [
-                {"execution": "serial"},
-                {
-                    "name": "byof-solution-smoke-libero-b200-gpu",
-                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
-                },
-            ],
+            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -907,6 +884,7 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
             "roles": ["npa-byof-libero-pod-reader"],
             "rolebindings": ["npa-byof-libero-payload-pod-reader"],
             "configmaps": [],
+            "services": [],
         },
     )
 
@@ -929,6 +907,80 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
     with pytest.raises(RuntimeError, match="differs"):
         module._libero_rbac_evidence(
             kubeconfig, "payload-context", namespace, run_id
+        )
+
+
+def test_libero_post_submit_rbac_recheck_refuses_any_service(monkeypatch) -> None:
+    module = _load_module()
+    namespace = "isolated-namespace"
+    run_id = "libero-post-submit-rbac"
+    resources = {
+        "serviceaccount": {"metadata": {"uid": "account-uid"}},
+        "role": {
+            "metadata": {"uid": "role-uid"},
+            "rules": module._libero_payload_rules("payload-pod"),
+        },
+        "rolebinding": {
+            "metadata": {"uid": "binding-uid"},
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": module.LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+                    "namespace": namespace,
+                }
+            ],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": module.LIBERO_PAYLOAD_ROLE,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_libero_resource",
+        lambda _kubeconfig, _context, _namespace, kind, _name: resources[kind],
+    )
+    monkeypatch.setattr(
+        module, "_libero_external_rbac_inventory_sha256", lambda *_args: "a" * 64
+    )
+    services: list[dict[str, object]] = []
+
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "services":
+            return {"items": services}
+        return {
+            "metadata": {
+                "name": namespace,
+                "uid": "namespace-uid",
+                "labels": {
+                    "npa.nebius.ai/solution": "libero",
+                    "npa.nebius.ai/run-id-sha256": module.hashlib.sha256(
+                        run_id.encode()
+                    ).hexdigest(),
+                },
+            }
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    module._libero_rbac_evidence(
+        Path("/private/payload-kubeconfig"),
+        "payload-context",
+        namespace,
+        run_id,
+        require_empty_inventory=False,
+        expected_pod_name="payload-pod",
+    )
+
+    services.append({"metadata": {"name": "unreviewed-selector"}})
+    with pytest.raises(RuntimeError, match="free of unreviewed Services"):
+        module._libero_rbac_evidence(
+            Path("/private/payload-kubeconfig"),
+            "payload-context",
+            namespace,
+            run_id,
+            require_empty_inventory=False,
+            expected_pod_name="payload-pod",
         )
 
 
@@ -1114,6 +1166,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
         ],
         "secrets": [],
         "configmaps": [],
+        "services": [],
     }
 
     def kubectl_json(arguments, **_kwargs):
@@ -1125,6 +1178,13 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
         Path("/private/payload-kubeconfig"), "payload-context", namespace
     )
     assert inventory == expected
+
+    expected["services"] = ["selector-trap"]
+    with pytest.raises(RuntimeError, match="reviewed services inventory"):
+        module._libero_namespaced_inventory(
+            Path("/private/payload-kubeconfig"), "payload-context", namespace
+        )
+    expected["services"] = []
 
     def broadened(arguments, **kwargs):
         if arguments[-1] == "rolebindings":

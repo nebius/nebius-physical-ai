@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -537,3 +538,78 @@ def test_failed_build_cleanup_runs_for_failure_and_cancellation() -> None:
     condition = str(spec["jobs"]["cleanup-failed-build"]["if"])
     assert '"failure","cancelled"' in condition
     assert "always()" in condition
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_returncode"),
+    [
+        ("404", 0),
+        ("401", 1),
+        ("403", 1),
+        ("429", 1),
+        ("500", 1),
+        ("existing", 1),
+        ("invalid-json", 1),
+    ],
+)
+def test_failed_build_cleanup_accepts_only_proven_package_absence(
+    tmp_path: Path, failure: str, expected_returncode: int
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = spec["jobs"]["cleanup-failed-build"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        "args=sys.argv[1:]\n"
+        "failure=os.environ['FIXTURE_FAILURE']\n"
+        "if '--paginate' in args:\n"
+        " print('{' if failure == 'invalid-json' else '')\n"
+        " raise SystemExit(0 if failure == 'invalid-json' else 1)\n"
+        "if '-i' in args:\n"
+        " status = '200' if failure in {'existing','invalid-json'} else failure\n"
+        " print(f'HTTP/2.0 {status} fixture')\n"
+        " raise SystemExit(0 if status == '200' else 1)\n"
+        "if '--method' in args:\n"
+        " open(os.environ['DELETE_RECORD'],'a').write('delete\\n')\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    delete_record = tmp_path / "deletes"
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FIXTURE_FAILURE": failure,
+            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-"
+            + "1" * 40,
+            "TOOL": "libero",
+            "LIBERO_ACCEPTED_OCI_DIGEST": "sha256:" + "a" * 64,
+            "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": "[]",
+            "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "DELETE_RECORD": str(delete_record),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == expected_returncode
+    assert not delete_record.exists()
+    if failure not in {"404", "existing", "invalid-json"}:
+        assert "Failed-build package absence is unverified" in completed.stdout
+    if failure in {"existing", "invalid-json"}:
+        assert "package exists but its versions could not be verified" in (
+            completed.stdout
+        )

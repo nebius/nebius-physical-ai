@@ -189,6 +189,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "publication_bundle_sha256": "a" * 64,
         "infrastructure_bundle_sha256": infrastructure_sha256,
         "runtime_manifest_sha256": manifest_sha,
+        "executable_profile_sha256": "e" * 64,
         "upstream_source_revision": "1" * 40,
         "authorized_boundaries": sorted(module.EXPECTED_DECISION_BOUNDARIES),
         "run_id": "libero-runtime-bootstrap-fixture",
@@ -321,6 +322,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     monkeypatch.setenv("HF_TOKEN", "provider-secret")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/attacker-controlled-libraries")
     monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-runtime-environment")
+    monkeypatch.setenv("PATH", "/attacker-controlled-bin")
 
     environment = module._runtime_execution_environment(Path("/proc/self/fd/7"))
 
@@ -330,6 +332,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     assert "LD_LIBRARY_PATH" not in environment
     assert environment["NPA_BYOF_RUN_ID"] == "libero-runtime-environment"
     assert environment["LIBERO_RUNTIME_ROOT"] == "/proc/self/fd/7"
+    assert environment["PATH"] == "/usr/bin:/bin"
 
 
 def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
@@ -1423,7 +1426,7 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
 
     def fake_run(command, **kwargs):
         assert command == [
-            "sudo",
+            "/usr/bin/sudo",
             "--user=npa-libero-exec",
             "/opt/npa/libero/runtime-bootstrap.py",
             "execute",
@@ -1435,6 +1438,7 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
         assert environment["NPA_BYOF_RUN_ID"] == "libero-lock-test-0001"
         assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
+        assert environment["PATH"] == "/usr/bin:/bin"
         return Completed()
 
     lock_path = Path(args.cache_root) / ".bootstrap.lock"

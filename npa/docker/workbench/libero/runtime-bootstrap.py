@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
-DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
+DECISION_SCHEMA = "npa.libero.runtime-use-decision.v3"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_MANIFEST_KEYS = frozenset(
@@ -69,7 +69,7 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "2db4ca50fa3c324bf60eeb6a4f9d9ba9f36fc377a958ef3458e1bf97a51b83ea"
+    "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -883,6 +883,7 @@ def _validate_decision(
         "publication_bundle_sha256",
         "infrastructure_bundle_sha256",
         "runtime_manifest_sha256",
+        "executable_profile_sha256",
         "upstream_source_revision",
         "authorized_boundaries",
         "run_id",
@@ -906,6 +907,7 @@ def _validate_decision(
         or decision.get("infrastructure_bundle_sha256")
         != acceptance.get("infrastructure_bundle_sha256")
         or decision.get("runtime_manifest_sha256") != manifest_sha256
+        or not _is_hex(str(decision.get("executable_profile_sha256") or ""), 64)
         or decision.get("upstream_source_revision") != source["revision"]
         or decision.get("run_id") != infrastructure.get("run_id")
         or decision.get("namespace_sha256")
@@ -1670,6 +1672,7 @@ def _runtime_execution_environment(stable_root: Path) -> dict[str, str]:
         },
         "HOME": "/nonexistent",
         "LIBERO_RUNTIME_ROOT": str(stable_root),
+        "PATH": "/usr/bin:/bin",
     }
 
 
@@ -2239,7 +2242,7 @@ def execute_and_upload() -> int:
                     )
                     completed = subprocess.run(
                         [
-                            "sudo",
+                            "/usr/bin/sudo",
                             "--user=npa-libero-exec",
                             "/opt/npa/libero/runtime-bootstrap.py",
                             "execute",

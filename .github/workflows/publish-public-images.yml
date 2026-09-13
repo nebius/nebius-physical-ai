@@ -89,7 +89,8 @@ jobs:
       - name: Install NPA validation environment
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/pip install -e "npa[dev]"
+          npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
+          npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
       - name: Materialize owner-private LIBERO manager trust root
         if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
@@ -374,7 +375,8 @@ jobs:
       - name: Install NPA validation environment
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/pip install -e "npa[dev]"
+          npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
+          npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
       - name: Materialize owner-private LIBERO manager trust root
         if: matrix.tool == 'libero'
@@ -1466,8 +1468,16 @@ jobs:
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
           if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
-            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            response="$(mktemp)"
+            if gh api -i "$package_api" >"$response" 2>&1; then
+              echo "::error::Failed-build package exists but its versions could not be verified"
+              exit 1
+            elif grep -q '^HTTP/.* 404 ' "$response"; then
+              echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Failed-build package absence is unverified"
+            exit 1
           fi
           if [ "$TOOL" = libero ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"

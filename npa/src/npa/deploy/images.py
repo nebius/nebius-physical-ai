@@ -46,7 +46,7 @@ NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
-LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v2"
+LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v3"
 LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV = (
     "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE"
 )
@@ -532,7 +532,9 @@ def libero_acceptance_signature_payload(payload: dict[str, Any]) -> bytes:
     )
 
 
-def _verify_libero_manager_signature(payload: dict[str, Any]) -> None:
+def _verify_libero_manager_signature(
+    payload: dict[str, Any], *, manager_public_key_file: str = ""
+) -> None:
     acceptance = payload["acceptance"]
     signature_record = acceptance.get("manager_signature")
     if not isinstance(signature_record, dict) or set(signature_record) != {
@@ -543,7 +545,7 @@ def _verify_libero_manager_signature(payload: dict[str, Any]) -> None:
         raise RuntimeError("LIBERO acceptance requires a closed manager signature")
     if signature_record.get("algorithm") != "ed25519":
         raise RuntimeError("LIBERO acceptance requires an Ed25519 manager signature")
-    key_path_value = os.environ.get(
+    key_path_value = manager_public_key_file.strip() or os.environ.get(
         LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
     ).strip()
     try:
@@ -744,7 +746,9 @@ def libero_publication_lineage_values(
     return {field: acceptance[field] for field in fields}
 
 
-def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
+def validate_libero_accepted_image_manifest(
+    payload: Any, *, manager_public_key_file: str = ""
+) -> dict[str, Any]:
     """Validate the separately reviewed bytes and identities allowed to run.
 
     This repository resource is the authenticated channel for LIBERO acceptance.
@@ -1023,7 +1027,9 @@ def validate_libero_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         and expires_at - accepted_at <= timedelta(days=7),
         "unexpired acceptance window",
     )
-    _verify_libero_manager_signature(payload)
+    _verify_libero_manager_signature(
+        payload, manager_public_key_file=manager_public_key_file
+    )
     return acceptance
 
 
@@ -1059,6 +1065,7 @@ def validate_libero_runtime_decision(
         "publication_bundle_sha256",
         "infrastructure_bundle_sha256",
         "runtime_manifest_sha256",
+        "executable_profile_sha256",
         "upstream_source_revision",
         "authorized_boundaries",
         "run_id",
@@ -1085,6 +1092,11 @@ def validate_libero_runtime_decision(
         != acceptance.get("infrastructure_bundle_sha256")
         or decision.get("runtime_manifest_sha256")
         != acceptance.get("runtime_manifest_sha256")
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(decision.get("executable_profile_sha256") or ""),
+        )
+        is None
         or decision.get("upstream_source_revision")
         != acceptance.get("upstream_source_revision")
         or decision.get("run_id") != run_id
