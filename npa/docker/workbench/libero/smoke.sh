@@ -12,7 +12,10 @@ export LIBERO_CONFIG_PATH="$output_root/.libero-config"
 export LIBERO_EXPERIMENT_DIR="$(mktemp -d /tmp/npa-libero-experiment.XXXXXXXX)"
 cleanup_runtime_scratch() {
   rm -f "$LIBERO_CONFIG_PATH/config.yaml"
-  rmdir "$LIBERO_CONFIG_PATH" 2>/dev/null || true
+  if ! rmdir "$LIBERO_CONFIG_PATH"; then
+    echo "LIBERO scratch config cleanup failed" >&2
+    return 1
+  fi
   rm -rf -- "$LIBERO_EXPERIMENT_DIR"
 }
 trap cleanup_runtime_scratch EXIT INT TERM

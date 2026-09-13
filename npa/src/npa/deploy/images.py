@@ -109,6 +109,14 @@ LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS = (
 LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER = (
     b"# npa: publication-enforcement=libero"
 )
+LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES = (
+    b"_cleanup_libero_access_objects",
+    b"_libero_external_rbac_inventory_sha256",
+    b"libero_publication_enforcement_bundle_sha256",
+    b"validate_libero_accepted_image_manifest",
+    b"NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
+    b"NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+)
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
     "https://slsa.dev/provenance/v1",
     "https://spdx.dev/Document",
@@ -609,6 +617,7 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
     """Resolve every accepted runner plus its security-critical Python closure."""
 
     paths = set(LIBERO_PUBLICATION_ENFORCEMENT_PATHS)
+    unmarked_critical_tests: list[str] = []
     for relative_root in LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS:
         directory = repository_root / relative_root
         if not directory.is_dir() or directory.is_symlink():
@@ -642,10 +651,23 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
                     "LIBERO enforcement test must be a regular file: "
                     f"{candidate.relative_to(repository_root).as_posix()}"
                 )
-            if LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER in (
-                candidate.read_bytes().splitlines()
-            ):
-                paths.add(candidate.relative_to(repository_root).as_posix())
+            relative = candidate.relative_to(repository_root).as_posix()
+            content = candidate.read_bytes()
+            marked = LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER in (
+                content.splitlines()
+            )
+            if any(
+                reference in content
+                for reference in LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES
+            ) and not marked:
+                unmarked_critical_tests.append(relative)
+            if marked:
+                paths.add(relative)
+    if unmarked_critical_tests:
+        raise RuntimeError(
+            "LIBERO-critical tests require the publication-enforcement marker: "
+            + ", ".join(sorted(unmarked_critical_tests))
+        )
     return tuple(sorted(paths))
 
 

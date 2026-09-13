@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 """Fail-closed and atomic tests for the LIBERO runtime materializer."""
 
 from __future__ import annotations
@@ -587,6 +588,30 @@ def test_manager_acceptance_payload_cannot_select_its_trust_root(tmp_path) -> No
             manifest_sha256=module.EXPECTED_RUNTIME_MANIFEST_SHA256,
             decision_sha256=args.decision_sha256,
         )
+
+
+def test_manager_trust_root_rejects_descriptor_metadata_race(
+    monkeypatch, tmp_path
+) -> None:
+    module, _args, _fixture_values = _fixture(tmp_path)
+    original_fstat = module.os.fstat
+    touched = False
+
+    def racing_fstat(descriptor):
+        nonlocal touched
+        metadata = original_fstat(descriptor)
+        if not touched:
+            touched = True
+            os.utime(
+                module.MANAGER_ACCEPTANCE_PUBLIC_KEY,
+                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+            )
+        return metadata
+
+    monkeypatch.setattr(module.os, "fstat", racing_fstat)
+
+    with pytest.raises(module.BootstrapRefusal, match="mutable or invalid"):
+        module._trusted_manager_public_key()
 
 
 @pytest.mark.parametrize("field", ["size_bytes", "license_expression"])

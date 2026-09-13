@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 """Exercise target resolution and real probe behavior at provider boundaries."""
 
 from io import BytesIO
@@ -602,10 +603,44 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
     assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
 
 
+def test_libero_worker_environment_checks_the_final_stripped_document(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    observed: list[dict[str, str]] = []
+
+    def verify_final(_target, documents) -> None:
+        task_env = dict(documents[0]["envs"])
+        observed.append(task_env)
+        assert task_env["AWS_ENDPOINT_URL"] == (
+            "https://storage.eu-west1.nebius.cloud"
+        )
+        assert "AWS_ACCESS_KEY_ID" not in task_env
+        assert "AWS_SECRET_ACCESS_KEY" not in task_env
+
+    monkeypatch.setattr(
+        "npa.execution_preflight.verify_worker_environment", verify_final
+    )
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert len(observed) == 1
+
+
 @pytest.mark.parametrize(
     ("secret_name", "expected_error"),
     [
-        ("AWS_ACCESS_KEY_ID", "pod storage credentials or endpoint differ"),
+        (
+            "AWS_ACCESS_KEY_ID",
+            "inline authorization or storage material",
+        ),
         (
             "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
             "inline authorization or storage material",
