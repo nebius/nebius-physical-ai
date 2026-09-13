@@ -217,6 +217,7 @@ def verify_execution_target(
             bucket=bucket, prefix=prefix, endpoint_url=target.credentials.endpoint_url,
             access_key_id=target.credentials.access_key_id,
             secret_access_key=target.credentials.secret_access_key,
+            session_token=target.credentials.session_token,
             region=target.region, profile=StorageCapabilityProfile.STANDARD,
         )
         if not probe.ok:
@@ -329,9 +330,7 @@ def verify_worker_environment(target: ExecutionTarget, documents: Sequence[Mappi
     expected = {
         "AWS_ACCESS_KEY_ID": target.credentials.access_key_id,
         "AWS_SECRET_ACCESS_KEY": target.credentials.secret_access_key,
-        # Static Nebius S3 keys are the checked principal. A pod-level token
-        # reference must not change signing after those checks passed.
-        "AWS_SESSION_TOKEN": "",
+        "AWS_SESSION_TOKEN": target.credentials.session_token,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, target.credentials.endpoint_url),
     }
 
@@ -876,8 +875,19 @@ def preflight_skypilot_submission(
             ) from exc
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
         raise ExecutionPreflightError("gpu", "alternative resource targets are ambiguous; select one effective resource mapping")
-    selected = target.credentials if target is not None else resolve_submit_credentials(
-        project=project, environ=process_env, workflow_env=workflow_env,
+    selected = (
+        resolve_submit_credentials(
+            project=project,
+            environ=process_env,
+            workflow_env=workflow_env,
+            require_process_environment_triplet=True,
+        )
+        if libero_submission
+        else target.credentials
+        if target is not None
+        else resolve_submit_credentials(
+            project=project, environ=process_env, workflow_env=workflow_env,
+        )
     )
     task_resources = [(document, document.get("resources") or {}) for document in documents]
     controller = ((global_config or {}).get("jobs") or {}).get("controller") or {}
@@ -975,6 +985,10 @@ def preflight_skypilot_submission(
         # A preverified workflow target includes ledger/source destinations as
         # well as task outputs. Fresh task-specific outputs must also be checked.
         target = replace_execution_outputs(target, destinations)
+        if libero_submission:
+            from dataclasses import replace
+
+            target = replace(target, credentials=selected)
     if native_documents and infra.startswith("nebius/"):
         placement = infra.split("/")
         if len(placement) > 3 or placement[1] != target.region:
@@ -988,6 +1002,7 @@ def preflight_skypilot_submission(
     injected = {
         "AWS_ACCESS_KEY_ID": selected.access_key_id,
         "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
+        "AWS_SESSION_TOKEN": selected.session_token,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
     }
     for document in documents:
@@ -996,7 +1011,12 @@ def preflight_skypilot_submission(
             if value and (
                 not libero_submission
                 or (
-                    name not in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+                    name
+                    not in {
+                        "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY",
+                        "AWS_SESSION_TOKEN",
+                    }
                     and name in env
                 )
             ):
@@ -1045,7 +1065,7 @@ def preflight_skypilot_submission(
     # so the checked document is exactly the one persisted for SkyPilot while
     # its secrets travel only through the separate redacted channel.
     verify_worker_environment(target, [*documents, dict(global_config or {})])
-    session_token = process_env.get("AWS_SESSION_TOKEN", "")
+    session_token = selected.session_token
     if workflow_env.get("AWS_SESSION_TOKEN"):
         raise ExecutionPreflightError(
             "credentials",

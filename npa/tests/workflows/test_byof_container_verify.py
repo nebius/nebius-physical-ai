@@ -1688,7 +1688,7 @@ def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> Non
     pre_submit = submit_function[:submit_call]
     last_nonblank_lines = [
         line.strip() for line in pre_submit.splitlines() if line.strip()
-    ][-5:]
+    ][-6:]
 
     assert last_nonblank_lines == [
         "if libero_binding is not None:",
@@ -1696,12 +1696,103 @@ def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> Non
         "libero_binding, require_empty_inventory=True",
         ")",
         "_verify_libero_controller_unchanged(libero_binding)",
+        "submission_started = True",
     ]
 
     job_id = submit_function.index("scheduler_job_id = _exact_scheduler_job_id(")
     bind = submit_function.index("_bind_libero_payload_pod_access(")
     wait = submit_function.index("final, wait_diagnostics = _wait_for_terminal(")
     assert job_id < bind < wait
+
+
+def test_libero_cleanup_transaction_is_installed_before_every_preflight() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    submit_function = source[source.index("def _submit_and_wait(") :]
+    binding = submit_function.index("libero_binding = _bind_libero_runtime_contract(")
+    after_binding = submit_function[binding:]
+    install = binding + after_binding.index(
+        "signal_previous_handlers = install_teardown_signal_handlers("
+    )
+    write = binding + after_binding.index("_write_yaml_documents(rendered_yaml, docs)")
+    storage = binding + after_binding.index("preflight_output_storage(")
+    provider = binding + after_binding.index("_ensure_infra_enabled(")
+
+    assert binding < install < write < storage < provider
+
+
+@pytest.mark.parametrize(
+    "failure_stage", ["write", "storage", "provider", "payload", "controller"]
+)
+def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
+    monkeypatch, tmp_path, failure_stage
+) -> None:
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    args.solution_name = "libero"
+    isolated = tmp_path / args.run_id
+    isolated.mkdir(mode=0o700)
+    args.isolated_config_dir = str(isolated)
+    binding = SimpleNamespace(
+        manager_acceptance_b64="signed-manager-acceptance",
+        evidence={},
+        access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
+    )
+    events: list[str] = []
+    installed: list[object] = []
+
+    monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
+    monkeypatch.setattr(
+        module, "_libero_global_config_path", lambda selected: selected.config_path
+    )
+    monkeypatch.setattr(
+        module, "_bind_libero_runtime_contract", lambda *_a, **_k: binding
+    )
+    monkeypatch.setattr(
+        module,
+        "install_teardown_signal_handlers",
+        lambda callback: installed.append(callback) or None,
+    )
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
+
+    def complete(cleanup, **_kwargs):
+        events.append("cleanup")
+        cleanup.resources_removed.append("all-bound-access")
+        cleanup.verified = True
+        cleanup.remote_absence_verified = True
+        return cleanup, True, True
+
+    monkeypatch.setattr(module, "_complete_libero_cleanup", complete)
+
+    def fail() -> None:
+        raise RuntimeError(f"fixture {failure_stage} failure")
+
+    if failure_stage == "write":
+        monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a: fail())
+    elif failure_stage == "storage":
+        monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: fail())
+    elif failure_stage == "provider":
+        monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: fail())
+    elif failure_stage == "payload":
+        monkeypatch.setattr(
+            module, "_verify_libero_payload_unchanged", lambda *_a, **_k: fail()
+        )
+        monkeypatch.setattr(
+            module, "_verify_libero_controller_unchanged", lambda *_a, **_k: None
+        )
+    else:
+        monkeypatch.setattr(
+            module, "_verify_libero_payload_unchanged", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(
+            module, "_verify_libero_controller_unchanged", lambda *_a, **_k: fail()
+        )
+
+    with pytest.raises(RuntimeError, match=f"fixture {failure_stage} failure"):
+        module._submit_and_wait(args)
+
+    assert len(installed) == 1
+    assert events == ["cleanup"]
 
 
 def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
@@ -1874,6 +1965,147 @@ def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> N
         ),
         ("namespace", "isolated-namespace", "namespace-uid"),
     ]
+
+
+@pytest.mark.parametrize("failure_operation", ["delete", "read"])
+@pytest.mark.parametrize("failure_index", range(7))
+def test_libero_cleanup_attempts_every_uid_bound_position_after_failure(
+    monkeypatch, failure_operation, failure_index
+) -> None:
+    module = _load_module()
+    delete_calls: list[str] = []
+    read_calls: list[str] = []
+    labels = [
+        "controller-rolebinding",
+        "controller-role",
+        "controller-serviceaccount",
+        "rolebinding",
+        "role",
+        "serviceaccount",
+        "namespace",
+    ]
+
+    class ApiException(Exception):
+        def __init__(self, status: int):
+            super().__init__(status)
+            self.status = status
+
+    class Preconditions:
+        def __init__(self, *, uid: str):
+            self.uid = uid
+
+    class DeleteOptions:
+        def __init__(self, *, preconditions: Preconditions):
+            self.preconditions = preconditions
+
+    def operation(kind: str, label: str) -> None:
+        calls = delete_calls if kind == "delete" else read_calls
+        calls.append(label)
+        if kind == failure_operation and labels.index(label) == failure_index:
+            raise RuntimeError(f"injected {kind} failure at {label}")
+        if kind == "read":
+            raise ApiException(404)
+
+    class Core:
+        def __init__(self, _client):
+            pass
+
+        def delete_namespaced_service_account(self, name, *_args, **_kwargs):
+            operation(
+                "delete",
+                "controller-serviceaccount"
+                if name == module.SKYPILOT_ENGINE_SERVICE_ACCOUNT
+                else "serviceaccount",
+            )
+
+        def read_namespaced_service_account(self, name, *_args, **_kwargs):
+            operation(
+                "read",
+                "controller-serviceaccount"
+                if name == module.SKYPILOT_ENGINE_SERVICE_ACCOUNT
+                else "serviceaccount",
+            )
+
+        def delete_namespace(self, *_args, **_kwargs):
+            operation("delete", "namespace")
+
+        def read_namespace(self, *_args, **_kwargs):
+            operation("read", "namespace")
+
+    class Rbac:
+        def __init__(self, _client):
+            pass
+
+        def delete_namespaced_role_binding(self, name, *_args, **_kwargs):
+            operation(
+                "delete",
+                "controller-rolebinding"
+                if name == module.LIBERO_CONTROLLER_ROLE_BINDING
+                else "rolebinding",
+            )
+
+        def read_namespaced_role_binding(self, name, *_args, **_kwargs):
+            operation(
+                "read",
+                "controller-rolebinding"
+                if name == module.LIBERO_CONTROLLER_ROLE_BINDING
+                else "rolebinding",
+            )
+
+        def delete_namespaced_role(self, name, *_args, **_kwargs):
+            operation(
+                "delete",
+                "controller-role"
+                if name == module.LIBERO_CONTROLLER_ROLE
+                else "role",
+            )
+
+        def read_namespaced_role(self, name, *_args, **_kwargs):
+            operation(
+                "read",
+                "controller-role"
+                if name == module.LIBERO_CONTROLLER_ROLE
+                else "role",
+            )
+
+    client_module = ModuleType("kubernetes.client")
+    client_module.CoreV1Api = Core
+    client_module.RbacAuthorizationV1Api = Rbac
+    client_module.V1DeleteOptions = DeleteOptions
+    client_module.V1Preconditions = Preconditions
+    exceptions_module = ModuleType("kubernetes.client.exceptions")
+    exceptions_module.ApiException = ApiException
+    config_module = ModuleType("kubernetes.config")
+    config_module.new_client_from_config = lambda **_kwargs: object()
+    package = ModuleType("kubernetes")
+    package.client = client_module
+    package.config = config_module
+    monkeypatch.setitem(sys.modules, "kubernetes", package)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(
+        sys.modules, "kubernetes.client.exceptions", exceptions_module
+    )
+    monkeypatch.setitem(sys.modules, "kubernetes.config", config_module)
+    state = module.LiberoAccessState(
+        kubeconfig=Path("/private/payload-kubeconfig"),
+        context="payload-context",
+        namespace="isolated-namespace",
+        namespace_uid="namespace-uid",
+        service_account_uid="service-account-uid",
+        role_uid="role-uid",
+        role_binding_uid="binding-uid",
+        controller_service_account_uid="controller-account-uid",
+        controller_role_uid="controller-role-uid",
+        controller_role_binding_uid="controller-binding-uid",
+    )
+
+    result = module._cleanup_libero_access_objects(state, timeout=1)
+
+    assert delete_calls == labels
+    assert read_calls == labels
+    assert result.ok is False
+    assert result.verified is False
+    assert result.remote_absence_verified is False
 
 
 def test_libero_cleanup_removes_only_exact_run_local_state(tmp_path) -> None:
@@ -2275,6 +2507,101 @@ def test_render_storage_env_honors_explicit_regional_endpoint(monkeypatch) -> No
     )
     assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == "https://storage.correct-region"
     assert docs[1]["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.correct-region"
+
+
+def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
+    monkeypatch,
+) -> None:
+    import boto3
+
+    module = _load_module()
+    calls: list[tuple[str, str, str]] = []
+    clients: list[dict] = []
+
+    class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            calls.append(("list", Bucket, Prefix))
+            assert MaxKeys == 1
+            return {"Contents": []}
+
+        def put_object(self, *, Bucket, Key, **_kwargs):
+            calls.append(("put", Bucket, Key))
+
+        def head_object(self, *, Bucket, Key):
+            calls.append(("head", Bucket, Key))
+            return {"ContentLength": 24}
+
+        def delete_object(self, *, Bucket, Key):
+            calls.append(("delete", Bucket, Key))
+
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda *_args, **_kwargs: pytest.fail("saved project storage is forbidden"),
+    )
+
+    def client(service, **kwargs):
+        clients.append({"service": service, **kwargs})
+        return FakeS3()
+
+    monkeypatch.setattr(boto3, "client", client)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setenv("NPA_PROJECT", "saved-project-with-different-credentials")
+
+    module.preflight_output_storage(
+        output_root="s3://manager-bucket/accepted-prefix",
+        run_id="libero-authorized-probe",
+        libero=True,
+    )
+
+    assert len(clients) == 1
+    assert clients[0]["service"] == "s3"
+    assert clients[0]["endpoint_url"] == "https://storage.example"
+    assert clients[0]["aws_access_key_id"] == "manager-access"
+    assert clients[0]["aws_secret_access_key"] == "manager-secret"
+    assert clients[0]["aws_session_token"] == "manager-session"
+    assert calls[0] == (
+        "list",
+        "manager-bucket",
+        "accepted-prefix/libero-authorized-probe/",
+    )
+
+
+@pytest.mark.parametrize(
+    "missing", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
+)
+def test_libero_output_preflight_rejects_partial_triplets_before_provider(
+    monkeypatch, missing
+) -> None:
+    import boto3
+
+    module = _load_module()
+    values = {
+        "AWS_ACCESS_KEY_ID": "manager-access",
+        "AWS_SECRET_ACCESS_KEY": "manager-secret",
+        "AWS_SESSION_TOKEN": "manager-session",
+    }
+    for name, value in values.items():
+        if name == missing:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda *_args, **_kwargs: pytest.fail("provider must not be called"),
+    )
+
+    with pytest.raises(ValueError, match="complete.*triplet"):
+        module.preflight_output_storage(
+            output_root="s3://manager-bucket/accepted-prefix",
+            run_id="libero-authorized-probe",
+            libero=True,
+        )
 
 
 def test_output_storage_preflight_fails_before_launch(monkeypatch) -> None:

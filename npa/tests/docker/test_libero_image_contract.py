@@ -46,6 +46,7 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "useradd --no-log-init --uid 1001 --gid npa-libero-exec" in text
     assert "ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC" in text
     assert "NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute" in text
+    assert "Defaults!NPA_LIBERO_EXEC closefrom_override" in text
     exec_environment = next(
         line for line in text.splitlines() if "Defaults!NPA_LIBERO_EXEC env_keep" in line
     )
@@ -392,7 +393,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert '${TOOL}-public-package-versions.json' in text
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in text
     assert "reject every unexpected tag" in text
-    assert "Failed LIBERO cleanup retained a package graph" in text
+    assert "Failed LIBERO cleanup cannot isolate every accepted" in text
     for host_gate in (
         "npa/tests/workflows/test_byof_container_verify.py",
         "npa/tests/workflows/test_byof_libero.py",
@@ -402,9 +403,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     ):
         assert host_gate in text
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
-    assert "Retained the unchanged private accepted LIBERO graph" in text
-    assert "Deleted the complete exact failed public LIBERO OCI graph" in text
-    assert 'gh api --method DELETE "$package_api"' in text
+    assert "Retained the private accepted LIBERO versions" in text
+    assert "Deleted only the exact accepted failed public LIBERO OCI versions" in text
+    assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
     assert "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" in text
     assert (
         "--secret id=npa_libero_manager_acceptance_public_key_b64,"
@@ -617,3 +618,100 @@ def test_failed_build_cleanup_accepts_only_proven_package_absence(
         assert "package exists but its versions could not be verified" in (
             completed.stdout
         )
+
+
+def test_failed_libero_cleanup_removes_only_accepted_versions_under_graph_drift(
+    tmp_path: Path,
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = spec["jobs"]["cleanup-failed-build"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    root = "sha256:" + "a" * 64
+    platform = "sha256:" + "b" * 64
+    attestation = "sha256:" + "c" * 64
+    unrelated = "sha256:" + "d" * 64
+    tag = "dev-" + "1" * 40
+    state_path = tmp_path / "versions.json"
+    state_path.write_text(
+        json.dumps(
+            [
+                {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+                {"id": 2, "name": platform, "metadata": {"container": {"tags": []}}},
+                {"id": 3, "name": attestation, "metadata": {"container": {"tags": []}}},
+                {"id": 99, "name": unrelated, "metadata": {"container": {"tags": ["stable-other"]}}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    delete_record = tmp_path / "deleted.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import json,os,sys\n"
+        "args=sys.argv[1:]\n"
+        "state_path=os.environ['VERSION_STATE']\n"
+        "state=json.load(open(state_path))\n"
+        "if '--paginate' in args:\n"
+        " print(json.dumps([state]))\n"
+        " raise SystemExit(0)\n"
+        "if '--method' in args and args[args.index('--method')+1] == 'DELETE':\n"
+        " version_id=args[-1].rsplit('/',1)[-1]\n"
+        " removed=[row for row in state if str(row['id']) == version_id]\n"
+        " if len(removed) != 1: raise SystemExit(1)\n"
+        " state=[row for row in state if str(row['id']) != version_id]\n"
+        " json.dump(state,open(state_path,'w'))\n"
+        " with open(os.environ['DELETE_RECORD'],'a') as stream: stream.write(version_id+'\\n')\n"
+        " raise SystemExit(0)\n"
+        "if '--jq' in args:\n"
+        " query=args[args.index('--jq')+1]\n"
+        " print('public' if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n"
+        " raise SystemExit(0)\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:" + tag,
+            "TOOL": "libero",
+            "LIBERO_ACCEPTED_OCI_DIGEST": root,
+            "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": json.dumps(
+                sorted([root, platform, attestation])
+            ),
+            "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "VERSION_STATE": str(state_path),
+            "DELETE_RECORD": str(delete_record),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert set(delete_record.read_text(encoding="utf-8").splitlines()) == {
+        "1",
+        "2",
+        "3",
+    }
+    assert json.loads(state_path.read_text(encoding="utf-8")) == [
+        {
+            "id": 99,
+            "name": unrelated,
+            "metadata": {"container": {"tags": ["stable-other"]}},
+        }
+    ]
+    assert "Deleted only the exact accepted" in (tmp_path / "summary").read_text(
+        encoding="utf-8"
+    )
