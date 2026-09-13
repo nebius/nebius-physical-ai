@@ -1,0 +1,244 @@
+{
+  "title": "Before the next move.",
+  "duration": 120,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "footer": "INFERENCE FOR PHYSICAL AI",
+  "brief": {
+    "prompt": "Create a phenomenal two-minute film showing why inference is essential to Physical AI. Show sophisticated NVIDIA Cosmos world-model inference and VLM evaluation, using authentic Token Factory Cosmos 3 Super Reasoner results, from a Nebius + NVIDIA perspective.",
+    "audience": "C-suite and technical leaders evaluating Physical AI inference",
+    "goal": "Make the need for world-model generation and vision-language evaluation tangible, and position Nebius infrastructure and NVIDIA Cosmos as complementary parts of the inference workflow.",
+    "tone": "Cinematic, ambitious, precise; short headlines and strong visual proof.",
+    "duration_seconds": 120,
+    "call_to_action": "github.com/nebius/nebius-physical-ai"
+  },
+  "scenes": [
+    {
+      "id": "01-before-the-move",
+      "duration": 8,
+      "layout": "cinematic",
+      "eyebrow": "NEBIUS + NVIDIA",
+      "title": [
+        "Before the",
+        "next move."
+      ],
+      "subtitle": "Physical AI needs inference.",
+      "assets": [
+        "super_kitchen"
+      ],
+      "labels": [
+        "NVIDIA COSMOS 3 SUPER \u00b7 GENERATED SCENE"
+      ],
+      "narration": "Before a robot makes its next move, intelligence has work to do. That is where inference begins."
+    },
+    {
+      "id": "02-changing-world",
+      "duration": 10,
+      "layout": "feature",
+      "eyebrow": "WHY INFERENCE MATTERS",
+      "title": [
+        "The world",
+        "keeps changing."
+      ],
+      "subtitle": "New observations. New possibilities. New decisions.",
+      "assets": [
+        "nano_world"
+      ],
+      "labels": [
+        "COSMOS 3 NANO \u00b7 GENERATED WORLD"
+      ],
+      "narration": "Training builds capability. Inference puts it to work: interpreting new observations, generating possible scenarios, and evaluating what happened."
+    },
+    {
+      "id": "03-continue",
+      "duration": 12,
+      "layout": "comparison",
+      "eyebrow": "WORLD MODEL INFERENCE / CONTINUATION",
+      "title": [
+        "Carry context forward.",
+        "Extend the world."
+      ],
+      "subtitle": "A generated segment conditions the next request. Three requests form a 30-second sequence.",
+      "assets": [
+        "nano_chunk_one",
+        "nano_chunk_two"
+      ],
+      "labels": [
+        "FIRST GENERATED SEGMENT",
+        "NEXT SEGMENT \u00b7 CONDITIONED ON THE FIRST"
+      ],
+      "narration": "With Cosmos, generation can continue from earlier frames. Here, each continuation carries visual context forward, building a longer sequence from connected inference calls."
+    },
+    {
+      "id": "04-structure",
+      "duration": 12,
+      "layout": "triptych",
+      "eyebrow": "WORLD MODEL INFERENCE / STRUCTURAL CONTROL",
+      "title": [
+        "Keep the structure.",
+        "Explore a new condition."
+      ],
+      "subtitle": "The same generated source supplies edge controls for a new appearance.",
+      "assets": [
+        "nano_world",
+        "nano_edges",
+        "nano_variation"
+      ],
+      "labels": [
+        "GENERATED WORLD",
+        "ACTUAL EDGE CONDITIONING",
+        "GENERATED VARIATION"
+      ],
+      "narration": "Now change the conditions. Edge guidance from the source helps steer a new generation. The scene shifts to dim, warm lighting while retaining recognizable structure."
+    },
+    {
+      "id": "05-possibilities",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "NVIDIA COSMOS / GENERATIVE INFERENCE",
+      "title": [
+        "Turn one world into another possibility."
+      ],
+      "subtitle": "Source-conditioned generation creates another candidate to inspect.",
+      "assets": [
+        "nano_variation"
+      ],
+      "labels": [
+        "COSMOS 3 NANO \u00b7 CONTROLLED VARIATION"
+      ],
+      "narration": "Generated possibilities expand the scenarios available for development. Preserve each candidate with its source and generation settings."
+    },
+    {
+      "id": "06-ask",
+      "duration": 8,
+      "layout": "cinematic",
+      "eyebrow": "THE SECOND INFERENCE WORKLOAD",
+      "title": [
+        "What does",
+        "the evidence show?"
+      ],
+      "subtitle": "Generation opens possibilities. Evaluation asks harder questions.",
+      "assets": [
+        "super_kitchen"
+      ],
+      "labels": [
+        "GENERATED SCENE \u00b7 QUALITY REQUIRES EVALUATION"
+      ],
+      "narration": "A convincing image raises another question. What does the evidence actually support? That calls for evaluation."
+    },
+    {
+      "id": "07-observe",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "VLM EVALUATION / A SEPARATE RECORDED ROBOT RUN",
+      "title": [
+        "Give the evaluator evidence and a task."
+      ],
+      "subtitle": "Task: move the object to the target while maintaining stable contact.",
+      "assets": [
+        "vlm_inputs_grid"
+      ],
+      "labels": [
+        "EIGHT ORIGINAL SELECTED FRAMES \u00b7 ISAAC SIMULATION \u00b7 RECORDED 27 AUG 2026"
+      ],
+      "narration": "For this separate robot experiment, eight selected frames and a manipulation task went to a vision language evaluator through Nebius Token Factory."
+    },
+    {
+      "id": "08-reason",
+      "duration": 12,
+      "layout": "reason",
+      "eyebrow": "RECORDED TOKEN FACTORY EVALUATION",
+      "title": [
+        "Ask what",
+        "happened."
+      ],
+      "subtitle": "Requested model: Cosmos 3 Super Reasoner",
+      "assets": [
+        "vlm_inputs_sequence"
+      ],
+      "labels": [
+        "ORIGINAL SELECTED FRAMES \u00b7 PRESENTATION SEQUENCE"
+      ],
+      "narration": "The report lists Cosmos Three Super Reasoner as the requested model. The recorded assessment flags inaccurate final placement, giving the next experiment specific feedback.",
+      "quote_heading": "RECORDED MODEL ASSESSMENT",
+      "quote": "\u201cThe object does not reach the intended target position, and the final placement is inaccurate.\u201d",
+      "source_notes": [
+        "Archived report \u00b7 27 Aug 2026 \u00b7 selected-frame assessment",
+        "Requested-model attribution; returned model identity was not retained."
+      ]
+    },
+    {
+      "id": "09-decision",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "VLM EVALUATION / RECORDED RESULT",
+      "title": [
+        "Make the result actionable."
+      ],
+      "subtitle": "Preserve the critique, the inputs, and the recorded outcome.",
+      "assets": [
+        "vlm_result"
+      ],
+      "labels": [
+        "MODEL ASSESSMENT \u00b7 NOT INDEPENDENT PHYSICAL GROUND TRUTH"
+      ],
+      "narration": "The report records no task success. Preserve the critique and inputs, giving the next experiment a specific problem to investigate."
+    },
+    {
+      "id": "10-two-workloads",
+      "duration": 10,
+      "layout": "comparison",
+      "eyebrow": "TWO INFERENCE WORKLOADS",
+      "title": [
+        "Generate possibilities.",
+        "Evaluate evidence."
+      ],
+      "subtitle": "Complementary workloads, shown through separate recorded examples.",
+      "assets": [
+        "nano_variation",
+        "vlm_inputs_sequence"
+      ],
+      "labels": [
+        "WORLD MODELS \u00b7 GENERATE CANDIDATES",
+        "VISION LANGUAGE MODELS \u00b7 ASSESS OBSERVATIONS"
+      ],
+      "narration": "World models generate candidates. Vision language models assess observations. Both support an iterative development loop, grounded in evidence."
+    },
+    {
+      "id": "11-platform",
+      "duration": 8,
+      "layout": "cinematic",
+      "eyebrow": "NEBIUS INFRASTRUCTURE + NVIDIA COSMOS",
+      "title": [
+        "Make inference",
+        "part of the loop."
+      ],
+      "subtitle": "GPU generation. Hosted evaluation. Traceable artifacts.",
+      "assets": [
+        "nano_variation"
+      ],
+      "labels": [
+        "WORLD MODEL GPU RUN + SEPARATE ARCHIVED TOKEN FACTORY EVALUATION"
+      ],
+      "narration": "Nebius infrastructure and NVIDIA Cosmos bring generation and reasoning into the physical A I development loop."
+    },
+    {
+      "id": "12-next",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "BUILD PHYSICAL AI",
+      "title": [
+        "Build what comes next."
+      ],
+      "subtitle": "Explore the inference workflows.",
+      "assets": [
+        "closing_brand"
+      ],
+      "labels": [
+        "github.com/nebius/nebius-physical-ai"
+      ],
+      "narration": "Explore physical A I inference with Nebius and NVIDIA. Start with a world. Ask better questions. Build on the evidence."
+    }
+  ]
+}

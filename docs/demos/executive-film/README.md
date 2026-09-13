@@ -11,6 +11,44 @@ original music mix, player-selectable SRT captions, a poster, and a hash manifes
 Duration, audience and narrative are project choices. The included
 [60-second technical walkthrough](storyboard-technical.json) uses the same
 renderer and a subset of the same assets with a different script and scene order.
+The [120-second inference film](storyboard-inference.json) tells a third story:
+why Physical AI needs world-model generation and vision-language evaluation,
+from the perspective of Nebius infrastructure and NVIDIA Cosmos.
+
+## Inference film evidence
+
+The inference storyboard uses an archived Cosmos 3 Nano continuation, its actual
+source-derived edge controls and controlled variation, plus a separately
+verified Cosmos 3 Super generation. Its evaluation chapter uses eight original
+robot-rollout frames and an archived Token Factory report. It does not depict
+those world-model clips as having been evaluated by that separate robot run.
+
+The recorded report attributes its request to `nvidia/Cosmos3-Super-Reasoner`.
+It retains critiques and request receipts but no raw provider response envelope
+or returned-model identity. The film therefore says **requested model** and
+**recorded evaluation**. The public Token Factory catalog lacked that model and
+an exact-model request returned HTTP 404 during production on 13 September 2026.
+This is an archival demonstration, not a claim that the public endpoint currently
+serves the model. Recheck exact-model access before creating a new evaluation;
+do not silently substitute another model or present a saved report as a new call.
+
+To adapt this story, supply the following roles through the private asset manifest.
+Keep source hashes, original reports and derivation instructions with the project:
+
+| Roles | Evidence required |
+| --- | --- |
+| `super_kitchen`, `nano_world`, `nano_variation` | Actual generated videos and their matching successful run manifests. |
+| `nano_chunk_one`, `nano_chunk_two` | Consecutive generation requests with the later request's input linked to the earlier output. |
+| `nano_edges` | Actual preprocessing controls derived from the same generated source. |
+| `vlm_inputs_grid`, `vlm_inputs_sequence` | Original selected evaluation frames, source timestamps and presentation timing; these are editorial compositions. |
+| `vlm_result` | An editorial card containing the report's exact score, threshold and success fields. |
+| `closing_brand` | A composition using original official Nebius and NVIDIA logo artwork, with source URLs, hashes and transformations. |
+
+The original [Nebius media kit](https://nebius.com/media-kit) and
+[NVIDIA newsroom logos](https://nvidianews.nvidia.com/multimedia/corporate/nvidia-logos)
+provide the brand sources. Runtime footage, camera imagery, report receipts and
+the composed media stay in the private project. Model assessments are not
+independent physical ground truth; generation success is not task success.
 
 ## What drives the narrative
 
