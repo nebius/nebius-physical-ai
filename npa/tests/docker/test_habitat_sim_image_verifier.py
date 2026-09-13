@@ -223,6 +223,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
     source_files = {
         "LICENSE": b"source-license",
         "data/default.physics_config.json": b"{}\n",
+        "data/pbr/PbrImages.conf": b"pbr fixture\n",
     }
     projection = {
         "schema_version": "npa.habitat-sim.source-projection.v1",
@@ -261,6 +262,9 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         for path, payload in controls.items()
         if not path.endswith("source-projection.json")
     }
+    contract["required_final_file_sha256"][
+        "/usr/src/habitat-sim/data/pbr/PbrImages.conf"
+    ] = _digest(source_files["data/pbr/PbrImages.conf"])
     entries = [file(path, payload) for path, payload in controls.items()]
     entries.extend(
         file("usr/src/habitat-sim/" + path, payload)
@@ -357,7 +361,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 22
+    assert report["regular_files_read"] == 23
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
@@ -373,7 +377,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
         "copyright_path": "usr/share/doc/python3/copyright",
         "copyright_sha256": _digest(b"python license\n"),
     }
-    assert report["projected_source_file_count"] == 2
+    assert report["projected_source_file_count"] == 3
     assert report["python_distribution_count"] == 4
     assert report["python_record_files_verified"] == 1
     assert len(report["python_venv_inventory"]) == 9
@@ -783,6 +787,31 @@ def test_source_projection_rejects_undeclared_links(tmp_path) -> None:
     )
 
 
+def test_source_projection_refuses_missing_or_changed_pbr_configuration(
+    tmp_path,
+) -> None:
+    target = "usr/src/habitat-sim/data/pbr/PbrImages.conf"
+    omitted = tmp_path / "omitted"
+    omitted.mkdir()
+    without_pbr = [row for row in _required_entries() if row[0] != target]
+    assert {
+        "required_path_missing",
+        "required_file_hash_mismatch",
+        "source_projection_file_mismatch",
+        "source_projection_population_mismatch",
+    } <= _codes(_verify(omitted, [without_pbr]))
+
+    changed = tmp_path / "changed"
+    changed.mkdir()
+    changed_pbr = _required_entries()
+    index = next(i for i, row in enumerate(changed_pbr) if row[0] == target)
+    changed_pbr[index] = file(target, b"changed pbr fixture\n")
+    assert {
+        "required_file_hash_mismatch",
+        "source_projection_file_mismatch",
+    } <= _codes(_verify(changed, [changed_pbr]))
+
+
 def test_every_layer_rejects_scene_paths_and_known_payload_hashes(tmp_path) -> None:
     contract = _fixture()[0]
     contract["forbidden_content_sha256"].append(_digest(b"scene payload"))
@@ -906,6 +935,12 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         "/usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": PACKAGE
         / "REDISTRIBUTION.md",
     }
+    projected_source = {
+        f"/usr/src/habitat-sim/{row['path']}": row["sha256"]
+        for row in json.loads((PACKAGE / "source-manifest.json").read_text())["source"][
+            "required_projection_files"
+        ]
+    }
     source_artifacts = {
         f"/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync/{row['filename']}": row[
             "sha256"
@@ -914,10 +949,14 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
             "corresponding_sources"
         ][0]["artifacts"]
     }
-    assert set(expected) == set(repository_mappings) | set(source_artifacts)
+    assert set(expected) == (
+        set(repository_mappings) | set(projected_source) | set(source_artifacts)
+    )
     for image_path, source_path in repository_mappings.items():
         assert expected[image_path] == _digest(source_path.read_bytes())
     for image_path, digest in source_artifacts.items():
+        assert expected[image_path] == digest
+    for image_path, digest in projected_source.items():
         assert expected[image_path] == digest
 
 

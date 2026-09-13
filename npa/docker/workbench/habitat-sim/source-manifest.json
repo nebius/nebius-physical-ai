@@ -1,8 +1,8 @@
 {
   "schema_version": "npa.habitat-sim.source-manifest.v1",
   "expected_projection": {
-    "file_count": 8134,
-    "inventory_sha256": "67ebb18e937adae735d9fe429f5fa33760934c6602f8ba4ce560a4f55d97bc5d"
+    "file_count": 8135,
+    "inventory_sha256": "ea722cdf72a64b0d4cc0b329007dd5a17daabb7565605c07d9550b715ebd0501"
   },
   "source": {
     "repository": "https://github.com/facebookresearch/habitat-sim",
@@ -14,10 +14,17 @@
     "license_path": "LICENSE",
     "license_bytes": 1092,
     "license_sha256": "2d4c3d00d67067461412a2d9a2f3f8b7b9cda62b3db501e4b6844ccf35c949aa",
-  "final_projection": [
-    "LICENSE",
-    "MANIFEST.in",
-    "README.md",
+    "required_projection_files": [
+      {
+        "path": "data/pbr/PbrImages.conf",
+        "bytes": 327,
+        "sha256": "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
+      }
+    ],
+    "final_projection": [
+      "LICENSE",
+      "MANIFEST.in",
+      "README.md",
       "pyproject.toml",
       "setup.py",
       "src/CMakeLists.txt",
@@ -27,7 +34,8 @@
       "src/shaders",
       "src/utils",
       "src_python",
-      "data/default.physics_config.json"
+      "data/default.physics_config.json",
+      "data/pbr/PbrImages.conf"
     ]
   },
   "dependencies": [

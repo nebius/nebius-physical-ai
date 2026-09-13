@@ -9,6 +9,7 @@
     "/var/lib/dpkg/status",
     "/usr/src/habitat-sim/LICENSE",
     "/usr/src/habitat-sim/data/default.physics_config.json",
+    "/usr/src/habitat-sim/data/pbr/PbrImages.conf",
     "/usr/share/doc/npa-habitat-sim/source-manifest.json",
     "/usr/share/doc/npa-habitat-sim/source-projection.json",
     "/usr/share/doc/npa-habitat-sim/licenses.json",
@@ -19,7 +20,8 @@
   ],
   "required_final_file_sha256": {
     "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "1b1d7af997f35ba1ff2f4db39507ff11ac4306b6fcfc74a32385c9fde8bc5120",
-    "/usr/share/doc/npa-habitat-sim/source-manifest.json": "6ebe5dc3075233d5ae18c4880d739dc77887ac6f2176e84d3d7dcc341ade1fc3",
+    "/usr/src/habitat-sim/data/pbr/PbrImages.conf": "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce",
+    "/usr/share/doc/npa-habitat-sim/source-manifest.json": "8440ba052a38244b369476e39915f8a0f333831d0c1f845e4198b19b72bab282",
     "/usr/share/doc/npa-habitat-sim/licenses.json": "62c01e3e099466a5523f4b6e829334343c17e8d40429c71e5d8cb38eff6df211",
     "/usr/share/doc/npa-habitat-sim/apt-build.lock": "c88925cf63d383581266c0ed7a16f71890f5404cc66d8c7f556c8d0914d788c4",
     "/usr/share/doc/npa-habitat-sim/apt-runtime.lock": "4bb99869a74cf5cedf359d173b72e5c0ec2dea6530b7191af136844dd651fcb7",

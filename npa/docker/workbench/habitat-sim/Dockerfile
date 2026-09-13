@@ -175,11 +175,12 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
     /opt/runtime-venv/bin/pip check && \
     find /opt/runtime-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -delete && \
     ! find /opt/runtime-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -print -quit | grep -q . && \
-    mkdir -p /opt/source-projection/data /opt/source-projection/src && \
+    mkdir -p /opt/source-projection/data/pbr /opt/source-projection/src && \
     cp /opt/habitat-sim/LICENSE /opt/habitat-sim/MANIFEST.in \
        /opt/habitat-sim/README.md /opt/habitat-sim/pyproject.toml \
        /opt/habitat-sim/setup.py /opt/source-projection/ && \
     cp /opt/habitat-sim/data/default.physics_config.json /opt/source-projection/data/ && \
+    cp /opt/habitat-sim/data/pbr/PbrImages.conf /opt/source-projection/data/pbr/ && \
     cp -a /opt/habitat-sim/src/CMakeLists.txt /opt/habitat-sim/src/cmake \
        /opt/habitat-sim/src/esp /opt/habitat-sim/src/shaders \
        /opt/habitat-sim/src/utils \

@@ -21,6 +21,26 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 PREPARER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREPARER)
+PBR_CONFIG = b"""group = pbr-images
+
+[file]
+filename = bluts/brdflut_ldr_512x512.png
+
+[file]
+filename = env_maps/anniversary_lounge_1k.hdr
+
+[file]
+filename = env_maps/autoshop_01_1k.hdr
+
+[file]
+filename = env_maps/brown_photostudio_02_1k.hdr
+
+[file]
+filename = env_maps/lythwood_room_1k.hdr
+
+[file]
+filename = env_maps/blue_photo_studio_1k.hdr
+"""
 
 
 def _archive(path: Path, entries: list[tuple[str, bytes, bytes, str]]) -> None:
@@ -45,11 +65,67 @@ def test_source_manifest_pins_every_official_archive_and_projection() -> None:
         assert len(row["archive_sha256"]) == 64
         assert row["license"] and len(row["license_sha256"]) == 64
     assert MANIFEST["expected_projection"] == {
-        "file_count": 8134,
+        "file_count": 8135,
         "inventory_sha256": (
-            "67ebb18e937adae735d9fe429f5fa33760934c6602f8ba4ce560a4f55d97bc5d"
+            "ea722cdf72a64b0d4cc0b329007dd5a17daabb7565605c07d9550b715ebd0501"
         ),
     }
+
+
+def test_required_pbr_configuration_is_bound_to_the_official_source() -> None:
+    assert len(PBR_CONFIG) == 327
+    assert hashlib.sha256(PBR_CONFIG).hexdigest() == (
+        "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
+    )
+    assert MANIFEST["source"]["required_projection_files"] == [
+        {
+            "path": "data/pbr/PbrImages.conf",
+            "bytes": 327,
+            "sha256": (
+                "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce"
+            ),
+        }
+    ]
+
+
+def test_required_pbr_configuration_refuses_omission_or_wrong_content(
+    tmp_path: Path,
+) -> None:
+    required = MANIFEST["source"]["required_projection_files"]
+    root = tmp_path / "source"
+    root.mkdir()
+    with pytest.raises(PREPARER.SourceError, match="PbrImages.conf"):
+        PREPARER._verify_required_source_files(root, required)
+
+    config = root / "data/pbr/PbrImages.conf"
+    config.parent.mkdir(parents=True)
+    config.write_bytes(b"x" * len(PBR_CONFIG))
+    with pytest.raises(PREPARER.SourceError, match="PbrImages.conf"):
+        PREPARER._verify_required_source_files(root, required)
+
+    config.write_bytes(PBR_CONFIG)
+    PREPARER._verify_required_source_files(root, required)
+
+
+def test_parent_projection_keeps_only_required_pbr_configuration(tmp_path: Path) -> None:
+    root = tmp_path / "source"
+    for name in ("LICENSE", "MANIFEST.in", "README.md", "pyproject.toml", "setup.py"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(b"fixture")
+    for name in ("src/deps/basis-universal/transcoder", "src_python"):
+        (root / name).mkdir(parents=True)
+    data = root / "data"
+    (data / "pbr/env_maps").mkdir(parents=True)
+    (data / "default.physics_config.json").write_bytes(b"{}")
+    (data / "pbr/PbrImages.conf").write_bytes(PBR_CONFIG)
+    (data / "pbr/env_maps/forbidden.hdr").write_bytes(b"not projected")
+    (data / "scene_datasets").mkdir()
+
+    PREPARER._prune_parent(root)
+
+    assert (data / "pbr/PbrImages.conf").read_bytes() == PBR_CONFIG
+    assert not (data / "pbr/env_maps").exists()
+    assert not (data / "scene_datasets").exists()
 
 
 def test_openexr_imath_fetchcontent_source_is_exact_and_projected() -> None:
@@ -189,6 +265,7 @@ def test_final_source_projection_preserves_the_manifest_directory_layout() -> No
         "pyproject.toml",
         "setup.py",
         "data/default.physics_config.json",
+        "data/pbr/PbrImages.conf",
         "src/CMakeLists.txt",
         "src/cmake",
         "src/deps",
@@ -197,3 +274,8 @@ def test_final_source_projection_preserves_the_manifest_directory_layout() -> No
         "src/utils",
         "src_python",
     }
+    assert "mkdir -p /opt/source-projection/data/pbr" in dockerfile
+    assert (
+        "cp /opt/habitat-sim/data/pbr/PbrImages.conf "
+        "/opt/source-projection/data/pbr/"
+    ) in dockerfile
