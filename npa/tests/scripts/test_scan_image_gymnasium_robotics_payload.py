@@ -5,12 +5,15 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import stat
 import struct
 import sys
 import tarfile
+import tempfile
+from typing import Iterator
 import zipfile
 
 import pytest
@@ -40,6 +43,18 @@ assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
 sys.modules[BOOTSTRAP_SPEC.name] = BOOTSTRAP
 BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Keep scanner inputs beneath one non-replaceable owner directory chain."""
+
+    trusted_tmp = ROOT.parent / "test-tmp"
+    trusted_tmp.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(trusted_tmp.lstat().st_mode) != 0o700:
+        pytest.fail("shared child test directory is not mode 0700")
+    with tempfile.TemporaryDirectory(prefix="payload-scan-", dir=trusted_tmp) as raw:
+        yield Path(raw)
 
 
 class _UnseekableBytesIO(io.BytesIO):
@@ -232,6 +247,96 @@ def _docker_save(
     return hashlib.sha256(config).hexdigest(), diff_ids
 
 
+def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
+    stream = io.BytesIO()
+    with gzip.GzipFile(filename=filename, mode="wb", fileobj=stream, mtime=0) as archive:
+        archive.write(content)
+    return stream.getvalue()
+
+
+def _oci_descriptor(content: bytes, media_type: str) -> dict[str, object]:
+    return {
+        "mediaType": media_type,
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+    }
+
+
+def _oci_layout(
+    path: Path,
+    files: dict[str, bytes],
+    *,
+    layer_filename: str = "",
+    layer_suffix: bytes = b"",
+    layer_digest: str | None = None,
+    layer_size_delta: int = 0,
+    layer_media_type: str = "application/vnd.oci.image.layer.v1.tar+gzip",
+    configured_diff_ids: list[str] | None = None,
+) -> tuple[str, list[str], list[dict[str, object]]]:
+    raw_layers = [
+        _tar_bytes({"etc/neutral-base": b"base"}),
+        _tar_bytes(files),
+    ]
+    compressed = [
+        _gzip_layer(raw_layers[0]),
+        _gzip_layer(raw_layers[1], filename=layer_filename) + layer_suffix,
+    ]
+    descriptors = [
+        _oci_descriptor(content, layer_media_type) for content in compressed
+    ]
+    if layer_digest is not None:
+        descriptors[1]["digest"] = layer_digest
+    if layer_size_delta:
+        descriptors[1]["size"] = len(compressed[1]) + layer_size_delta
+    diff_ids = ["sha256:" + hashlib.sha256(raw).hexdigest() for raw in raw_layers]
+    config = json.dumps(
+        {
+            "config": {"User": "ubuntu", "Env": []},
+            "rootfs": {
+                "type": "layers",
+                "diff_ids": configured_diff_ids or diff_ids,
+            },
+            "history": [{"created_by": "base"}, {"created_by": "neutral"}],
+        },
+        separators=(",", ":"),
+    ).encode()
+    config_descriptor = _oci_descriptor(
+        config, "application/vnd.oci.image.config.v1+json"
+    )
+    manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": descriptors,
+        },
+        separators=(",", ":"),
+    ).encode()
+    manifest_descriptor = _oci_descriptor(
+        manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    manifest_descriptor["platform"] = {"architecture": "amd64", "os": "linux"}
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
+        separators=(",", ":"),
+    ).encode()
+    blobs = {config_descriptor["digest"]: config, manifest_descriptor["digest"]: manifest}
+    blobs.update(
+        (descriptor["digest"], content)
+        for descriptor, content in zip(descriptors, compressed, strict=True)
+    )
+    archive_files = {
+        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+        "index.json": index,
+        **{
+            f"blobs/sha256/{str(digest).removeprefix('sha256:')}": content
+            for digest, content in blobs.items()
+        },
+    }
+    path.write_bytes(_tar_bytes(archive_files))
+    return hashlib.sha256(config).hexdigest(), diff_ids, descriptors
+
+
 def _scan_directory_case(kind: str, body: bytes, tmp_path: Path) -> object:
     if kind == "zip":
         nested = _zip_with_member("neutral/", content=body)
@@ -270,6 +375,119 @@ def test_structural_scan_covers_every_layer_and_rootfs_byte(
     assert result["release_authorized"] is False
 
 
+def test_oci_layout_binds_compressed_descriptors_and_uncompressed_diff_ids(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "image-oci.tar"
+    config_digest, diff_ids, descriptors = _oci_layout(image, _required())
+
+    result = SCAN.scan_oci_layout(image)
+
+    assert result["status"] == "passed"
+    assert result["archive_format"] == "oci-layout"
+    assert result["config_sha256"] == config_digest
+    assert result["ordered_layer_diff_ids"] == diff_ids
+    assert result["ordered_layer_descriptors"] == descriptors
+    assert result["distributed_blob_scan_complete"] is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"layer_digest": "sha256:" + "0" * 64}, "does not bind its blob"),
+        ({"layer_size_delta": 1}, "does not bind its blob"),
+        ({"layer_media_type": "application/octet-stream"}, "unsupported OCI runtime"),
+        (
+            {"configured_diff_ids": ["sha256:" + "0" * 64]},
+            "diff IDs do not match",
+        ),
+    ],
+)
+def test_oci_layout_refuses_descriptor_or_diff_id_drift(
+    tmp_path: Path,
+    structural_scan: None,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    image = tmp_path / "drifted-oci.tar"
+    _oci_layout(image, _required(), **kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        SCAN.scan_oci_layout(image)
+
+
+def test_oci_layout_refuses_trailing_compressed_stream(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "ambiguous-oci.tar"
+    _oci_layout(image, _required(), layer_suffix=gzip.compress(b"second", mtime=0))
+
+    with pytest.raises(ValueError, match="ambiguous compressed stream"):
+        SCAN.scan_oci_layout(image)
+
+
+def test_oci_layout_scans_raw_gzip_header_without_echo(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    marker = "password" + "=" + ("x" * 16)
+    image = tmp_path / "header-secret-oci.tar"
+    _oci_layout(image, _required(), layer_filename=marker)
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN.scan_oci_layout(image)
+    assert marker not in str(captured.value)
+
+
+def test_container_archive_symlink_is_refused(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    target = tmp_path / "target.tar"
+    _docker_save(target, _required())
+    linked = tmp_path / "linked.tar"
+    linked.symlink_to(target)
+
+    with pytest.raises(ValueError, match="unsafe or unavailable"):
+        SCAN.scan(linked)
+
+
+def test_container_archive_untrusted_parent_is_refused(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir(mode=0o700)
+    image = unsafe / "image.tar"
+    _docker_save(image, _required())
+    unsafe.chmod(0o777)
+
+    with pytest.raises(ValueError, match="unsafe or unavailable"):
+        SCAN.scan(image)
+
+
+def test_container_archive_inode_swap_is_refused(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "image.tar"
+    replacement = tmp_path / "replacement.tar"
+    displaced = tmp_path / "displaced.tar"
+    _docker_save(image, _required())
+    _docker_save(replacement, _required())
+    original = SCAN._open_archive_at_parent
+
+    def swap_after_open(
+        path: Path, parent_identity: tuple[int, ...]
+    ) -> tuple[int, int, os.stat_result]:
+        opened = original(path, parent_identity)
+        image.rename(displaced)
+        replacement.rename(image)
+        return opened
+
+    monkeypatch.setattr(SCAN, "_open_archive_at_parent", swap_after_open)
+    with pytest.raises(ValueError, match="changed while being read"):
+        SCAN.scan(image)
+
+
 def test_docker_save_archive_limit_accepts_exact_boundary(
     tmp_path: Path, structural_scan: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -293,7 +511,7 @@ def test_docker_save_archive_limit_refuses_before_open(
         raise AssertionError("oversized Docker-save must be refused before open")
 
     monkeypatch.setattr(Path, "open", forbidden_open)
-    with pytest.raises(ValueError, match="Docker-save archive exceeds scan bound"):
+    with pytest.raises(ValueError, match="container archive exceeds scan bound"):
         SCAN.scan(image)
 
 
@@ -697,6 +915,17 @@ def test_nested_upstream_path_refuses(
     _docker_save(image, {**_required(), name: nested})
     with pytest.raises(ValueError, match="forbidden nested archive member"):
         SCAN.scan(image)
+
+
+@pytest.mark.parametrize("kind", ["zip", "tar"])
+def test_duplicate_normalized_nested_archive_member_refuses(kind: str) -> None:
+    if kind == "zip":
+        nested = _zip_with_files({"neutral.txt": b"one", "./neutral.txt": b"two"})
+    else:
+        nested = _tar_bytes({"neutral.txt": b"one", "./neutral.txt": b"two"})
+
+    with pytest.raises(ValueError, match="duplicate normalized nested"):
+        SCAN._nested_archive_members(f"nested.{kind}", nested)
 
 
 @pytest.mark.parametrize("kind", ["zip", "nested-tar", "layer", "outer"])

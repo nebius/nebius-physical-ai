@@ -83,6 +83,7 @@ class RuntimeLock:
     raw: bytes
     digest: str
     artifacts: tuple[Artifact, ...]
+    requirements_raw: bytes
     requirements_sha256: str
 
 
@@ -93,6 +94,47 @@ def _refuse(message: str) -> NoReturn:
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _read_trusted_input(path: Path, *, label: str) -> bytes:
+    """Read one stable trusted input through a no-follow descriptor."""
+
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"{label} is unsafe or unavailable: {error}")
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size)
+        expected = (before.st_dev, before.st_ino, before.st_mode, before.st_size)
+        if (
+            identity != expected
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid not in {0, os.geteuid()}
+            or stat.S_IMODE(opened.st_mode) & 0o022
+        ):
+            _refuse(f"{label} is not a trusted stable regular file")
+        content = stream.read()
+        after_descriptor = os.fstat(stream.fileno())
+    try:
+        after = path.lstat()
+    except OSError as error:
+        _refuse(f"{label} changed while being read: {error}")
+    final_identity = (
+        after_descriptor.st_dev,
+        after_descriptor.st_ino,
+        after_descriptor.st_mode,
+        after_descriptor.st_size,
+    )
+    path_identity = (after.st_dev, after.st_ino, after.st_mode, after.st_size)
+    if (
+        identity != final_identity
+        or identity != path_identity
+        or len(content) != opened.st_size
+    ):
+        _refuse(f"{label} changed while being read")
+    return content
 
 
 def _safe_url(value: object, *, field: str) -> str:
@@ -186,9 +228,9 @@ def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
     """Validate every trust field before any caller can fetch an artifact."""
 
     try:
-        raw = manifest.read_bytes()
+        raw = _read_trusted_input(manifest, label="runtime lock")
         payload = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as error:
+    except json.JSONDecodeError as error:
         _refuse(f"runtime lock is unavailable or malformed: {error}")
     if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
         _refuse("runtime lock schema is unsupported")
@@ -214,10 +256,13 @@ def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
     ):
         _refuse("runtime lock has no exact requirements digest")
     try:
-        if _sha256(requirements) != requirements_sha256:
+        requirements_raw = _read_trusted_input(
+            requirements, label="runtime requirements lock"
+        )
+        if hashlib.sha256(requirements_raw).hexdigest() != requirements_sha256:
             _refuse("runtime requirements lock bytes changed")
-        requirements_text = requirements.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
+        requirements_text = requirements_raw.decode("utf-8")
+    except UnicodeDecodeError as error:
         _refuse(f"runtime requirements lock is unavailable: {error}")
     if (
         "# status: complete" not in requirements_text
@@ -323,6 +368,7 @@ def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
         raw=raw,
         digest=hashlib.sha256(raw).hexdigest(),
         artifacts=tuple(artifacts),
+        requirements_raw=requirements_raw,
         requirements_sha256=requirements_sha256,
     )
 
@@ -634,6 +680,27 @@ def _write_control(path: Path, content: bytes) -> None:
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
             _refuse("runtime cache control file is not operator-owned")
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+        os.fchmod(stream.fileno(), 0o400)
+
+
+def _write_new_control(path: Path, content: bytes) -> None:
+    """Create one sealed staging control file from already validated bytes."""
+
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o400,
+        )
+    except OSError as error:
+        _refuse(f"runtime staging control file cannot be created safely: {error}")
+    with os.fdopen(descriptor, "wb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _refuse("runtime staging control file is not operator-owned")
         stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
@@ -978,8 +1045,14 @@ def prepare(
                         )
                         os.replace(fetched, wheelhouse / artifact.filename)
                 locked_requirements = stage / "requirements.lock"
-                shutil.copyfile(requirements, locked_requirements)
-                locked_requirements.chmod(0o400)
+                _write_new_control(
+                    locked_requirements, runtime_lock.requirements_raw
+                )
+                if (
+                    hashlib.sha256(_read_owned_control(locked_requirements)).hexdigest()
+                    != runtime_lock.requirements_sha256
+                ):
+                    _refuse("staged runtime requirements digest changed")
                 installer(stage, locked_requirements)
                 python = stage / "runtime/bin/python"
                 if not python.is_file() or not os.access(python, os.X_OK):

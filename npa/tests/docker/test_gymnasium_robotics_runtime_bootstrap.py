@@ -243,6 +243,81 @@ def test_verified_runtime_is_atomically_published_and_reused(tmp_path: Path) -> 
     assert second_calls == []
 
 
+def test_installer_receives_the_once_read_exact_requirements_bytes(
+    tmp_path: Path,
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    expected = requirements.read_bytes()
+
+    def exact_installer(stage: Path, staged_requirements: Path) -> None:
+        assert staged_requirements.read_bytes() == expected
+        assert stat.S_IMODE(staged_requirements.stat().st_mode) == 0o400
+        _installer(stage, staged_requirements)
+
+    BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        tmp_path / "cache",
+        opener=_opener(content, []),
+        installer=exact_installer,
+    )
+
+
+def test_requirements_path_replacement_refuses_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    original_open = BOOTSTRAP.os.open
+    displaced = tmp_path / "requirements.displaced"
+    swapped = False
+
+    def replacing_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if Path(path) == requirements and not swapped:
+            swapped = True
+            requirements.rename(displaced)
+            requirements.write_bytes(displaced.read_bytes())
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(BOOTSTRAP.os, "open", replacing_open)
+    calls: list[str] = []
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="trusted stable"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            tmp_path / "cache",
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert calls == []
+    assert not (tmp_path / "cache").exists()
+
+
+def test_symlinked_requirements_refuses_before_fetch(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    target = tmp_path / "requirements.target"
+    requirements.rename(target)
+    requirements.symlink_to(target)
+    calls: list[str] = []
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="unsafe or unavailable"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            tmp_path / "cache",
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert calls == []
+    assert not (tmp_path / "cache").exists()
+
+
 @pytest.mark.parametrize("mutation", ["content", "extra", "symlink", "receipt"])
 def test_cache_reuse_refuses_any_unsealed_or_unmanifested_tree(
     tmp_path: Path, mutation: str
