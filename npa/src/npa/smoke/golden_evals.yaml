@@ -44,7 +44,7 @@ containers:
         RoboTwin bimanual data-collection workflow.
     safety:
       runs_as: ubuntu
-      base_image: unresolved Ubuntu 22.04 linux/amd64 digest (Phase A)
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
       network: none during refusal check
       external_fetch: []
       notes: >-

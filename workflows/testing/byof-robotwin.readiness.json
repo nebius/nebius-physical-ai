@@ -36,7 +36,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The public bootstrap is versioned -unbuilt and publication-quarantined. Its Ubuntu base/apt/runtime locks are intentionally incomplete, so no build, pull, scan, SBOM, provenance, or anonymous-pull claim exists.",
+      "reason": "The public bootstrap is versioned -unbuilt and publication-quarantined. Its Ubuntu base and public APT closure are immutable, but runtime delivery and its artifact lock remain disabled and the native-content policy remains incomplete, so no build, pull, scan, SBOM, provenance, or anonymous-pull claim exists.",
       "evidence": []
     },
     "target_runtime": {
