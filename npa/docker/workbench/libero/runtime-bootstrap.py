@@ -1748,7 +1748,9 @@ def _parse_utc(value: object, label: str) -> datetime:
     return parsed
 
 
-def _storage_authorization(output_prefix: str, run_id: str) -> dict[str, Any]:
+def _storage_authorization(
+    output_prefix: str, run_id: str, endpoint: str
+) -> dict[str, Any]:
     encoded = os.environ.get("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", "").strip()
     expected = os.environ.get(
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256", ""
@@ -1768,6 +1770,7 @@ def _storage_authorization(output_prefix: str, run_id: str) -> dict[str, Any]:
         "issuer",
         "run_id",
         "output_prefix",
+        "endpoint_url",
         "access_key_id_sha256",
         "secret_access_key_sha256",
         "session_token_sha256",
@@ -1786,10 +1789,11 @@ def _storage_authorization(output_prefix: str, run_id: str) -> dict[str, Any]:
     expires_at = _parse_utc(authorization.get("expires_at"), "authorization expires_at")
     now = datetime.now(timezone.utc)
     valid = (
-        authorization.get("schema") == "npa.libero.output-storage-authorization.v1"
+        authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
         and authorization.get("issuer") == "npa-manager"
         and authorization.get("run_id") == run_id
         and authorization.get("output_prefix") == output_prefix
+        and authorization.get("endpoint_url") == endpoint
         and prefix_sha256
         == os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256", "")
         and authorization.get("policy_sha256")
@@ -1948,7 +1952,6 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
     parsed = urllib.parse.urlsplit(output_prefix)
     if parsed.scheme != "s3" or not parsed.netloc:
         raise BootstrapRefusal("output prefix must be an S3 URI")
-    _storage_authorization(output_prefix, run_id)
     endpoint = (
         os.environ.get("AWS_ENDPOINT_URL")
         or os.environ.get("NEBIUS_S3_ENDPOINT")
@@ -1957,6 +1960,7 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
     endpoint_parts = urllib.parse.urlsplit(endpoint)
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
+    _storage_authorization(output_prefix, run_id, endpoint)
     root = Path(f"/workspace/byof-runs/{run_id}")
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     summary = {

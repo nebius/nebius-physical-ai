@@ -26,8 +26,9 @@ dependencies = [
     "click>=8.3.3",
     "httpx>=0.27",
     "paramiko>=5.0",
-    # Directly verifies externally manager-signed LIBERO acceptance records.
-    "cryptography>=50.0",
+    # Directly verifies externally manager-signed LIBERO acceptance records;
+    # keep the operator/runtime verifier version aligned with CI.
+    "cryptography==50.0.0",
     "bcrypt>=5.0",
     "pyyaml>=6.0",
     "rich>=13.0",

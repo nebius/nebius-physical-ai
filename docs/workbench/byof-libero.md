@@ -178,8 +178,9 @@ SDK call. The SDK snapshots the profile once for parsing and hashing, then
 requires the final serialized task bytes to retain that digest before any
 controller or job operation.
 The storage authorization is hash-bound by the checked-in infrastructure bundle,
-binds the exact run prefix and policy receipt, and requires short-lived session
-credentials. Storage secrets are removed from the fetched-code subprocess; only
+binds the exact run prefix and origin-only HTTPS storage endpoint plus the policy
+receipt, and requires short-lived session credentials. Storage secrets are
+removed from the fetched-code subprocess; only
 the image-owned standard-library uploader receives them. Per-file and aggregate
 size budgets apply before reads, PUT is conditional, and GET must return the
 service checksum as well as identical bytes. S3 key segments are encoded

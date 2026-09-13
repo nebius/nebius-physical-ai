@@ -341,11 +341,13 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     secret_key = "fixture-temporary-secret"
     session_token = "fixture-temporary-session"
     policy_sha256 = "d" * 64
+    endpoint = "https://storage.fixture.invalid"
     storage_authorization = {
-        "schema": "npa.libero.output-storage-authorization.v1",
+        "schema": "npa.libero.output-storage-authorization.v2",
         "issuer": "npa-manager",
         "run_id": run_id,
         "output_prefix": output_prefix,
+        "endpoint_url": endpoint,
         "access_key_id_sha256": module.hashlib.sha256(access_key.encode()).hexdigest(),
         "secret_access_key_sha256": module.hashlib.sha256(secret_key.encode()).hexdigest(),
         "session_token_sha256": module.hashlib.sha256(session_token.encode()).hexdigest(),
@@ -440,7 +442,10 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             {"kubernetes": {"allowed_nodes": {"names": ["worker"]}}}
         ),
     }
-    expected_envs = {"S3_OUTPUT_PREFIX": output_prefix}
+    expected_envs = {
+        "S3_OUTPUT_PREFIX": output_prefix,
+        "AWS_ENDPOINT_URL": endpoint,
+    }
     expected_envs.update(
         {
             f"NPA_LIBERO_EXPECTED_{key.upper()}": value
@@ -524,7 +529,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     args = SimpleNamespace(
         solution_name="libero", direct_launch=False, cleanup=True, image=candidate
     )
-    documents = runtime_documents({"S3_OUTPUT_PREFIX": output_prefix})
+    documents = runtime_documents(
+        {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+    )
 
     binding = module._bind_libero_runtime_contract(
         args,
@@ -558,6 +565,33 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         )
     ]
 
+    with pytest.raises(ValueError, match="invalid or expired"):
+        module._bind_libero_runtime_contract(
+            args,
+            runtime_documents(
+                {
+                    "S3_OUTPUT_PREFIX": output_prefix,
+                    "AWS_ENDPOINT_URL": "https://other.invalid",
+                }
+            ),
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+            run_id=run_id,
+        )
+    with pytest.raises(ValueError, match="origin-only HTTPS"):
+        module._bind_libero_runtime_contract(
+            args,
+            runtime_documents(
+                {
+                    "S3_OUTPUT_PREFIX": output_prefix,
+                    "AWS_ENDPOINT_URL": endpoint + "/path?redirect=1",
+                }
+            ),
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+            run_id=run_id,
+        )
+
     mismatched_controller = {
         **controller_evidence,
         "external_rbac_inventory_sha256": "f" * 64,
@@ -570,7 +604,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="observe different external RBAC"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -594,7 +630,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="checked-in acceptance"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -616,7 +654,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         with pytest.raises(ValueError):
             module._bind_libero_runtime_contract(
                 args,
-                runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+                runtime_documents(
+                    {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+                ),
                 global_config={"kubernetes": {"allowed_nodes": allowed}},
                 infra="k8s/execution-context",
                 run_id=run_id,
@@ -627,7 +667,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="checked-in infrastructure differs"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -647,7 +689,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="different clusters"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -665,7 +709,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="exact run namespace"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,
@@ -683,7 +729,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     with pytest.raises(ValueError, match="explicitly separated"):
         module._bind_libero_runtime_contract(
             args,
-            runtime_documents({"S3_OUTPUT_PREFIX": output_prefix}),
+            runtime_documents(
+                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+            ),
             global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
             infra="k8s/execution-context",
             run_id=run_id,

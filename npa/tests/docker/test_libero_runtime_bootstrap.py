@@ -341,6 +341,7 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     module = _load_module()
     run_id = "libero-output-authorization"
     prefix = f"s3://fixture/byof/{run_id}/"
+    endpoint = "https://storage.fixture.invalid"
     credentials = {
         "AWS_ACCESS_KEY_ID": "temporary-access",
         "AWS_SECRET_ACCESS_KEY": "temporary-secret",
@@ -350,10 +351,11 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         monkeypatch.setenv(name, value)
     policy_sha256 = "a" * 64
     authorization = {
-        "schema": "npa.libero.output-storage-authorization.v1",
+        "schema": "npa.libero.output-storage-authorization.v2",
         "issuer": "npa-manager",
         "run_id": run_id,
         "output_prefix": prefix,
+        "endpoint_url": endpoint,
         "access_key_id_sha256": _sha(credentials["AWS_ACCESS_KEY_ID"].encode()),
         "secret_access_key_sha256": _sha(
             credentials["AWS_SECRET_ACCESS_KEY"].encode()
@@ -379,11 +381,14 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", policy_sha256
     )
 
-    assert module._storage_authorization(prefix, run_id) == authorization
+    assert module._storage_authorization(prefix, run_id, endpoint) == authorization
+
+    with pytest.raises(module.BootstrapRefusal, match="invalid or expired"):
+        module._storage_authorization(prefix, run_id, "https://other.invalid")
 
     monkeypatch.delenv("AWS_SESSION_TOKEN")
     with pytest.raises(module.BootstrapRefusal, match="invalid or expired"):
-        module._storage_authorization(prefix, run_id)
+        module._storage_authorization(prefix, run_id, endpoint)
 
 
 def test_sigv4_storage_request_uses_a_direct_tls_connection(

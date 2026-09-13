@@ -1455,6 +1455,25 @@ def _validate_libero_output_storage_authorization(
         "output_storage_prefix_sha256"
     ]:
         raise ValueError("LIBERO output prefix differs from checked-in acceptance")
+    endpoints = {
+        str((document.get("envs") or {}).get("AWS_ENDPOINT_URL") or "").rstrip("/")
+        for document in documents[1:]
+    }
+    if len(endpoints) != 1 or not next(iter(endpoints)):
+        raise ValueError("LIBERO requires one exact output storage endpoint")
+    endpoint = endpoints.pop()
+    parsed_endpoint = urlparse(endpoint)
+    if (
+        parsed_endpoint.scheme != "https"
+        or not parsed_endpoint.hostname
+        or parsed_endpoint.username is not None
+        or parsed_endpoint.password is not None
+        or parsed_endpoint.path not in {"", "/"}
+        or parsed_endpoint.params
+        or parsed_endpoint.query
+        or parsed_endpoint.fragment
+    ):
+        raise ValueError("LIBERO output storage endpoint must be an origin-only HTTPS URL")
     encoded = os.environ.get(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""
     ).strip()
@@ -1475,6 +1494,7 @@ def _validate_libero_output_storage_authorization(
         "issuer",
         "run_id",
         "output_prefix",
+        "endpoint_url",
         "access_key_id_sha256",
         "secret_access_key_sha256",
         "session_token_sha256",
@@ -1502,10 +1522,11 @@ def _validate_libero_output_storage_authorization(
         raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
     now = datetime.now(timezone.utc)
     valid = (
-        authorization.get("schema") == "npa.libero.output-storage-authorization.v1"
+        authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
         and authorization.get("issuer") == "npa-manager"
         and authorization.get("run_id") == run_id
         and authorization.get("output_prefix") == output_prefix
+        and authorization.get("endpoint_url") == endpoint
         and authorization.get("policy_sha256")
         == expected["output_storage_policy_sha256"]
         and all((access_key, secret_key, session_token))

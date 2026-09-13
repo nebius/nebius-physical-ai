@@ -145,7 +145,9 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
 
 def test_publication_uses_the_locked_cryptography_dependency() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
+    project = (ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
 
+    assert project.count('"cryptography==50.0.0"') == 1
     assert text.count(
         'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
     ) == 2
@@ -254,6 +256,30 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert prepush < push
     assert "Private destination contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    attestations = {
+        step["name"]: step
+        for step in steps
+        if step.get("name")
+        in {
+            "Attest exact pushed digest provenance",
+            "Attest exact pushed digest SBOM",
+            "Require both digest-bound attestation results",
+        }
+    }
+    assert set(attestations) == {
+        "Attest exact pushed digest provenance",
+        "Attest exact pushed digest SBOM",
+        "Require both digest-bound attestation results",
+    }
+    for step in attestations.values():
+        assert step["if"] == "matrix.tool != 'ncore' && matrix.tool != 'libero'"
+    assert attestations["Attest exact pushed digest provenance"]["with"][
+        "push-to-registry"
+    ] is True
+    assert attestations["Attest exact pushed digest SBOM"]["with"][
+        "push-to-registry"
+    ] is True
     verify = text[text.index("Verify pushed bytes") :]
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
