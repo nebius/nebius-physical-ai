@@ -15,6 +15,11 @@ import yaml
 
 from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.skypilot_render import (
+    NpaWorkflowRenderError,
+    SkypilotRenderOptions,
+    render_skypilot_yaml,
+)
 from npa.workflows import habitat_sim_smoke as H
 
 
@@ -86,6 +91,63 @@ def test_one_state_workflow_validates_plans_and_never_selects_b200() -> None:
     assert resource["image"] == "tool://habitat-sim"
     assert "B200" not in json.dumps(payload)
     assert "habitat-sim-smoke.json" in json.dumps(payload["states"])
+
+
+def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
+    spec = load_spec(WORKFLOW)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="habitat-placement"),
+        run_id="habitat-placement",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in rendered
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "B200:1",
+        "H100:1",
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2",
+        "RTXPRO6000:1",
+    ],
+)
+def test_renderer_refuses_non_exact_habitat_accelerator_overrides(
+    monkeypatch: pytest.MonkeyPatch, override: str
+) -> None:
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", override)
+    spec = load_spec(WORKFLOW)
+
+    with pytest.raises(
+        NpaWorkflowRenderError,
+        match="Habitat-Sim rendering requires exactly",
+    ):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="habitat-hostile-placement"),
+            run_id="habitat-hostile-placement",
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+
+
+def test_renderer_refuses_submit_time_habitat_accelerator_remap() -> None:
+    spec = load_spec(WORKFLOW)
+    declared = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+
+    with pytest.raises(
+        NpaWorkflowRenderError,
+        match="Habitat-Sim rendering requires exactly",
+    ):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="habitat-hostile-remap"),
+            run_id="habitat-hostile-remap",
+            options=SkypilotRenderOptions(
+                gpu_accelerator_overrides={declared: "B200:1"},
+                materialize_registry_secrets=False,
+            ),
+        )
 
 
 def test_readiness_binds_exact_workflow_and_records_unbuilt_blocker() -> None:
