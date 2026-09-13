@@ -151,6 +151,9 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
     _assert_pinned(steps[auth]["uses"], "docker/login-action")
+    assert steps[auth]["uses"] == (
+        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
+    )
     assert auth < build < push
 
 
