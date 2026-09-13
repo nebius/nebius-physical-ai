@@ -16,6 +16,7 @@ from npa.workflows.artifacts import (
     artifact_media_type,
     artifact_data_role,
     build_fiftyone_dataset,
+    build_s3_client,
     decode_run_ref,
     download_s3_uri,
     encode_run_ref,
@@ -36,6 +37,33 @@ from npa.workflows.artifacts import (
     resolve_run_artifacts,
     select_preferred_artifact,
 )
+
+
+def test_build_s3_client_applies_requested_transport_bounds() -> None:
+    client = build_s3_client(
+        endpoint_url="https://storage.example.test",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",
+        connect_timeout=3,
+        read_timeout=8,
+        retries={"total_max_attempts": 1, "mode": "standard"},
+    )
+
+    assert client.meta.config.connect_timeout == 3
+    assert client.meta.config.read_timeout == 8
+    assert client.meta.config.retries["total_max_attempts"] == 1
+
+
+@pytest.mark.parametrize("name", ["connect_timeout", "read_timeout"])
+def test_build_s3_client_rejects_non_positive_transport_bound(name: str) -> None:
+    kwargs = {name: 0}
+    with pytest.raises(ValueError, match=f"{name} must be positive"):
+        build_s3_client(
+            endpoint_url="https://storage.example.test",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",
+            **kwargs,
+        )
 
 
 def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
