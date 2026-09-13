@@ -369,8 +369,10 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "exactly the accepted untagged OCI graph" in text
     assert "tagged_count=" in text
     assert "public-image-${{ inputs.target" in text
-    assert "-registry-mutation\n" in text
-    assert "inputs.release_tag || inputs.development_sha" not in text
+    assert (
+        "(inputs.release_tag || inputs.development_sha) && "
+        "'registry-mutation' || 'registry-mutation'"
+    ) in text
     assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")
