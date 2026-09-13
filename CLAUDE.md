@@ -127,6 +127,11 @@ making architecture, review, or domain judgments.
  ecosystem and scaled-orchestration relationship is recorded in
  `skills/NOTICE-NVIDIA-PAIDF`; executable evaluator/curator boundaries are in
  `skills/NOTICE-NVIDIA-COSMOS-OSS`.
+- `skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md`: translate pinned
+ NVIDIA OSMO workflow definitions, or related authoritative Airflow DAGs, into
+ semantic `npa.workflow/v0.0.1` graphs while preserving real components, typed
+ handoffs, retry/failure behavior, evidence, licensing, and attribution without
+ claiming control-plane equivalence.
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
  reconstruction on Nebius — NCore V4 capture (including deriving the
  `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable

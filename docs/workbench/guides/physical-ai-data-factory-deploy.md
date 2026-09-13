@@ -15,7 +15,7 @@ the "how to stand it up".
 
 The blueprint is a single `npa.workflow/v0.0.1` spec, promoted to the top of the
 workflow tree for prominence:
-[`workflows/testing/physical-ai-data-factory.yaml`](../../../workflows/testing/physical-ai-data-factory.yaml).
+[`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`](../../../workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml).
 SkyPilot is the only orchestrator; there is no OSMO and no bespoke "data factory"
 tool — every stage is an existing workbench tool or a real `run.shell` step.
 
@@ -45,7 +45,7 @@ repository files.
 The Nebius CLI is already authenticated. Configure NPA, deploy and verify the NPA
 agent, provision one CPU node and one on-demand RTX PRO 6000 GPU node (use
 preemptible only if needed), then run
-`workflows/testing/physical-ai-data-factory.yaml`
+`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`
 end to end with its verified real RoboPro starter input and one augmentation.
 
 Tenant: <tenant-id>
@@ -85,7 +85,7 @@ python -m pip install -e npa
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
 
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
@@ -127,7 +127,7 @@ npa workbench workflow submit "$SPEC" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN
 
-MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+MANIFEST_URI="s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/npa-workflow/manifest.json"
 # Normal NPA-only status lookup:
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 # Explicit fallback if this shell cannot resolve the project storage location:
@@ -220,13 +220,13 @@ With no input selector, submit uses the verified real RoboPro starter described
 in the [PAIDF guide](physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement).
 It prints whether the checksum-verified cache was hit or fetched and stages the
 source plus its derived conditioning artifacts at
-`s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input/`.
+`s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/input/`.
 
 Not sure what is still missing? `submit` checks first and prints everything at
 once:
 
 ```text
-Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
+Error: Cannot submit nvidia-paidf-vda-cosmos-transfer25.yaml: missing prerequisites:
   - SkyPilot CLI is not usable (...)
       fix: run `npa skypilot bootstrap` ...
   - config.bucket is the spec placeholder 'example-bucket'
@@ -295,7 +295,7 @@ semantic-subject assertion.
 | `unsupported video container/codec` | replacement media is not a decodable H.264 MP4 | transcode as the message shows before submitting; validation occurs before automatic provisioning |
 | `manifest_state: pending` with `resolution_source: durable_submission_receipt`, `canonical_paidf_s3_prefix`, or `managed_job` | the exact run exists, but artifact publication has not produced its final workflow manifest yet | keep using the NPA status/log/artifact commands; do not resubmit merely to make the manifest appear |
 | A stage remains `PENDING` | the exact scheduler/pod/event reason may be accelerator/capacity, image pull, storage, init/crash, or backoff | run `npa workbench workflow status <run> --project <alias> --json`, then its stage `log_command`; if diagnostics are unavailable, fix the reported DNS/RBAC/controller cause rather than guessing |
-| `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
+| `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/nvidia-paidf-vda-cosmos-transfer25/<run>/npa-workflow` |
 | `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
 | cancel reports `NOT_SUBMITTED` | the owner-only durable ledger is still planned/reserved/staged and contains no workflow, stage, controller, or job launch identity | no provider dependency is required; the repeat-safe cancellation no-op exits 0 |
 | cancel reports `VERIFICATION_UNAVAILABLE` after local S3/SkyPilot removal | durable evidence says submission began, but no terminal receipt exists and the exact provider dependency is unavailable | restore the receipt-recorded provider context/dependency and retry; missing local tools are never treated as proof of absence |
@@ -318,7 +318,7 @@ to on-demand capacity.
 set -eu
 set -o pipefail
 CONTEXT=npa-cluster
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 
 npa configure
 # For prompt-free setup, export supported credential variables first and use:
@@ -637,7 +637,7 @@ used when you select it explicitly. Pick one path and preflight the same registr
 submit will use:
 
 ```bash
-npa workbench workflow preflight-images workflows/testing/physical-ai-data-factory.yaml \
+npa workbench workflow preflight-images workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml \
   --project "$PROJECT"
 ```
 
@@ -697,7 +697,7 @@ for ref in npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904 \
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
 
-npa workbench workflow preflight-images workflows/testing/physical-ai-data-factory.yaml \
+npa workbench workflow preflight-images workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml \
   --project "$PROJECT" --registry "$REGISTRY"
 ```
 
@@ -708,7 +708,7 @@ npa workbench workflow preflight-images workflows/testing/physical-ai-data-facto
 The blueprint lives at the promoted top-level path. Validate and plan first:
 
 ```bash
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec   "$SPEC" \
@@ -725,7 +725,7 @@ caption frames, and `provenance.json` under the canonical input prefix.
 ```bash
 BUCKET="<your-artifact-bucket>"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
-INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
+INPUT="s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/input"
 ```
 
 No extra flag is the production starter path. To replace it, add exactly one of:
@@ -1030,9 +1030,9 @@ Run real curation standalone against a completed run's augmented output:
 
 ```bash
 npa workbench fiftyone curate-augmented \
-  --augment-uri "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/cosmos_augmented/" \
-  --report-uri  "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/report.json" \
-  --curator-report-uri "s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/cosmos_curator.json" \
+  --augment-uri "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/cosmos_augmented/" \
+  --report-uri  "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/curation/report.json" \
+  --curator-report-uri "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/curation/cosmos_curator.json" \
   --require-fiftyone \
   --dedup-threshold 0.10
 ```
@@ -1053,7 +1053,7 @@ guide's curation section.
 
 The agent discovers runs from its artifact bucket. If the agent's base prefix is
 `checkpoints`, the run lands at
-`checkpoints/physical-ai-data-factory/<run-id>/`. Open `https://<public-ip>/`,
+`checkpoints/nvidia-paidf-vda-cosmos-transfer25/<run-id>/`. Open `https://<public-ip>/`,
 sign in, then:
 
 - **Main stages:** the run's stage graph (config → annotate → augment → grade →

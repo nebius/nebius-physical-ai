@@ -205,6 +205,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
         "paidf-cosmos3.yaml",
         "token-factory-gate-loop.yaml",
     }

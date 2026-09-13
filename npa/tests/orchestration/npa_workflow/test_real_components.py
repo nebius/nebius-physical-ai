@@ -1,4 +1,4 @@
-"""Enforce the real-components skill for the Physical AI Data Factory blueprint.
+"""Enforce real components in the NVIDIA-derived PAIDF VDA workflow.
 
 Fails if the blueprint uses a known-stub toolRef, if a run.shell stage isn't a
 real command/module call, or if the augment stage isn't the real Cosmos execute.
@@ -22,8 +22,8 @@ from npa.cli.agent_workflow import (
     generate_sim2real_staged_yaml,
 )
 
-BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
-assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
+BLUEPRINT = resolve_npa_workflow_spec("nvidia-paidf-vda-cosmos-transfer25.yaml")
+assert BLUEPRINT is not None, "NVIDIA-derived PAIDF VDA spec not found"
 
 NUREC_BLUEPRINT = resolve_npa_workflow_spec("nurec-reconstruct.yaml")
 assert NUREC_BLUEPRINT is not None, "nurec-reconstruct.yaml not found in any spec root"

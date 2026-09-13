@@ -18,14 +18,6 @@ Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
 
-This variant uses the same explicit upstream boundary as the Transfer workflow:
-[NVIDIA/physical-ai-data-factory](https://github.com/NVIDIA/physical-ai-data-factory)
-is the PAIDF ecosystem entry point, while
-[NVIDIA/paidf-orchestration](https://github.com/NVIDIA/paidf-orchestration) is a
-separate Airflow scaler for its published IAA/EVG DAGs. Neither OSMO nor Airflow
-runs here. The first workflow state writes their pinned attribution and the real
-NPA/SkyPilot component mapping to `reports/upstream.json`.
-
 The pipeline is:
 
 1. select one generic MP4 or one camera from one LeRobot v2/v3 episode;
@@ -170,11 +162,6 @@ parallelism, and the same conditioning contract.
 evaluated video hash for each variant. Annotation verifies the current video
 bytes and extracts fresh frames; finalization rejects stale or missing coverage.
 
-The run also writes `reports/upstream.json` with schema
-`npa.paidf.upstream.v1`, and successful finalization carries that public-source
-contract into `reports/final.json` without embedding credentials, infrastructure
-identifiers, or model weights.
-
 `generate-variants` publishes this distributed stage contract to S3 only. Its
 `output_uri` must use `s3://`; local paths are rejected before generation so the
 workflow never implies that a local path shared across SkyPilot stages is
@@ -246,7 +233,7 @@ variant count and seeds, and the same Cosmos Evaluator threshold/check modes:
 
 1. stage the fixture once under a private run prefix;
 2. run `paidf-cosmos3.yaml` with one configured variant;
-3. run `physical-ai-data-factory.yaml` with `n_augmentations=1`, the same fixture,
+3. run `nvidia-paidf-vda-cosmos-transfer25.yaml` with `n_augmentations=1`, the same fixture,
    sampled appearance combination, and evaluator configuration;
 4. retain each engine's unmodified `cosmos_augmented/manifest.json` and
    `grade/cosmos_evaluator.json`;

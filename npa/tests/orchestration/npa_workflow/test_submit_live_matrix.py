@@ -644,6 +644,26 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     assert helpers.assume_decision_for(spec) == "promote_checkpoint"
 
 
+def test_nvidia_paidf_vda_registered_for_real_runtime_live_infra() -> None:
+    spec = "nvidia-paidf-vda-cosmos-transfer25.yaml"
+    case = next((item for item in SUBMIT_LIVE_MATRIX if item.spec == spec), None)
+    assert case is not None
+    assert case.tier == "multi"
+    assert case.runtime
+    assert not case.plan_only
+    assert case.requires_token_factory
+    assert dict(case.config_vars) == {"n_augmentations": "1"}
+    assert dict(case.image_overrides) == {
+        "workbench.cosmos2.transfer_execute": "cosmos2-transfer",
+        "workbench.cosmos_evaluator.evaluate": "cosmos-evaluator",
+        "workbench.cosmos_curate.curate": "cosmos-curate",
+        "workbench.fiftyone.curate_augmented": "fiftyone",
+    }
+    helpers = _load_live_helpers()
+    assert spec in helpers.DYNAMIC_SPECS
+    assert helpers.assume_decision_for(spec) == "promote_checkpoint"
+
+
 def test_paidf_cosmos3_registered_for_real_runtime_live_infra() -> None:
     spec = "paidf-cosmos3.yaml"
     case = next((item for item in SUBMIT_LIVE_MATRIX if item.spec == spec), None)

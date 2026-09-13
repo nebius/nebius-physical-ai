@@ -27,7 +27,8 @@ NPA keeps `npa.workflow/v0.0.1` as the authoring surface and SkyPilot as its sol
 execution engine. It does not vendor OSMO, Airflow, either repository, PAIDF NGC
 service images, model weights, or input datasets. The shipped workflow set is:
 
-  physical-ai-data-factory.yaml              direct VDA translation
+  physical-ai-data-factory.yaml              unchanged established NPA VDA reference
+  nvidia-paidf-vda-cosmos-transfer25.yaml    direct VDA semantic translation
   paidf-defect-image-generation.yaml         direct DIG Day-1 manual-ROI translation
   paidf-image-attribute-augmentation.yaml    direct Airflow IAA translation
   paidf-event-video-generation.yaml          direct Airflow EVG translation
@@ -60,8 +61,11 @@ GHCR namespace without a separate redistribution review. NPA runtime-fetches exa
 Apache-2.0 protocol source where the selected vendor service image does not
 carry its client, and verifies the fetched commit before execution. All
 registered components use S3-compatible object storage for handoffs.
-Each run writes `reports/upstream.json` (`npa.paidf.upstream.v1`) so this
-adaptation boundary and the exact public revisions travel with its artifacts.
+The separately named direct translations write `reports/upstream.json`
+(`npa.paidf.upstream.v1`) so this adaptation boundary and the exact public
+revisions travel with their artifacts. The established
+`physical-ai-data-factory.yaml` and `paidf-cosmos3.yaml` workflows remain
+unchanged from their `main` versions and do not receive that branch-only stage.
 
 NPA modifies the runtime-fetched paidf-augmentation image writer to honor its
 published JPEG output path before the upstream VLM verifier reads that output.

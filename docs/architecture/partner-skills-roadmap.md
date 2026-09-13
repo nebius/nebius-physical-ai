@@ -52,8 +52,8 @@ https://github.com/NVIDIA/physical-ai-data-factory. Its OSMO agent skills are
 distinct from https://github.com/NVIDIA/paidf-orchestration, the Apache-2.0
 Airflow-on-Kubernetes scaler for the currently published IAA and EVG DAGs. NPA
 uses neither alternate orchestrator; exact reviewed revisions and boundaries are
-in `skills/NOTICE-NVIDIA-PAIDF` and every PAIDF run's
-`reports/upstream.json`.
+in `skills/NOTICE-NVIDIA-PAIDF` and the separately named direct translations'
+`reports/upstream.json` artifacts.
 
 Earlier analysis was adapted from NVIDIA agent skills at
 https://github.com/NVIDIA/skills.
@@ -96,18 +96,18 @@ plumbing.
 | `defect-image-generation` | AOI defect SDG (usd2roi, image-edit, AnomalyGen; PCBA/metal/glass; Day 0/Day 1) | `physical-ai-defect-image-generation` | CC-BY-4.0 AND Apache-2.0 | Native `paidf-defect-image-generation.yaml` implements and has passed Day-1 manual-ROI fresh fine-tuning and generation on B200: 15,000 iterations with early stopping disabled, evaluator-selected checkpoint 13,000, and 30/30 requests accounted. Day-0 USD and PCBA real-alignment remain roadmap work. |
 | `image-attribute-augmentation` | Qwen image editing, upstream attribute verification, pane postprocessing, and person attribute search | `NVIDIA/paidf-orchestration` IAA DAG | Apache-2.0 | Native `paidf-image-attribute-augmentation.yaml` completed all nine states on reserved B200 capacity; source, output hashes, and quality limitations are in the Workbench guide. |
 | `event-video-generation` | Cosmos3 video generation, detection/tracking, captioning, anomaly/person Visual QA, and attribute search | `NVIDIA/paidf-orchestration` EVG DAG | Apache-2.0 | Native `paidf-event-video-generation.yaml` completed all twelve logical stages on reserved B200 capacity; source, output hashes, partial-QA accounting, and quality limitations are in the Workbench guide. |
-| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Core path landed:** `workflows/testing/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements real arbitrary-input annotate → augment → evaluate → re-label → curate → visualize with output-to-S3; optional upstream flow variants such as SeedVR2 super-resolution remain roadmap work |
+| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Core path landed:** the separately named `workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml` (SkyPilot, no OSMO) implements real arbitrary-input annotate → augment → evaluate → re-label → curate → visualize with pinned provenance and output-to-S3; optional upstream flow variants such as SeedVR2 super-resolution remain roadmap work |
 | `infrastructure-resilient-scaling` | SDG infra setup/scaling/recovery | `physical-ai-infrastructure-setup-and-resilient-scaling` | Apache-2.0 | Captured as Nebius-K8s + SkyPilot provisioning/runbooks; overlaps `nebius-infra` + `skypilot-workflows` |
 
 ## Deep-Read Findings (2026-07): usefulness + how used for the pipeline
 
 Full read of the four upstream skills (`NVIDIA/skills`) against the shipped
-`physical-ai-data-factory.yaml` blueprint. All four are OSMO-orchestrated
+`nvidia-paidf-vda-cosmos-transfer25.yaml` translation. All four are OSMO-orchestrated
 upstream; NPA re-expresses the relevant one on SkyPilot.
 
 | Upstream skill | Capability | Usefulness to the NPA data-factory pipeline | How it maps / is used | Incorporate as |
 | --- | --- | --- | --- | --- |
-| `physical-ai-video-data-augmentation` (VDA) | annotate → augment → evaluate → re-label; Cosmos Transfer 2.5 + SeedVR2 SR + VLM/LLM NIMs; flows `auto_labeling` / `augmentation_and_al` / `e2e` / `e2e_super_resolution` | **High — it is the upstream of our blueprint** | `physical-ai-data-factory.yaml` is the NPA-native (SkyPilot, **no OSMO**) implementation of the core loop with real input conditioning and durable outputs. It directly informs the stage graph, model roles (Qwen VL / LLM, Cosmos Transfer 2.5, cosmos-reason), the promote/loop gate, and side-by-side evidence. | Reference spec for the shipped core path; optional SeedVR2/flow variants remain roadmap work |
+| `physical-ai-video-data-augmentation` (VDA) | annotate → augment → evaluate → re-label; Cosmos Transfer 2.5 + SeedVR2 SR + VLM/LLM NIMs; flows `auto_labeling` / `augmentation_and_al` / `e2e` / `e2e_super_resolution` | **High — it is the upstream of our blueprint** | `nvidia-paidf-vda-cosmos-transfer25.yaml` is the separately named NPA-native (SkyPilot, **no OSMO**) semantic translation of the core loop with real input conditioning, pinned provenance, and durable outputs. It directly informs the stage graph, model roles, promote/loop gate, and evidence contract. | Reference spec for the shipped direct path; optional SeedVR2/flow variants remain roadmap work |
 | `physical-ai-infrastructure-setup-and-resilient-scaling` | K8s (MicroK8s/AKS) + OSMO + NIM Operator setup, verify gates, resilient scaling, don't-over-deploy endpoints, model-cache warmup | **Medium-high (ops concepts)** | Maps onto Nebius Managed K8s + SkyPilot + vLLM/Token Factory serving. Adopt the verify-gate discipline, "deploy only referenced endpoints", and cache-warmup ideas. Skip the OSMO/Azure plumbing. | Ops guidance; overlaps `nebius-infra` + `skypilot-workflows` |
 | `physical-ai-neural-reconstruction` (NuRec/NRE) | sensor logs → NCore V4 → 3DGS train → renderable USDZ → novel-view / gRPC sensor sim | **Medium (adjacent, upstream data source)** | Not used by the video-augmentation blueprint today. Valuable as a *real-data source*: reconstruct real captures into re-renderable scenes, then feed rendered views as pipeline input (better than synthetic test clips). RT-core render → L40S / RTX PRO 6000. | **Implemented** as `neural-reconstruction` (tool + CLI + SkyPilot workflow + skill + tests) |
 | `physical-ai-defect-image-generation` (DIG) | AOI defect SDG via Cosmos AnomalyGen (Cosmos-Predict2) for PCBA / metal / glass; Day-0 / Day-1 | **Low-medium (adjacent domain)** | A sibling image-SDG blueprint rather than a stage of the VDA pipeline. | Native Day-1 manual-ROI spec, exact-image B200 component gates, and full native workload passed. Day-0 and real-alignment remain Tier C roadmap work. |

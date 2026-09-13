@@ -264,8 +264,11 @@ def test_direct_translation_rejects_unsafe_overrides_before_render(
 @pytest.mark.parametrize(
     ("filename", "variant", "successor"),
     [
-        ("physical-ai-data-factory.yaml", "cosmos-transfer2.5", "generate-configs"),
-        ("paidf-cosmos3.yaml", "cosmos3-video2video", "prepare-input"),
+        (
+            "nvidia-paidf-vda-cosmos-transfer25.yaml",
+            "cosmos-transfer2.5",
+            "generate-configs",
+        ),
         (
             "paidf-defect-image-generation.yaml",
             "defect-image-generation-day1-manual-roi",
@@ -287,9 +290,8 @@ def test_shipped_workflows_record_upstream_before_processing(
     filename: str, variant: str, successor: str
 ) -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    tier = "main" if filename == "paidf-cosmos3.yaml" else "testing"
     workflow = yaml.safe_load(
-        (repo_root / "workflows" / tier / filename).read_text(encoding="utf-8")
+        (repo_root / "workflows" / "testing" / filename).read_text(encoding="utf-8")
     )
 
     assert workflow["initial"] == "record-upstream"

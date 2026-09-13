@@ -22,22 +22,26 @@ Earlier design analysis was adapted from https://github.com/NVIDIA/skills,
 primarily `physical-ai-video-data-augmentation`. Copyright (c) 2025-2026 NVIDIA
 CORPORATION & AFFILIATES. Upstream licenses: Apache-2.0 and CC-BY-4.0. See
 `skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on SkyPilot (not OSMO or Airflow)
-and composes existing workbench tools. Every new run writes the immutable
-`reports/upstream.json` source/execution-boundary artifact before data processing.
+and composes existing workbench tools. The separately named direct translations
+write an immutable `reports/upstream.json` source/execution-boundary artifact
+before data processing; the two established workflows retained from `main` are
+not textually or behaviorally changed to add that contract.
 
 ## Workflow Inventory
 
 | YAML | Official source | Classification | Execution |
 | --- | --- | --- | --- |
-| `physical-ai-data-factory.yaml` | physical-ai-data-factory VDA | direct translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
+| `physical-ai-data-factory.yaml` | established NPA VDA blueprint | unchanged NPA-native reference | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
+| `nvidia-paidf-vda-cosmos-transfer25.yaml` | physical-ai-data-factory VDA | separately named direct semantic translation | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |
 | `paidf-defect-image-generation.yaml` | physical-ai-data-factory DIG Day-1 manual-ROI | direct scoped translation | SkyPilot + restricted operator-built AnomalyGen compatibility image |
 | `paidf-image-attribute-augmentation.yaml` | paidf-orchestration IAA DAG | direct translation | SkyPilot + operator-built Qwen Edit wrapper + PAIDF protocols |
 | `paidf-event-video-generation.yaml` | paidf-orchestration EVG DAG | direct translation | SkyPilot + operator-built Cosmos3 Super wrapper + PAIDF protocols |
 | `paidf-cosmos3.yaml` | no corresponding Airflow IAA/EVG DAG | NPA-specific VDA alternative | SkyPilot + NPA Cosmos3/Curator/FiftyOne |
 
 The exact source/component revisions and licenses live in
-`skills/NOTICE-NVIDIA-PAIDF` and every run's `reports/upstream.json`. Do not call
-`paidf-cosmos3.yaml` an IAA or EVG translation.
+`skills/NOTICE-NVIDIA-PAIDF`. The separately named direct translations carry
+them in each run's `reports/upstream.json`. Do not call `paidf-cosmos3.yaml` an
+IAA or EVG translation.
 For native acceptance, supply exact scanned private digests through DIG's
 `anomalygen_image` and IAA/EVG's `generation_image` config values. Their shipped
 placeholders deliberately cannot run. The live matrix uses
@@ -177,7 +181,7 @@ runs and where NPA substitutes its own endpoint.
 
 ## When To Use
 
-Load this skill to author, validate, submit, run, or inspect any of the five
+Load this skill to author, validate, submit, run, or inspect any of the six
 PAIDF-related YAMLs in the inventory: VDA, scoped DIG, IAA, EVG, or the NPA
 Cosmos3 VDA alternative. It also covers dataset adaptation, GPU/runtime access,
 generated media and label validation, provenance, and viewer troubleshooting.
@@ -192,8 +196,9 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
-`workflows/testing/physical-ai-data-factory.yaml` — one
-`npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
+`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml` — the separately
+named direct VDA translation as one `npa.workflow/v0.0.1` spec. Blueprint → NPA
+stage mapping:
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
 | --- | --- | --- | --- |
@@ -365,7 +370,7 @@ an unsupported modality now fails closed instead.
 Example:
 
 ```bash
-npa workbench workflow submit physical-ai-data-factory.yaml --run-id <id> \
+npa workbench workflow submit nvidia-paidf-vda-cosmos-transfer25.yaml --run-id <id> \
   --var augment_control=seg \
   --var augment_control_prompt="robot arm, conveyor, bin" \
   --var augment_mask_prompt="robot arm"
@@ -495,7 +500,7 @@ Token Factory model.
 ## Commands
 
 ```bash
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns). The shipped

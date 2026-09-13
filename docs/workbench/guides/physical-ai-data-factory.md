@@ -3,12 +3,12 @@
 [Guides](README.md)
 
 This guide runs **NVIDIA Physical AI Data Factory** workflows natively on
-Nebius + SkyPilot. Five `npa.workflow` specs cover the direct VDA, scoped DIG,
-IAA, and EVG translations plus one clearly labeled NPA-specific Cosmos3 VDA
-alternative. They compose registered Workbench tools and narrow protocol
-adapters; neither OSMO nor Airflow is embedded. SkyPilot is the sole
-orchestrator, and stages hand off durable artifacts through S3-compatible
-storage.
+Nebius + SkyPilot. Six `npa.workflow` specs cover a separately named direct VDA,
+scoped DIG, IAA, and EVG translations, the established Transfer blueprint, and
+one clearly labeled NPA-specific Cosmos3 VDA alternative. They compose
+registered Workbench tools and narrow protocol adapters; neither OSMO nor
+Airflow is embedded. SkyPilot is the sole orchestrator, and stages hand off
+durable artifacts through S3-compatible storage.
 
 Two official repositories have intentionally different roles. NVIDIA's
 [Physical AI Data Factory](https://github.com/NVIDIA/physical-ai-data-factory)
@@ -18,22 +18,26 @@ Augmentation workflow runs on OSMO upstream. NVIDIA's
 is an Apache Airflow-on-Kubernetes scaler and currently carries Image Attribute
 Augmentation and Event Video Generation DAGs. NPA does not embed either
 orchestrator and does not describe those Airflow DAGs as this VDA workflow.
-Every NPA run records the reviewed revisions, licenses, and this execution
-boundary in `reports/upstream.json`; see `skills/NOTICE-NVIDIA-PAIDF`.
+The separately named direct translations record the reviewed revisions,
+licenses, and this execution boundary in `reports/upstream.json`; see
+`skills/NOTICE-NVIDIA-PAIDF`. The established Transfer and Cosmos3 YAMLs remain
+byte-for-byte aligned with their `main` versions rather than gaining a new
+provenance state.
 
 ## Authoritative YAML mapping
 
 | NPA YAML | Upstream repository / workflow | Relationship | NPA orchestrator / runtime |
 | --- | --- | --- | --- |
-| `physical-ai-data-factory.yaml` | `NVIDIA/physical-ai-data-factory` / Video Data Augmentation | Direct VDA translation using Cosmos Transfer 2.5 | `npa.workflow/v0.0.1` on SkyPilot; Workbench GPU/CPU stages + Token Factory |
+| `physical-ai-data-factory.yaml` | established NPA VDA blueprint | Unchanged NPA-native Transfer reference | `npa.workflow/v0.0.1` on SkyPilot; Workbench GPU/CPU stages + Token Factory |
+| `nvidia-paidf-vda-cosmos-transfer25.yaml` | `NVIDIA/physical-ai-data-factory` / Video Data Augmentation | Separately named direct semantic translation using Cosmos Transfer 2.5 | `npa.workflow/v0.0.1` on SkyPilot; pinned upstream contract + Workbench GPU/CPU stages + Token Factory |
 | `paidf-defect-image-generation.yaml` | `NVIDIA/physical-ai-data-factory` / DIG Day-1 manual-ROI default fresh-finetune branch | Direct, deliberately scoped translation; not the USD Day-0 or real-alignment branch | `npa.workflow/v0.0.1` on SkyPilot; operator-built restricted AnomalyGen compatibility image on B200 |
 | `paidf-image-attribute-augmentation.yaml` | `NVIDIA/paidf-orchestration` / `image_attribute_augmentation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Qwen Image Edit worker + pinned PAIDF augmentation/auto-label protocols |
 | `paidf-event-video-generation.yaml` | `NVIDIA/paidf-orchestration` / `event_video_generation_dag` | Direct Airflow-DAG translation | `npa.workflow/v0.0.1` on SkyPilot; operator-built Cosmos3 Super worker + pinned PAIDF augmentation and auto-label services |
 | `paidf-cosmos3.yaml` | NPA composition informed by the PAIDF VDA contract; no upstream Airflow DAG | NPA-specific Cosmos3 video2video VDA alternative, not IAA or EVG | `npa.workflow/v0.0.1` on SkyPilot; NPA Cosmos3/Curator/FiftyOne/Rerun images |
 
-All five specs write `npa.paidf.upstream.v1`. Direct translations name the
-exact upstream workflow and revision; the Cosmos3 alternative records
-`translation: npa-specific-variant`. Vendor images are digest-pinned. Gated
+The four separately named direct translations write `npa.paidf.upstream.v1` and
+name the exact upstream workflow and revision. The established Transfer and
+Cosmos3 specs retain their existing contracts. Vendor images are digest-pinned. Gated
 weights and operator inputs remain runtime-only and are never published in NPA
 image layers. IAA pins `Qwen/Qwen-Image-Edit-2511` at
 `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9`; EVG pins
@@ -731,7 +735,7 @@ models` reports which of the two is visible along with what is already on disk.
 ## Validate / plan / render
 
 ```bash
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is what ties the plan to your storage; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns when that happens).
@@ -747,7 +751,7 @@ NPA_SRC_S3_URI="s3://<your-bucket>/npa-src/npa/" \
 ## Submit (real run)
 
 ```bash
-SPEC=workflows/testing/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 npa workbench health access --capability paidf
 npa workbench workflow preflight-images "$SPEC" \
   --project "<alias>" --registry "<registry>"

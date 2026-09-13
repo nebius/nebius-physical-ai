@@ -1119,12 +1119,7 @@ def require_accepted_quality(disposition_uri: str) -> None:
 
 
 def finalize(
-    run_root_uri: str,
-    report_uri: str,
-    run_id: str = "",
-    *,
-    storage: Any | None = None,
-    allow_legacy_missing_upstream: bool = False,
+    run_root_uri: str, report_uri: str, *, storage: Any | None = None
 ) -> dict[str, Any]:
     """Fail closed unless every advertised downstream component produced evidence."""
 
@@ -1217,27 +1212,6 @@ def finalize(
         )
     if fiftyone.get("curation_engine") != "fiftyone-brain":
         raise PaidfCosmos3Error("FiftyOne report does not prove real Brain curation")
-    upstream = None
-    if run_id.strip():
-        try:
-            upstream = _read_json(root + "reports/upstream.json", storage=client)
-        except Exception as exc:
-            raise PaidfCosmos3Error(
-                "current PAIDF run is missing its upstream provenance"
-            ) from exc
-        if (
-            not isinstance(upstream, dict)
-            or upstream.get("schema") != "npa.paidf.upstream.v1"
-            or upstream.get("run_id") != run_id
-            or upstream.get("workflow_variant") != "cosmos3-video2video"
-        ):
-            raise PaidfCosmos3Error(
-                "upstream provenance does not match this PAIDF Cosmos3 run"
-            )
-    elif not allow_legacy_missing_upstream:
-        raise PaidfCosmos3Error(
-            "PAIDF Cosmos3 finalization requires the workflow run identity"
-        )
     keys = _list_keys(root, storage=client)
     rrd_uri = root + "reports/sim2real.rrd"
     if not any(key.endswith("reports/sim2real.rrd") for key in keys) or _artifact_size(
@@ -1264,8 +1238,6 @@ def finalize(
         "quality_threshold": evaluator.get("threshold"),
         "attribute_threshold": evaluator.get("attribute_threshold", 1.0),
     }
-    if upstream is not None:
-        payload["upstream"] = upstream
     payload["written_uri"] = _write_json(payload, report_uri, storage=client)
     print(
         json.dumps(
