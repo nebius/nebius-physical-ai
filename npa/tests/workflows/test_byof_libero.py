@@ -252,6 +252,10 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert "_execution_uid_processes()" in bootstrap
     assert "os.fchmod(root_fd, 0o700)" in bootstrap
     assert "snapshots.append((name, payload, digest))" in bootstrap
+    assert '"PATH": "/usr/bin:/bin"' in bootstrap
+    assert '["git"' not in bootstrap
+    assert '"/usr/bin/git"' in bootstrap
+    assert "_discard_new_cache_entry" in bootstrap
     assert profile.count("unset NPA_LIBERO_RUNTIME_USE_DECISION_B64") == 2
     assert (
         "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "

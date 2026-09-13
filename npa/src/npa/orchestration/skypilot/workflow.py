@@ -881,13 +881,7 @@ def submit_workflow(
         # actual rendered task environment before controller/job side effects.
         from npa.execution_preflight import (
             ExecutionPreflightError,
-            LIBERO_PROFILE_NAME,
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
-        )
-        libero_submission = any(
-            document.get("name") == LIBERO_PROFILE_NAME
-            and (document.get("envs") or {}).get("BYOF_SOLUTION_NAME") == "libero"
-            for document in docs
         )
         executable_profile_sha256 = hashlib.sha256(
             source_profile_bytes
@@ -906,6 +900,10 @@ def submit_workflow(
             )
         except (ExecutionPreflightError, ValueError) as exc:
             raise SkyPilotSubmitError(str(exc)) from exc
+        libero_submission = (
+            (_target_report.get("checks") or {}).get("libero_authorization")
+            == "pass"
+        )
         env.update(injected)
         if _target is not None:
             env["NPA_SKYPILOT_PROJECT"] = _target.project

@@ -172,14 +172,21 @@ manager-signed acceptance, the paired decision digest, exact run ID, and the
 digest of the profile bytes it is about to submit before it selects or forwards
 any LIBERO secret. The signed infrastructure record also binds the source
 SkyPilot configuration, and LIBERO accepts only the Kubernetes managed-jobs
-backend with an explicit context. A matching task name or
-`BYOF_SOLUTION_NAME` string cannot authorize an alternate profile or a direct
-SDK call. The SDK snapshots the profile once for parsing and hashing, then
+backend with an explicit context. The shared classifier treats the official
+`npa-libero` repository in either `resources.image_id` or `BYOF_IMAGE` as a
+LIBERO signal, so renaming a raw SDK task cannot bypass this gate. Every signal
+requires the canonical task name, solution marker, and the same exact accepted
+repository-at-digest image in both fields. The classifier result, rather than a
+second name-based guess, controls secret forwarding and the final serialized
+profile check. The SDK snapshots the profile once for parsing and hashing, then
 requires the final serialized task bytes to retain that digest before any
 controller or job operation.
 The storage authorization is hash-bound by the checked-in infrastructure bundle,
 binds the exact run prefix and origin-only HTTPS storage endpoint plus the policy
-receipt, and requires short-lived session credentials. Storage secrets are
+receipt, and requires short-lived session credentials. The same shared SDK gate
+validates the complete credential triplet, authorization digest, hashes, policy,
+prefix, endpoint, expiry, and nonce before target resolution or controller
+effects; both absent is a refusal, not an optional state. Storage secrets are
 removed from the fetched-code subprocess; only
 the image-owned standard-library uploader receives them. Per-file and aggregate
 size budgets apply before reads, PUT is conditional, and GET must return the
@@ -210,15 +217,24 @@ namespace/payload grant and controller checks after infrastructure preflight
 immediately adjacent to submission. It rechecks the bound Role, sole Pod UID,
 job label, image, and no-ClusterRoleBinding result immediately after binding and
 at every scheduler-status observation, together with the controller identity.
-At terminal status the exact Pod may already be absent, but any replacement or
-foreign Pod is a hard failure. Every
+At a failed terminal status the exact Pod may already be absent, but a successful
+qualification must still expose it for the manager-side live-evidence read;
+any replacement or foreign Pod is a hard failure. Every
 namespace/object UID, inventory, and payload permission is bound to the checked-in
 acceptance record. The isolated namespace inventory includes ConfigMaps as well
 as Secrets, Pods, Services, accounts, Roles, and RoleBindings. The canonical
 external RBAC inventory binds every allowed broad discovery/self-review grant,
 including binding and referenced-role UIDs and rules, so later RBAC drift changes
-the accepted infrastructure hash. The payload reads its own Pod and bound JWT and records
-the actual service account, Pod UID, node, and `containerStatuses.imageID`.
+the accepted infrastructure hash. The payload reads its own Pod and bound JWT
+and records the actual service account, Pod UID, node, and
+`containerStatuses.imageID`. That self-report is workload output, not
+authenticity proof. Before cleanup, the manager-side runner independently reads
+the bound Pod status and its exact node, verifies the container's accepted
+digest, one-GPU request, B200 node labels, and allocatable GPU state, and emits a
+separate manager-live-evidence envelope. The later live gate requires every
+corresponding hashed Pod/node/service-account field and image digest in the
+uploaded report to equal that independent envelope, and parses the captured
+`nvidia-smi -L` output as exactly one B200.
 
 The execution and payload-proof kubeconfig contexts remain distinct but must
 flatten to the same cluster identity. A single owner-receipted allowed node and
@@ -244,7 +260,8 @@ from an incidental word match.
 
 ## Acceptance artifact
 
-A later live gate owns the managed submission, independently downloads the
+A later live gate owns the managed submission, preserves the manager-side
+Pod/node/GPU envelope collected before cleanup, independently downloads the
 ten-object upload set, verifies every receipt size/hash/checksum against fresh
 GET bytes, checks cleanup/API-stop evidence, and accepts the retrieved
 `libero-smoke.json` only with:
@@ -261,7 +278,8 @@ GET bytes, checks cleanup/API-stop evidence, and accepts the retrieved
   held-out forwards, and finite reloaded 7-DoF action shape/dtype/value proof;
 - exactly one observed B200, compute capability 10.0 / `sm_100`, the Pod-observed
   immutable candidate digest, actual solution-scoped payload service account,
-  and owner-receipted RBAC/node/cluster hashes;
+  and owner-receipted RBAC/node/cluster hashes, all cross-checked against the
+  independent manager envelope and interpreted `nvidia-smi` capture;
 - the hash of the independent Buildx plus published-base lineage receipt,
   `status: passed`, `exit_status: 0`, and storage readback identity.
 

@@ -1053,7 +1053,25 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
         },
         "spec": {
             "serviceAccountName": module.LIBERO_PAYLOAD_SERVICE_ACCOUNT,
-            "containers": [{"name": "ray-node", "image": candidate}],
+            "nodeName": "worker",
+            "containers": [
+                {
+                    "name": "ray-node",
+                    "image": candidate,
+                    "resources": {
+                        "requests": {"nvidia.com/gpu": "1"},
+                        "limits": {"nvidia.com/gpu": "1"},
+                    },
+                }
+            ],
+        },
+        "status": {
+            "containerStatuses": [
+                {
+                    "name": "ray-node",
+                    "imageID": "docker-pullable://" + candidate,
+                }
+            ]
         },
     }
 
@@ -1114,6 +1132,76 @@ def test_libero_payload_pod_record_is_exact_and_singleton(monkeypatch) -> None:
     pod["spec"]["containers"].pop()
     with pytest.raises(RuntimeError, match="submitted scheduler job"):
         module._libero_payload_pod_record(binding, scheduler_job_id="74")
+
+
+@pytest.mark.parametrize(
+    "drift", ["none", "node", "product", "gpu-request", "image-status"]
+)
+def test_libero_manager_live_evidence_is_independent_and_exact(
+    monkeypatch, drift
+) -> None:
+    module = _load_module()
+    pod = _libero_payload_pod_fixture(module)
+    candidate = pod["spec"]["containers"][0]["image"]
+    state = module.LiberoAccessState(
+        kubeconfig=Path("/private/payload-kubeconfig"),
+        context="payload-context",
+        namespace="isolated-namespace",
+        namespace_uid="namespace-uid",
+        service_account_uid="service-account-uid",
+        role_uid="role-uid",
+        role_binding_uid="binding-uid",
+        execution_kubeconfig=Path("/private/execution-kubeconfig"),
+        execution_context="execution-context",
+        run_id="libero-manager-evidence",
+    )
+    binding = module.LiberoRuntimeBinding(
+        evidence={
+            "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest()
+        },
+        access_state=state,
+        candidate_image=candidate,
+        task_name=module.LIBERO_PROFILE_TASK_NAME,
+    )
+    node = {
+        "metadata": {
+            "name": "worker",
+            "uid": "worker-uid",
+            "creationTimestamp": "2026-09-12T00:00:00Z",
+            "labels": {"nvidia.com/gpu.product": "NVIDIA-B200"},
+        },
+        "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+    }
+    if drift == "node":
+        pod["spec"]["nodeName"] = "foreign-worker"
+    elif drift == "product":
+        node["metadata"]["labels"]["nvidia.com/gpu.product"] = "NVIDIA-H200"
+    elif drift == "gpu-request":
+        pod["spec"]["containers"][0]["resources"]["limits"][
+            "nvidia.com/gpu"
+        ] = "2"
+    elif drift == "image-status":
+        pod["status"]["containerStatuses"][0]["imageID"] = (
+            "docker-pullable://example.invalid/other@sha256:" + "8" * 64
+        )
+
+    def kubectl_json(arguments, **_kwargs):
+        if "pods" in arguments:
+            return {"items": [pod]}
+        return node
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    if drift != "none":
+        with pytest.raises(RuntimeError):
+            module._libero_manager_live_evidence(binding, "73")
+        return
+
+    evidence = module._libero_manager_live_evidence(binding, "73")
+    assert evidence["schema"] == "npa.libero.manager-live-evidence.v1"
+    assert evidence["pod_observed_image_digest"] == candidate.rsplit("@", 1)[1]
+    assert evidence["gpu_family"] == "B200"
+    assert evidence["pod_gpu_count"] == 1
+    assert evidence["node_allocatable_gpu_count"] == 8
 
 
 def test_libero_payload_role_binds_uid_atomically_to_observed_pod(

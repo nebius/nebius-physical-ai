@@ -1284,6 +1284,107 @@ def _libero_payload_pod_record(
     return pod, evidence
 
 
+def _libero_manager_live_evidence(
+    binding: LiberoRuntimeBinding, scheduler_job_id: str
+) -> dict[str, Any]:
+    """Collect manager-side Pod, image, node, and accelerator evidence."""
+
+    pod, pod_evidence = _libero_payload_pod_record(
+        binding, scheduler_job_id=scheduler_job_id
+    )
+    spec = pod["spec"]
+    node_name = str(spec.get("nodeName") or "")
+    if hashlib.sha256(node_name.encode()).hexdigest() != binding.evidence.get(
+        "allowed_node_sha256"
+    ):
+        raise RuntimeError("LIBERO payload Pod used a different accepted node")
+    containers = spec["containers"]
+    resources = containers[0].get("resources") or {}
+    requests = resources.get("requests") or {}
+    limits = resources.get("limits") or {}
+    if str(limits.get("nvidia.com/gpu") or "") != "1" or str(
+        requests.get("nvidia.com/gpu") or limits.get("nvidia.com/gpu") or ""
+    ) != "1":
+        raise RuntimeError("LIBERO payload Pod did not request exactly one GPU")
+    statuses = (pod.get("status") or {}).get("containerStatuses") or []
+    if (
+        not isinstance(statuses, list)
+        or len(statuses) != 1
+        or not isinstance(statuses[0], dict)
+        or statuses[0].get("name") != containers[0].get("name")
+    ):
+        raise RuntimeError("LIBERO payload container status is not exact")
+    image_ids = re.findall(r"sha256:[0-9a-f]{64}", str(statuses[0].get("imageID") or ""))
+    expected_digest = binding.candidate_image.rsplit("@", 1)[-1]
+    if image_ids != [expected_digest]:
+        raise RuntimeError("LIBERO payload status differs from the accepted image digest")
+
+    execution_kubeconfig = binding.access_state.execution_kubeconfig
+    if execution_kubeconfig is None:
+        raise RuntimeError("LIBERO execution kubeconfig is unavailable")
+    node = _kubectl_json(
+        [
+            "--context",
+            binding.access_state.execution_context,
+            "get",
+            "node",
+            node_name,
+        ],
+        purpose="LIBERO manager-owned live node evidence",
+        kubeconfig=execution_kubeconfig,
+    )
+    node_metadata = node.get("metadata") or {}
+    node_status = node.get("status") or {}
+    if (
+        node_metadata.get("name") != node_name
+        or not node_metadata.get("uid")
+        or not node_metadata.get("creationTimestamp")
+    ):
+        raise RuntimeError("LIBERO live node identity is incomplete")
+    labels = node_metadata.get("labels") or {}
+    products = {
+        str(labels.get(key) or "").strip()
+        for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name")
+        if labels.get(key)
+    }
+    if not products or any("B200" not in product.upper() for product in products):
+        raise RuntimeError("LIBERO live node is not independently labelled B200")
+    try:
+        allocatable_gpus = int(
+            (node_status.get("allocatable") or {}).get("nvidia.com/gpu", 0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO live node GPU capacity is invalid") from exc
+    if allocatable_gpus < 1:
+        raise RuntimeError("LIBERO live node has no allocatable GPU")
+    product_sha256 = hashlib.sha256(
+        json.dumps(sorted(products), separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "schema": "npa.libero.manager-live-evidence.v1",
+        "scheduler_job_id_sha256": hashlib.sha256(
+            scheduler_job_id.encode()
+        ).hexdigest(),
+        **pod_evidence,
+        "namespace_sha256": hashlib.sha256(
+            binding.access_state.namespace.encode()
+        ).hexdigest(),
+        "node_name_sha256": hashlib.sha256(node_name.encode()).hexdigest(),
+        "node_uid_sha256": hashlib.sha256(
+            str(node_metadata["uid"]).encode()
+        ).hexdigest(),
+        "service_account_uid_sha256": hashlib.sha256(
+            binding.access_state.service_account_uid.encode()
+        ).hexdigest(),
+        "pod_observed_image_digest": expected_digest,
+        "gpu_family": "B200",
+        "pod_gpu_count": 1,
+        "node_allocatable_gpu_count": allocatable_gpus,
+        "node_gpu_products_sha256": product_sha256,
+        "observation_method": "manager_kubernetes_pod_status_and_node_labels",
+    }
+
+
 def _bind_libero_payload_pod_access(
     binding: LiberoRuntimeBinding,
     scheduler_job_id: str,
@@ -2601,6 +2702,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
                 if libero_binding is not None:
+                    if final.status == "SUCCEEDED":
+                        summary["libero_manager_live_evidence"] = (
+                            _libero_manager_live_evidence(
+                                libero_binding, scheduler_job_id
+                            )
+                        )
                     _verify_libero_payload_unchanged(
                         libero_binding,
                         require_empty_inventory=False,

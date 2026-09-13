@@ -531,6 +531,12 @@ def test_fractional_gpu_minimum_never_rounds_down(provider, configured, gpu_inve
 def libero_task(service_account: str | None) -> dict:
     document = raw_task(BYOF_SOLUTION_NAME="libero")
     document["name"] = "byof-solution-smoke-libero-b200-gpu"
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    )
+    document["resources"]["image_id"] = f"docker:{candidate}"
+    document["envs"]["BYOF_IMAGE"] = candidate
+    document["envs"]["S3_OUTPUT_PREFIX"] = "s3://unit-output/task/"
     if service_account is not None:
         document["config"] = {
             "kubernetes": {
@@ -554,6 +560,10 @@ def libero_controller_config(service_account: str = "skypilot-service-account") 
 def libero_authorized(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.execution_preflight._verify_libero_submission_authorization",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_output_storage_authorization",
         lambda *_args, **_kwargs: None,
     )
 
@@ -738,10 +748,146 @@ def test_libero_preflight_requires_both_canonical_identity_signals(
     assert not provider.s3.calls
 
 
-def test_libero_preflight_allows_only_manager_authorized_secret_session_pair(
-    provider, configured, libero_authorized
+@pytest.mark.parametrize("image_location", ["resources", "environment"])
+def test_libero_official_image_signal_cannot_bypass_shared_authorization(
+    provider, configured, image_location
 ) -> None:
     from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "8" * 64
+    )
+    if image_location == "resources":
+        document["resources"]["image_id"] = f"docker:{candidate}"
+    else:
+        document["envs"]["BYOF_IMAGE"] = candidate
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+def test_libero_preflight_requires_output_authority_before_target_resolution(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_submission_authorization",
+        lambda *_args, **_kwargs: {"infrastructure": {}},
+    )
+    document = libero_task("npa-byof-libero-payload")
+    with pytest.raises(ExecutionPreflightError, match="credentials"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["endpoint", "access", "session", "prefix", "policy", "expired"],
+)
+def test_libero_output_authority_binds_every_execution_input(drift) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from npa.execution_preflight import _verify_libero_output_storage_authorization
+
+    run_id = "libero-storage-authority-0001"
+    access_key = "unit-executing-access"
+    secret_key = "unit-executing-secret"
+    session_token = "unit-executing-session"
+    endpoint = "https://storage.eu-west1.nebius.cloud"
+    prefix = "s3://unit-output/task/"
+    policy_sha256 = "7" * 64
+    now = datetime.now(timezone.utc)
+    authorization = {
+        "schema": "npa.libero.output-storage-authorization.v2",
+        "issuer": "npa-manager",
+        "run_id": run_id,
+        "output_prefix": prefix,
+        "endpoint_url": endpoint,
+        "access_key_id_sha256": hashlib.sha256(access_key.encode()).hexdigest(),
+        "secret_access_key_sha256": hashlib.sha256(secret_key.encode()).hexdigest(),
+        "session_token_sha256": hashlib.sha256(session_token.encode()).hexdigest(),
+        "policy_sha256": policy_sha256,
+        "issued_at": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "nonce": "manager-storage-authorization-nonce-0001",
+    }
+    payload = json.dumps(authorization, sort_keys=True).encode()
+    acceptance = {
+        "expires_at": (now + timedelta(hours=2)).isoformat(),
+        "infrastructure": {
+            "output_storage_authorization_sha256": hashlib.sha256(payload).hexdigest(),
+            "output_storage_prefix_sha256": hashlib.sha256(prefix.encode()).hexdigest(),
+            "output_storage_policy_sha256": policy_sha256,
+        },
+    }
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    process_env = {
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
+        "AWS_SESSION_TOKEN": session_token,
+        "AWS_ENDPOINT_URL": endpoint,
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64": base64.b64encode(
+            payload
+        ).decode(),
+    }
+
+    _verify_libero_output_storage_authorization(
+        [document], process_env, acceptance=acceptance, run_id=run_id
+    )
+
+    if drift == "endpoint":
+        process_env["AWS_ENDPOINT_URL"] = "https://other.invalid"
+    elif drift == "access":
+        process_env["AWS_ACCESS_KEY_ID"] = "different-access"
+    elif drift == "session":
+        process_env.pop("AWS_SESSION_TOKEN")
+    elif drift == "prefix":
+        document["envs"]["S3_OUTPUT_PREFIX"] = "s3://unit-output/other/"
+    elif drift == "policy":
+        acceptance["infrastructure"]["output_storage_policy_sha256"] = "6" * 64
+    else:
+        authorization["expires_at"] = (now - timedelta(minutes=1)).isoformat()
+        payload = json.dumps(authorization, sort_keys=True).encode()
+        acceptance["infrastructure"][
+            "output_storage_authorization_sha256"
+        ] = hashlib.sha256(payload).hexdigest()
+        process_env["NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64"] = (
+            base64.b64encode(payload).decode()
+        )
+    with pytest.raises(ValueError):
+        _verify_libero_output_storage_authorization(
+            [document], process_env, acceptance=acceptance, run_id=run_id
+        )
+
+
+def test_libero_preflight_allows_only_manager_authorized_secret_session_pair(
+    provider, configured, libero_authorized, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    def require_pair(_documents, process_env, **_kwargs) -> None:
+        if not process_env.get("AWS_SESSION_TOKEN") or not process_env.get(
+            "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64"
+        ):
+            raise ValueError("missing temporary output authority")
+
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_output_storage_authorization",
+        require_pair,
+    )
 
     document = libero_task("npa-byof-libero-payload")
     _, report, _ = preflight_skypilot_submission(
@@ -780,6 +926,9 @@ def test_libero_submission_authorization_binds_signed_records_to_profile(
     decision_sha256 = hashlib.sha256(decision_bytes).hexdigest()
     decision = {"executable_profile_sha256": profile_sha256}
     global_config = libero_controller_config()
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    )
     config_sha256 = hashlib.sha256(
         json.dumps(global_config, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -790,6 +939,7 @@ def test_libero_submission_authorization_binds_signed_records_to_profile(
     def validate_acceptance(payload, *, manager_public_key_file=""):
         observed["acceptance"] = (payload, manager_public_key_file)
         return {
+            "candidate_image": candidate,
             "infrastructure": {
                 "run_id": run_id,
                 "skypilot_config_sha256": config_sha256,
@@ -829,6 +979,7 @@ def test_libero_submission_authorization_binds_signed_records_to_profile(
     assert observed["decision"] == (
         decision_bytes,
         {
+            "candidate_image": candidate,
             "infrastructure": {
                 "run_id": run_id,
                 "skypilot_config_sha256": config_sha256,
@@ -845,6 +996,7 @@ def test_libero_submission_authorization_binds_signed_records_to_profile(
         "decision-bytes",
         "decision-digest",
         "profile",
+        "candidate",
         "run",
         "controller-config",
         "controller-backend",
@@ -875,6 +1027,10 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
         images,
         "validate_libero_accepted_image_manifest",
         lambda *_args, **_kwargs: {
+            "candidate_image": (
+                "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
+                + "9" * 64
+            ),
             "infrastructure": {
                 "run_id": run_id,
                 "skypilot_config_sha256": config_sha256,
@@ -905,6 +1061,10 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
     }
     if drift == "profile":
         decision["executable_profile_sha256"] = "b" * 64
+    if drift == "candidate":
+        document["envs"]["BYOF_IMAGE"] = (
+            "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "8" * 64
+        )
     if drift == "controller-config":
         global_config = {**global_config, "jobs": {"controller": {}}}
 
