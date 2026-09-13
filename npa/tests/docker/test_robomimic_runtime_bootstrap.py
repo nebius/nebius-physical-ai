@@ -50,6 +50,7 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
                 "filename": f"{name}-{version}.whl",
                 "source": "https://download.pytorch.org/whl/cu128/",
                 "sha256": hashlib.sha256(f"{name}=={version}".encode()).hexdigest(),
+                "size": 1,
             }
             for name, version in lock["packages"].items()
         ],
@@ -343,8 +344,123 @@ def test_exact_external_runtime_inventory_verifies_without_mutation(
     }
     assert result["package_count"] == 22
     assert result["artifact_count"] == 22
+    assert result["artifact_payload_bytes"] == 22
     assert result["payload_file_count"] == 1
+    assert result["payload_bytes"] == 17
     assert before == after
+
+
+def _artifact(index: int, *, size: int) -> dict[str, object]:
+    return {
+        "name": f"package-{index}",
+        "version": "1.0",
+        "filename": f"package_{index}-1.0.whl",
+        "source": "https://download.pytorch.org/whl/cu128/",
+        "sha256": hashlib.sha256(str(index).encode()).hexdigest(),
+        "size": size,
+    }
+
+
+def test_runtime_artifact_limits_admit_every_positive_boundary() -> None:
+    artifact_size = verifier.RUNTIME_PAYLOAD_MAX_BYTES // 32
+    artifacts = [_artifact(index, size=artifact_size) for index in range(32)]
+
+    checked, total_bytes = verifier._checked_artifacts(artifacts)
+
+    assert len(checked) == verifier.RUNTIME_ARTIFACT_MAX_COUNT == 32
+    assert total_bytes == verifier.RUNTIME_PAYLOAD_MAX_BYTES
+    assert artifact_size < verifier.RUNTIME_OBJECT_MAX_BYTES
+    assert 22 <= verifier.RUNTIME_ARTIFACT_MAX_COUNT
+    assert 1_039_389_795 < verifier.RUNTIME_OBJECT_MAX_BYTES
+    assert 3_855_918_950 < verifier.RUNTIME_PAYLOAD_MAX_BYTES
+
+
+@pytest.mark.parametrize(
+    ("artifacts", "message"),
+    [
+        ([{}] * 33, "artifact object count exceeds limit"),
+        (
+            [_artifact(0, size=verifier.RUNTIME_OBJECT_MAX_BYTES + 1)],
+            "artifact exceeds size limit",
+        ),
+        (
+            [
+                _artifact(0, size=verifier.RUNTIME_OBJECT_MAX_BYTES),
+                _artifact(1, size=verifier.RUNTIME_OBJECT_MAX_BYTES),
+                _artifact(2, size=1),
+            ],
+            "artifact aggregate exceeds size limit",
+        ),
+    ],
+)
+def test_runtime_artifact_limits_fail_closed_before_unbounded_processing(
+    artifacts: list[dict[str, object]], message: str
+) -> None:
+    with pytest.raises(verifier.VerificationError, match=message):
+        verifier._checked_artifacts(artifacts)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("artifact-count", "artifact object count exceeds limit"),
+        ("artifact-size", "artifact exceeds size limit"),
+        ("artifact-aggregate", "artifact aggregate exceeds size limit"),
+        ("payload-count", "payload entry count exceeds limit"),
+        ("payload-size", "payload object exceeds size limit"),
+        ("payload-aggregate", "payload aggregate exceeds size limit"),
+    ],
+)
+def test_snapshot_refuses_resource_overflow_before_payload_hash_or_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    if mutation == "artifact-count":
+        monkeypatch.setattr(verifier, "RUNTIME_ARTIFACT_MAX_COUNT", 21)
+    elif mutation == "artifact-size":
+        inventory["artifacts"][0]["size"] = verifier.RUNTIME_OBJECT_MAX_BYTES + 1
+    elif mutation == "artifact-aggregate":
+        monkeypatch.setattr(verifier, "RUNTIME_PAYLOAD_MAX_BYTES", 21)
+    elif mutation == "payload-count":
+        monkeypatch.setattr(verifier, "RUNTIME_PAYLOAD_MAX_ENTRY_COUNT", 1)
+        inventory["symlinks"].append(
+            {"path": "payload/bin/python-link", "target": "python"}
+        )
+    elif mutation == "payload-size":
+        inventory["files"][0]["size"] = verifier.RUNTIME_OBJECT_MAX_BYTES + 1
+    else:
+        monkeypatch.setattr(verifier, "RUNTIME_PAYLOAD_MAX_BYTES", 22)
+        inventory["files"][0]["size"] = 23
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    original_sha256 = verifier._sha256
+
+    def reject_payload_hash(path: Path) -> str:
+        if (runtime_root / "payload") in path.parents:
+            pytest.fail("payload hashing started before inventory limits passed")
+        return original_sha256(path)
+
+    def reject_copy(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("snapshot copying started before inventory limits passed")
+
+    monkeypatch.setattr(verifier, "_sha256", reject_payload_hash)
+    monkeypatch.setattr(verifier, "_copy_bounded_regular_file", reject_copy)
+    with pytest.raises(verifier.VerificationError, match=message):
+        verifier.materialize_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+            destination=tmp_path / "snapshot",
+            require_source_read_only=False,
+        )
 
 
 @pytest.mark.parametrize("mutation", ["missing", "corrupt", "wrong-package", "extra"])
