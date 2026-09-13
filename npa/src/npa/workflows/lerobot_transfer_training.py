@@ -13,7 +13,7 @@ from npa.workbench.lerobot.policy_container import (
     build_lerobot_train_command,
     validate_lerobot_checkpoint,
 )
-from npa.workflows.lerobot_transfer_data import file_sha256, tree_hashes, write_json
+from npa.workflows.lerobot_transfer_data import LEROBOT_VERSION, file_sha256, tree_hashes, write_json
 
 
 def training_command(prepared: Path, output: Path, arm: str) -> list[str]:
@@ -31,24 +31,34 @@ def training_command(prepared: Path, output: Path, arm: str) -> list[str]:
     if arm not in {"baseline", "robust"}:
         raise ValueError("arm must be baseline or robust")
     recipe = json.loads((prepared / "recipe.json").read_text())
+    if recipe["lerobot_version"] != LEROBOT_VERSION:
+        raise ValueError("Recipe LeRobot version differs from the pinned benchmark")
+    if recipe["video_backend"] != "torchcodec":
+        raise ValueError("The sealed benchmark requires native TorchCodec decoding")
+    transforms = {
+        "brightness": {"type": "ColorJitter", "kwargs": {"brightness": [0.4, 1.4]}},
+        "contrast": {"type": "ColorJitter", "kwargs": {"contrast": [0.6, 1.4]}},
+        "saturation": {"type": "ColorJitter", "kwargs": {"saturation": [0.5, 1.5]}},
+        "hue": {"type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}},
+        "sharpness": {"type": "SharpnessJitter", "kwargs": {"sharpness": [0.5, 1.5]}},
+        "affine": {"weight": 0, "type": "RandomAffine", "kwargs": {"degrees": [-5, 5]}},
+    }
     overrides = [
         f"--dataset.revision={recipe['dataset_revision']}",
         f"--dataset.episodes={json.dumps(recipe['train_episodes'])}",
-        "--dataset.video_backend=pyav", "--dataset.use_imagenet_stats=true",
+        f"--dataset.video_backend={recipe['video_backend']}", "--dataset.use_imagenet_stats=true",
         f"--seed={recipe['seed']}", "--cudnn_deterministic=true",
         "--policy.chunk_size=16", "--policy.n_action_steps=8",
         "--policy.optimizer_lr=0.0001", "--policy.optimizer_lr_backbone=0.00001",
         "--policy.use_amp=true",
         f"--dataset.image_transforms.enable={str(arm == 'robust').lower()}",
-        "--dataset.image_transforms.tfs.affine.weight=0",
-        "--dataset.image_transforms.tfs.brightness.kwargs.brightness=[0.4,1.4]",
-        "--dataset.image_transforms.tfs.contrast.kwargs.contrast=[0.6,1.4]",
+        f"--dataset.image_transforms.tfs={json.dumps(transforms, sort_keys=True)}",
     ]
     return build_lerobot_train_command(
         dataset_path=prepared / "dataset", dataset_repo_id=recipe["dataset_repo"],
         output_dir=output, steps=recipe["train_steps"], batch_size=recipe["batch_size"],
         policy_type="act", device="cuda", num_workers=4, eval_freq=0,
-        log_freq=100, extra_args=overrides,
+        log_freq=100, extra_args=overrides, lerobot_version=recipe["lerobot_version"],
     )
 
 
@@ -106,13 +116,13 @@ def runtime_versions() -> dict:
     Returns:
         Non-identifying runtime provenance.
     Raises:
-        RuntimeError: LeRobot is not 0.5.1 or CUDA is unavailable.
+        RuntimeError: LeRobot is not 0.6.0 or CUDA is unavailable.
     """
     import torch
 
     version = importlib.metadata.version("lerobot")
-    if version != "0.5.1" or not torch.cuda.is_available():
-        raise RuntimeError("The transfer benchmark requires LeRobot 0.5.1 and working CUDA")
+    if version != LEROBOT_VERSION or not torch.cuda.is_available():
+        raise RuntimeError(f"The transfer benchmark requires LeRobot {LEROBOT_VERSION} and working CUDA")
     return {
         "lerobot": version, "torch": torch.__version__, "cuda": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(), "compute_capability": list(torch.cuda.get_device_capability()),

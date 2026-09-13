@@ -72,6 +72,7 @@ def test_preparation_fits_statistics_only_on_training_episodes(tmp_path, monkeyp
     assert stats["action"]["count"] == [24]
     assert sealed["train_frames"] == 24
     assert sealed["dataset_revision"] == data.DEFAULT_PUBLIC_LEROBOT_REVISION
+    assert sealed["video_backend"] == "torchcodec"
 
 
 @pytest.mark.parametrize("mutation", ["duplicate", "gap", "timestamp", "nan", "workspace"])
@@ -107,22 +108,30 @@ def test_stage_exchange_rejects_tampered_and_unlisted_files(tmp_path):
         data.materialize(str(destination), tmp_path / "unused")
 
 
-def test_training_uses_sealed_split_and_geometry_preserving_augmentation(tmp_path, recipe):
-    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[1, 3, 6])
+def test_training_uses_sealed_split_and_geometry_preserving_augmentation(tmp_path, recipe, monkeypatch):
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
+    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[1, 3, 6],
+                  lerobot_version="0.6.0", video_backend="torchcodec")
     data.write_json(tmp_path / "recipe.json", recipe)
     baseline = training.training_command(tmp_path, tmp_path / "train", "baseline")
     robust = training.training_command(tmp_path, tmp_path / "train", "robust")
     assert "--dataset.episodes=[1, 3, 6]" in baseline
-    assert "--dataset.image_transforms.tfs.affine.weight=0" in robust
+    assert "--dataset.video_backend=torchcodec" in baseline
+    transforms = json.loads(next(arg.split("=", 1)[1] for arg in robust
+                                 if arg.startswith("--dataset.image_transforms.tfs=")))
+    assert transforms["affine"]["weight"] == 0
+    assert transforms["brightness"]["kwargs"]["brightness"] == [0.4, 1.4]
     assert set(robust) - set(baseline) == {"--dataset.image_transforms.enable=true"}
     assert set(baseline) - set(robust) == {"--dataset.image_transforms.enable=false"}
-    assert "--eval_freq=0" in baseline
+    assert "--env_eval_freq=0" in baseline
+    assert "--eval_freq=0" not in baseline
 
 
 def test_training_failure_cannot_publish_a_checkpoint(tmp_path, monkeypatch, recipe):
-    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[0])
+    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[0],
+                  lerobot_version="0.6.0", video_backend="torchcodec")
     data.write_json(tmp_path / "recipe.json", recipe)
-    monkeypatch.setattr(training, "runtime_versions", lambda: {"lerobot": "0.5.1"})
+    monkeypatch.setattr(training, "runtime_versions", lambda: {"lerobot": "0.6.0"})
     reached = []
 
     def fail(command, log_path):

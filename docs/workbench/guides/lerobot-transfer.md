@@ -9,6 +9,9 @@ The executable benchmark uses **native LeRobot ACT and native PushT physics**.
 It tests the hypothesis that photometric augmentation improves transfer
 robustness. A completed workflow can report that this hypothesis failed.
 Physical robot transfer requires a subsequent hardware experiment.
+The first complete B200 run increased average held-out success from 13.7% to
+24.6%, but failed the benchmark's absolute-success gate. See the
+[measured results](#measured-b200-results) before using these checkpoints.
 
 ```mermaid
 flowchart LR
@@ -45,32 +48,44 @@ Set `NPA_PROJECT` and `NPA_KUBE_CONTEXT` to that project's local alias and exact
 context; set `NPA_RUN_ID` to a new run identity and `NPA_OUTPUT_BUCKET` to the
 project's authorized output bucket name, without `s3://`. Select the matching private
 `NPA_CONFIG_DIR` and `KUBECONFIG` when using isolated operator configuration.
+Use a dedicated operator account whose Nebius CLI configuration contains the
+project-scoped service-account profile and its authorized RSA key. Set
+`NPA_NEBIUS_PROFILE` to that profile and `NPA_SKYPILOT_ISOLATED_CONFIG_DIR` to a
+new private directory for each experiment. Stage source before starting its
+SkyPilot API, then keep the configuration unchanged while it owns jobs.
 From the checkout containing this change:
 
 ```bash
 npa/.venv/bin/npa workbench health preflight --project "$NPA_PROJECT" --checks nebius,s3
+npa/.venv/bin/npa workbench workflow stage-src --project "$NPA_PROJECT" --bucket "$NPA_OUTPUT_BUCKET"
 npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/lerobot-transfer.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/lerobot-transfer.yaml --run-id "$NPA_RUN_ID" --waves --json
 npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/lerobot-transfer.yaml --json
 npa/.venv/bin/npa workbench workflow submit workflows/testing/lerobot-transfer.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_KUBE_CONTEXT" \
+  --isolated-config-dir "$NPA_SKYPILOT_ISOLATED_CONFIG_DIR" \
   --run-id "$NPA_RUN_ID" --runtime --stage-src --max-wait-seconds 0 \
   --var "bucket=$NPA_OUTPUT_BUCKET" \
+  --var "prefix=lerobot-transfer/$NPA_RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 The selected project supplies storage credentials and the endpoint. The
 `--var bucket=...` binding replaces the checked-in `example-bucket` placeholder.
 The bucket must be authorized for that project.
+The explicit prefix prevents an inherited storage prefix from redirecting a new
+experiment into an older namespace. An isolated API is bound to its storage
+scope; retain that directory for resume and use a fresh one for a new experiment.
 Use the same checkout, source identity, configuration directory and run id with
 `--resume-run` when resuming a durable run. Incomplete training restarts its
 wave; this adapter does not promise mid-optimizer resume.
 
-The workflow pins the accepted CUDA 13 LeRobot 0.5.1 image by digest. CPU
+The workflow pins the B200-validated LeRobot 0.6.0 image by digest. CPU
 preparation and reporting share the B200 node's image cache without requesting
 GPU devices. This avoids a separate large image unpack on a small CPU boot disk.
-`--stage-src`
-supplies the new adapters; no container build or image publication is needed.
+The separate service-account configuration avoids a shared human-login token
+cache changing during refresh and invalidating the API's credential-identity check.
+`--stage-src` supplies the new adapters; no container build or image publication is needed.
 The live submit matrix registers the real runtime path with two parallel
 training tasks. The public dataset is MIT-licensed; LeRobot is Apache-2.0.
 No gated model access or hosted VLM credential is required.
@@ -102,10 +117,10 @@ seals them before training; both arms must carry that recipe's exact hash.
 | `arm`, `training_uri` | `baseline`, baseline directory | Training member defaults; the robust member overlays both |
 
 ACT uses action chunks of 16 and executes eight actions before replanning.
-Both arms train from the same split, seed and optimizer settings. The candidate
-uses the same mixed precision and learning rates as the baseline: 0.0001 for
-the policy and 0.00001 for the visual backbone. The candidate
-adds brightness, contrast, saturation, hue and sharpness variation. Affine
+Both arms use the same split, seed, mixed precision and learning rates:
+0.0001 for the policy and 0.00001 for the visual backbone. Native TorchCodec
+decoding caches video readers to reduce time spent on random frame reads.
+The candidate adds brightness, contrast, saturation, hue and sharpness variation. Affine
 transforms have zero weight because moving pixels alone would break the
 absolute action-coordinate contract. No synthesized frame or inferred action
 is added to the dataset.
@@ -161,6 +176,40 @@ procedure. Start from real demonstrations, retain an untouched hardware test
 set, and collect the expert recoveries that validation identifies. The report
 always keeps `ready_for_robot_deployment=false` until a separate physical
 validation process exists.
+
+## Measured B200 results
+
+The 2026-09-13 run completed all four phases with LeRobot 0.6.0, PyTorch
+2.11.0+cu130 and one B200 per training arm. Both arms completed 20,000 updates
+at batch size 64; native training and export took 9.8 minutes for baseline and
+14.9 minutes for the augmentation candidate. Evaluation used all 768 planned
+trials: 32 validation and 64 test resets per arm and condition.
+
+| Held-out condition | Baseline | Augmentation candidate |
+| --- | ---: | ---: |
+| Clean | 18/64 · 28.1% | 25/64 · 39.1% |
+| Dim | 0/64 · 0.0% | 13/64 · 20.3% |
+| Warm | 1/64 · 1.6% | 10/64 · 15.6% |
+| One-step delay | 16/64 · 25.0% | 15/64 · 23.4% |
+| Mean across conditions | 13.7% | 24.6% |
+
+The paired mean difference was **+10.9 percentage points**, with a 95% interval
+of **+4.7 to +17.2 points**. Validation selected the candidate, but its success
+remains far below 70% in every condition. The report therefore correctly keeps
+`improvement_demonstrated=false` and `ready_for_robot_deployment=false`.
+Photometric augmentation helped the measured visual shifts; it did not resolve
+the task's low absolute success or improve the delayed-control condition.
+The resulting collection queue contains 108 validation failures requiring
+expert demonstrations. This benchmark does not yet prove physical transfer.
+
+![Measured held-out PushT success](../evidence/lerobot-transfer-b200.png)
+
+The [evidence record](../evidence/lerobot-transfer-b200.json) includes the pinned
+protocol, runtime, checkpoint hashes, executed module hashes and exact counts.
+The [complete trial CSV](../evidence/lerobot-transfer-b200-trials.csv) permits
+independent recomputation. The audit verified all five stage manifests,
+matched native and exported checkpoint bytes, recomputed both paired intervals,
+decoded all 16 MP4s, and verified and decoded the Rerun recording.
 
 ## Validation
 

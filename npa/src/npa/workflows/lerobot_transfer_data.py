@@ -18,6 +18,8 @@ from npa.workflows.lerobot_dataset import (
     seeded_episode_split,
 )
 
+LEROBOT_VERSION = "0.6.0"
+
 
 def write_json(path: Path, payload: object) -> None:
     """Write finite, deterministic JSON.
@@ -141,8 +143,9 @@ def prepare_dataset(output: Path, recipe: dict) -> None:
         "dataset_revision": DEFAULT_PUBLIC_LEROBOT_REVISION, "train_episodes": train,
         "reserved_episodes": heldout, "train_frames": len(selected), "total_frames": len(rows),
         "normalization": "training episodes only; fixed ImageNet camera statistics",
-        "dataset_source_hashes": source_hashes, "lerobot_version": "0.5.1",
-        "lerobot_commit": "1396b9fab7aecddd10006c33c47a487ffdcb54b4",
+        "dataset_source_hashes": source_hashes, "lerobot_version": LEROBOT_VERSION,
+        "video_backend": "torchcodec",
+        "lerobot_release_commit": "30da8e687a6dfc617fcd94afc367ac7071c376ce",
         "conditions": ["clean", "dim", "warm", "delay"],
     })
     write_json(output / "recipe.json", recipe)

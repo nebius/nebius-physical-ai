@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "01046704811dd25901ae0849db4d34b12c923546f2667be8ab28aa711e345b35",
+  "workflow_sha256": "9c8908f20cdb1c87df44bb5a041a4c80469a362ccafc9f7b82ff18d6c331c24a",
   "planning": {
     "validation": {
       "status": "verified",
@@ -43,15 +43,19 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "Accepted LeRobot 0.5.1 CUDA 13 image is pullable; new modules require staged source.",
+      "reason": "Pinned LeRobot 0.6.0 image is pullable; new modules require staged source.",
       "evidence": [
-        "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"
+        "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Reserved B200 cluster passed GPU health checks. Full GPU workflow execution remains unverified.",
-      "evidence": []
+      "status": "verified",
+      "reason": "All four waves completed on reserved B200 capacity: two native ACT policies each trained for 20000 updates, 768 paired trials, 16 decoded MP4s, verified RRD, and five verified stage manifests. The measured candidate fails the absolute-success qualification gate; physical transfer remains unverified.",
+      "evidence": [
+        "docs/workbench/evidence/lerobot-transfer-b200.json",
+        "docs/workbench/evidence/lerobot-transfer-b200-trials.csv",
+        "docs/workbench/guides/lerobot-transfer.md#measured-b200-results"
+      ]
     }
   }
 }

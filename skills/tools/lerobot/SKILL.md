@@ -14,14 +14,12 @@ Use it as the data standard and policy interface layer, not as a managed-service
 | Version | Role | Image tag | Notes |
 | --- | --- | --- | --- |
 | **0.5.1** | **Default** | `npa-lerobot:cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | Accepted public default; the plain `0.5.1` alias is historical |
-| **0.6.0** | Additional package support | Operator-built image required | No accepted public image pin/digest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq` |
+| **0.6.0** | Optional public image | `npa-lerobot:0.6.0-d6-extras-20260912` | Exact digest in the version manifest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq` |
 
-Select the package with `--lerobot-version`. For serverless training on 0.6.0,
-supply a validated operator image through `train --image`; version selection
-alone does not publish an image. VM deployment installs the selected package
-and has no `--image` option. The anonymous 2026-09-05 audit returned
-`404 MANIFEST_UNKNOWN` for the official `npa-lerobot:0.6.0` tag. It is outside
-the current public release plan and must not be treated as an accepted release.
+Select the package with `--lerobot-version`. The version manifest records an
+optional public 0.6.0 image validated on B200; this does not replace the 0.5.1
+default. VM deployment installs the selected package and has no `--image`
+option. Pin the manifest digest for reproducible workflows.
 
 Canonical manifest: `npa/src/npa/deploy/lerobot_version_manifest.json`.
 
@@ -72,7 +70,7 @@ For a reproducible demonstration-first transfer experiment, use
 `workflows/testing/lerobot-transfer.yaml` and
 `docs/workbench/guides/lerobot-transfer.md`. The standard runtime owns four waves:
 prepare, paired ACT training, paired native PushT evaluation, and reporting.
-The recipe pins public PushT data, excludes reserved episodes from training and
+The recipe pins LeRobot 0.6.0 and public PushT data, excludes reserved episodes from training and
 normalization, and disables affine image augmentation for absolute actions.
 Select the arm using validation only; derive expert demonstration requests only
 from validation failures. Report held-out success uncertainty without claiming
