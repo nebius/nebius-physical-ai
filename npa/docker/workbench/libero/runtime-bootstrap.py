@@ -1326,6 +1326,8 @@ def _install_runtime(
     root: Path,
     artifacts: list[dict[str, Any]],
     requirement_lines: list[str],
+    *,
+    published_root: Path,
 ) -> None:
     materialization_environment = _runtime_materialization_environment(root)
     wheelhouse = root / "downloads"
@@ -1395,7 +1397,7 @@ def _install_runtime(
         env=materialization_environment,
     ).strip()
     Path(site_packages, "npa-libero-source.pth").write_text(
-        str(root / "source") + "\n", encoding="utf-8"
+        str(published_root / "source") + "\n", encoding="utf-8"
     )
     os.chmod(wheelhouse, 0o700)
     shutil.rmtree(wheelhouse)
@@ -1769,7 +1771,10 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 _fetch_source(partial, manifest["source"])
                 _validate_task_inputs(partial, manifest)
                 _install_runtime(
-                    partial, manifest["runtime_artifacts"], requirement_lines
+                    partial,
+                    manifest["runtime_artifacts"],
+                    requirement_lines,
+                    published_root=final,
                 )
                 _fetch_inputs(partial, manifest)
                 record = _complete_record(

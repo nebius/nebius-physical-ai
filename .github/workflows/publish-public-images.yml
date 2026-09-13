@@ -1011,7 +1011,8 @@ jobs:
           SBOM_URL: ${{ steps.sbom-attestation.outputs.attestation-url }}
           SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
         run: |
-          test -s "$PROVENANCE_BUNDLE" && test -s "$SBOM_BUNDLE"
+          test -s "$PROVENANCE_BUNDLE"
+          test -s "$SBOM_BUNDLE"
           if [ "$TOOL" != libero ]; then
             test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"
           fi

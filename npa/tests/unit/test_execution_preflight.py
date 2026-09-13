@@ -1518,6 +1518,21 @@ def test_raw_explicit_pair_overrides_yaml_and_saved_pair_consistently(provider, 
     assert document["envs"]["AWS_ACCESS_KEY_ID"] == "explicit-access"
 
 
+def test_non_libero_ambient_session_token_refuses_before_storage(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "stale-ambient-session")
+
+    with pytest.raises(ExecutionPreflightError, match="session-token overrides"):
+        preflight_skypilot_submission(
+            [raw_task()], project="unit", infra="k8s/unit-context"
+        )
+
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("change,check", [
     ({"resources": {"cloud": "kubernetes", "region": "other-context"}}, "cluster_owner"),
     ({"envs": {"UNKNOWN_WRITER": "s3://unit-output/ambiguous"}}, "storage_target"),

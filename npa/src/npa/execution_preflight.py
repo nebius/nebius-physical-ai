@@ -52,6 +52,26 @@ LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
 )
 
 
+def is_libero_official_image_reference(value: object) -> bool:
+    """Return whether an image belongs to the exact official LIBERO repository.
+
+    Args:
+        value: Candidate image reference, optionally prefixed with ``docker:``.
+    Returns:
+        Whether the normalized reference is the official repository or one of
+        its tag/digest references.
+    Raises:
+        None.
+    """
+
+    image = str(value or "").removeprefix("docker:")
+    return (
+        image == LIBERO_OFFICIAL_IMAGE_REPOSITORY
+        or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}@")
+        or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}:")
+    )
+
+
 @dataclass(frozen=True)
 class ExecutionTarget:
     project: str = field(repr=False)
@@ -503,9 +523,7 @@ def verify_solution_payload_service_accounts(
             else ""
         )
         official_image_signal = any(
-            image == LIBERO_OFFICIAL_IMAGE_REPOSITORY
-            or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}@")
-            or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}:")
+            is_libero_official_image_reference(image)
             for image in (resource_image, environment_image)
         )
         if not profile_signal and not solution_signal and not official_image_signal:
@@ -1065,7 +1083,7 @@ def preflight_skypilot_submission(
     # so the checked document is exactly the one persisted for SkyPilot while
     # its secrets travel only through the separate redacted channel.
     verify_worker_environment(target, [*documents, dict(global_config or {})])
-    session_token = selected.session_token
+    session_token = process_env.get("AWS_SESSION_TOKEN", "")
     if workflow_env.get("AWS_SESSION_TOKEN"):
         raise ExecutionPreflightError(
             "credentials",
