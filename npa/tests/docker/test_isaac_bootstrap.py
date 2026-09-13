@@ -310,7 +310,18 @@ def test_bootstrap_refuses_a_cold_cache_without_flock(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     (harness.bin / "flock").unlink()
 
-    result = harness.run("ensure")
+    bash_env = harness.root / "no-flock.bash"
+    bash_env.write_text(
+        """command() {
+  if [ \"${1-}\" = -v ] && [ \"${2-}\" = flock ]; then
+    return 1
+  fi
+  builtin command \"$@\"
+}
+""",
+        encoding="utf-8",
+    )
+    result = harness.run("ensure", BASH_ENV=str(bash_env))
 
     assert result.returncode == EX_SOFTWARE
     assert "flock is required" in result.stderr

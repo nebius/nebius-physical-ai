@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import tempfile
 from pathlib import Path
 import socket
 import struct
@@ -929,7 +930,7 @@ def _short_event_socket_path(tmp_path: Path) -> Path:
     """Return a unique test socket path that fits Unix-domain socket limits."""
 
     digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
-    return Path("/tmp") / f"npa-leisaac-{digest}.sock"
+    return Path(tempfile.gettempdir()) / f"npa-leisaac-{digest}.sock"
 
 
 def _prepare_runtime(monkeypatch, tmp_path: Path):
