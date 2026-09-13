@@ -122,7 +122,7 @@ the current surface, never to recreate the old one.
 
 | Guardrail | Fix when it fails |
 |---|---|
-| `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, or makes mypy blocking. Match the existing template. |
+| `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
 | `test_daily_vm_network` | Daily SSH access loses host-key verification or isolated staging cleanup, requests unnecessary identity permissions, or adds a PR trigger. Restore pinned host keys, direct SSH, per-run private directories, and cleanup on failure. |
 | `test_e2e_gate_reachability` | A new `NPA_*` e2e gate has no runner mapping. Wire it into `scripts/dev-vm-daily-tests.sh` or record a reviewed manual reason. |
 | `test_terraform_provisioner_shell` | Bash embedded in the agent Terraform is not syntactically valid, or an SSH wait is unbounded. Check the heredocs. |

@@ -191,6 +191,25 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
+Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
+and 3.14. A focused compatibility check runs before the CPU tensor dependencies
+are installed, so async cancellation and isolated SkyPilot fixture regressions
+surface early. Run it locally with:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/guardrails/test_ci_workflows.py \
+  npa/tests/docker/test_base_image_scan.py \
+  npa/tests/orchestration/skypilot/test_workflow_logs.py \
+  npa/tests/workbench/test_cosmos3_nano_video_server.py -q
+```
+
+The image security workflow scans the pinned Python base after the same OS
+update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
+target without cache so newly published security fixes are included, then fails
+on fixable CRITICAL OS findings. This baseline check does not replace the
+complete image scans required before publication.
+
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
