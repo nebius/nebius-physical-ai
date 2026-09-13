@@ -212,6 +212,68 @@ def test_libero_payload_account_is_not_self_attested_authorization() -> None:
     assert module._uses_libero_payload_service_account(documents) is True
 
 
+def test_official_libero_image_forces_refusal_for_renamed_profile(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    module = _load_module()
+    renamed_profile = tmp_path / "renamed-profile.yaml"
+    renamed_profile.write_bytes(YAML_PATH.read_bytes())
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    )
+    documents = [
+        {"execution": "serial"},
+        {
+            "name": "renamed-profile",
+            "resources": {"image_id": f"docker:{candidate}"},
+            "envs": {"BYOF_IMAGE": candidate},
+            "run": "true",
+        },
+    ]
+    monkeypatch.setattr(module, "render_workflow", lambda *_args, **_kwargs: documents)
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(renamed_profile),
+            "--run-id",
+            "libero-image-refusal",
+            "--solution-name",
+            "not-libero",
+            "--render-only",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="requires --solution-name libero"):
+        module._submit_and_wait(args)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/example/npa-libero@sha256:" + "9" * 64,
+        "ghcr.io/nebius/nebius-physical-ai/npa-libero-copy@sha256:" + "9" * 64,
+        "mirror.invalid/ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
+        + "9" * 64,
+    ],
+)
+def test_libero_image_classifier_rejects_other_repositories_and_substrings(
+    image,
+) -> None:
+    module = _load_module()
+    args = SimpleNamespace(solution_name="not-libero", yaml_path=Path("renamed.yaml"))
+    documents = [
+        {
+            "name": "renamed-profile",
+            "resources": {"image_id": f"docker:{image}"},
+            "envs": {"BYOF_IMAGE": image},
+            "run": "true",
+        }
+    ]
+
+    assert module._is_libero_invocation(args, documents) is False
+
+
 def test_reserved_libero_payload_account_requires_explicit_solution(monkeypatch) -> None:
     module = _load_module()
     args = module._parse_args(

@@ -31,6 +31,8 @@ from npa.deploy.images import (
 )
 from npa.execution_preflight import (
     SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    is_libero_official_image_reference,
+    skypilot_task_documents,
     verify_solution_payload_service_accounts,
 )
 from npa.workflows.byof.live import resolve_byof_profile_path
@@ -220,12 +222,22 @@ VERIFIED_DRAIN_STATUSES = TERMINAL_STATUSES - {"FAILED_CONTROLLER"}
 
 
 def _is_libero_invocation(
-    args: argparse.Namespace, _documents: list[dict[str, Any]]
+    args: argparse.Namespace, documents: list[dict[str, Any]]
 ) -> bool:
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         return True
     if Path(args.yaml_path).name == LIBERO_PROFILE_FILENAME:
         return True
+    for document in skypilot_task_documents(documents):
+        resources = document.get("resources") or {}
+        envs = document.get("envs") or {}
+        if not isinstance(resources, dict) or not isinstance(envs, dict):
+            continue
+        if any(
+            is_libero_official_image_reference(image)
+            for image in (resources.get("image_id"), envs.get("BYOF_IMAGE"))
+        ):
+            return True
     return False
 
 

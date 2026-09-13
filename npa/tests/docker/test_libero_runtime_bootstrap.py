@@ -508,6 +508,8 @@ def _install_fake_materializers(
         root: Path,
         _artifacts: list[dict[str, object]],
         _requirements: list[str],
+        *,
+        published_root: Path,
     ) -> None:
         python = root / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
@@ -517,6 +519,11 @@ def _install_fake_materializers(
             encoding="utf-8",
         )
         python.chmod(0o755)
+        site_packages = root / "venv" / "lib" / "site-packages"
+        site_packages.mkdir(parents=True)
+        (site_packages / "npa-libero-source.pth").write_text(
+            str(published_root / "source") + "\n", encoding="utf-8"
+        )
 
     def fetch_inputs(root: Path, manifest: dict[str, object]) -> None:
         demo = manifest["demonstration"]
@@ -749,7 +756,13 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
 
     monkeypatch.setattr(module.subprocess, "check_output", fake_check_output)
 
-    module._install_runtime(tmp_path / "runtime", manifest["runtime_artifacts"], lines)
+    published_root = tmp_path / "cache" / "published-runtime"
+    module._install_runtime(
+        tmp_path / "runtime",
+        manifest["runtime_artifacts"],
+        lines,
+        published_root=published_root,
+    )
 
     installs = [command for command, _environment in commands if "install" in command]
     assert len(installs) == 2
@@ -771,6 +784,17 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
         environment["HOME"] == str(tmp_path / "runtime")
         for environment in subprocess_environments
     )
+    source_path = (
+        tmp_path
+        / "runtime"
+        / "venv"
+        / "lib"
+        / "site-packages"
+        / "npa-libero-source.pth"
+    )
+    assert source_path.read_text(encoding="utf-8") == str(
+        published_root / "source"
+    ) + "\n"
 
 
 def test_source_fetch_uses_only_the_credential_free_materialization_environment(
@@ -857,6 +881,25 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
         or (path.is_file() and path.stat().st_mode & 0o040 == 0o040)
         for path in (final, *final.rglob("*"))
     )
+
+
+def test_materialized_source_path_targets_published_cache_after_rename(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+
+    module.ensure(args)
+
+    final = Path(args.cache_root) / fixture["manifest_sha"]
+    source_record = (
+        final / "venv" / "lib" / "site-packages" / "npa-libero-source.pth"
+    )
+    recorded_path = source_record.read_text(encoding="utf-8").strip()
+    assert recorded_path == str(final / "source")
+    assert Path(recorded_path).is_dir()
+    assert ".partial-" not in recorded_path
+    assert not list(Path(args.cache_root).glob(".*.partial-*"))
 
 
 def _prepared_execute(monkeypatch, tmp_path):

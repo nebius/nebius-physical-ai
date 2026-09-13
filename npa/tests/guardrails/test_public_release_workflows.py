@@ -250,7 +250,12 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "push-to-registry"
     ] == "${{ matrix.tool != 'libero' }}"
     result_gate = attestations["Require both digest-bound attestation results"]["run"]
-    assert 'test -s "$PROVENANCE_BUNDLE" && test -s "$SBOM_BUNDLE"' in result_gate
+    result_lines = result_gate.splitlines()
+    assert result_lines[:2] == [
+        'test -s "$PROVENANCE_BUNDLE"',
+        'test -s "$SBOM_BUNDLE"',
+    ]
+    assert not any("&&" in line for line in result_lines[:2])
     assert 'if [ "$TOOL" != libero ]; then' in result_gate
     assert 'test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"' in result_gate
     verify = text[text.index("Verify pushed bytes") :]
