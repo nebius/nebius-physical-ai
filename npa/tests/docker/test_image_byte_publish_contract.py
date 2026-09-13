@@ -205,8 +205,10 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     setup = next(
         step
         for step in build_steps
-        if isinstance(step.get("uses"), str)
-        and re.fullmatch(r"actions/setup-python@[0-9a-f]{40}", step["uses"])
+        if step.get("uses", "").startswith("actions/setup-python@")
+    )
+    assert setup["uses"] == (
+        "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
     )
     assert setup["with"]["python-version"] == (
         "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || "
@@ -216,9 +218,10 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
         if name == "build-development":
             continue
         for step in job.get("steps", []):
-            if isinstance(step.get("uses"), str) and re.fullmatch(
-                r"actions/setup-python@[0-9a-f]{40}", step["uses"]
-            ):
+            if step.get("uses", "").startswith("actions/setup-python@"):
+                assert step["uses"] == (
+                    "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
+                )
                 assert step["with"]["python-version"] == "3.11"
     security = yaml.safe_load(SECURITY.read_text())
     job = security["jobs"]["image-policy"]
