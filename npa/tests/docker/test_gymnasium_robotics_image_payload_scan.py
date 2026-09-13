@@ -11,11 +11,21 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
     text = SCANNER.read_text(encoding="utf-8")
     whitespace_independent_text = "".join(text.split())
     assert "_zip_central_filename_bytes(path,info)" in whitespace_independent_text
+    assert 'layer_names=entry.get("Layers")' in whitespace_independent_text
+    assert (
+        "ifnotisinstance(layer_names,list)ornotlayer_names:"
+        in whitespace_independent_text
+    )
+    assert "iflen(layer_names)>MAX_ORDERED_LAYERS:" in whitespace_independent_text
+    assert (
+        "_validated_tar_members(path,content,max_members="
+        "MAX_NESTED_ARCHIVE_MEMBERS)"
+        in whitespace_independent_text
+    )
     for token in (
         '"manifest.json"',
         '_scan_decoded_member_bytes("exact image config", config_raw)',
         'config_name != f"{config_digest}.json"',
-        'entry.get("Layers", [])',
         'config_rootfs.get("diff_ids") != layer_diff_ids',
         '_scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)',
         '_scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)',
@@ -37,7 +47,6 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "unsupported zip extra field",
         "zip local descriptor metadata is not zero",
         'struct.unpack("<3L", fields)',
-        "_validated_tar_members(path, content)",
         "_nested_archive_members(",
         "allowed_system_wheel_path=",
         '"requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a"',
