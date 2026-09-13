@@ -28,6 +28,7 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
 COPY --chmod=0444 docker/workbench/gymnasium-robotics/asset-lock.json ./asset-lock.json
 COPY --chmod=0444 docker/workbench/gymnasium-robotics/source-lock.json ./source-lock.json
 COPY --chmod=0444 docker/workbench/gymnasium-robotics/requirements.lock ./requirements.lock
+RUN install -d -m 0755 /usr/share/doc/npa-gymnasium-robotics
 COPY --chmod=0444 docker/workbench/gymnasium-robotics/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md
 COPY --chmod=0444 docker/workbench/gymnasium-robotics/REDISTRIBUTION.md /usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md
 COPY --chmod=0555 docker/workbench/gymnasium-robotics/runtime-bootstrap.py ./runtime-bootstrap.py
@@ -51,5 +52,13 @@ RUN test "$(id -u ubuntu)" = 1000 \
 ENV HOME=/home/ubuntu
 WORKDIR /workspace
 USER ubuntu
+RUN test "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics)" = 755 \
+    && test "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md)" = 444 \
+    && test "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md)" = 444 \
+    && test -r /usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md \
+    && test ! -w /usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md \
+    && test -r /usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md \
+    && test ! -w /usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md \
+    && /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
 ENTRYPOINT ["/usr/local/bin/npa-gymnasium-entrypoint"]
 CMD ["/bin/sh"]

@@ -128,6 +128,33 @@ def test_pre_network_locks_are_readable_independent_of_checkout_modes() -> None:
     )
 
 
+def test_installed_notices_are_immutable_and_verified_by_the_default_user() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text(encoding="utf-8")
+    notice_directory = "RUN install -d -m 0755 /usr/share/doc/npa-gymnasium-robotics"
+    notice_copy = (
+        "COPY --chmod=0444 "
+        "docker/workbench/gymnasium-robotics/THIRD_PARTY_NOTICES.md "
+        "/usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md"
+    )
+    default_user_verifier = (
+        "/usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py"
+    )
+    assert notice_directory in dockerfile
+    assert notice_copy in dockerfile
+    assert dockerfile.index(notice_directory) < dockerfile.index(notice_copy)
+    assert dockerfile.index("USER ubuntu") < dockerfile.index(default_user_verifier)
+    for exact_mode in (
+        "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics)\" = 755",
+        "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md)\" = 444",
+        "$(stat -c '%a' /usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md)\" = 444",
+    ):
+        assert exact_mode in dockerfile
+    for notice in ("THIRD_PARTY_NOTICES.md", "REDISTRIBUTION.md"):
+        path = f"/usr/share/doc/npa-gymnasium-robotics/{notice}"
+        assert f"test -r {path}" in dockerfile
+        assert f"test ! -w {path}" in dockerfile
+
+
 def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
