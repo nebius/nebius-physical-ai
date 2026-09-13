@@ -300,6 +300,8 @@ successful GPU run or acceptable generated data.
 
 Choose one path below. For an existing cluster, use the adoption path so NPA
 records its identity before considering provisioning.
+Both paths define `CLUSTER_OPTIONS`, a shell array of the expected topology and
+driver settings. Keep it in the same shell for the health checks in S6.
 
 #### Create a new cluster
 
@@ -309,12 +311,15 @@ stages. Terraform and an SSH public key must be available as described in P1.
 
 ```bash
 export CLUSTER_NAME=paidf-cosmos3
+CLUSTER_OPTIONS=(
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 --gpu-preset 1gpu-24vcpu-218gb
+  --gpu-driver-mode auto --managed-driver-preset cuda13.0
+  --on-demand
+)
 npa workbench health preflight --checks nebius
 npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
-  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
-  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
-  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
-  --dry-run --output-format json
+  "${CLUSTER_OPTIONS[@]}" --dry-run --output-format json
 ```
 
 Check `status` and `preflight.decision`: a dry run can exit zero while reporting
@@ -338,11 +343,16 @@ take precedence over environment variables. Monitor actual node capacity and
 disk pressure during the workflow as described in R4.
 
 Check the project, region, node types, and disk sizes in the plan. When they
-match your intended setup and quota, run the same `provision-if-absent` command
-without `--dry-run --output-format json`. Wait for provisioning and node health
-checks to succeed. Do not proceed with a degraded cluster. This creates cloud
-resources; use the [teardown guide](../../docs/teardown.md) when you finish with
-a cluster you own.
+match your intended setup and quota, apply the same options:
+
+```bash
+npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  "${CLUSTER_OPTIONS[@]}"
+```
+
+Wait for provisioning and node health checks to succeed. Do not proceed with a
+degraded cluster. This creates cloud resources; use the
+[teardown guide](../../docs/teardown.md) when you finish with a cluster you own.
 
 Inspect the resulting cluster and set `KUBECONFIG` to the exact path reported
 by provisioning. The default is `~/.npa/clusters/<cluster-name>/kubeconfig`:
@@ -388,6 +398,38 @@ npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
 
+List [all node groups](https://docs.nebius.com/cli/reference/mk8s/node-group/list)
+in the adopted cluster without changing them:
+
+```bash
+nebius mk8s node-group list --parent-id "$CLUSTER_ID" --all --format json
+```
+
+Set the expected CPU and GPU node totals from `spec.fixed_node_count` (or
+`status.target_node_count` for autoscaled groups); require `status.node_count` to
+agree. Counts are nodes, so one eight-GPU node means `--gpu-nodes 1`.
+Copy each pool's `spec.template.resources.platform` and `.preset`. This command
+requires all GPU groups to share one platform/preset and driver policy.
+For managed-driver images, copy `spec.template.gpu_settings.drivers_preset`:
+
+```bash
+CLUSTER_OPTIONS=(
+  --cpu-nodes '<cpu-node-total>' --cpu-platform '<cpu-platform>'
+  --cpu-preset '<cpu-preset>'
+  --gpu-nodes '<gpu-node-total>' --gpu-platform '<gpu-platform>'
+  --gpu-preset '<gpu-preset>'
+  --gpu-driver-mode managed-image --managed-driver-preset '<managed-preset>'
+)
+```
+
+If there is no CPU pool, set `--cpu-nodes 0` and omit the CPU platform/preset
+options.
+For an existing GPU Operator deployment, replace both driver options with
+`--gpu-driver-mode operator`. Preserve any original workload-profile or MIG
+options in the array. Resolve unknown or mixed driver settings using the
+[driver strategy reference](../../docs/workbench/mk8s-gpu-driver-strategy.md)
+before S6; changing the validation policy does not repair the installed drivers.
+
 The Nebius CLI profile supplies cloud authentication, the NPA project alias
 selects saved project credentials, and the Kubernetes context selects the
 cluster. Use the values belonging to the selected project throughout.
@@ -396,7 +438,8 @@ cluster. Use the values belonging to the selected project throughout.
 
 Resolve Python from your Linux operator environment; `python3.12` must be on
 `PATH`. Use that same host for every subsequent run command. Keep the
-`KUBECONFIG` path verified in S5; a context name need not match its directory.
+`KUBECONFIG` path and `CLUSTER_OPTIONS` array from S5; a context name need not
+match its directory. In a new shell, restore the array before continuing.
 
 ```bash
 npa skypilot bootstrap --python "$(command -v python3.12)"
@@ -405,7 +448,7 @@ npa skypilot verify --cluster "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG"
 npa provision-if-absent \
   --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
   --context "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG" \
-  --skip-s3 --sky-smoke --sky-bin "$NPA_SKYPILOT_BIN"
+  "${CLUSTER_OPTIONS[@]}" --skip-s3 --sky-smoke --sky-bin "$NPA_SKYPILOT_BIN"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 ```
 
