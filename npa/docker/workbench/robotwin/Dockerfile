@@ -16,8 +16,10 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
   docker/workbench/robotwin/runtime-requirements.lock /opt/npa/robotwin/
 
 # Install only the exact Ubuntu main packages selected from the signed immutable
-# snapshot. The base keyring, all three InRelease files, every installed version,
-# and every retained package copyright file are bound to the committed lock.
+# snapshot. The locked direct set is ca-certificates, openssh-server,
+# python3-minimal, rsync, and sudo. The base keyring, all three InRelease files,
+# every installed version, and every retained package copyright file are bound
+# to the committed lock.
 RUN set -eux; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
     test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "0d7bb81b52d86d541a0487f4cbb2b84fcc773fce5fe58f48d90e370098b2763d"; \
