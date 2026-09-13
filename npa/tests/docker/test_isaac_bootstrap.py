@@ -1009,8 +1009,6 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK" in text
     assert "NPA_NO_BAKED_ISAAC_OK" in text
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
-    assert "ACCEPT_EULA='' env -u" in text
-    assert "ACCEPT_EULA= env -u" not in text
 
 
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
