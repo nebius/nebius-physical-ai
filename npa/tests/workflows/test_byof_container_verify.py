@@ -1796,6 +1796,64 @@ def test_complete_libero_cleanup_preserves_recovery_state_on_access_failure(
     assert result.errors == ["access absence is unverified"]
 
 
+def test_complete_libero_cleanup_preserves_state_on_api_stop_failure(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    run_id = "exact-run"
+    isolated_state = tmp_path / run_id
+    isolated_state.mkdir(mode=0o700)
+    state_file = isolated_state / "state"
+    state_file.write_text("recovery fixture\n", encoding="utf-8")
+    payload_kubeconfig = isolated_state / "payload-kubeconfig"
+    payload_kubeconfig.write_text("recovery fixture\n", encoding="utf-8")
+    payload_kubeconfig.chmod(0o600)
+    binding = SimpleNamespace(
+        access_state=SimpleNamespace(kubeconfig=payload_kubeconfig)
+    )
+    events: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_access_objects",
+        lambda *_a, **_k: events.append("access")
+        or _verified_cleanup(module, "libero-access"),
+    )
+
+    def fail_api_stop(**_kwargs) -> None:
+        events.append("api")
+        raise module.SkyPilotConfigError("fixture API stop failure")
+
+    monkeypatch.setattr(module, "_stop_sky_api", fail_api_stop)
+    monkeypatch.setattr(
+        module,
+        "_cleanup_libero_local_state",
+        lambda **_k: pytest.fail("local recovery state must be preserved"),
+    )
+
+    result, attempted, stopped = module._complete_libero_cleanup(
+        _verified_cleanup(module, "managed"),
+        binding=binding,
+        timeout=1,
+        sky_bin="sky",
+        isolated_config_dir=isolated_state,
+        config_path=tmp_path / "skypilot.yaml",
+        run_id=run_id,
+    )
+
+    assert events == ["access", "api"]
+    assert attempted is True
+    assert stopped is False
+    assert result.ok is False
+    assert result.verified is False
+    assert result.remote_absence_verified is True
+    assert result.errors == [
+        "LIBERO SkyPilot API stop failed; local recovery state preserved"
+    ]
+    assert isolated_state.is_dir()
+    assert state_file.read_text(encoding="utf-8") == "recovery fixture\n"
+    assert payload_kubeconfig.read_text(encoding="utf-8") == "recovery fixture\n"
+
+
 def test_libero_signal_callback_completes_every_cleanup_layer(
     monkeypatch, tmp_path
 ) -> None:

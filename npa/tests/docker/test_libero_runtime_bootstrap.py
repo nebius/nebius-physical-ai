@@ -319,6 +319,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
         monkeypatch.setenv(name, f"secret-{name}")
     monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_B64", "decision-secret")
     monkeypatch.setenv("HF_TOKEN", "provider-secret")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/attacker-controlled-libraries")
     monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-runtime-environment")
 
     environment = module._runtime_execution_environment(Path("/proc/self/fd/7"))
@@ -326,6 +327,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
     assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
     assert "HF_TOKEN" not in environment
+    assert "LD_LIBRARY_PATH" not in environment
     assert environment["NPA_BYOF_RUN_ID"] == "libero-runtime-environment"
     assert environment["LIBERO_RUNTIME_ROOT"] == "/proc/self/fd/7"
 
