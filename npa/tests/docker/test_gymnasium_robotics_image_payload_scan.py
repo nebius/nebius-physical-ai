@@ -11,11 +11,14 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
     text = SCANNER.read_text(encoding="utf-8")
     for token in (
         '"manifest.json"',
-        '_scan_policy_bytes("exact image config", config_raw)',
+        '_scan_decoded_member_bytes("exact image config", config_raw)',
         'config_name != f"{config_digest}.json"',
         'entry.get("Layers", [])',
         'config_rootfs.get("diff_ids") != layer_diff_ids',
-        '_scan_policy_bytes(f"raw layer bytes: {layer_name}", raw)',
+        '_scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)',
+        '_scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)',
+        'f"decoded member: {path}"',
+        'f"raw archive member: {path}"',
         "_whiteout_metadata(layer, item, path, layer_name)",
         'leaf == ".wh..wh..opq"',
         'leaf.startswith(".wh.")',
