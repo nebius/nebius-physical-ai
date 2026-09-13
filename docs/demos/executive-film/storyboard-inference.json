@@ -1,244 +1,255 @@
 {
-  "title": "Before the next move.",
+  "title": "Intelligence, tested.",
   "duration": 120,
   "fps": 30,
   "width": 1920,
   "height": 1080,
-  "footer": "INFERENCE FOR PHYSICAL AI",
+  "footer": "INFERENCE, TESTED IN SIMULATION",
   "brief": {
-    "prompt": "Create a phenomenal two-minute film showing why inference is essential to Physical AI. Show sophisticated NVIDIA Cosmos world-model inference and VLM evaluation, using authentic Token Factory Cosmos 3 Super Reasoner results, from a Nebius + NVIDIA perspective.",
+    "prompt": "Create a two-minute Physical AI inference film centered on a fresh simulation experiment. Use more Nebius Token Factory and other model families. Remove NVIDIA branding and model usage, and do not reuse footage from the executive film.",
     "audience": "C-suite and technical leaders evaluating Physical AI inference",
-    "goal": "Make the need for world-model generation and vision-language evaluation tangible, and position Nebius infrastructure and NVIDIA Cosmos as complementary parts of the inference workflow.",
-    "tone": "Cinematic, ambitious, precise; short headlines and strong visual proof.",
+    "goal": "Show how model-generated plans, physical simulation, measured outcomes, and visual evaluation form an inspectable development loop.",
+    "tone": "Cinematic, clear, technical claims grounded in the recorded experiment.",
     "duration_seconds": 120,
     "call_to_action": "github.com/nebius/nebius-physical-ai"
   },
   "scenes": [
     {
-      "id": "01-before-the-move",
+      "id": "01-intelligence-tested",
       "duration": 8,
       "layout": "cinematic",
-      "eyebrow": "NEBIUS + NVIDIA",
+      "eyebrow": "NEBIUS / PHYSICAL AI",
       "title": [
-        "Before the",
-        "next move."
+        "Intelligence,",
+        "tested."
       ],
-      "subtitle": "Physical AI needs inference.",
+      "subtitle": "Inference meets the physical world.",
       "assets": [
-        "super_kitchen"
+        "nominal_overview"
       ],
       "labels": [
-        "NVIDIA COSMOS 3 SUPER \u00b7 GENERATED SCENE"
+        "FRESH MUJOCO SIMULATION"
       ],
-      "narration": "Before a robot makes its next move, intelligence has work to do. That is where inference begins."
+      "narration": "Physical A I turns decisions into motion. Simulation lets us test what those decisions actually do."
     },
     {
-      "id": "02-changing-world",
-      "duration": 10,
+      "id": "02-start-with-a-goal",
+      "duration": 8,
       "layout": "feature",
-      "eyebrow": "WHY INFERENCE MATTERS",
+      "eyebrow": "A NEW ROBOT MANIPULATION EXPERIMENT",
       "title": [
-        "The world",
-        "keeps changing."
+        "Start with",
+        "a goal."
       ],
-      "subtitle": "New observations. New possibilities. New decisions.",
+      "subtitle": "Orange cube. Cyan target. A plan to connect them.",
       "assets": [
-        "nano_world"
+        "nominal_initial"
       ],
       "labels": [
-        "COSMOS 3 NANO \u00b7 GENERATED WORLD"
+        "CUSTOM CARTESIAN WORKCELL / MUJOCO"
       ],
-      "narration": "Training builds capability. Inference puts it to work: interpreting new observations, generating possible scenarios, and evaluating what happened."
+      "narration": "Start with a goal: move the orange cube into the cyan target."
     },
     {
-      "id": "03-continue",
-      "duration": 12,
-      "layout": "comparison",
-      "eyebrow": "WORLD MODEL INFERENCE / CONTINUATION",
-      "title": [
-        "Carry context forward.",
-        "Extend the world."
-      ],
-      "subtitle": "A generated segment conditions the next request. Three requests form a 30-second sequence.",
-      "assets": [
-        "nano_chunk_one",
-        "nano_chunk_two"
-      ],
-      "labels": [
-        "FIRST GENERATED SEGMENT",
-        "NEXT SEGMENT \u00b7 CONDITIONED ON THE FIRST"
-      ],
-      "narration": "With Cosmos, generation can continue from earlier frames. Here, each continuation carries visual context forward, building a longer sequence from connected inference calls."
-    },
-    {
-      "id": "04-structure",
-      "duration": 12,
-      "layout": "triptych",
-      "eyebrow": "WORLD MODEL INFERENCE / STRUCTURAL CONTROL",
-      "title": [
-        "Keep the structure.",
-        "Explore a new condition."
-      ],
-      "subtitle": "The same generated source supplies edge controls for a new appearance.",
-      "assets": [
-        "nano_world",
-        "nano_edges",
-        "nano_variation"
-      ],
-      "labels": [
-        "GENERATED WORLD",
-        "ACTUAL EDGE CONDITIONING",
-        "GENERATED VARIATION"
-      ],
-      "narration": "Now change the conditions. Edge guidance from the source helps steer a new generation. The scene shifts to dim, warm lighting while retaining recognizable structure."
-    },
-    {
-      "id": "05-possibilities",
+      "id": "03-qwen-plan",
       "duration": 10,
       "layout": "screen",
-      "eyebrow": "NVIDIA COSMOS / GENERATIVE INFERENCE",
+      "eyebrow": "NEBIUS TOKEN FACTORY / PLANNING",
       "title": [
-        "Turn one world into another possibility."
+        "Qwen proposes a route."
       ],
-      "subtitle": "Source-conditioned generation creates another candidate to inspect.",
+      "subtitle": "A structured task becomes model-generated waypoints.",
       "assets": [
-        "nano_variation"
+        "qwen_plan"
       ],
       "labels": [
-        "COSMOS 3 NANO \u00b7 CONTROLLED VARIATION"
+        "QWEN3 235B / RECORDED MODEL OUTPUT"
       ],
-      "narration": "Generated possibilities expand the scenarios available for development. Preserve each candidate with its source and generation settings."
+      "narration": "Through Nebius Token Factory, Qwen proposes a straight route. Its returned waypoints become the controller’s input."
     },
     {
-      "id": "06-ask",
+      "id": "04-test-in-physics",
       "duration": 8,
-      "layout": "cinematic",
-      "eyebrow": "THE SECOND INFERENCE WORKLOAD",
-      "title": [
-        "What does",
-        "the evidence show?"
-      ],
-      "subtitle": "Generation opens possibilities. Evaluation asks harder questions.",
-      "assets": [
-        "super_kitchen"
-      ],
-      "labels": [
-        "GENERATED SCENE \u00b7 QUALITY REQUIRES EVALUATION"
-      ],
-      "narration": "A convincing image raises another question. What does the evidence actually support? That calls for evaluation."
-    },
-    {
-      "id": "07-observe",
-      "duration": 10,
       "layout": "screen",
-      "eyebrow": "VLM EVALUATION / A SEPARATE RECORDED ROBOT RUN",
+      "eyebrow": "EXECUTE THE MODEL-GENERATED PLAN",
       "title": [
-        "Give the evaluator evidence and a task."
+        "Run the plan in physics."
       ],
-      "subtitle": "Task: move the object to the target while maintaining stable contact.",
+      "subtitle": "A scripted controller executes the returned waypoints.",
       "assets": [
-        "vlm_inputs_grid"
+        "nominal_run"
       ],
       "labels": [
-        "EIGHT ORIGINAL SELECTED FRAMES \u00b7 ISAAC SIMULATION \u00b7 RECORDED 27 AUG 2026"
+        "MUJOCO / 1.2× PLAYBACK / FINAL FRAME HELD"
       ],
-      "narration": "For this separate robot experiment, eight selected frames and a manipulation task went to a vision language evaluator through Nebius Token Factory."
+      "narration": "The controller executes that plan in MuJoCo. In the clear scene, the cube reaches the target."
     },
     {
-      "id": "08-reason",
-      "duration": 12,
-      "layout": "reason",
-      "eyebrow": "RECORDED TOKEN FACTORY EVALUATION",
+      "id": "05-new-obstacle",
+      "duration": 10,
+      "layout": "comparison",
+      "eyebrow": "CHANGE ONE CONDITION",
       "title": [
-        "Ask what",
-        "happened."
+        "Same plan.",
+        "New obstacle."
       ],
-      "subtitle": "Requested model: Cosmos 3 Super Reasoner",
+      "subtitle": "Replay the original waypoints with an obstacle in the path.",
       "assets": [
-        "vlm_inputs_sequence"
+        "nominal_top",
+        "blocked_top"
       ],
       "labels": [
-        "ORIGINAL SELECTED FRAMES \u00b7 PRESENTATION SEQUENCE"
+        "CLEAR SCENE / GOAL REACHED",
+        "OBSTACLE ADDED / GOAL MISSED"
       ],
-      "narration": "The report lists Cosmos Three Super Reasoner as the requested model. The recorded assessment flags inaccurate final placement, giving the next experiment specific feedback.",
-      "quote_heading": "RECORDED MODEL ASSESSMENT",
-      "quote": "\u201cThe object does not reach the intended target position, and the final placement is inaccurate.\u201d",
+      "narration": "Add an obstacle and replay the same plan. The task fails. A changed world needs a new decision."
+    },
+    {
+      "id": "06-verify-the-verdict",
+      "duration": 10,
+      "layout": "reason",
+      "eyebrow": "TOKEN FACTORY / MINICPM-V 4.5",
+      "title": [
+        "Verify the",
+        "verdict."
+      ],
+      "subtitle": "This visual assessment incorrectly reports success.",
+      "assets": [
+        "blocked_final"
+      ],
+      "labels": [
+        "ORIGINAL FINAL FRAME / CUBE OUTSIDE THE TARGET"
+      ],
+      "narration": "Vision models also need evaluation. In this case, Mini C P M reports success, but the simulation disagrees.",
+      "quote_heading": "RECORDED MODEL RESPONSE",
+      "quote": "“No change needed.”",
       "source_notes": [
-        "Archived report \u00b7 27 Aug 2026 \u00b7 selected-frame assessment",
-        "Requested-model attribution; returned model identity was not retained."
+        "MiniCPM-V 4.5 / response from this experiment",
+        "An observed false positive; checked against recorded state."
       ]
     },
     {
-      "id": "09-decision",
+      "id": "07-ground-the-request",
       "duration": 10,
       "layout": "screen",
-      "eyebrow": "VLM EVALUATION / RECORDED RESULT",
+      "eyebrow": "SIMULATION PROVIDES MEASURED EVIDENCE",
       "title": [
-        "Make the result actionable."
+        "Ground the next request."
       ],
-      "subtitle": "Preserve the critique, the inputs, and the recorded outcome.",
+      "subtitle": "Images, measured state, and geometry inform the revision.",
       "assets": [
-        "vlm_result"
+        "measured_state"
       ],
       "labels": [
-        "MODEL ASSESSMENT \u00b7 NOT INDEPENDENT PHYSICAL GROUND TRUTH"
+        "ACTUAL SIMULATOR MEASUREMENT / DISTANCE TO GOAL CENTER"
       ],
-      "narration": "The report records no task success. Preserve the critique and inputs, giving the next experiment a specific problem to investigate."
+      "narration": "MuJoCo measures the failed outcome. Send that state, the images, and obstacle geometry into the next inference."
     },
     {
-      "id": "10-two-workloads",
+      "id": "08-minimax-revise",
       "duration": 10,
-      "layout": "comparison",
-      "eyebrow": "TWO INFERENCE WORKLOADS",
+      "layout": "screen",
+      "eyebrow": "NEBIUS TOKEN FACTORY / REPLANNING",
       "title": [
-        "Generate possibilities.",
-        "Evaluate evidence."
+        "MiniMax proposes a detour."
       ],
-      "subtitle": "Complementary workloads, shown through separate recorded examples.",
+      "subtitle": "The model returns a new route for the same controller.",
       "assets": [
-        "nano_variation",
-        "vlm_inputs_sequence"
+        "minimax_route"
       ],
       "labels": [
-        "WORLD MODELS \u00b7 GENERATE CANDIDATES",
-        "VISION LANGUAGE MODELS \u00b7 ASSESS OBSERVATIONS"
+        "MINIMAX-M3 / RECORDED MODEL OUTPUT"
       ],
-      "narration": "World models generate candidates. Vision language models assess observations. Both support an iterative development loop, grounded in evidence."
+      "narration": "Using images and simulator evidence, MiniMax proposes a new route around the obstacle."
     },
     {
-      "id": "11-platform",
-      "duration": 8,
+      "id": "09-test-revised-decision",
+      "duration": 12,
       "layout": "cinematic",
-      "eyebrow": "NEBIUS INFRASTRUCTURE + NVIDIA COSMOS",
+      "eyebrow": "TEST THE NEW MODEL-GENERATED WAYPOINTS",
       "title": [
-        "Make inference",
-        "part of the loop."
+        "Test the",
+        "revised decision."
       ],
-      "subtitle": "GPU generation. Hosted evaluation. Traceable artifacts.",
+      "subtitle": "Same task. Same obstacle. A new route.",
       "assets": [
-        "nano_variation"
+        "revised_run"
       ],
       "labels": [
-        "WORLD MODEL GPU RUN + SEPARATE ARCHIVED TOKEN FACTORY EVALUATION"
+        "MUJOCO / 2× PLAYBACK / FINAL FRAME HELD"
       ],
-      "narration": "Nebius infrastructure and NVIDIA Cosmos bring generation and reasoning into the physical A I development loop."
+      "narration": "Execute the revised waypoints in the same simulation. The robot takes the detour and reaches the original target."
     },
     {
-      "id": "12-next",
+      "id": "10-measure-the-outcome",
+      "duration": 8,
+      "layout": "comparison",
+      "eyebrow": "RECORDED SIMULATION OUTCOMES",
+      "title": [
+        "Measure",
+        "what changed."
+      ],
+      "subtitle": "Distance from cube center to goal center, in this experiment.",
+      "assets": [
+        "blocked_final",
+        "revised_final"
+      ],
+      "labels": [
+        "ORIGINAL PLAN / 70.3 CM FROM GOAL",
+        "REVISED PLAN / 0.4 CM FROM GOAL"
+      ],
+      "narration": "Compare outcomes using recorded state. The task, obstacle, and success criteria stay the same."
+    },
+    {
+      "id": "11-evaluate-the-evidence",
+      "duration": 8,
+      "layout": "screen",
+      "eyebrow": "NEBIUS TOKEN FACTORY / VISUAL EVALUATION",
+      "title": [
+        "Evaluate the evidence."
+      ],
+      "subtitle": "Separate model judgments, checked against simulation state.",
+      "assets": [
+        "visual_assessments"
+      ],
+      "labels": [
+        "MINIMAX-M3 / TWO RECORDED VISUAL CHECKS"
+      ],
+      "narration": "MiniMax evaluates both outcomes. Check those judgments against measured state, and preserve the evidence."
+    },
+    {
+      "id": "12-choose-models",
+      "duration": 8,
+      "layout": "screen",
+      "eyebrow": "THREE MODEL FAMILIES / ONE DEVELOPMENT LOOP",
+      "title": [
+        "Choose models for the job."
+      ],
+      "subtitle": "Planning, visual feedback, revision, and evaluation.",
+      "assets": [
+        "model_roles"
+      ],
+      "labels": [
+        "FIVE NEW INFERENCE CALLS THROUGH NEBIUS TOKEN FACTORY"
+      ],
+      "narration": "Connect models through Token Factory. Test decisions in simulation. Keep the evidence together."
+    },
+    {
+      "id": "13-build-the-loop",
       "duration": 10,
       "layout": "screen",
-      "eyebrow": "BUILD PHYSICAL AI",
+      "eyebrow": "BUILD WITH NEBIUS TOKEN FACTORY",
       "title": [
-        "Build what comes next."
+        "Build an inference loop."
       ],
-      "subtitle": "Explore the inference workflows.",
+      "subtitle": "Open the project. Change the task. Test the next decision.",
       "assets": [
-        "closing_brand"
+        "closing"
       ],
       "labels": [
         "github.com/nebius/nebius-physical-ai"
       ],
-      "narration": "Explore physical A I inference with Nebius and NVIDIA. Start with a world. Ask better questions. Build on the evidence."
+      "narration": "Build an inference loop with Nebius Token Factory. Plan. Simulate. Evaluate. Revise. Keep improving."
     }
   ]
 }

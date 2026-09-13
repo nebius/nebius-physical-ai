@@ -12,43 +12,59 @@ Duration, audience and narrative are project choices. The included
 [60-second technical walkthrough](storyboard-technical.json) uses the same
 renderer and a subset of the same assets with a different script and scene order.
 The [120-second inference film](storyboard-inference.json) tells a third story:
-why Physical AI needs world-model generation and vision-language evaluation,
-from the perspective of Nebius infrastructure and NVIDIA Cosmos.
+how hosted model inference, simulation, and measured feedback form a development
+loop. It uses fresh MuJoCo footage and five new Nebius Token Factory calls across
+Qwen, MiniCPM, and MiniMax, with official Nebius branding.
 
 ## Inference film evidence
 
-The inference storyboard uses an archived Cosmos 3 Nano continuation, its actual
-source-derived edge controls and controlled variation, plus a separately
-verified Cosmos 3 Super generation. Its evaluation chapter uses eight original
-robot-rollout frames and an archived Token Factory report. It does not depict
-those world-model clips as having been evaluated by that separate robot run.
+The inference example follows one newly authored Cartesian pushing workcell.
+Qwen returns a direct route; a scripted controller executes its cube-center
+waypoints in MuJoCo. The plan succeeds in a clear scene and fails when an
+obstacle is added. MiniCPM's visual assessment incorrectly reports success.
+The next MiniMax request includes original images, that assessment, measured
+failure coordinates, and explicit obstacle geometry. Its revised route reaches
+the target when executed by the same controller. Separate MiniMax visual checks
+assess the blocked and revised outcomes, and recorded simulator state verifies
+both results.
 
-The recorded report attributes its request to `nvidia/Cosmos3-Super-Reasoner`.
-It retains critiques and request receipts but no raw provider response envelope
-or returned-model identity. The film therefore says **requested model** and
-**recorded evaluation**. The public Token Factory catalog lacked that model and
-an exact-model request returned HTTP 404 during production on 13 September 2026.
-This is an archival demonstration, not a claim that the public endpoint currently
-serves the model. Recheck exact-model access before creating a new evaluation;
-do not silently substitute another model or present a saved report as a new call.
+The five calls retain complete requests, raw responses, exact requested and
+returned model identities, input-image hashes, and usage receipts. They use
+`Qwen/Qwen3-235B-A22B-Instruct-2507`, `openbmb/MiniCPM-V-4_5`, and
+`MiniMaxAI/MiniMax-M3`. Preserve the MiniCPM response as observed: its
+`task_complete` field is the string `"true"`, which is also invalid for a boolean
+gate. Do not silently convert it into an accepted judgment. The separate blocked
+MiniMax check happened after the replan; it did not trigger that request.
 
-To adapt this story, supply the following roles through the private asset manifest.
-Keep source hashes, original reports and derivation instructions with the project:
+MuJoCo performs CPU physics with local OpenGL rendering in this example. The
+hosted model calls run through Nebius Token Factory. The controller is scripted,
+and the simulation is a physics engine; this example does not demonstrate a
+learned low-level policy or a neural world model. Exact oriented-corner replay
+checks confirm full target containment for the two successful runs. These are
+three recorded task outcomes, not a model benchmark or general safety claim.
+All simulation footage is newly generated for this story, with no footage from
+the executive showcase and no NVIDIA models or branding.
+
+To adapt this story, supply these roles in the private asset manifest and retain
+their original inputs, outputs, derivation scripts, and hashes:
 
 | Roles | Evidence required |
 | --- | --- |
-| `super_kitchen`, `nano_world`, `nano_variation` | Actual generated videos and their matching successful run manifests. |
-| `nano_chunk_one`, `nano_chunk_two` | Consecutive generation requests with the later request's input linked to the earlier output. |
-| `nano_edges` | Actual preprocessing controls derived from the same generated source. |
-| `vlm_inputs_grid`, `vlm_inputs_sequence` | Original selected evaluation frames, source timestamps and presentation timing; these are editorial compositions. |
-| `vlm_result` | An editorial card containing the report's exact score, threshold and success fields. |
-| `closing_brand` | A composition using original official Nebius and NVIDIA logo artwork, with source URLs, hashes and transformations. |
+| `nominal_overview`, `nominal_initial` | Fresh clear-scene simulation video and initial frame, plus the scene, controller, returned plan, trajectory, and result. |
+| `nominal_run`, `nominal_top`, `blocked_top`, `revised_run` | Videos derived from those exact runs, with playback speed and final-frame holds recorded. |
+| `blocked_final`, `revised_final` | Original final frames from the corresponding recorded runs. |
+| `qwen_plan`, `minimax_route` | Editorial diagrams computed from actual returned waypoints and task geometry. |
+| `measured_state` | An editorial card computed from the blocked run's recorded result. |
+| `visual_assessments` | Exact summaries and boolean outcomes from the two separate MiniMax visual checks. |
+| `model_roles` | A model-role card supported by the five original request/response receipts. |
+| `closing` | A composition using the original official Nebius logo from [brand/](brand/). |
 
-The original [Nebius media kit](https://nebius.com/media-kit) and
-[NVIDIA newsroom logos](https://nvidianews.nvidia.com/multimedia/corporate/nvidia-logos)
-provide the brand sources. Runtime footage, camera imagery, report receipts and
-the composed media stay in the private project. Model assessments are not
-independent physical ground truth; generation success is not task success.
+The [Nebius media kit](https://nebius.com/media-kit) supplies the unmodified logo.
+The private editable package retains the experiment source, original simulation
+frames, five inference records, independent containment checks, narration,
+editorial compositions, renderer, and final output. Visual judgments are checked
+against measured state. Replaying saved plans is separate from requesting new
+model outputs, which may differ even with the same inputs.
 
 ## What drives the narrative
 
