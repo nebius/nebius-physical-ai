@@ -867,7 +867,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             ("workbench.cosmos_curate.curate", "cosmos-curate"),
             ("workbench.fiftyone.curate_augmented", "fiftyone"),
         ),
-        max_wait_seconds=7200,
         notes=(
             "Authorized GPU-daily acceptance for the separately named, direct "
             "NVIDIA-derived VDA translation. Proves the pinned upstream contract, "
