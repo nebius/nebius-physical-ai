@@ -327,6 +327,37 @@ def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
     )
 
 
+def _validate_cache_component(path: Path, *, cache_root: Path) -> None:
+    """Require a trusted directory at one cache path component."""
+
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        _refuse(f"runtime cache path cannot be inspected: {error}")
+    if stat.S_ISLNK(metadata.st_mode):
+        _refuse("runtime cache path may not traverse a symlink")
+    if not stat.S_ISDIR(metadata.st_mode):
+        _refuse("runtime cache path component is not a directory")
+    allowed_owners = {os.geteuid()} if path == cache_root else {0, os.geteuid()}
+    if metadata.st_uid not in allowed_owners:
+        _refuse("runtime cache path component has an untrusted owner")
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        _refuse("runtime cache path component is group/world writable")
+
+
+def _validate_existing_cache_chain(cache_root: Path) -> None:
+    """Validate existing components before creating a missing cache leaf."""
+
+    for component in reversed((cache_root, *cache_root.parents)):
+        try:
+            component.lstat()
+        except FileNotFoundError:
+            break
+        except OSError as error:
+            _refuse(f"runtime cache path cannot be inspected: {error}")
+        _validate_cache_component(component, cache_root=cache_root)
+
+
 def _validate_cache_root(cache_root: Path) -> Path:
     cache_root = cache_root.absolute()
     forbidden = (Path("/"), Path("/opt"), Path("/usr"), Path("/var"))
@@ -334,20 +365,15 @@ def _validate_cache_root(cache_root: Path) -> Path:
         _refuse("runtime cache must be an operator-owned external path")
     if cache_root == forbidden[0]:
         _refuse("runtime cache may not be the filesystem root")
+    _validate_existing_cache_chain(cache_root)
     try:
         cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        metadata = cache_root.lstat()
     except OSError as error:
         _refuse(f"runtime cache cannot be created: {error}")
-    if stat.S_ISLNK(metadata.st_mode):
-        _refuse("runtime cache root may not be a symlink")
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+    for component in reversed((cache_root, *cache_root.parents)):
+        _validate_cache_component(component, cache_root=cache_root)
+    if cache_root.lstat().st_uid != os.geteuid():
         _refuse("runtime cache root is not owned by the runtime operator")
-    if stat.S_IMODE(metadata.st_mode) & 0o022:
-        _refuse("runtime cache root is group/world writable")
-    for parent in (cache_root, *cache_root.parents):
-        if parent.is_symlink():
-            _refuse("runtime cache path may not traverse a symlink")
     return cache_root
 
 

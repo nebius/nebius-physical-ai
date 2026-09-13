@@ -11,7 +11,8 @@ from pathlib import Path
 import stat
 import sys
 import tarfile
-from typing import BinaryIO
+import tempfile
+from typing import BinaryIO, Iterator
 import urllib.error
 import zipfile
 
@@ -26,6 +27,16 @@ assert SPEC and SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = BOOTSTRAP
 SPEC.loader.exec_module(BOOTSTRAP)
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Create test caches below a non-writable owner-controlled parent chain."""
+
+    trusted_tmp = ROOT.parent / "test-tmp"
+    trusted_tmp.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="runtime-bootstrap-", dir=trusted_tmp) as raw:
+        yield Path(raw)
 
 
 @pytest.fixture(autouse=True)
@@ -606,6 +617,73 @@ def test_symlinked_cache_root_refuses_before_fetch(tmp_path: Path) -> None:
             manifest,
             requirements,
             cache,
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert calls == []
+
+
+def test_group_writable_cache_ancestor_refuses_before_fetch(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    ancestor = tmp_path / "unsafe-parent"
+    ancestor.mkdir(mode=0o700)
+    ancestor.chmod(0o770)
+    calls: list[str] = []
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="group/world writable"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            ancestor / "cache",
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert calls == []
+
+
+def test_symlinked_cache_ancestor_refuses_before_fetch(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    target = tmp_path / "trusted-target"
+    target.mkdir(mode=0o700)
+    ancestor = tmp_path / "linked-parent"
+    ancestor.symlink_to(target, target_is_directory=True)
+    calls: list[str] = []
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="symlink"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            ancestor / "cache",
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert calls == []
+
+
+def test_untrusted_cache_ancestor_owner_refuses_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    ancestor = tmp_path / "untrusted-owner"
+    ancestor.mkdir(mode=0o700)
+    real_lstat = Path.lstat
+    untrusted_uid = os.geteuid() + 1
+
+    def spoofed_lstat(path: Path) -> os.stat_result:
+        metadata = real_lstat(path)
+        if path != ancestor:
+            return metadata
+        fields = list(metadata)
+        fields[4] = untrusted_uid
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", spoofed_lstat)
+    calls: list[str] = []
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="untrusted owner"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            ancestor / "cache",
             opener=_opener(content, calls),
             installer=_installer,
         )

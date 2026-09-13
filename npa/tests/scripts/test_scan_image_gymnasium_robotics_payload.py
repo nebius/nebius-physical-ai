@@ -111,6 +111,14 @@ def _zip_with_member(
     return stream.getvalue()
 
 
+def _zip_with_files(files: dict[str, bytes]) -> bytes:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return stream.getvalue()
+
+
 def _tar_bytes(
     files: dict[str, bytes],
     *,
@@ -328,14 +336,37 @@ def test_outer_graph_resource_limits_accept_boundary_and_refuse_plus_one(
         SCAN.scan(image)
 
 
-def test_structural_container_text_cannot_create_unlocalized_false_positive(
+def test_safe_structural_tar_metadata_is_accepted(
     tmp_path: Path, structural_scan: None
 ) -> None:
     image = tmp_path / "structural-text.tar"
+    _docker_save(image, _required(), structural_gname="root")
+    assert SCAN.scan(image)["status"] == "passed"
+
+
+def test_secret_in_tar_header_metadata_refuses_without_echo(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "structural-secret.tar"
     structural_marker = "password" + "=" + ("x" * 16)
     _docker_save(image, _required(), structural_gname=structural_marker)
-    assert SCAN.SECRET_TEXT.search(image.read_bytes()) is not None
-    assert SCAN.scan(image)["status"] == "passed"
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN.scan(image)
+    assert structural_marker not in str(captured.value)
+
+
+def test_nonzero_tar_member_padding_refuses_without_echo() -> None:
+    marker = b"api" + b"_key=" + (b"x" * 16)
+    content = bytearray(_tar_bytes({"neutral.txt": b"x"}))
+    with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+        member = archive.getmember("neutral.txt")
+    padding_start = member.offset_data + member.size
+    content[padding_start : padding_start + len(marker)] = marker
+
+    with pytest.raises(ValueError, match="nonzero tar member padding") as captured:
+        SCAN._nested_archive_members("nested.tar", bytes(content))
+    assert marker.decode() not in str(captured.value)
 
 
 def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() -> None:
@@ -828,6 +859,33 @@ def test_malformed_zip_data_descriptor_refuses(mutation: str, message: str) -> N
         )
 
 
+@pytest.mark.parametrize("comment_kind", ["archive", "member"])
+def test_zip_comments_refuse_without_echo(comment_kind: str) -> None:
+    marker = b"api" + b"_key=" + (b"x" * 16)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        if comment_kind == "archive":
+            archive.writestr("neutral.txt", b"neutral")
+            archive.comment = marker
+        else:
+            member = zipfile.ZipInfo("neutral.txt")
+            member.comment = marker
+            archive.writestr(member, b"neutral")
+
+    with pytest.raises(ValueError, match=f"unsupported zip {comment_kind} comment") as captured:
+        SCAN._validated_zip_infos("nested.zip", stream.getvalue())
+    assert marker.decode() not in str(captured.value)
+
+
+def test_secret_in_zip_filename_metadata_refuses_without_echo() -> None:
+    marker = "password" + "=" + ("x" * 16)
+    content = _zip_with_member(marker)
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN._validated_zip_infos("nested.zip", content)
+    assert marker not in str(captured.value)
+
+
 def test_zip_member_count_limit_accepts_exact_boundary() -> None:
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
@@ -851,6 +909,58 @@ def test_zip_member_count_limit_refuses_before_infolist(
     monkeypatch.setattr(SCAN.zipfile, "ZipFile", forbidden_zipfile)
     with pytest.raises(ValueError, match="zip archive member count exceeds limit"):
         SCAN._validated_zip_infos("oversized.zip", content)
+
+
+def _sibling_nested_zip() -> bytes:
+    first = _zip_with_files({"first.txt": b"first-body"})
+    second = _zip_with_files({"second.txt": b"second-body"})
+    return _zip_with_files({"first.zip": first, "second.zip": second})
+
+
+def test_nested_member_budget_is_shared_across_sibling_archives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = _sibling_nested_zip()
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_MEMBERS", 4)
+    assert SCAN._nested_archive_members("outer.zip", content) == 4
+
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_MEMBERS", 3)
+    with pytest.raises(ValueError, match="nested archive member budget exceeded"):
+        SCAN._nested_archive_members("outer.zip", content)
+
+
+def test_nested_expanded_budget_is_shared_across_sibling_archives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = _sibling_nested_zip()
+    measured = SCAN._NestedArchiveBudget()
+    SCAN._nested_archive_members("outer.zip", content, budget=measured)
+    exact = measured.expanded_bytes
+
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", exact)
+    assert SCAN._nested_archive_members("outer.zip", content) == 4
+
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", exact - 1)
+    with pytest.raises(ValueError, match="expanded-byte budget exceeded"):
+        SCAN._nested_archive_members("outer.zip", content)
+
+
+def test_nested_work_budget_is_shared_across_archive_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = _zip_with_files({"leaf.txt": b"leaf-body"})
+    for level in range(3):
+        content = _zip_with_files({f"level-{level}.zip": content})
+    measured = SCAN._NestedArchiveBudget()
+    SCAN._nested_archive_members("outer.zip", content, budget=measured)
+    exact = measured.work_bytes
+
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", exact)
+    assert SCAN._nested_archive_members("outer.zip", content) == 4
+
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", exact - 1)
+    with pytest.raises(ValueError, match="work budget exceeded"):
+        SCAN._nested_archive_members("outer.zip", content)
 
 
 def test_link_to_forbidden_cache_refuses(tmp_path: Path, structural_scan: None) -> None:
