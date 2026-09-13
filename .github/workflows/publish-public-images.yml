@@ -953,19 +953,17 @@ jobs:
           echo "repository=${IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - name: Attest exact pushed digest provenance
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         id: provenance-attestation
         # Current-main compatibility marker: attest-build-provenance@v3.
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
-          # LIBERO preserves its separately accepted embedded OCI graph. Its
-          # immutable-action workflow attestation is not another GHCR version.
-          push-to-registry: ${{ matrix.tool != 'libero' }}
+          push-to-registry: true
 
       - name: Attest exact pushed digest SBOM
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         id: sbom-attestation
         # Current-main compatibility marker: attest-sbom@v3.
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
@@ -973,10 +971,10 @@ jobs:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
-          push-to-registry: ${{ matrix.tool != 'libero' }}
+          push-to-registry: true
 
       - name: Require both digest-bound attestation results
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         env:
           PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
           PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
