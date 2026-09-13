@@ -2245,6 +2245,22 @@ def _s3_cache_identity(s3) -> str:
     return f"{endpoint}|{access_key}"
 
 
+def _pending_run_list_page(limit: int) -> RunListPage:
+    return RunListPage(
+        runs=[],
+        truncated=True,
+        total_runs=0,
+        limit=limit,
+        discovery_complete=False,
+        source_errors=(
+            {
+                "code": "artifact_discovery_pending",
+                "message": "Artifact discovery is running in the background.",
+            },
+        ),
+    )
+
+
 def list_runs_cached_multi(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -2258,8 +2274,15 @@ def list_runs_cached_multi(
     s3=None,
     ttl: "float | None" = None,
     refresh_sync: bool = False,
+    cold_start_async: bool = False,
 ) -> RunListPage:
-    """Cache generic or explicit-prefix discovery across accessible buckets."""
+    """Cache generic or explicit-prefix discovery across accessible buckets.
+
+    ``cold_start_async`` returns an explicitly incomplete page while one daemon
+    refresh populates an empty cache. Interactive callers can stay responsive
+    when the first object-store walk is slow without treating the empty page as
+    a completed inventory.
+    """
     # DEFAULT_RUN_LIST_TTL is defined below this block; resolve at call time.
     if ttl is None:
         ttl = DEFAULT_RUN_LIST_TTL
@@ -2312,6 +2335,9 @@ def list_runs_cached_multi(
                 entry = _RUN_LIST_CACHE.get(key)
             return entry[1] if entry else page
         return page
+    if cold_start_async and not refresh_sync:
+        _schedule_run_list_refresh(key, _compute)
+        return _pending_run_list_page(limit)
     page = _compute()
     with _RUN_LIST_LOCK:
         _RUN_LIST_CACHE[key] = (time.monotonic(), page)

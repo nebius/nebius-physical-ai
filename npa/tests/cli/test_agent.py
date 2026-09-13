@@ -6866,6 +6866,15 @@ def test_artifact_role_summary_uses_the_declared_role() -> None:
     assert "acc[role] = (acc[role] || 0) + 1" not in script
 
 
+def test_artifact_ui_explains_background_discovery() -> None:
+    """A cold S3 scan must leave the browser with a clear retryable state."""
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert 'code === "artifact_access_pending"' in script
+    assert 'code === "artifact_discovery_pending"' in script
+    assert "checking storage in background; refresh shortly" in script
+    assert "retry_after_seconds" in script
+
+
 def test_boot_rerun_mount_preserves_a_newer_operator_media_preview() -> None:
     """A late boot-time Rerun mount must not replace an explicit replay video."""
 

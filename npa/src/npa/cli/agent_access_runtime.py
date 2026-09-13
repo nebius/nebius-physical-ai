@@ -443,6 +443,34 @@ def _refresh_agent_access_in_background() -> None:
     _finish_agent_access_refresh(report)
 
 
+def _agent_access_report_for_artifact_discovery() -> "AgentAccessReport | None":
+    """Return cached access or begin a background cold-start discovery."""
+    now_mono = time.monotonic()
+    start_refresh = False
+    with _AGENT_ACCESS_CONDITION:
+        cached = _AGENT_ACCESS_CACHE.get("report")
+        expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
+        refreshing = bool(_AGENT_ACCESS_CACHE.get("refreshing"))
+        if isinstance(cached, AgentAccessReport):
+            if expires_at <= now_mono and not refreshing:
+                _AGENT_ACCESS_CACHE["refreshing"] = True
+                start_refresh = True
+            report = cached
+        elif refreshing:
+            report = None
+        else:
+            _AGENT_ACCESS_CACHE["refreshing"] = True
+            start_refresh = True
+            report = None
+    if start_refresh:
+        threading.Thread(
+            target=_refresh_agent_access_in_background,
+            name="npa-agent-access-refresh",
+            daemon=True,
+        ).start()
+    return report
+
+
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
     with _AGENT_ACCESS_CONDITION:

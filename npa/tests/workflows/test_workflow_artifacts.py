@@ -998,6 +998,45 @@ def test_exact_run_ref_reuses_credential_scoped_server_observation(monkeypatch) 
         A._run_list_cache_clear()
 
 
+def test_cold_async_run_discovery_returns_pending_page(monkeypatch) -> None:
+    from threading import Event
+
+    import npa.workflows.artifacts as A
+
+    started = Event()
+    release = Event()
+    finished = Event()
+
+    def slow_discovery(*_args, **kwargs):
+        started.set()
+        assert release.wait(timeout=2)
+        finished.set()
+        return A.RunListPage(
+            runs=[],
+            truncated=False,
+            total_runs=0,
+            limit=kwargs["limit"],
+        )
+
+    A._run_list_cache_clear()
+    monkeypatch.setattr(A, "list_all_runs_across_buckets", slow_discovery)
+    try:
+        page = A.list_runs_cached_multi(
+            ["bucket"],
+            limit=20,
+            s3=object(),
+            cold_start_async=True,
+        )
+        assert page.runs == []
+        assert page.discovery_complete is False
+        assert page.source_errors[0]["code"] == "artifact_discovery_pending"
+        assert started.wait(timeout=2)
+    finally:
+        release.set()
+        assert finished.wait(timeout=2)
+        A._run_list_cache_clear()
+
+
 def test_server_discovered_exact_source_survives_unrelated_truncated_scan(
     monkeypatch,
 ) -> None:
