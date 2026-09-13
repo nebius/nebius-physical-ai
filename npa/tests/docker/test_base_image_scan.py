@@ -15,9 +15,7 @@ WORKFLOW = ROOT / ".github/workflows/image-security-scan.yml"
 
 
 def _scan_job():
-    return yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)["jobs"][
-        "base-image-cve-scan"
-    ]
+    return yaml.safe_load(WORKFLOW.read_text())["jobs"]["base-image-cve-scan"]
 
 
 def _prepare_step():
@@ -40,8 +38,8 @@ def _run_preparation(tmp_path, entry, *, build_status=0):
         "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
         "BASE_IMAGE": entry["image"],
         "SCAN_NAME": entry["name"],
-        "PURGE_LINUX_LIBC_DEV": entry["purge_linux_libc_dev"],
-        "UPGRADE_OS": entry.get("upgrade_os", "false"),
+        "PURGE_LINUX_LIBC_DEV": str(entry["purge_linux_libc_dev"]).lower(),
+        "UPGRADE_OS": str(entry.get("upgrade_os", False)).lower(),
         "GITHUB_OUTPUT": str(tmp_path / "outputs"),
     }
     return subprocess.run(
@@ -62,8 +60,8 @@ def _run_preparation(tmp_path, entry, *, build_status=0):
 def test_scan_target_applies_only_the_declared_preparation(tmp_path, entry):
     result = _run_preparation(tmp_path, entry)
     assert result.returncode == 0, result.stderr
-    purge = entry["purge_linux_libc_dev"]
-    upgrade = entry.get("upgrade_os", "false")
+    purge = str(entry["purge_linux_libc_dev"]).lower()
+    upgrade = str(entry.get("upgrade_os", False)).lower()
     if purge == "false" and upgrade == "false":
         assert (tmp_path / "outputs").read_text() == f"image={entry['image']}\n"
         assert not (tmp_path / "build.json").exists()
@@ -95,7 +93,7 @@ def test_failed_preparation_never_emits_a_scan_target(tmp_path):
     entry = next(
         entry
         for entry in _scan_job()["strategy"]["matrix"]["include"]
-        if entry.get("upgrade_os") == "true"
+        if entry.get("upgrade_os") is True
     )
     result = _run_preparation(tmp_path, entry, build_status=17)
     assert result.returncode == 17
@@ -119,8 +117,8 @@ def test_os_preparation_stops_after_a_package_manager_failure(tmp_path, failed_c
     entry = {
         "image": "synthetic-base",
         "name": "fixture",
-        "upgrade_os": "true",
-        "purge_linux_libc_dev": "true",
+        "upgrade_os": True,
+        "purge_linux_libc_dev": True,
     }
     assert _run_preparation(tmp_path, entry).returncode == 0
     dockerfile = (tmp_path / "Dockerfile").read_text()
@@ -164,8 +162,8 @@ def test_python_scan_matches_fiftyones_pinned_and_upgraded_base():
         if entry["name"] == "python-3-11-slim-trixie"
     )
     assert entry["image"] == base and "@sha256:" in base
-    assert entry["upgrade_os"] == "true"
-    assert entry["purge_linux_libc_dev"] == "false"
+    assert entry["upgrade_os"] is True
+    assert entry["purge_linux_libc_dev"] is False
     recipe = _prepare_step()["run"]
     for command in (
         "apt-get update",
@@ -196,8 +194,9 @@ def test_base_cve_gate_remains_blocking_and_scans_the_prepared_target():
         step["with"]["image-ref"] == "${{ steps.scan-target.outputs.image }}"
         for step in scans
     )
-    workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    # PyYAML's safe YAML 1.1 loader reads the Actions `on` key as True.
     assert (
         "npa/tests/docker/test_base_image_scan.py"
-        in workflow["on"]["pull_request"]["paths"]
+        in workflow[True]["pull_request"]["paths"]
     )
