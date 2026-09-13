@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import re
+import stat
 import struct
 import sys
 import tarfile
@@ -92,18 +93,29 @@ def _replace_local_header_field(
     return bytes(raw)
 
 
-def _zip_with_member(name: str, *, extra: bytes = b"") -> bytes:
+def _zip_with_member(
+    name: str,
+    *,
+    content: bytes | None = None,
+    extra: bytes = b"",
+    mode: int | None = None,
+) -> bytes:
     stream = io.BytesIO()
     info = zipfile.ZipInfo(name)
     info.extra = extra
+    if mode is not None:
+        info.external_attr = mode << 16
+    payload = b"" if name.endswith("/") else b"neutral"
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr(info, b"" if name.endswith("/") else b"neutral")
+        archive.writestr(info, payload if content is None else content)
     return stream.getvalue()
 
 
 def _tar_bytes(
     files: dict[str, bytes],
     *,
+    directories: dict[str, bytes] | None = None,
+    directory_linknames: dict[str, str] | None = None,
     symlinks: dict[str, str] | None = None,
     hardlinks: dict[str, str] | None = None,
     suffix: bytes = b"",
@@ -126,7 +138,18 @@ def _tar_bytes(
             info.type = tarfile.LNKTYPE
             info.linkname = target
             archive.addfile(info)
-    return output.getvalue() + suffix
+        for name, raw in (directories or {}).items():
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.DIRTYPE
+            info.size = len(raw)
+            info.linkname = (directory_linknames or {}).get(name, "")
+            archive.addfile(info)
+    rendered = bytearray(output.getvalue())
+    with tarfile.open(fileobj=io.BytesIO(rendered), mode="r:") as archive:
+        for name, raw in (directories or {}).items():
+            member = archive.getmember(name)
+            rendered[member.offset_data : member.offset_data + len(raw)] = raw
+    return bytes(rendered) + suffix
 
 
 def _required() -> dict[str, bytes]:
@@ -141,6 +164,10 @@ def _docker_save(
     env: list[str] | None = None,
     symlinks: dict[str, str] | None = None,
     hardlinks: dict[str, str] | None = None,
+    layer_directories: dict[str, bytes] | None = None,
+    layer_directory_linknames: dict[str, str] | None = None,
+    outer_directories: dict[str, bytes] | None = None,
+    outer_directory_linknames: dict[str, str] | None = None,
     layer_suffix: bytes = b"",
     config_name: str | None = None,
     configured_diff_ids: list[str] | None = None,
@@ -151,6 +178,8 @@ def _docker_save(
         files,
         symlinks=symlinks,
         hardlinks=hardlinks,
+        directories=layer_directories,
+        directory_linknames=layer_directory_linknames,
         suffix=layer_suffix,
         gname=structural_gname,
     )
@@ -187,10 +216,28 @@ def _docker_save(
             "base/layer.tar": base,
             "app/layer.tar": app,
         },
+        directories=outer_directories,
+        directory_linknames=outer_directory_linknames,
         gname=structural_gname,
     )
     path.write_bytes(outer)
     return hashlib.sha256(config).hexdigest(), diff_ids
+
+
+def _scan_directory_case(kind: str, body: bytes, tmp_path: Path) -> object:
+    if kind == "zip":
+        nested = _zip_with_member("neutral/", content=body)
+        return SCAN._nested_archive_members("nested.zip", nested)
+    if kind == "nested-tar":
+        nested = _tar_bytes({}, directories={"neutral/": body})
+        return SCAN._nested_archive_members("nested.tar", nested)
+    image = tmp_path / f"{kind}.tar"
+    directory_option = {"opt/neutral/": body}
+    if kind == "layer":
+        _docker_save(image, _required(), layer_directories=directory_option)
+    else:
+        _docker_save(image, _required(), outer_directories={"base": body})
+    return SCAN.scan(image)
 
 
 @pytest.fixture
@@ -213,6 +260,72 @@ def test_structural_scan_covers_every_layer_and_rootfs_byte(
     assert result["runtime_cache_entry_count"] == 0
     assert result["accepted_manifest_present"] is False
     assert result["release_authorized"] is False
+
+
+def test_docker_save_archive_limit_accepts_exact_boundary(
+    tmp_path: Path, structural_scan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = tmp_path / "archive-boundary.tar"
+    _docker_save(image, _required())
+    monkeypatch.setattr(SCAN, "MAX_DOCKER_SAVE_ARCHIVE_BYTES", image.stat().st_size)
+
+    assert SCAN.scan(image)["status"] == "passed"
+
+
+def test_docker_save_archive_limit_refuses_before_open(
+    tmp_path: Path, structural_scan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = tmp_path / "archive-limit-plus-one.tar"
+    _docker_save(image, _required())
+    monkeypatch.setattr(
+        SCAN, "MAX_DOCKER_SAVE_ARCHIVE_BYTES", image.stat().st_size - 1, raising=False
+    )
+
+    def forbidden_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("oversized Docker-save must be refused before open")
+
+    monkeypatch.setattr(Path, "open", forbidden_open)
+    with pytest.raises(ValueError, match="Docker-save archive exceeds scan bound"):
+        SCAN.scan(image)
+
+
+@pytest.mark.parametrize(
+    ("constant", "exact", "message"),
+    [
+        ("MAX_DOCKER_SAVE_OUTER_MEMBERS", 4, "tar archive member count exceeds"),
+        ("MAX_ORDERED_LAYERS", 2, "ordered layer count exceeds"),
+        ("MAX_LAYER_ARCHIVE_BYTES", 20_480, "archive member exceeds"),
+        ("MAX_LAYER_MEMBERS", len(_required()), "tar archive member count exceeds"),
+        ("MAX_TOTAL_LAYER_MEMBERS", len(_required()) + 1, "total member count exceeds"),
+        (
+            "MAX_LAYER_MEMBER_BYTES",
+            max(4, *(len(value) for value in _required().values())),
+            "layer member exceeds",
+        ),
+        (
+            "MAX_MATERIALIZED_LAYER_BYTES",
+            4 + sum(len(value) for value in _required().values()),
+            "materialized layer bytes exceed",
+        ),
+        ("MAX_ORDERED_LAYER_BYTES", 30_720, "ordered layer bytes exceed"),
+    ],
+)
+def test_outer_graph_resource_limits_accept_boundary_and_refuse_plus_one(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+    constant: str,
+    exact: int,
+    message: str,
+) -> None:
+    image = tmp_path / f"{constant}.tar"
+    _docker_save(image, _required())
+    monkeypatch.setattr(SCAN, constant, exact)
+    assert SCAN.scan(image)["status"] == "passed"
+
+    monkeypatch.setattr(SCAN, constant, exact - 1)
+    with pytest.raises(ValueError, match=message):
+        SCAN.scan(image)
 
 
 def test_structural_container_text_cannot_create_unlocalized_false_positive(
@@ -552,6 +665,62 @@ def test_nested_upstream_path_refuses(
     image = tmp_path / "image.tar"
     _docker_save(image, {**_required(), name: nested})
     with pytest.raises(ValueError, match="forbidden nested archive member"):
+        SCAN.scan(image)
+
+
+@pytest.mark.parametrize("kind", ["zip", "nested-tar", "layer", "outer"])
+def test_zero_body_directory_is_accepted(
+    tmp_path: Path, structural_scan: None, kind: str
+) -> None:
+    assert _scan_directory_case(kind, b"", tmp_path) is not None
+
+
+@pytest.mark.parametrize("kind", ["zip", "nested-tar", "layer", "outer"])
+def test_nonzero_directory_body_refuses(
+    tmp_path: Path, structural_scan: None, kind: str
+) -> None:
+    with pytest.raises(ValueError, match="invalid .* directory"):
+        _scan_directory_case(kind, b"hidden payload", tmp_path)
+
+
+def test_zip_directory_regular_file_mode_refuses() -> None:
+    nested = _zip_with_member(
+        "neutral/", content=b"", mode=stat.S_IFREG | 0o644
+    )
+
+    with pytest.raises(ValueError, match="invalid nested ZIP directory"):
+        SCAN._nested_archive_members("nested.zip", nested)
+
+
+@pytest.mark.parametrize("kind", ["nested-tar", "layer", "outer"])
+def test_tar_directory_link_metadata_refuses(
+    tmp_path: Path, structural_scan: None, kind: str
+) -> None:
+    if kind == "nested-tar":
+        nested = _tar_bytes(
+            {},
+            directories={"neutral/": b""},
+            directory_linknames={"neutral/": "unexpected"},
+        )
+        with pytest.raises(ValueError, match="invalid .* directory"):
+            SCAN._nested_archive_members("nested.tar", nested)
+        return
+    image = tmp_path / f"{kind}-metadata.tar"
+    if kind == "layer":
+        _docker_save(
+            image,
+            _required(),
+            layer_directories={"opt/neutral/": b""},
+            layer_directory_linknames={"opt/neutral/": "unexpected"},
+        )
+    else:
+        _docker_save(
+            image,
+            _required(),
+            outer_directories={"base": b""},
+            outer_directory_linknames={"base": "unexpected"},
+        )
+    with pytest.raises(ValueError, match="invalid .* directory"):
         SCAN.scan(image)
 
 
