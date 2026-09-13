@@ -797,6 +797,8 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     final = Path(args.cache_root) / fixture["manifest_sha"]
     assert cold["warm_reuse"] is False
     assert warm["warm_reuse"] is True
+    assert cold["governing_terms_fetched_this_invocation"] is True
+    assert warm["governing_terms_fetched_this_invocation"] is False
     assert final.is_dir()
     assert (final / ".complete.json").is_file()
     assert (final / ".content-inventory.json").is_file()
@@ -1309,11 +1311,16 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     module.ensure(args)
     output = tmp_path / "run-output"
     output.mkdir()
+    output.chmod(0o1770)
     (output / "libero-smoke.json").write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(module, "DEFAULT_MANIFEST", Path(args.manifest))
     monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
     monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
     monkeypatch.setattr(module, "_run_output_root", lambda _run_id: output)
+    receipt = Path(args.cache_root) / "run-receipts" / "libero-lock-test-0001.json"
+    receipt.parent.mkdir(mode=0o750)
+    receipt.write_text('{"status":"ready"}\n', encoding="utf-8")
+    receipt.chmod(0o640)
     monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-lock-test-0001")
     monkeypatch.setenv("BYOF_SMOKE_ARTIFACT_NAME", "libero-smoke.json")
     monkeypatch.setenv(
@@ -1335,6 +1342,7 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
         assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
         assert "HF_TOKEN" not in environment
         assert environment["NPA_BYOF_RUN_ID"] == "libero-lock-test-0001"
+        assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
         return Completed()
 
@@ -1351,8 +1359,32 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
         return {"status": "verified"}
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_execution_uid_processes", lambda: [])
     monkeypatch.setattr(module, "upload_outputs", fake_upload)
 
     assert module.execute_and_upload() == 0
     assert (output / "solution_smoke_stdout.log").is_file()
     assert (output / "solution_smoke_stderr.log").is_file()
+    assert (output / "npa_runtime_bootstrap.json").read_bytes() == receipt.read_bytes()
+    assert (output / "npa_runtime_metadata.json").is_file()
+    assert output.stat().st_mode & 0o7777 == 0o750
+
+
+def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(
+    tmp_path,
+) -> None:
+    module, _args, _fixture_data = _fixture(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    evidence.chmod(0o640)
+    assert module._immutable_supervisor_bytes(evidence, 1024) == b"{}\n"
+
+    evidence.chmod(0o660)
+    with pytest.raises(module.BootstrapRefusal, match="mutable or invalid"):
+        module._immutable_supervisor_bytes(evidence, 1024)
+    evidence.chmod(0o640)
+
+    link = tmp_path / "evidence-link.json"
+    link.symlink_to(evidence)
+    with pytest.raises(module.BootstrapRefusal, match="unavailable"):
+        module._immutable_supervisor_bytes(link, 1024)

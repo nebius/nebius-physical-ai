@@ -62,9 +62,13 @@ setup: |
   test "$(sha256sum "${decision}" | cut -d ' ' -f 1)" = \
     "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
-  install -d -m 0770 "${output_dir}"
+  install -d -m 1770 "${output_dir}"
   chgrp npa-libero-exec "${output_dir}"
-  bootstrap_receipt="${output_dir}/npa_runtime_bootstrap.json"
+  receipt_dir="/workspace/.cache/npa/libero/run-receipts"
+  install -d -m 0750 "${receipt_dir}"
+  chgrp npa-libero-exec "${receipt_dir}"
+  bootstrap_receipt="${receipt_dir}/${NPA_BYOF_RUN_ID}.json"
+  test ! -e "${bootstrap_receipt}"
   if ! /opt/npa/libero/runtime-bootstrap.py ensure \
     --manifest /opt/npa/libero/runtime-manifest.json \
     --requirements /opt/npa/libero/runtime-requirements.txt \

@@ -1587,7 +1587,9 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa_source_metadata.json" in text
     assert "BYOF_SOURCE_PRUNE_PATH" in text
     assert 'observed_commit="$(git -C /opt/byof rev-parse HEAD)"' in text
-    assert 'rm -rf -- "/opt/byof/${source_prune_path}" /opt/byof/.git' in text
+    assert 'prune_target="/opt/byof"' in text
+    assert 'test ! -L "$prune_target"' in text
+    assert 'rm -rf -- "$prune_target" /opt/byof/.git' in text
     assert "printf" in text
     assert "/opt/byof" in text
     assert "USER ubuntu" in text

@@ -173,6 +173,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256",
         "NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256",
+        "NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256",
         "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256",
         "NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256",
         "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256",
@@ -184,6 +185,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256",
         "NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256",
         "NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256",
+        "NPA_LIBERO_BOOTSTRAP_RECEIPT",
         "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
         "NPA_SMOKE_OUTPUT_DIR",
         "NVIDIA_DRIVER_CAPABILITIES",
@@ -1583,7 +1585,12 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
             except Exception:
                 shutil.rmtree(partial, ignore_errors=True)
                 raise
-    return {**record, "cache_path": str(final), "warm_reuse": warm_reuse}
+    return {
+        **record,
+        "cache_path": str(final),
+        "warm_reuse": warm_reuse,
+        "governing_terms_fetched_this_invocation": not warm_reuse,
+    }
 
 
 def status(args: argparse.Namespace) -> dict[str, Any]:
@@ -1994,10 +2001,14 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
         )
         if observed_total > MAX_OUTPUT_BYTES:
             raise BootstrapRefusal("output exceeds the aggregate size budget")
-        receipts = []
+        snapshots = []
         for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
             payload, digest = immutable_bytes(root_fd, name, limit)
-            receipts.append(upload_and_read_back(name, payload, digest))
+            snapshots.append((name, payload, digest))
+        receipts = [
+            upload_and_read_back(name, payload, digest)
+            for name, payload, digest in snapshots
+        ]
         receipt_payload = (
             json.dumps(
                 {
@@ -2031,6 +2042,77 @@ def _run_output_root(run_id: str) -> Path:
     return Path(f"/workspace/byof-runs/{run_id}")
 
 
+def _bootstrap_receipt_path(cache_root: Path, run_id: str) -> Path:
+    return cache_root / "run-receipts" / f"{run_id}.json"
+
+
+def _immutable_supervisor_bytes(path: Path, limit: int) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise BootstrapRefusal("supervisor evidence is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            payload = stream.read(limit + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o027
+        or len(payload) > limit
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or before.st_size != len(payload)
+    ):
+        raise BootstrapRefusal("supervisor evidence is mutable or invalid")
+    return payload
+
+
+def _execution_uid_processes() -> list[int]:
+    try:
+        execution_uid = 1001
+        discovered = []
+        for process in Path("/proc").iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                status_lines = (process / "status").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                continue
+            uid_line = next(
+                (line for line in status_lines if line.startswith("Uid:")), None
+            )
+            if uid_line is None:
+                raise BootstrapRefusal("execution process identity is unavailable")
+            fields = uid_line.split()
+            if len(fields) != 5:
+                raise BootstrapRefusal("execution process identity is invalid")
+            if int(fields[2]) == execution_uid:
+                discovered.append(int(process.name))
+        return sorted(discovered)
+    except OSError as exc:
+        raise BootstrapRefusal("execution process inventory is unavailable") from exc
+
+
+def _materialize_supervisor_artifact(
+    root_fd: int, name: str, payload: bytes
+) -> None:
+    descriptor = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+        dir_fd=root_fd,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+
+
 def execute_and_upload() -> int:
     """Hold the accepted cache snapshot lock through smoke output readback."""
 
@@ -2053,6 +2135,22 @@ def execute_and_upload() -> int:
         raise BootstrapRefusal("execution requires the accepted run ID")
     output_root = _run_output_root(run_id)
     root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        root_info = os.fstat(root_fd)
+        if (
+            root_info.st_uid != os.getuid()
+            or stat.S_IMODE(root_info.st_mode) != 0o1770
+        ):
+            raise BootstrapRefusal("execution output staging directory is invalid")
+        bootstrap_receipt = _bootstrap_receipt_path(cache_root, run_id)
+        bootstrap_payload = _immutable_supervisor_bytes(
+            bootstrap_receipt, OUTPUT_SIZE_LIMITS["npa_runtime_bootstrap.json"]
+        )
+        if _execution_uid_processes():
+            raise BootstrapRefusal("runtime execution UID is already active")
+    except Exception:
+        os.close(root_fd)
+        raise
     lock_path = cache_root / ".bootstrap.lock"
     try:
         stdout_fd = os.open(
@@ -2090,9 +2188,17 @@ def execute_and_upload() -> int:
                     requirements_sha256,
                     governing_terms_sha256,
                 )
+                runtime_metadata = _immutable_supervisor_bytes(
+                    stable_root / ".complete.json",
+                    OUTPUT_SIZE_LIMITS["npa_runtime_metadata.json"],
+                )
                 with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
                     stderr_fd, "wb"
                 ) as stderr:
+                    environment = _runtime_execution_environment(final)
+                    environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] = str(
+                        bootstrap_receipt
+                    )
                     completed = subprocess.run(
                         [
                             "sudo",
@@ -2101,11 +2207,24 @@ def execute_and_upload() -> int:
                             "execute",
                         ],
                         check=False,
-                        env=_runtime_execution_environment(final),
+                        env=environment,
                         stdout=stdout,
                         stderr=stderr,
                     )
                 smoke_exit_code = completed.returncode
+                remaining_processes = _execution_uid_processes()
+                if remaining_processes:
+                    raise BootstrapRefusal(
+                        "runtime execution left processes behind: "
+                        + ",".join(str(pid) for pid in remaining_processes)
+                    )
+                os.fchmod(root_fd, 0o750)
+                _materialize_supervisor_artifact(
+                    root_fd, "npa_runtime_bootstrap.json", bootstrap_payload
+                )
+                _materialize_supervisor_artifact(
+                    root_fd, "npa_runtime_metadata.json", runtime_metadata
+                )
                 artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
                 if artifact_name not in OUTPUT_SIZE_LIMITS or not (
                     output_root / artifact_name

@@ -395,6 +395,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "namespace_sha256": "5" * 64,
         "namespace_uid_sha256": "7" * 64,
         "namespace_inventory_sha256": "8" * 64,
+        "external_rbac_inventory_sha256": "e" * 64,
     }
     access_state = module.LiberoAccessState(
         kubeconfig=kubeconfig,
@@ -417,6 +418,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "controller_role_uid_sha256": "a" * 64,
         "controller_role_binding_uid_sha256": "b" * 64,
         "controller_rbac_spec_sha256": "d" * 64,
+        "external_rbac_inventory_sha256": "e" * 64,
     }
     controller_identities = {
         "controller_service_account_uid": "controller-account-uid",
@@ -535,6 +537,35 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             acceptance["development_sha"],
         )
     ]
+
+    mismatched_controller = {
+        **controller_evidence,
+        "external_rbac_inventory_sha256": "f" * 64,
+    }
+    monkeypatch.setattr(
+        module,
+        "_libero_controller_rbac_evidence",
+        lambda *_a: (dict(mismatched_controller), dict(controller_identities)),
+    )
+    with pytest.raises(ValueError, match="observe different external RBAC"):
+        module._bind_libero_runtime_contract(
+            args,
+            [
+                {"execution": "serial"},
+                {
+                    "name": "byof-solution-smoke-libero-b200-gpu",
+                    "envs": {"S3_OUTPUT_PREFIX": output_prefix},
+                },
+            ],
+            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
+            infra="k8s/execution-context",
+            run_id=run_id,
+        )
+    monkeypatch.setattr(
+        module,
+        "_libero_controller_rbac_evidence",
+        lambda *_a: (dict(controller_evidence), dict(controller_identities)),
+    )
 
     invalid_decision = {**decision, "authorized_boundaries": ["source"]}
     invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
@@ -848,10 +879,10 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
         "_libero_resource",
         lambda _kubeconfig, _context, _namespace, kind, _name: objects[kind],
     )
-    monkeypatch.setattr(
-        module,
-        "_kubectl_json",
-        lambda *_a, **_k: {
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] in {"clusterrolebindings", "rolebindings"}:
+            return {"items": []}
+        return {
             "metadata": {
                 "name": namespace,
                 "uid": "namespace-uid",
@@ -862,8 +893,9 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
                     ).hexdigest(),
                 },
             }
-        },
-    )
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
     monkeypatch.setattr(
         module,
         "_libero_namespaced_inventory",
@@ -873,7 +905,7 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
             "serviceaccounts": ["default", "npa-byof-libero-payload"],
             "roles": ["npa-byof-libero-pod-reader"],
             "rolebindings": ["npa-byof-libero-payload-pod-reader"],
-            "clusterrolebindings": [],
+            "configmaps": [],
         },
     )
 
@@ -1080,21 +1112,22 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
             "skypilot-service-account-role-binding",
         ],
         "secrets": [],
+        "configmaps": [],
     }
 
     def kubectl_json(arguments, **_kwargs):
         kind = arguments[-1]
-        if kind == "clusterrolebindings":
-            return {"items": []}
         return {"items": [{"metadata": {"name": name}} for name in expected[kind]]}
 
     monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
     inventory = module._libero_namespaced_inventory(
         Path("/private/payload-kubeconfig"), "payload-context", namespace
     )
-    assert inventory == {**expected, "clusterrolebindings": []}
+    assert inventory == expected
 
     def broadened(arguments, **kwargs):
+        if arguments[-1] == "rolebindings":
+            return {"items": []}
         if arguments[-1] != "clusterrolebindings":
             return kubectl_json(arguments, **kwargs)
         return {
@@ -1114,7 +1147,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
 
     monkeypatch.setattr(module, "_kubectl_json", broadened)
     with pytest.raises(RuntimeError, match="may not receive ClusterRoleBindings"):
-        module._libero_namespaced_inventory(
+        module._libero_external_rbac_inventory_sha256(
             Path("/private/payload-kubeconfig"), "payload-context", namespace
         )
 
@@ -1157,7 +1190,7 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
     }
 
     def kubectl_json(arguments, **_kwargs):
-        if arguments[-1] == "clusterrolebindings":
+        if arguments[-1] in {"clusterrolebindings", "rolebindings"}:
             return {"items": []}
         return objects[arguments[-1]]
 
@@ -1170,6 +1203,7 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         "controller_role_uid_sha256",
         "controller_role_binding_uid_sha256",
         "controller_rbac_spec_sha256",
+        "external_rbac_inventory_sha256",
     }
     assert identities == {
         "controller_service_account_uid": "uid-skypilot-service-account",
@@ -1262,10 +1296,15 @@ def test_libero_rejects_workload_access_for_authenticated_group(monkeypatch) -> 
             return {
                 "items": [
                     {
+                        "metadata": {
+                            "name": "unsafe-binding",
+                            "uid": "unsafe-binding-uid",
+                        },
                         "subjects": [
                             {"kind": "Group", "name": "system:authenticated"}
                         ],
                         "roleRef": {
+                            "apiGroup": "rbac.authorization.k8s.io",
                             "kind": "ClusterRole",
                             "name": "unsafe-pod-reader",
                         },
@@ -1274,6 +1313,7 @@ def test_libero_rejects_workload_access_for_authenticated_group(monkeypatch) -> 
             }
         assert arguments[-2:] == ["clusterrole", "unsafe-pod-reader"]
         return {
+            "metadata": {"uid": "unsafe-role-uid"},
             "rules": [
                 {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
             ]
@@ -1296,10 +1336,15 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
             return {
                 "items": [
                     {
+                        "metadata": {
+                            "name": "discovery-binding",
+                            "uid": "discovery-binding-uid",
+                        },
                         "subjects": [
                             {"kind": "Group", "name": "system:authenticated"}
                         ],
                         "roleRef": {
+                            "apiGroup": "rbac.authorization.k8s.io",
                             "kind": "ClusterRole",
                             "name": "system:discovery",
                         },
@@ -1308,6 +1353,7 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
             }
         assert arguments[-2:] == ["clusterrole", "system:discovery"]
         return {
+            "metadata": {"uid": "discovery-role-uid"},
             "rules": [
                 {"nonResourceURLs": ["/api", "/apis"], "verbs": ["get"]}
             ]
@@ -1319,6 +1365,123 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
         "payload-context",
         "isolated-namespace",
     )
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        {
+            "kind": "ServiceAccount",
+            "name": "npa-byof-libero-payload",
+            "namespace": "isolated-namespace",
+        },
+        {
+            "kind": "User",
+            "name": "system:serviceaccount:isolated-namespace:npa-byof-libero-payload",
+        },
+        {"kind": "Group", "name": "system:serviceaccounts"},
+        {"kind": "Group", "name": "system:serviceaccounts:isolated-namespace"},
+    ],
+)
+def test_libero_rejects_cross_namespace_role_binding_to_run_identity(
+    monkeypatch, subject
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_kubectl_json",
+        lambda *_args, **_kwargs: {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "pre-staged-access",
+                        "namespace": "other-namespace",
+                        "uid": "pre-staged-binding-uid",
+                    },
+                    "subjects": [subject],
+                    "roleRef": {
+                        "apiGroup": "rbac.authorization.k8s.io",
+                        "kind": "Role",
+                        "name": "pod-reader",
+                    },
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="cross-namespace RoleBindings"):
+        module._reject_libero_cross_namespace_role_bindings(
+            Path("/private/payload-kubeconfig"),
+            "payload-context",
+            "isolated-namespace",
+        )
+
+
+def test_libero_external_rbac_inventory_is_hash_bound_and_drift_sensitive(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    role_uid = "safe-role-uid"
+
+    def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "clusterrolebindings":
+            return {
+                "items": [
+                    {
+                        "metadata": {"name": "discovery", "uid": "binding-uid"},
+                        "subjects": [
+                            {"kind": "Group", "name": "system:authenticated"}
+                        ],
+                        "roleRef": {
+                            "apiGroup": "rbac.authorization.k8s.io",
+                            "kind": "ClusterRole",
+                            "name": "system:discovery",
+                        },
+                    }
+                ]
+            }
+        if arguments[-1] == "rolebindings":
+            return {"items": []}
+        assert arguments[-2:] == ["clusterrole", "system:discovery"]
+        return {
+            "metadata": {"uid": role_uid},
+            "rules": [{"nonResourceURLs": ["/api"], "verbs": ["get"]}],
+        }
+
+    monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
+    first = module._libero_external_rbac_inventory_sha256(
+        Path("/private/payload-kubeconfig"),
+        "payload-context",
+        "isolated-namespace",
+    )
+    role_uid = "replacement-role-uid"
+    second = module._libero_external_rbac_inventory_sha256(
+        Path("/private/payload-kubeconfig"),
+        "payload-context",
+        "isolated-namespace",
+    )
+
+    assert first != second
+
+
+def test_libero_cleanup_preserves_kubeconfig_outside_run_state(tmp_path) -> None:
+    module = _load_module()
+    run_id = "libero-local-cleanup"
+    state_root = tmp_path / run_id
+    state_root.mkdir(mode=0o700)
+    kubeconfig = tmp_path / "durable-operator-kubeconfig"
+    kubeconfig.write_text("fixture\n", encoding="utf-8")
+    kubeconfig.chmod(0o600)
+
+    result = module._cleanup_libero_local_state(
+        isolated_state_root=state_root,
+        payload_kubeconfig=kubeconfig,
+        run_id=run_id,
+    )
+
+    assert result.ok is False
+    assert kubeconfig.is_file()
+    assert state_root.is_dir()
 
 
 def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> None:
@@ -1522,7 +1685,7 @@ def test_libero_cleanup_removes_only_exact_run_local_state(tmp_path) -> None:
     state_root = tmp_path / run_id
     state_root.mkdir(mode=0o700)
     (state_root / "state").write_text("fixture\n", encoding="utf-8")
-    kubeconfig = tmp_path / "payload-kubeconfig"
+    kubeconfig = state_root / "payload-kubeconfig"
     kubeconfig.write_text("fixture\n", encoding="utf-8")
     kubeconfig.chmod(0o600)
 

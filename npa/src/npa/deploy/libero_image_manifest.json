@@ -83,6 +83,7 @@
       "namespace_sha256": "",
       "namespace_uid_sha256": "",
       "namespace_inventory_sha256": "",
+      "external_rbac_inventory_sha256": "",
       "rbac_spec_sha256": "",
       "role_binding_uid_sha256": "",
       "role_uid_sha256": "",

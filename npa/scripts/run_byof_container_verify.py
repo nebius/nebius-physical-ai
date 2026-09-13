@@ -503,7 +503,7 @@ def _libero_managed_job_display_name(task_name: str, scheduler_job_id: str) -> s
 
 def _reject_libero_cluster_role_bindings(
     kubeconfig: Path, context: str, namespace: str
-) -> None:
+) -> list[dict[str, Any]]:
     cluster_bindings = _kubectl_json(
         ["--context", context, "get", "clusterrolebindings"],
         purpose="LIBERO cluster RoleBinding inventory",
@@ -518,6 +518,7 @@ def _reject_libero_cluster_role_bindings(
         "system:authenticated",
         "system:unauthenticated",
     }
+    safe_bindings: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             raise RuntimeError("LIBERO cluster RoleBinding inventory is invalid")
@@ -554,6 +555,7 @@ def _reject_libero_cluster_role_bindings(
                 role_ref = item.get("roleRef")
                 if (
                     not isinstance(role_ref, dict)
+                    or role_ref.get("apiGroup") != "rbac.authorization.k8s.io"
                     or role_ref.get("kind") != "ClusterRole"
                     or not isinstance(role_ref.get("name"), str)
                     or not role_ref["name"]
@@ -573,13 +575,34 @@ def _reject_libero_cluster_role_bindings(
                     kubeconfig=kubeconfig,
                 )
                 rules = cluster_role.get("rules")
-                if not isinstance(rules, list) or not _libero_safe_public_group_rules(
-                    rules
+                metadata = item.get("metadata") or {}
+                cluster_role_metadata = cluster_role.get("metadata") or {}
+                if (
+                    not isinstance(metadata.get("name"), str)
+                    or not metadata["name"]
+                    or not isinstance(metadata.get("uid"), str)
+                    or not metadata["uid"]
+                    or not isinstance(cluster_role_metadata.get("uid"), str)
+                    or not cluster_role_metadata["uid"]
+                    or not isinstance(rules, list)
+                    or not _libero_safe_public_group_rules(rules)
                 ):
                     raise RuntimeError(
                         "LIBERO broad authenticated groups may not receive "
                         "workload resource access"
                     )
+                safe_bindings.append(
+                    {
+                        "kind": "ClusterRoleBinding",
+                        "name": metadata.get("name"),
+                        "uid": metadata.get("uid"),
+                        "role_ref": role_ref,
+                        "role_uid": cluster_role_metadata["uid"],
+                        "rules": rules,
+                        "subject": subject,
+                    }
+                )
+    return safe_bindings
 
 
 def _libero_safe_public_group_rules(rules: list[Any]) -> bool:
@@ -618,6 +641,138 @@ def _libero_safe_public_group_rules(rules: list[Any]) -> bool:
     return True
 
 
+def _libero_role_binding_rules(
+    item: dict[str, Any],
+    *,
+    kubeconfig: Path,
+    context: str,
+    binding_namespace: str,
+) -> tuple[list[Any], str]:
+    role_ref = item.get("roleRef")
+    if (
+        not isinstance(role_ref, dict)
+        or role_ref.get("apiGroup") != "rbac.authorization.k8s.io"
+        or role_ref.get("kind") not in {"Role", "ClusterRole"}
+        or not isinstance(role_ref.get("name"), str)
+        or not role_ref["name"]
+    ):
+        raise RuntimeError("LIBERO broad-group RoleBinding is invalid")
+    arguments = ["--context", context]
+    if role_ref["kind"] == "Role":
+        arguments.extend(["--namespace", binding_namespace, "get", "role"])
+    else:
+        arguments.extend(["get", "clusterrole"])
+    arguments.append(role_ref["name"])
+    role = _kubectl_json(
+        arguments,
+        purpose="LIBERO broad-group RoleBinding role",
+        kubeconfig=kubeconfig,
+    )
+    rules = role.get("rules")
+    role_uid = str((role.get("metadata") or {}).get("uid") or "")
+    if not isinstance(rules, list) or not role_uid:
+        raise RuntimeError("LIBERO broad-group RoleBinding rules are invalid")
+    return rules, role_uid
+
+
+def _reject_libero_cross_namespace_role_bindings(
+    kubeconfig: Path, context: str, namespace: str
+) -> list[dict[str, Any]]:
+    bindings = _kubectl_json(
+        ["--context", context, "--all-namespaces", "get", "rolebindings"],
+        purpose="LIBERO all-namespace RoleBinding inventory",
+        kubeconfig=kubeconfig,
+    )
+    items = bindings.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("LIBERO all-namespace RoleBinding inventory is invalid")
+    namespace_user = f"system:serviceaccount:{namespace}:"
+    namespace_group = f"system:serviceaccounts:{namespace}"
+    safe_bindings: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise RuntimeError("LIBERO all-namespace RoleBinding is invalid")
+        metadata = item.get("metadata") or {}
+        binding_namespace = metadata.get("namespace")
+        binding_name = metadata.get("name")
+        subjects = item.get("subjects") or []
+        if (
+            not isinstance(binding_namespace, str)
+            or not binding_namespace
+            or not isinstance(binding_name, str)
+            or not binding_name
+            or not isinstance(subjects, list)
+        ):
+            raise RuntimeError("LIBERO all-namespace RoleBinding is invalid")
+        for subject in subjects:
+            if not isinstance(subject, dict):
+                raise RuntimeError("LIBERO all-namespace RoleBinding subject is invalid")
+            kind = subject.get("kind")
+            name = subject.get("name")
+            reaches_run_account = (
+                kind == "ServiceAccount" and subject.get("namespace") == namespace
+            ) or (
+                kind == "User"
+                and isinstance(name, str)
+                and name.startswith(namespace_user)
+            )
+            reaches_run_group = kind == "Group" and name in {
+                "system:serviceaccounts",
+                namespace_group,
+            }
+            intended_local_binding = (
+                binding_namespace == namespace
+                and binding_name
+                in {LIBERO_PAYLOAD_ROLE_BINDING, LIBERO_CONTROLLER_ROLE_BINDING}
+            )
+            if (reaches_run_account or reaches_run_group) and not intended_local_binding:
+                raise RuntimeError(
+                    "LIBERO service accounts may not receive cross-namespace "
+                    "RoleBindings"
+                )
+            if kind == "Group" and name in {
+                "system:authenticated",
+                "system:unauthenticated",
+            }:
+                rules, role_uid = _libero_role_binding_rules(
+                    item,
+                    kubeconfig=kubeconfig,
+                    context=context,
+                    binding_namespace=binding_namespace,
+                )
+                if not _libero_safe_public_group_rules(rules):
+                    raise RuntimeError(
+                        "LIBERO broad authenticated groups may not receive "
+                        "namespaced workload resource access"
+                    )
+                safe_bindings.append(
+                    {
+                        "kind": "RoleBinding",
+                        "name": binding_name,
+                        "namespace": binding_namespace,
+                        "uid": metadata.get("uid"),
+                        "role_ref": item.get("roleRef"),
+                        "role_uid": role_uid,
+                        "rules": rules,
+                        "subject": subject,
+                    }
+                )
+    return safe_bindings
+
+
+def _libero_external_rbac_inventory_sha256(
+    kubeconfig: Path, context: str, namespace: str
+) -> str:
+    records = [
+        *_reject_libero_cluster_role_bindings(kubeconfig, context, namespace),
+        *_reject_libero_cross_namespace_role_bindings(
+            kubeconfig, context, namespace
+        ),
+    ]
+    records.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+    return _sha256_json(records)
+
+
 def _libero_namespaced_inventory(
     kubeconfig: Path, context: str, namespace: str
 ) -> dict[str, list[str]]:
@@ -635,6 +790,7 @@ def _libero_namespaced_inventory(
             LIBERO_CONTROLLER_ROLE_BINDING,
         },
         "secrets": set(),
+        "configmaps": set(),
     }
     for kind, expected_names in expected.items():
         payload = _kubectl_json(
@@ -659,8 +815,6 @@ def _libero_namespaced_inventory(
                 f"LIBERO namespace is not isolated to its reviewed {kind} inventory"
             )
         inventory[kind] = names
-    _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
-    inventory["clusterrolebindings"] = []
     return inventory
 
 
@@ -712,7 +866,9 @@ def _libero_controller_rbac_evidence(
         raise RuntimeError(
             "LIBERO SkyPilot controller RoleBinding differs from the reviewed contract"
         )
-    _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
+    external_rbac_inventory_sha256 = _libero_external_rbac_inventory_sha256(
+        kubeconfig, context, namespace
+    )
     evidence = {
         "controller_service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
@@ -726,6 +882,7 @@ def _libero_controller_rbac_evidence(
         "controller_rbac_spec_sha256": _sha256_json(
             {"rules": rules, "subjects": subjects, "roleRef": role_ref}
         ),
+        "external_rbac_inventory_sha256": external_rbac_inventory_sha256,
     }
     identities = {
         "controller_service_account_uid": account["metadata"]["uid"],
@@ -795,11 +952,12 @@ def _libero_rbac_evidence(
         )
     if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
         raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
+    external_rbac_inventory_sha256 = _libero_external_rbac_inventory_sha256(
+        kubeconfig, context, namespace
+    )
     inventory = None
     if require_empty_inventory:
         inventory = _libero_namespaced_inventory(kubeconfig, context, namespace)
-    else:
-        _reject_libero_cluster_role_bindings(kubeconfig, context, namespace)
     evidence = {
         "service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
@@ -822,6 +980,7 @@ def _libero_rbac_evidence(
         "namespace_uid_sha256": hashlib.sha256(
             namespace_metadata["uid"].encode()
         ).hexdigest(),
+        "external_rbac_inventory_sha256": external_rbac_inventory_sha256,
     }
     if inventory is not None:
         evidence["namespace_inventory_sha256"] = _sha256_json(inventory)
@@ -956,6 +1115,13 @@ def _bind_libero_runtime_contract(
     controller_evidence, controller_identities = _libero_controller_rbac_evidence(
         execution_kubeconfig, execution_context, namespace
     )
+    if (
+        controller_evidence["external_rbac_inventory_sha256"]
+        != evidence["external_rbac_inventory_sha256"]
+    ):
+        raise ValueError(
+            "LIBERO payload and execution contexts observe different external RBAC"
+        )
     evidence.update(controller_evidence)
     access_state = replace(
         access_state,
@@ -2023,6 +2189,10 @@ def _cleanup_libero_local_state(
         kubeconfig = _mode_private_regular_file(
             str(payload_kubeconfig), label="payload kubeconfig"
         )
+        if kubeconfig.parent != state_root:
+            raise RuntimeError(
+                "payload kubeconfig is not inside the exact-run isolated state"
+            )
         kubeconfig.unlink()
         if kubeconfig.exists() or kubeconfig.is_symlink():
             raise RuntimeError("payload kubeconfig still exists")

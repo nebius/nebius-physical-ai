@@ -9,7 +9,13 @@ test ! -e "$runtime_root/source/libero/libero/assets"
 test ! -e "$runtime_root/source/.git"
 export BYOF_REPO_ROOT="$runtime_root/source"
 export LIBERO_CONFIG_PATH="$output_root/.libero-config"
-cp "$runtime_root/.complete.json" "$output_root/npa_runtime_metadata.json"
+export LIBERO_EXPERIMENT_DIR="$(mktemp -d /tmp/npa-libero-experiment.XXXXXXXX)"
+cleanup_runtime_scratch() {
+  rm -f "$LIBERO_CONFIG_PATH/config.yaml"
+  rmdir "$LIBERO_CONFIG_PATH" 2>/dev/null || true
+  rm -rf -- "$LIBERO_EXPERIMENT_DIR"
+}
+trap cleanup_runtime_scratch EXIT INT TERM
 mkdir -p "$LIBERO_CONFIG_PATH"
 printf '%s\n' \
   "benchmark_root: $runtime_root/source/libero/libero" \
@@ -20,6 +26,6 @@ printf '%s\n' \
   > "$LIBERO_CONFIG_PATH/config.yaml"
 status=0
 "$runtime_root/venv/bin/python" /opt/npa/libero/libero_smoke.py || status=$?
-rm -f "$LIBERO_CONFIG_PATH/config.yaml"
-rmdir "$LIBERO_CONFIG_PATH"
+cleanup_runtime_scratch
+trap - EXIT INT TERM
 exit "$status"
