@@ -87,7 +87,8 @@ if len(binaries) != apt.get("binary_package_count") or len(sources) != apt.get(
 ):
     raise SystemExit("RoboTwin neutral build refused: apt closure count mismatch")
 if any(
-    len(line) != 12
+    len(line) not in {12, 13}
+    or (len(line) == 13 and line[12] != "gitleaks:allow=public-ubuntu-copyright-sha256")
     or len(line[4]) != 64
     or not set(line[4]) <= set("0123456789abcdef")
     or len(line[10]) != 64

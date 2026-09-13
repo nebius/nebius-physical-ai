@@ -91,7 +91,9 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert sum(line.startswith("binary\t") for line in apt_lines) == 75
     assert sum(line.startswith("source\t") for line in apt_lines) == 57
     for line in (line.split("\t") for line in apt_lines if line.startswith("binary\t")):
-        assert len(line) == 12
+        assert len(line) in {12, 13}
+        if len(line) == 13:
+            assert line[12] == "gitleaks:allow=public-ubuntu-copyright-sha256"
         assert len(line[4]) == 64
         assert len(line[10]) == 64
     requirements = (IMAGE_ROOT / "runtime-requirements.lock").read_text()

@@ -22,7 +22,7 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
 # to the committed lock.
 RUN set -eux; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
-    test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "0d7bb81b52d86d541a0487f4cbb2b84fcc773fce5fe58f48d90e370098b2763d"; \
+    test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "554ae7df404eb46788608a5b7d16e20c9d8f055e2678294b2f03b82a9caf666d"; \
     test "$(sha256sum /opt/npa/robotwin/runtime-requirements.lock | cut -d ' ' -f1)" = "cce5aad788880905cc7b6755c66d294577a68b3b8ea8eeb5b1eb96a997b041f2"; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \
     printf '%s\n' \
@@ -40,7 +40,7 @@ RUN set -eux; \
     packages="$(awk -F '\t' '$1 == "binary" { printf "%s=%s ", $2, $3 }' /opt/npa/robotwin/apt-packages.lock)"; \
     test "$(awk -F '\t' '$1 == "binary" { count += 1 } END { print count + 0 }' /opt/npa/robotwin/apt-packages.lock)" = 75; \
     apt-get install -y --no-install-recommends --allow-downgrades ${packages}; \
-    while IFS="$(printf '\t')" read -r kind name version architecture archive_sha archive_size archive_path source source_version relationship copyright_sha copyright_path; do \
+    while IFS="$(printf '\t')" read -r kind name version architecture archive_sha archive_size archive_path source source_version relationship copyright_sha copyright_path annotation; do \
       test "${kind}" = binary || continue; \
       test "$(dpkg-query -W -f='${Version}' "${name}")" = "${version}"; \
       test "$(dpkg-query -W -f='${Architecture}' "${name}")" = "${architecture}"; \
