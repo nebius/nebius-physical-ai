@@ -545,6 +545,23 @@ def test_build_frontend_uses_supported_release_environment() -> None:
         assert setting in DOCKERFILE
 
 
+def test_openexr_fetchcontent_is_bound_to_local_exact_imath_source() -> None:
+    local_override = (
+        'CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_IMATH='
+        "/opt/habitat-sim/src/deps/imath "
+        '-DFETCHCONTENT_FULLY_DISCONNECTED=ON"'
+    )
+    assert DOCKERFILE.count(local_override) == 1
+    build = DOCKERFILE.split("RUN python3 prepare_source.py", 1)[1].split(
+        "FROM ${BASE_IMAGE} AS runtime", 1
+    )[0]
+    assert build.index(local_override) < build.index("/opt/build-venv/bin/pip wheel .")
+    assert "src/deps/imath" in (PACKAGE / "source-manifest.json").read_text(
+        encoding="utf-8"
+    )
+    assert "FETCHCONTENT_SOURCE_DIR_IMATH=*" not in DOCKERFILE
+
+
 def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
     final = _runtime_stage(DOCKERFILE)
     assert final.rstrip().endswith(

@@ -164,6 +164,7 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
     HABITAT_BUILD_TEST=OFF \
     HABITAT_BUILD_BASIS_COMPRESSOR=OFF \
     SKBUILD_CMAKE_BUILD_TYPE=Release \
+    CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_IMATH=/opt/habitat-sim/src/deps/imath -DFETCHCONTENT_FULLY_DISCONNECTED=ON" \
       /opt/build-venv/bin/pip wheel . --no-build-isolation --no-deps \
       --wheel-dir /opt/wheelhouse && \
     python3 -m venv /opt/runtime-venv && \
