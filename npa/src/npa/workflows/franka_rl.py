@@ -52,6 +52,7 @@ def _recipe(args: argparse.Namespace) -> dict:
         "episode_steps": 250, "stable_steps": 20, "success_distance_m": 0.05,
         "maximum_object_speed_m_s": 0.03, "minimum_object_height_m": 0.1,
         "train_mass_range": [0.7, 1.3], "train_friction_range": [0.5, 1.5],
+        "physics_capacity": {"gpu_total_aggregate_pairs_capacity": 2**21},
         "conditions": {
             "nominal": {"mass_scale": 1.0, "friction": 1.0, "action_delay": 0},
             "heavy": {"mass_scale": 2.0, "friction": 1.0, "action_delay": 0},
@@ -92,6 +93,9 @@ def _native_step(stage: str, prepared: Path, output: Path, *extra: str) -> None:
     filename, key, expected = receipts[stage]
     with log_path.open("w") as log:
         result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, check=False)
+    if any("PhysX error:" in line or "simulation will miss interactions" in line
+           for line in log_path.read_text().splitlines()):
+        raise RuntimeError(f"Franka {stage} reported invalid physics; inspect {log_path.name}")
     receipt = output / filename
     if result.returncode or not receipt.is_file():
         print(log_path.read_text()[-12_000:], flush=True)
@@ -124,6 +128,14 @@ def _run_native(stage: str, prepared: Path, output: Path) -> None:
 
 
 def _run_stage(args, prepared: Path, output: Path, workspace: Path) -> None:
+    try:
+        _run_stage_payload(args, prepared, output, workspace)
+    except Exception as error:
+        _publish_stage_failure(output, args.output_path, error, stage=args.stage)
+        raise
+
+
+def _run_stage_payload(args, prepared: Path, output: Path, workspace: Path) -> None:
     if args.stage == "report":
         from npa.workflows.franka_rl_report import report_results
 
@@ -132,31 +144,28 @@ def _run_stage(args, prepared: Path, output: Path, workspace: Path) -> None:
     elif args.stage == "visual-evaluate":
         from npa.workflows.franka_rl_vlm import evaluate_captures
 
-        try:
-            evaluate_captures(prepared, output)
-        except Exception as error:
-            _publish_visual_failure(output, args.output_path, error)
-            raise
+        evaluate_captures(prepared, output)
     else:
         _run_native(args.stage, prepared, output)
 
 
-def _publish_visual_failure(output: Path, destination: str, error: Exception) -> None:
+def _publish_stage_failure(output: Path, destination: str, error: Exception, *, stage: str = "visual-evaluate") -> None:
     """Retain diagnostic bytes separately without claiming stage completion."""
     try:
         output.mkdir(parents=True, exist_ok=True)
-        (output / "visual-evaluation.json").unlink(missing_ok=True)
+        for name in ("training.json", "evaluation.json", "visual-evaluation.json", "report.json"):
+            (output / name).unlink(missing_ok=True)
         failure_destination = destination.rstrip("/") + "-failures/" + uuid.uuid4().hex + "/"
         write_json(output / "failure.json", {
-            "schema": "npa.franka-rl.visual-failure.v1", "status": "failed",
+            "schema": "npa.franka-rl.stage-failure.v1", "status": "failed", "stage": stage,
             "error_type": type(error).__name__,
             "completed_judgments": len(list(output.glob("episode-*/verdict.json"))),
-            "complete_visual_audit": False,
+            "complete_stage": False,
         })
         publish(output, failure_destination)
         print(json.dumps({"status": "failed", "evidence_uri": failure_destination}), flush=True)
     except Exception as publication_error:
-        # Publication failure must never replace the judge's original traceback.
+        # Publication failure must never replace the stage's original traceback.
         print(json.dumps({"status": "failed", "failure_evidence_published": False,
                           "publication_error_type": type(publication_error).__name__}), flush=True)
 

@@ -144,6 +144,36 @@ def test_isaac_zero_exit_without_completion_record_is_a_failure(tmp_path, monkey
         franka_rl._native_step(stage, tmp_path / "input", tmp_path / "output")
 
 
+@pytest.mark.parametrize("message", ["PhysX error: GPU buffer overflow", "the simulation will miss interactions"])
+def test_physics_error_rejects_even_zero_exit_and_valid_completion(tmp_path, monkeypatch, message):
+    def simulate(argv, **kwargs):
+        output = Path(argv[argv.index("--output-path") + 1])
+        (output / "training.json").write_text('{"schema":"npa.franka-rl.training.v1"}')
+        kwargs["stdout"].write(message + "\n")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(franka_rl.subprocess, "run", simulate)
+    with pytest.raises(RuntimeError, match="reported invalid physics"):
+        franka_rl._native_step("train", tmp_path / "input", tmp_path / "output")
+
+
+def test_scene_restores_sealed_physx_pair_capacity(tmp_path, monkeypatch, recipe):
+    import sys
+    from npa.workflows import franka_rl_environment
+    from npa.workflows.sim2real import isaac_assets_compat
+
+    config = SimpleNamespace(scene=SimpleNamespace(), sim=SimpleNamespace(
+        physics=SimpleNamespace(gpu_total_aggregate_pairs_capacity=16384)),
+        commands=SimpleNamespace(object_pose=SimpleNamespace()))
+    monkeypatch.setitem(sys.modules, "isaaclab_tasks", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "isaaclab_tasks.utils", SimpleNamespace(load_cfg_from_registry=lambda *args: config))
+    monkeypatch.setattr(isaac_assets_compat, "remap_moved_franka_usd", lambda *args: None)
+    monkeypatch.setattr(franka_rl_environment, "_physics_events", lambda *args: None)
+    actual = franka_rl_environment.environment_config(recipe, training=True)
+    assert actual.sim.physics.gpu_total_aggregate_pairs_capacity == 2**21
+    assert actual.sim.physics.gpu_total_aggregate_pairs_capacity == recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
+
+
 @pytest.mark.parametrize("capture_exit", [0, 1])
 def test_evaluation_uses_fresh_processes_and_requires_capture_before_publication(tmp_path, monkeypatch, capture_exit):
     calls, published = [], []
@@ -162,7 +192,7 @@ def test_evaluation_uses_fresh_processes_and_requires_capture_before_publication
 
     monkeypatch.setattr(franka_rl.subprocess, "run", simulate)
     monkeypatch.setattr(franka_rl, "materialize", lambda *args: tmp_path)
-    monkeypatch.setattr(franka_rl, "publish", lambda *args: published.append(True))
+    monkeypatch.setattr(franka_rl, "publish", lambda root, destination: published.append(destination))
     argv = ["evaluate", "--input-path", str(tmp_path), "--output-path", str(tmp_path / "published")]
     if capture_exit:
         with pytest.raises(RuntimeError, match="capture failed"):
@@ -170,7 +200,11 @@ def test_evaluation_uses_fresh_processes_and_requires_capture_before_publication
     else:
         assert franka_rl.main(argv) == 0
     assert calls == ["validate", "test", "capture"]
-    assert published == ([] if capture_exit else [True])
+    assert len(published) == 1
+    if capture_exit:
+        assert published[0].startswith(str(tmp_path / "published-failures") + "/")
+    else:
+        assert published == [str(tmp_path / "published")]
 
 
 def test_initial_native_checkpoint_is_decodable_without_a_training_logger(tmp_path):
@@ -214,11 +248,13 @@ def test_isaac_physics_evidence_decodes_actual_warp_arrays():
     masses = wp.array([[0.7], [1.3]], dtype=wp.float32, device="cpu")
     view = SimpleNamespace(get_material_properties=lambda: material, get_masses=lambda: masses)
     env = SimpleNamespace(unwrapped=SimpleNamespace(scene={"object": SimpleNamespace(root_view=view)},
+        cfg=SimpleNamespace(sim=SimpleNamespace(physics=SimpleNamespace(gpu_total_aggregate_pairs_capacity=2**21))),
         event_manager=SimpleNamespace(active_terms={"startup": ["npa_object_mass", "npa_object_material"]})))
     evidence = physics_evidence(env)
     assert evidence["mass_kg"] == pytest.approx({"min": 0.7, "max": 1.3})
     assert evidence["static_friction"] == {"min": 0.5, "max": 1.5}
     assert evidence["dynamic_friction"] == {"min": 0.25, "max": 1.25}
+    assert evidence["physics_capacity"] == {"gpu_total_aggregate_pairs_capacity": 2**21}
 
 
 def test_isaac_proxy_geometry_uses_explicit_tensors_for_goal_and_reset_hash(monkeypatch):

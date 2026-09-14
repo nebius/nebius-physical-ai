@@ -30,6 +30,8 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
     config.scene.num_envs = recipe["num_envs"] if training else recipe["eval_episodes"]
     config.seed = recipe["seed"] if training else recipe["validation_seed"]
     config.sim.device = "cuda:0"
+    if "physics_capacity" in recipe:
+        config.sim.physics.gpu_total_aggregate_pairs_capacity = recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
     config.commands.object_pose.resampling_time_range = (5.0, 5.0)
     remap_moved_franka_usd(config)
     if "assets" in recipe:
@@ -132,7 +134,8 @@ def physics_evidence(env) -> dict:
     material = wp.to_torch(view.get_material_properties())
     values = {"mass_kg": wp.to_torch(view.get_masses()), "static_friction": material[..., 0],
               "dynamic_friction": material[..., 1], "restitution": material[..., 2]}
-    evidence = {"startup_terms": list(terms)}
+    evidence = {"startup_terms": list(terms), "physics_capacity": {
+        "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
     for name, value in values.items():
         if not torch.isfinite(value).all():
             raise RuntimeError("Applied Franka physics is nonfinite")

@@ -47,6 +47,8 @@ def _capture_contract(evaluated: Path) -> tuple[dict, dict, dict]:
 
 
 def _check_physics(row: dict, recipe: dict) -> None:
+    if "physics_capacity" in recipe and row["applied_physics"].get("physics_capacity") != recipe["physics_capacity"]:
+        raise ValueError("Franka capture physics capacity differs from the sealed experiment")
     condition = recipe["conditions"][row["condition"]]
     expected = {"mass_kg": recipe["assets"]["nominal_mass_kg"] * condition["mass_scale"],
                 "static_friction": condition["friction"], "dynamic_friction": condition["friction"]}

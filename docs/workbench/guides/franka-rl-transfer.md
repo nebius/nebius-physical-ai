@@ -54,6 +54,13 @@ telemetry remains disabled. No model weights or gated dataset are downloaded.
 Token Factory hosts the selected vision model under the operator's account.
 See [Isaac Lab 3 packaging](../isaac-lab-3.md).
 
+The sealed recipe restores `gpu_total_aggregate_pairs_capacity` to 2,097,152
+for the richer scene. The pinned [upstream lift task](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/lift/lift_env_cfg.py)
+reduces this buffer to 16,384, which produced missed-interaction errors with
+4,096 parts environments. Native stages reject recorded PhysX errors even when
+the process exits zero; failed-stage logs are retained beside the normal output
+under a unique `-failures/` prefix. Such an attempt cannot qualify the policy.
+
 Set `NPA_PROJECT`, `NPA_KUBE_CONTEXT`, `NPA_OUTPUT_BUCKET`, and a fresh
 `NPA_RUN_ID`. Use the project's private configuration and a new isolated
 SkyPilot directory for this run. The spec enables `source_overlay: "1"` so both

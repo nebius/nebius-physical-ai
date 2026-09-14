@@ -150,11 +150,11 @@ def test_failed_judge_retains_diagnostics_without_success_manifest(tmp_path, mon
 
 def test_failure_directory_error_does_not_replace_judge_error(tmp_path, monkeypatch, capsys):
     from pathlib import Path
-    from npa.workflows.franka_rl import _publish_visual_failure
+    from npa.workflows.franka_rl import _publish_stage_failure
 
     def fail_mkdir(*args, **kwargs):
         raise OSError("filesystem unavailable")
 
     monkeypatch.setattr(Path, "mkdir", fail_mkdir)
-    _publish_visual_failure(tmp_path, str(tmp_path / "visual"), ValueError("invalid judge"))
+    _publish_stage_failure(tmp_path, str(tmp_path / "visual"), ValueError("invalid judge"))
     assert '"failure_evidence_published": false' in capsys.readouterr().out
