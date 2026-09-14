@@ -393,22 +393,16 @@ def test_gpu_memory_override_targets_only_accelerator_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "384Gi")
-    assert (
-        normalize_resources(
-            {
-                "cloud": "kubernetes",
-                "accelerators": "RTXPRO6000:4",
-                "memory": "128Gi",
-            }
-        )["memory"]
-        == "384+"
-    )
-    assert (
-        normalize_resources({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"})[
-            "memory"
-        ]
-        == "16+"
-    )
+    assert normalize_resources(
+        {
+            "cloud": "kubernetes",
+            "accelerators": "RTXPRO6000:4",
+            "memory": "128Gi",
+        }
+    )["memory"] == "384+"
+    assert normalize_resources(
+        {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
+    )["memory"] == "16+"
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
@@ -491,7 +485,9 @@ def test_render_public_image_ignores_unrelated_private_registry_credentials(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="ghcr.io/nebius/nebius-physical-ai"),
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai"
+        ),
     )
 
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
@@ -642,7 +638,8 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
-        REPO_ROOT / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        REPO_ROOT
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,
@@ -764,7 +761,9 @@ def test_paidf_refinement_iterations_use_append_only_artifact_prefixes() -> None
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "cosmos_augmented/iteration-2/manifest.json",
     ]
-    assert [step.argv[step.argv.index("--output-uri") + 1] for step in evaluates] == [
+    assert [
+        step.argv[step.argv.index("--output-uri") + 1] for step in evaluates
+    ] == [
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "grade/iteration-1/ranking/",
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
@@ -797,11 +796,9 @@ def test_paidf_bare_static_plan_previews_promoted_path_with_fail_closed_guard(
     states = [step.state for step in plan.steps]
 
     assert plan.assume_decision == "promote_checkpoint"
-    assert (
-        states.index("quality-disposition")
-        < states.index("require-accepted-quality")
-        < states.index("annotate-augmented")
-    )
+    assert states.index("quality-disposition") < states.index(
+        "require-accepted-quality"
+    ) < states.index("annotate-augmented")
     assert states[-2:] == ["visualize", "finalize"]
     assert "visualize-rejected" not in states
     assert "reject-quality" not in states
@@ -1196,10 +1193,7 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
     # This test replaces the runtime; provider boundary coverage lives in
     # test_execution_preflight and must not be bypassed by --skip-preflight.
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
@@ -1342,10 +1336,7 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
+    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

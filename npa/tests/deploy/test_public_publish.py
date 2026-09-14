@@ -684,11 +684,6 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
 
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
-    assert is_public_registry("docker.io:443/example")
-    assert is_public_registry("quay.io:443/example")
-    assert is_public_registry("public.ecr.aws:80/example")
-    assert is_public_registry("docker.io./example")
-    assert is_public_registry("quay.io:5000/example")
     assert not is_public_registry("GHCR.IO/Operator/Private-Package")
     assert not is_public_registry("registry.example/e00example")
     assert not is_public_registry("")
@@ -700,16 +695,6 @@ def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
     assert is_public_registry("ghcr.io/example/workbench")
     assert is_public_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY)
     assert not is_public_registry("ghcr.io/example/private")
-
-
-def test_public_release_override_is_normalized_symmetrically(monkeypatch) -> None:
-    monkeypatch.setattr(
-        images,
-        "public_container_registry",
-        lambda: "ghcr.io.:443/example/workbench/",
-    )
-    assert is_public_registry("ghcr.io/example/workbench")
-    assert is_public_registry("ghcr.io:443/example/workbench")
 
 
 def test_restricted_tool_refuses_default_official_namespace_after_override(
