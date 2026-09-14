@@ -4,10 +4,41 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 from npa.workbench.isaac_arena import runtime
+
+
+def test_actual_simulator_child_does_not_inherit_admission_secrets(tmp_path, monkeypatch):
+    names = (
+        "NEBIUS_TOKEN_FACTORY_KEY", "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY", "NPA_AGENT_LANGFUSE_SECRET_KEY",
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+        "HF_TOKEN", "NGC_API_KEY", "NEBIUS_IAM_TOKEN", "NPA_AGENT_AUTH_PASSWORD",
+    )
+    secrets = {name: f"synthetic-admission-secret-{index}" for index, name in enumerate(names)}
+    allowed = {"CUDA_VISIBLE_DEVICES": "0", "ACCEPT_EULA": "Y", "LANG": "C.UTF-8"}
+    monkeypatch.setattr(runtime.os, "environ", {**secrets, **allowed})
+    observed = {}
+
+    def inspect_child(argv, **kwargs):
+        child = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", "import json,os;print(json.dumps(dict(os.environ)))"],
+            env=kwargs["env"], capture_output=True, text=True, check=True,
+        )
+        observed.update(json.loads(child.stdout))
+        return _failed_process(argv, **kwargs)
+
+    destination = tmp_path / "out"
+    with pytest.raises(runtime.IsaacArenaError, match="policy_runner failed"):
+        runtime.evaluate(runtime.IsaacArenaRequest(output_path=str(destination)), runner=inspect_child)
+    assert not set(secrets).intersection(observed)
+    assert all(observed[name] == value for name, value in allowed.items())
+    assert dict(runtime.os.environ) == {**secrets, **allowed}
+    for path in (destination / "result.json", destination / "evaluation.log"):
+        assert all(value not in path.read_text() for value in secrets.values())
 
 
 def _failed_process(argv, **kwargs):

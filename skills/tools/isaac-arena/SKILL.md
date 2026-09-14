@@ -19,6 +19,16 @@ The only supported execution path is upstream
 and retain the upstream JSONL plus HTML report. Imports, `--help`, a simulator
 launch, or an incomplete fixed-step rollout do not establish evaluation.
 
+The capability payload's `upstream_workflows` also lists agentic environment
+generation, experiment orchestration, sensitivity analysis, teleoperation,
+Mimic data generation, imitation learning, and reinforcement learning. These
+are `unsupported`, `input_required`, and `upstream_alpha` in the NPA Arena
+integration. Their pinned upstream entrypoints or documentation and required
+inputs are listed for discovery. Do not route them to the evaluation runner or
+claim that other NPA tools qualify these Arena workflows. Prompt resolution
+requires model access; upstream schema/catalog inspection does not. The
+upstream OSMO experiment backend is not part of NPA's SkyPilot integration.
+
 - Arena source: Apache-2.0, baked from the checksum-verified release commit.
 - Lightwheel SDK 1.0.3: upstream-declared Apache-2.0 client, baked from the
   exact wheel and SHA-256 in Arena's `uv.lock`. Its package description and some

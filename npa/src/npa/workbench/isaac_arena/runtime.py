@@ -228,7 +228,11 @@ def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
             "HF_TOKEN",
             "NGC_API_KEY",
             "NEBIUS_IAM_TOKEN",
-        } or upper.endswith(("_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD")):
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        } or upper.endswith((
+            "_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD",
+            "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_SECRET_KEY",
+        )):
             env.pop(key, None)
     env.setdefault("ACCEPT_EULA", "Y")
     env.pop("NPA_ISAAC_ARENA_VIEWPORT_ONLY", None)
@@ -397,6 +401,8 @@ def _runtime_metadata(request: IsaacArenaRequest) -> dict[str, Any]:
             "license": "upstream-provider-controlled", "redistribution": False,
         },
         "model_baked": False, "dataset_baked": False,
+        "input_payload_scope": "Arena policy weights and evaluation datasets",
+        "inherited_dependency_fixtures": "Public dependency test fixtures are described separately in the image's third-party notices.",
     }
 
 

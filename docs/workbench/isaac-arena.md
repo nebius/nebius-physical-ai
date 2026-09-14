@@ -132,8 +132,9 @@ npa workbench isaac-arena evaluate \
   --run-id "<run-id>"
 ```
 
-Inputs and outputs may be local or operator-owned S3 paths. The simulator
-subprocess receives no cloud, model, or HTTP admission credentials. A completed
+Inputs and outputs may be local or operator-owned S3 paths. NPA removes cloud,
+model, and HTTP admission secrets from the simulator subprocess environment,
+including the Agent's artifact-reader and observability credentials. A completed
 evaluation contains raw episode JSONL, upstream static HTML, the current run's simulator
 ground-truth HDF5, the credential-isolated simulator log, and `result.json` with
 aggregate metrics, GPU identity, byte sizes, and hashes. After evaluation setup
@@ -301,6 +302,25 @@ specs, and 38 RoboLab task plus 17 RoboLab scene specs. They remain upstream
 alpha and are listed by the capability payload as unsupported because this NPA
 surface does not yet accept `--env_spec`. This is not a broad graph-catalog or
 external-plugin support claim.
+
+The capability payload also lists the broader upstream workflow families under
+`upstream_workflows`. Each is explicitly `unsupported`, `input_required`, and
+`upstream_alpha` in this Arena integration:
+
+| Upstream workflow | Required inputs and NPA boundary |
+| --- | --- |
+| Agentic environment generation | A prompt or graph specification, with model access for prompt resolution and authorized assets for building. NPA does not expose the experimental CLI, review GUI, or generated-scene build workflow. |
+| Experiment runner | Experiment configuration, compatible policies, and task assets. Upstream local experiment orchestration and OSMO submission are not exposed by NPA's SkyPilot evaluation workflows. |
+| Sensitivity analysis | Episode outcomes with recorded variation factors. Ordinary evaluation metrics do not constitute upstream posterior estimation or sensitivity reports. |
+| Teleoperation | A registered task, compatible input device, and assets. The upstream Isaac Lab demonstration recorder is not an NPA Arena command. |
+| Data generation | Demonstrations, task annotations, and Isaac Lab Mimic configuration. Replay evaluation does not annotate or generate demonstrations. |
+| Imitation learning | A demonstration dataset, training configuration, and authorized model access. The upstream GR00T conversion and fine-tuning workflow uses a separate training environment. |
+| Reinforcement learning | A registered Arena task and Isaac Lab training configuration. Evaluating an RSL-RL checkpoint does not train it. |
+
+These entries reference files in the [pinned upstream revision](https://github.com/isaac-sim/IsaacLab-Arena/tree/ed0fd12be862078be316c73eb7cf423ba9b1c5cd).
+Schema and catalog inspection need neither a prompt nor model access. Separate NPA
+training or teleoperation tools retain their own supported contracts; their
+existence does not qualify these Arena workflows.
 
 ## Supported workflows
 

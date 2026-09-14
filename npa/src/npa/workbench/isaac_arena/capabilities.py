@@ -334,6 +334,59 @@ _CAPABILITY_MANIFEST = {
             "limitation": "Arbitrary Python import paths are not accepted by the public NPA runner.",
         },
     },
+    "upstream_workflows": {
+        "agentic_environment_generation": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_entrypoints": [
+                "isaaclab_arena_examples/agentic_environment_generation/cli_runner.py",
+                "isaaclab_arena_examples/agentic_environment_generation/gui_runner.py",
+            ],
+            "required_inputs": [
+                "prompt for resolve/full or graph specification for build/prim_tree; schema/catalog need neither",
+                "authorized model access for prompt resolution; authorized assets for scene building",
+            ],
+            "limitation": "NPA does not expose the experimental generation CLI, review GUI, or generated-environment build workflow.",
+        },
+        "experiment_runner": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_entrypoints": [
+                "isaaclab_arena/evaluation/experiment_runner.py",
+                "osmo/submit_arena_experiment.py",
+            ],
+            "required_inputs": ["experiment configuration, compatible policies, and task assets"],
+            "limitation": "NPA's SkyPilot evaluation workflows do not expose upstream experiment orchestration or its OSMO backend.",
+        },
+        "sensitivity_analysis": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_entrypoints": ["isaaclab_arena/analysis/sensitivity/generate_report.py"],
+            "required_inputs": ["episode outcomes with recorded variation factors"],
+            "limitation": "NPA retains ordinary evaluation metrics but does not invoke upstream posterior estimation or sensitivity reports.",
+        },
+        "teleoperation": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_2_teleoperation.rst",
+            "required_inputs": ["registered task, compatible teleoperation device, and runtime assets"],
+            "limitation": "Upstream records demonstrations through Isaac Lab; the Arena workbench exposes no teleoperation or demonstration-recording command.",
+        },
+        "data_generation": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_3_data_generation.rst",
+            "required_inputs": ["source demonstrations, task annotations, and compatible Isaac Lab Mimic configuration"],
+            "limitation": "Evaluation replay does not implement upstream demonstration annotation or Mimic dataset generation.",
+        },
+        "imitation_learning": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_4_policy_training.rst",
+            "required_inputs": ["demonstration dataset, compatible training configuration, and authorized model access"],
+            "limitation": "The upstream GR00T conversion and fine-tuning workflow requires its separate training environment; NPA Arena does not invoke it.",
+        },
+        "reinforcement_learning": {
+            "npa_status": ["unsupported", "input_required", "upstream_alpha"],
+            "upstream_documentation": "docs/pages/example_workflows/reinforcement_learning/step_2_policy_training.rst",
+            "required_inputs": ["registered Arena task and compatible Isaac Lab training configuration"],
+            "limitation": "NPA Arena can evaluate a supplied RSL-RL checkpoint but does not invoke upstream policy training.",
+        },
+    },
     "runtime_dependencies": [
         {
             "name": "lightwheel-sdk",
