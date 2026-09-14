@@ -130,6 +130,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
 | [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
+| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | Real Isaac Franka PPO with randomized physics, validation-only checkpoint selection, paired held-out shifts, and RTX rollouts exported as LeRobotDataset/Rerun. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |

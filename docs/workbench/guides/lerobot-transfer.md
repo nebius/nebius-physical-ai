@@ -13,6 +13,11 @@ The first complete B200 run increased average held-out success from 13.7% to
 24.6%, but failed the benchmark's absolute-success gate. See the
 [measured results](#measured-b200-results) before using these checkpoints.
 
+For an articulated arm and real simulation RL, use the companion
+[Franka PPO workflow](franka-rl-transfer.md). It retains this benchmark and adds
+Franka Panda contact dynamics, physical perturbations, held-out evaluation, and
+genuine RTX rollouts exported to LeRobotDataset.
+
 ```mermaid
 flowchart LR
     A[Seal LeRobot data and recipe] --> B[Train baseline and augmented ACT]

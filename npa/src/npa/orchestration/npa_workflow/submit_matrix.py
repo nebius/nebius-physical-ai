@@ -72,6 +72,12 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "franka-rl-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Real Isaac Franka PPO, sealed validation/test resets, physics-shift evaluation, and LeRobot/RRD capture.",
+    ),
+    SubmitLiveCase(
         "lerobot-transfer.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True, expected_parallel_tasks=2, image_tool="lerobot",

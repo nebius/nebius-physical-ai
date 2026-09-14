@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0f32ce3eb5f4a7459dad55ecc5dcc8ec11efc2dd1a407617ec8ce5737cd01d23",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec pass with four ordinary runtime stages.",
+      "evidence": [
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Real Isaac Franka PPO, validation-only selection, paired held-out evaluation, and native LeRobot/Rerun conversion are wired.",
+      "evidence": [
+        "npa/tests/workflows/test_franka_rl.py",
+        "docs/workbench/guides/franka-rl-transfer.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Dedicated project storage passed S3 credential preflight.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The worker fetched the pinned Isaac runtime and instantiated 4,096 real Franka environments with object mass/material events.",
+      "evidence": [
+        "Private native Isaac worker log"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Operator Nebius identity and project storage credentials passed preflight; no gated model dependency.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Both digest-pinned images are pullable; Isaac image carries compatible bootstrap attestation. Branch source must be staged.",
+      "evidence": [
+        "npa workbench workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Reserved RTX PRO 6000 CUDA and graphics validation passed; completed PPO training and rendered evaluation are pending.",
+      "evidence": []
+    }
+  }
+}
