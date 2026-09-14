@@ -624,6 +624,52 @@ def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Chat runs a safe preflight; only the returned token can provision."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-confirmation-state.json"
+    module._STATE_STORE = None
+    calls: list[bool] = []
+
+    def provision(project, cluster_name, *, dry_run, **_kwargs):
+        calls.append(dry_run)
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            model="unused",
+        )
+        assert initial["grounded"] is True
+        assert initial["needs_confirmation"] is True
+        assert initial["infra_deployment"] == {
+            "phase": "ready_for_confirmation",
+            "status": "ready",
+            "needs_confirmation": True,
+        }
+        assert initial["confirm_token"]
+        assert calls == [True]
+        assert "project" not in initial["reply"].lower()
+
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+        assert confirmed["infra_deployment"]["phase"] == "submitted"
+        assert confirmed["needs_confirmation"] is False
+        assert calls == [True, False]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
     monkeypatch, tmp_path
 ) -> None:

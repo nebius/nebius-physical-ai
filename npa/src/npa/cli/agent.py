@@ -4175,8 +4175,26 @@ def _dedupe(values: list[str]) -> list[str]:
             unique.append(token)
     return unique
 
+
+def _safe_infra_chat_status(response: object) -> str:
+    # Reduce a provider response to a display-safe status for chat.
+    if isinstance(response, JSONResponse):
+        try:
+            response = json.loads(response.body.decode("utf-8"))
+        except Exception:
+            response = {{}}
+    payload = response if isinstance(response, dict) else {{}}
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    if bool(result.get("ok")):
+        return "ready"
+    status = str(result.get("status") or payload.get("status") or "").strip().lower()
+    return status if status in {{"blocked", "invalid", "unavailable", "error"}} else "unavailable"
+
+
 def _maybe_toolground_chat_reply(
     user_text: str,
+    *,
+    confirm_token: str = "",
 ) -> tuple[str | None, list[str], list[str], str | None, dict | None, str | None]:
     intent = match_chat_intent(user_text)
     if not intent and re.search(r"\\bworkflow\\b.*\\b(?:yaml|spec)\\b", str(user_text or ""), re.IGNORECASE):
@@ -4189,6 +4207,53 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent == "mk8s_provision":
+        request = {{"dry_run": True, "validate": False, "skip_s3": True}}
+        if confirm_token:
+            request.update({{"dry_run": False, "validate": True, "confirm_token": confirm_token}})
+            response = provision_infra(request)
+            status = _safe_infra_chat_status(response)
+            completed = status == "ready"
+            reply = (
+                "**Nebius infrastructure deployment submitted**\\n"
+                "- The configured Kubernetes backend was handed to the NPA provisioner.\\n"
+                f"- **status**: `{{status}}`\\n"
+                "- I will keep using the configured backend for future workflow planning and submission."
+                if completed
+                else "**Nebius infrastructure deployment needs attention**\\n"
+                f"- **status**: `{{status}}`\\n"
+                "- No provider diagnostics are shown here; review the operator deployment logs before retrying."
+            )
+            details = {{"phase": "submitted", "status": status, "needs_confirmation": False}}
+            return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details}}, intent
+        preflight = provision_infra(request)
+        status = _safe_infra_chat_status(preflight)
+        if status != "ready":
+            reply = (
+                "**Nebius infrastructure preflight needs attention**\\n"
+                f"- **status**: `{{status}}`\\n"
+                "- The check made no cloud changes. Review the staged NPA configuration, then ask me to retry."
+            )
+            details = {{"phase": "preflight", "status": status, "needs_confirmation": False}}
+            return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details}}, intent
+        confirmation = provision_infra({{"dry_run": False, "validate": True, "skip_s3": True}})
+        token = str(confirmation.get("confirm_token") or "") if isinstance(confirmation, dict) else ""
+        if not token:
+            reply = (
+                "**Nebius infrastructure preflight needs attention**\\n"
+                "- **status**: `unavailable`\\n"
+                "- The check made no cloud changes, but a confirmation could not be prepared. Ask me to retry."
+            )
+            details = {{"phase": "preflight", "status": "unavailable", "needs_confirmation": False}}
+            return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details}}, intent
+        reply = (
+            "**Nebius infrastructure preflight complete**\\n"
+            "- I checked the configured Kubernetes deployment path with a non-mutating dry-run.\\n"
+            "- **status**: `ready`\\n"
+            "- No cloud resources have been created. Use the confirmation card below to create or reuse the configured backend."
+        )
+        details = {{"phase": "ready_for_confirmation", "status": "ready", "needs_confirmation": bool(token)}}
+        return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details, "confirm_token": token}}, intent
     if intent in {{"validate_workflow", "plan_workflow"}}:
         result = evaluate_workflow_chat_request(
             user_text, state.get("workflow_draft") or {{}},
@@ -4611,7 +4676,7 @@ def _maybe_origin_reply(user_text: str, *, visual_context=None, state=None):
     except Exception:
         return None, []
 
-def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
+def _agent_chat_with_tools(*, raw_messages: list, model: str, confirm_token: str = "") -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
         return None
@@ -4625,7 +4690,9 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
             "grounded": True,
             "apis_used": ["reports/sim2real-report.json"],
         }}
-    tool_reply, apis_used, apis_suggested, workflow_yaml, workflow_validation, intent = _maybe_toolground_chat_reply(last_user)
+    tool_reply, apis_used, apis_suggested, workflow_yaml, workflow_validation, intent = _maybe_toolground_chat_reply(
+        last_user, confirm_token=confirm_token
+    )
     if not tool_reply:
         return None
     skill_names, _ = _resolve_skill_context(user_text=last_user, intent=intent)
@@ -4641,6 +4708,15 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     }}
     if workflow_yaml:
         payload["workflow_yaml"] = workflow_yaml
+    if intent == "mk8s_provision" and isinstance(workflow_validation, dict):
+        deployment = workflow_validation.get("infra_deployment")
+        if isinstance(deployment, dict):
+            payload["infra_deployment"] = deployment
+            payload["needs_confirmation"] = bool(deployment.get("needs_confirmation"))
+        token = str(workflow_validation.get("confirm_token") or "")
+        if token:
+            payload["confirm_token"] = token
+        return payload
     if isinstance(workflow_validation, dict):
         payload["workflow_validation"] = workflow_validation
         draft = _workflow_draft_from_state(_load_state())
@@ -4883,7 +4959,11 @@ def chat(payload: dict):
             "session": public_chat_session_payload(session),
         }}
     # Never short-circuit framed Describe-this / vision turns through intent tools.
-    tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
+    tool_result = None if visual_turn else _agent_chat_with_tools(
+        raw_messages=history,
+        model=model,
+        confirm_token=str(payload.get("confirm_token") or "").strip(),
+    )
     if tool_result is not None:
         reply = str(tool_result.get("reply") or "").strip()
         if reply:

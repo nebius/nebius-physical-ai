@@ -1379,6 +1379,21 @@
         cursor: pointer;
       }
       .msg-copy-btn:hover { background: #f5f7ff; }
+      .infra-confirmation-card {
+        width: 100%; box-sizing: border-box;
+        border: 1px solid #b8dba1; border-radius: 10px;
+        background: #f5fbef; color: #244315;
+        padding: 10px 12px;
+      }
+      .infra-confirmation-card strong { display: block; font-size: 13px; }
+      .infra-confirmation-card p { margin: 4px 0 9px; font-size: 12px; line-height: 1.4; }
+      .infra-confirmation-button {
+        border: 1px solid #3d6d1f; border-radius: 7px;
+        background: #4d861f; color: #fff; cursor: pointer;
+        font-size: 12px; font-weight: 800; padding: 7px 10px;
+      }
+      .infra-confirmation-button:hover { background: #3f7119; }
+      .infra-confirmation-button:disabled { cursor: wait; opacity: .7; }
       .msg-row.thinking .bubble {
         min-width: 72px;
         background: var(--thinking-bg);
@@ -8192,6 +8207,31 @@
         }
         thinkingNode = null;
       }
+      function renderInfraConfirmation(row, data, context) {
+        const deployment = data && data.infra_deployment;
+        const token = String((data && data.confirm_token) || "");
+        if (!row || !deployment || !data.needs_confirmation || !token) return;
+        const card = row.querySelector(".msg-card");
+        if (!card) return;
+        const panel = document.createElement("div");
+        panel.className = "infra-confirmation-card";
+        panel.innerHTML = "<strong>Ready for your confirmation</strong><p>No cloud resources have been created. This one-time confirmation starts the configured Kubernetes deployment and validation.</p>";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "infra-confirmation-button";
+        button.textContent = "Confirm deployment";
+        button.addEventListener("click", () => {
+          button.disabled = true;
+          queueChatText(context.requestText, {
+            session_id: context.sessionId,
+            displayText: "Confirm infrastructure deployment",
+            confirm_token: token,
+            restoreInput: false,
+          }).catch(() => { button.disabled = false; });
+        });
+        panel.appendChild(button);
+        card.appendChild(panel);
+      }
       function setChatBusy(isBusy) {
         const btn = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
@@ -8516,6 +8556,7 @@
               session_id: jobSessionId,
             };
             if (opts.visual_context) body.visual_context = opts.visual_context;
+            if (opts.confirm_token) body.confirm_token = String(opts.confirm_token);
             const data = await apiJson("/api/chat", {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -8555,7 +8596,11 @@
             }
             const reply = normalizeAssistantReply(data.reply || "");
             if (reply) {
-              appendChat("assistant", reply);
+              const assistantRow = appendChat("assistant", reply);
+              renderInfraConfirmation(assistantRow, data, {
+                requestText: payloadText,
+                sessionId: jobSessionId,
+              });
               chatHistory.push({ role: "assistant", content: reply });
               trimClientChatHistory();
               refreshChatSessions(activeChatSessionId).catch(() => { /* best-effort */ });
