@@ -3112,6 +3112,7 @@ def _preflight_image_bootstrap_contracts(
     from npa.orchestration.skypilot.image_bootstrap_contract import (
         CONTRACT_VERSION,
         ImageBootstrapContractError,
+        immutable_image_reference,
         is_trusted_npa_image,
         load_cached_evidence,
         probe_image_capabilities,
@@ -3166,7 +3167,11 @@ def _preflight_image_bootstrap_contracts(
                 not runtime_probe_required
                 or cached.source == "ephemeral_capability_probe"
             ):
-                evidence = cached
+                # Mirrored bytes share capabilities, but pull authority belongs
+                # to the selected repository that this preflight just checked.
+                evidence = replace(
+                    cached, image=immutable_image_reference(image, digest)
+                )
             else:
                 attested = verify_attestation(image=image, digest=digest, labels=labels)
                 if runtime_probe_required:

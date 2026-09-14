@@ -849,6 +849,60 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     assert result == []
 
 
+@pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])
+@pytest.mark.parametrize(
+    "selected_image",
+    [
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:release",
+        "registry.example.invalid/selected/npa-cosmos-curate:custom",
+    ],
+)
+def test_cached_capability_preserves_the_selected_image_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spec_path: Path,
+    selected_image: str, source: str,
+) -> None:
+    """Identical mirrored bytes must not redirect a verified pull to another registry."""
+    digest = "sha256:" + "7" * 64
+    cached_image = "registry.example.invalid/previous/npa-cosmos-curate@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache_path = tmp_path / ".npa/cache/sky-image-bootstrap.json"
+    store_cached_evidence(cache_path, ImageContractEvidence(
+        image=cached_image, digest=digest, contract_version=CONTRACT_VERSION,
+        state="compatible", source=source, cleanup="verified",
+    ))
+    original_cache = cache_path.read_bytes()
+    checked: list[str] = []
+
+    def pull(images, **_kwargs):
+        checked.extend(images)
+        return [ImagePullCheck(image=image, status="ok", digest=digest) for image in images]
+
+    def metadata(image, **_kwargs):
+        assert image == selected_image
+        return digest, {ATTESTATION_LABEL: CONTRACT_VERSION}
+
+    def unexpected_probe(**_kwargs):
+        raise AssertionError("compatible bytes should reuse capability evidence")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials", pull,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata", metadata,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities", unexpected_probe,
+    )
+    pins = workflow_cli._preflight_submit_images(
+        spec_path, options=SkypilotRenderOptions(image_overrides={"*": selected_image}),
+        assume_decision="promote_checkpoint", enabled=True,
+    )
+
+    assert checked == [selected_image]
+    assert pins == {selected_image: selected_image.rsplit(":", 1)[0] + "@" + digest}
+    assert cache_path.read_bytes() == original_cache
+
+
 def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
     digest = "sha256:" + "9" * 64
 
