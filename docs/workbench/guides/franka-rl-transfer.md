@@ -162,3 +162,54 @@ Download and inspect the recording with `rerun <recording.rrd>` and decode the
 LeRobot MP4s before treating an artifact reference as visual evidence. When the
 run is complete, cancel its jobs before removing its dedicated cluster and
 workflow identity; retain the artifact storage for reproduction.
+
+## Measured RTX PRO 6000 result
+
+The native run completed **1,500 PPO updates across 4,096 Franka environments**:
+147,456,000 transitions in 22.1 minutes of learning and final checkpoint export,
+excluding worker installation and renderer startup. The actor's parameter
+change had L2 norm 32.6653. Validation evaluated five saved checkpoints on
+640 episodes and selected checkpoint `model_1499.pt` before opening the test
+stream. The final native checkpoint contains the same learned actor after the
+requested updates; checkpoint counters follow the upstream runner convention.
+
+All 1,024 test trials passed the exact reset-pairing and checkpoint-lineage
+checks. Two evaluation attempts using the same saved weights and recipe in
+fresh workers produced byte-identical evaluation JSON, including all validation
+and held-out trial records. The initial actor never lifted the cube and had
+zero strict successes in every condition. The trained actor learned to lift reliably, but rarely
+satisfied the stable-hold criterion:
+
+| Held-out condition | Trained cube lifts | Trained strict successes |
+| --- | ---: | ---: |
+| Nominal | 128/128 | 10/128 (7.8%) |
+| Heavy | 128/128 | 3/128 (2.3%) |
+| Slippery | 128/128 | 4/128 (3.1%) |
+| One-step delay | 119/128 | 0/128 (0.0%) |
+
+Mean strict success improved from 0% to 3.3%; the paired 95% bootstrap interval
+for the improvement is **+1.4 to +5.7 percentage points**. Every condition
+failed the preregistered 70% threshold. **Simulation qualification is false;
+physical transfer is untested.** Stock lift/tracking reward is not sufficient
+evidence of a stable hold. A subsequent experiment should address settling and
+actuation robustness, select changes on validation, and seal a new held-out
+stream before testing.
+
+The pinned beta simulator reported its TGS warning about potentially noisy
+velocities. This run retains the sealed velocity threshold and measured results;
+it does not establish whether that warning contributed to the low hold scores.
+
+Four independent capture episodes produced 1,000 synchronized 640×480 RGB
+frames at 50 Hz, nine joint positions, and eight applied actions. All four
+lifted the cube; none satisfied the strict hold criterion. One reached 19 of
+the required 20 stable steps and remains labeled as a failure. Every MP4 was
+fully decoded; all 72 Rerun camera/telemetry entities matched their frame and
+time timelines and the sealed run identity.
+
+![Actual Franka capture, episode 1 at 2 seconds](../evidence/franka-rl-rtx-preview.png)
+
+This is an unedited decoded frame from the recorded policy rollout. See the
+[measured evidence and hashes](../evidence/franka-rl-rtx.json),
+[complete held-out trial table](../evidence/franka-rl-rtx-trials.csv),
+[native learning curve](../evidence/franka-rl-rtx-training.png), and
+[success comparison](../evidence/franka-rl-rtx-success.png).

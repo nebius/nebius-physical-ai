@@ -49,9 +49,13 @@
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Reserved RTX PRO 6000 CUDA and graphics validation passed; completed PPO training and rendered evaluation are pending.",
-      "evidence": []
+      "status": "verified",
+      "reason": "All four standard-runtime stages completed on reserved RTX PRO 6000: 1,500 PPO updates, 1,024 paired test trials, four fully decoded RTX MP4s, and a decoded Franka Rerun recording. Simulation qualification remains false.",
+      "evidence": [
+        "docs/workbench/evidence/franka-rl-rtx.json",
+        "docs/workbench/evidence/franka-rl-rtx-trials.csv",
+        "docs/workbench/guides/franka-rl-transfer.md"
+      ]
     }
   }
 }
