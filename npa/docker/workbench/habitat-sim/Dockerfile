@@ -167,14 +167,14 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
     CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_IMATH=/opt/habitat-sim/src/deps/imath -DFETCHCONTENT_FULLY_DISCONNECTED=ON" \
       /opt/build-venv/bin/pip wheel . --no-build-isolation --no-deps \
       --wheel-dir /opt/wheelhouse && \
-    python3 -m venv /opt/runtime-venv && \
-    /opt/runtime-venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+    python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --disable-pip-version-check --no-cache-dir \
       --only-binary=:all: --no-deps --require-hashes -r /opt/npa-build/requirements-runtime.lock && \
-    /opt/runtime-venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+    /opt/venv/bin/pip install --disable-pip-version-check --no-cache-dir \
       --no-deps /opt/wheelhouse/habitat_sim-*.whl && \
-    /opt/runtime-venv/bin/pip check && \
-    find /opt/runtime-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -delete && \
-    ! find /opt/runtime-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -print -quit | grep -q . && \
+    /opt/venv/bin/pip check && \
+    find /opt/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -delete && \
+    ! find /opt/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -print -quit | grep -q . && \
     mkdir -p /opt/source-projection/data/pbr /opt/source-projection/src && \
     cp /opt/habitat-sim/LICENSE /opt/habitat-sim/MANIFEST.in \
        /opt/habitat-sim/README.md /opt/habitat-sim/pyproject.toml \
@@ -195,7 +195,7 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
        /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.dsc \
        /opt/notices/ubuntu-sources/rsync/ && \
     cp source-manifest.json source-projection.json licenses.json apt-build.lock apt-runtime.lock \
-       requirements-build.lock requirements-runtime.lock runtime-payload.json /opt/notices/
+       requirements-runtime.lock /opt/notices/
 
 FROM ${BASE_IMAGE} AS runtime
 ARG APT_SNAPSHOT
@@ -254,7 +254,7 @@ RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-npa-skypilot && \
     chmod 0440 /etc/sudoers.d/90-npa-skypilot
 
-COPY --from=build /opt/runtime-venv /opt/venv
+COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/source-projection /usr/src/habitat-sim
 COPY --from=build /opt/notices /usr/share/doc/npa-habitat-sim
 COPY src/npa/__init__.py /opt/npa-runtime/npa/__init__.py

@@ -545,6 +545,33 @@ def test_build_frontend_uses_supported_release_environment() -> None:
         assert setting in DOCKERFILE
 
 
+def test_runtime_venv_is_created_at_its_final_image_path() -> None:
+    build = DOCKERFILE.split("FROM ${BASE_IMAGE} AS build", 1)[1].split(
+        "FROM ${BASE_IMAGE} AS runtime", 1
+    )[0]
+
+    assert "python3 -m venv /opt/venv" in build
+    assert "/opt/venv/bin/pip install" in build
+    assert "COPY --from=build /opt/venv /opt/venv" in DOCKERFILE
+    assert "/opt/runtime-venv" not in DOCKERFILE
+
+
+def test_final_notices_exclude_builder_and_verifier_control_inputs() -> None:
+    build = DOCKERFILE.split("FROM ${BASE_IMAGE} AS build", 1)[1].split(
+        "FROM ${BASE_IMAGE} AS runtime", 1
+    )[0]
+    notice_copy = re.search(
+        r"cp source-manifest\.json .*? /opt/notices/", build, re.DOTALL
+    )
+
+    assert notice_copy is not None
+    assert "requirements-runtime.lock" in notice_copy.group()
+    assert "requirements-build.lock" not in notice_copy.group()
+    assert "runtime-payload.json" not in notice_copy.group()
+    assert "-r requirements-build.lock" in build
+    assert "COPY docker/workbench/habitat-sim/runtime-payload.json" in build
+
+
 def test_openexr_fetchcontent_is_bound_to_local_exact_imath_source() -> None:
     local_override = (
         'CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_IMATH='
