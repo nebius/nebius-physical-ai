@@ -4755,6 +4755,8 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--ipv4-public-pool-id",
+            "vpcpool-synthetic",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -4901,6 +4903,8 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--ipv4-public-pool-id",
+            "vpcpool-synthetic",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -4909,6 +4913,7 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
     assert merged_vars["server_port"] == "8088"
     assert merged_vars["ssh_user"] == "ubuntu"
     assert merged_vars["extra_ingress_ports"] == "[443,9090]"
+    assert merged_vars["ipv4_public_pool_id"] == "vpcpool-synthetic"
     assert not any("OptionInfo" in str(value) for value in merged_vars.values()), (
         f"OptionInfo leaked into terraform vars: {merged_vars}"
     )
@@ -4919,6 +4924,16 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
         "s3_bucket": "npa-agent-state",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
     }
+
+
+def test_agent_terraform_exposes_optional_public_ipv4_pool() -> None:
+    terraform_dir = Path(__file__).resolve().parents[2] / "src" / "npa" / "deploy" / "terraform"
+    main_tf = (terraform_dir / "main.tf").read_text(encoding="utf-8")
+    variables_tf = (terraform_dir / "variables.tf").read_text(encoding="utf-8")
+
+    assert 'variable "ipv4_public_pool_id"' in variables_tf
+    assert "ipv4_public_pools = trimspace(var.ipv4_public_pool_id)" in main_tf
+    assert "pools = [{ id = trimspace(var.ipv4_public_pool_id) }]" in main_tf
 
 
 def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(

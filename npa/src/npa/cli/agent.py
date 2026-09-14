@@ -9784,6 +9784,11 @@ def deploy_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
+    ipv4_public_pool_id: str = typer.Option(
+        "",
+        "--ipv4-public-pool-id",
+        help="Optional existing VPC public IPv4 pool for the agent network.",
+    ),
     agent_only: bool = typer.Option(
         False, "--agent-only", help="Provision agent only."
     ),
@@ -9840,6 +9845,9 @@ def deploy_cmd(
     tf_var = _coerce_cli_list(tf_var)
     llm_models = _coerce_cli_list(llm_models)
     llm_config_file = llm_config_file if isinstance(llm_config_file, str) else ""
+    ipv4_public_pool_id = (
+        ipv4_public_pool_id.strip() if isinstance(ipv4_public_pool_id, str) else ""
+    )
     foxglove_settings = _resolve_foxglove_settings_or_fail(
         embed_src=foxglove_embed_src,
         viewer_backend=foxglove_viewer_backend,
@@ -10062,6 +10070,7 @@ def deploy_cmd(
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
         "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
+        "ipv4_public_pool_id": ipv4_public_pool_id,
         "ssh_user": ssh_user,
         "ssh_public_key_path": ssh_public_key_path,
         "enable_preemptible": "false",
@@ -10497,6 +10506,11 @@ def fresh_setup_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
+    ipv4_public_pool_id: str = typer.Option(
+        "",
+        "--ipv4-public-pool-id",
+        help="Optional existing VPC public IPv4 pool for the agent network.",
+    ),
     agent_only: bool = typer.Option(
         False,
         "--agent-only",
@@ -10572,6 +10586,7 @@ def fresh_setup_cmd(
         ssh_user=ssh_user,
         ssh_public_key_path=ssh_public_key_path,
         tf_var=tf_var,
+        ipv4_public_pool_id=ipv4_public_pool_id,
         agent_only=agent_only,
         agent_port=agent_port,
         backend_port=backend_port,
@@ -10603,6 +10618,11 @@ def setup_cmd(
         [],
         "--tf-var",
         help="Additional Terraform var key=value; use for explicit SSH/application CIDRs.",
+    ),
+    ipv4_public_pool_id: str = typer.Option(
+        "",
+        "--ipv4-public-pool-id",
+        help="Optional existing VPC public IPv4 pool for the agent network.",
     ),
     replace: bool = typer.Option(
         False,
@@ -10696,6 +10716,7 @@ def setup_cmd(
         region=region,
         ssh_public_key_path=ssh_public_key_path,
         tf_var=tf_var,
+        ipv4_public_pool_id=ipv4_public_pool_id,
         llm_config_file="",
         replace=replace,
     )
