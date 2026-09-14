@@ -37,6 +37,11 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
+For operator setup, verify `command -v nebius` and `nebius version` after selecting
+`PATH` and after any environment activation. Health preflight proves profile
+authentication, while configure also enforces NPA's supported CLI version.
+`NPA_NEBIUS_BIN` alone does not select the executable for those two commands.
+
 `workflows/testing/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 

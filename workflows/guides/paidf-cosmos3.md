@@ -114,11 +114,21 @@ the repository's CLI compatibility check:
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION=0.12.254 bash
 export PATH="$HOME/.nebius/bin:$PATH"
+hash -r
+command -v nebius
+nebius version
 ```
 
-Use the version requested by NPA if its compatibility check changes. An
-unsupported CLI can produce an authentication-looking error; check the version
-before recreating a working profile.
+Require the selected executable to report `0.12.254` before continuing. An
+existing compatible installation can be reused by putting its bin directory
+first on `PATH` and running the last three commands again. Repeat this check
+after changing `PATH` or activating another environment. `NPA_NEBIUS_BIN` alone
+does not select the executable used by health preflight and configure.
+
+Use the version requested by NPA if its compatibility check changes. Online
+Nebius health preflight proves profile authentication; it does not check NPA's
+CLI compatibility requirements. A compatibility error requires correcting the
+selected installation before retrying setup.
 
 ### P3. Select the project and authenticate
 
@@ -1259,7 +1269,8 @@ appears.
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
 | `ERROR:root:'NoneType' object has no attribute 'strip'` during an otherwise successful launch | A kubeconfig credential plugin returned a valid token with `expirationTimestamp: null` | This was nonfatal in live validation: the Kubernetes client logged an expiry parsing error after loading the token. Check the actual command exit and stage status; rerun credential preflight for authentication failures. |
 | `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
-| `The active Nebius CLI profile cannot authenticate non-interactively` | CLI compatibility as well as authentication | Check the version first; install the compatible CLI from P2 before replacing the profile. |
+| `Unsupported Nebius CLI` or `Could not check/parse the Nebius CLI version` | Effective executable and NPA's supported version | Follow P2 and verify `command -v nebius` and `nebius version` after setting `PATH`. |
+| `The active Nebius CLI profile cannot authenticate non-interactively` | Selected profile and credentials | Follow P3 and the headless authentication procedure where applicable; recheck online authentication before provisioning. |
 | `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../docs/credentials.yaml.example). Do not assign ambiguous keys to the new project. |
 | Missing bootstrap-contract attestation for `npa-rerun-viewer` | Old checkout or image override | Use current supported pins and rerun `preflight-images`; retain the failing check. |
 | Private-registry `403` when expecting GHCR | Explicit image/registry overrides or an older client | Use the current default public mirror and remove unintended overrides. Current runtime image selection does not inherit `NPA_REGISTRY`. |
