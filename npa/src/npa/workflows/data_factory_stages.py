@@ -2156,8 +2156,6 @@ def select_hard_passing_candidates(
 
     source_rows = _inventory_rows(augment_uri)
     destination_rows = _inventory_rows(selection_uri)
-    if destination_rows:
-        raise RuntimeError("candidate selection refuses to overwrite prior evidence")
     listed_keys = [str(row["key"]) for row in source_rows]
     manifest = _committed_augment_manifest(augment_uri, listed_keys=listed_keys)
     if not isinstance(manifest, dict):
@@ -2195,6 +2193,7 @@ def select_hard_passing_candidates(
         raise RuntimeError("candidate selection must remain in canonical run storage")
     source_keys = {str(row["key"]): row for row in source_rows}
     selected_variants: list[dict[str, Any]] = []
+    candidate_copies: list[tuple[dict[str, Any], str]] = []
     for variant in variants:
         clip = str(variant.get("clip") or "")
         if clip not in eligible:
@@ -2212,11 +2211,7 @@ def select_hard_passing_candidates(
         for key in candidate_keys:
             relative = key[len(source_directory) :]
             destination_key = f"{destination_prefix}{clip}/{relative}"
-            _s3_client().copy_object(
-                Bucket=destination_bucket,
-                CopySource={"Bucket": source_bucket, "Key": key},
-                Key=destination_key,
-            )
+            candidate_copies.append((source_keys[key], destination_key))
         selected_variants.append(
             {
                 "clip": clip,
@@ -2247,13 +2242,6 @@ def select_hard_passing_candidates(
 
     validate_committed_run_manifest(selected_manifest, selection_uri)
     manifest_uri = selection_uri.rstrip("/") + "/manifest.json"
-    _upload_json(selected_manifest, manifest_uri)
-    after_source = _inventory_rows(augment_uri)
-    if source_rows != after_source:
-        raise RuntimeError("candidate selection changed the preserved ranking pool")
-    selected_rows = _inventory_rows(selection_uri)
-    if not selected_rows or any(int(row["size"]) <= 0 for row in selected_rows):
-        raise RuntimeError("candidate selection produced an incomplete final batch")
     result = {
         "schema": "npa.paidf.candidate-selection/v1",
         "status": "completed",
@@ -2275,6 +2263,68 @@ def select_hard_passing_candidates(
             for clip, evaluation in sorted(evaluations.items())
         ],
     }
+
+    if destination_rows:
+        report_bucket, report_key = _split(selection_report_uri)
+        manifest_bucket, manifest_key = _split(manifest_uri)
+        if report_bucket != destination_bucket or manifest_bucket != destination_bucket:
+            raise RuntimeError("candidate selection evidence left canonical storage")
+        expected_rows = {
+            destination_key: source_row
+            for source_row, destination_key in candidate_copies
+        }
+        expected_keys = {*expected_rows, manifest_key, report_key}
+        actual_rows = {str(row["key"]): row for row in destination_rows}
+        if set(actual_rows) != expected_keys:
+            raise RuntimeError(
+                "candidate selection prior evidence inventory differs from replay"
+            )
+        for key, source_row in expected_rows.items():
+            observed = actual_rows[key]
+            if int(observed.get("size") or 0) != int(source_row.get("size") or 0):
+                raise RuntimeError(
+                    "candidate selection prior media size differs from source"
+                )
+            source_etag = str(source_row.get("etag") or "")
+            observed_etag = str(observed.get("etag") or "")
+            if source_etag and observed_etag and source_etag != observed_etag:
+                raise RuntimeError(
+                    "candidate selection prior media digest differs from source"
+                )
+        existing_manifest = _download_json(manifest_uri)
+        existing_result = _download_json(selection_report_uri)
+        if existing_manifest != selected_manifest or existing_result != result:
+            raise RuntimeError(
+                "candidate selection prior evidence differs from deterministic replay"
+            )
+        if source_rows != _inventory_rows(augment_uri):
+            raise RuntimeError("candidate selection changed the preserved ranking pool")
+        print(
+            json.dumps(
+                {
+                    "stage": "select_hard_passing_candidates",
+                    "ranked_count": result["ranked_count"],
+                    "selected_count": result["selected_count"],
+                    "ranking_pool_unchanged": True,
+                    "replayed": True,
+                }
+            )
+        )
+        return {**result, "written_uri": selection_report_uri}
+
+    for source_row, destination_key in candidate_copies:
+        _s3_client().copy_object(
+            Bucket=destination_bucket,
+            CopySource={"Bucket": source_bucket, "Key": source_row["key"]},
+            Key=destination_key,
+        )
+    _upload_json(selected_manifest, manifest_uri)
+    after_source = _inventory_rows(augment_uri)
+    if source_rows != after_source:
+        raise RuntimeError("candidate selection changed the preserved ranking pool")
+    selected_rows = _inventory_rows(selection_uri)
+    if not selected_rows or any(int(row["size"]) <= 0 for row in selected_rows):
+        raise RuntimeError("candidate selection produced an incomplete final batch")
     result["written_uri"] = _upload_json(result, selection_report_uri)
     print(
         json.dumps(

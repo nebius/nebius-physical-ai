@@ -343,6 +343,9 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
             },
         ],
     }
+    ranking_uri = "s3://b/run/grade/iteration-1/ranking/cosmos_evaluator.json"
+    stored_json = {ranking_uri: ranking}
+    copied_keys: list[str] = []
 
     def inventory(uri: str) -> list[dict]:
         if uri == augment_uri:
@@ -356,17 +359,23 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
             assert Bucket == "b"
             source = next(row for row in source_rows if row["key"] == CopySource["Key"])
             destination_rows.append({**source, "key": Key})
+            copied_keys.append(Key)
 
     def upload(payload: dict, uri: str) -> str:
+        stored_json[uri] = json.loads(json.dumps(payload))
         if uri == f"{selection_uri}manifest.json":
             destination_rows.append(
                 {"key": "run/selection/iteration-1/manifest.json", "size": 100, "etag": "sm"}
+            )
+        elif uri == f"{selection_uri}selection.json":
+            destination_rows.append(
+                {"key": "run/selection/iteration-1/selection.json", "size": 100, "etag": "sr"}
             )
         return uri
 
     monkeypatch.setattr(dfs, "_inventory_rows", inventory)
     monkeypatch.setattr(dfs, "_committed_augment_manifest", lambda *_args, **_kwargs: manifest)
-    monkeypatch.setattr(dfs, "_download_json", lambda _uri: ranking)
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: stored_json[uri])
     monkeypatch.setattr(dfs, "_s3_client", lambda: FakeS3())
     monkeypatch.setattr(dfs, "_upload_json", upload)
 
@@ -385,6 +394,27 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     if expected_selected:
         assert any("candidate-a/augmented_video.mp4" in row["key"] for row in destination_rows)
     assert not any("candidate-b/" in row["key"] for row in destination_rows)
+
+    copied_once = list(copied_keys)
+    replay = dfs.select_hard_passing_candidates(
+        augment_uri,
+        "s3://b/run/grade/iteration-1/ranking/",
+        selection_uri,
+        "s3://b/run/selection/iteration-1/selection.json",
+        0.75,
+    )
+    assert replay == result
+    assert copied_keys == copied_once
+
+    stored_json[f"{selection_uri}selection.json"]["selected_count"] = 99
+    with pytest.raises(RuntimeError, match="prior evidence differs"):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
 
 
 def test_rejected_review_fields_are_truthful_and_never_promotion_eligible() -> None:
