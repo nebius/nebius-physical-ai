@@ -260,6 +260,31 @@ def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> 
     assert "NPA_BYOF_ROBOTWIN_STRICT_CAPACITY" not in live_test
 
 
+def test_robotwin_live_gate_redacts_only_schema_valid_private_coordinates() -> None:
+    image = (
+        "registry.example/private/robotwin/npa-robotwin@sha256:"
+        + "a" * 64
+    )
+    runtime = {
+        "project": "private-project",
+        "nebius_profile": "private-profile",
+        "kubeconfig": "/private/kubeconfig",
+        "kubernetes_context": "private-context",
+        "skypilot_config_path": "/private/skypilot.yaml",
+        "bootstrap_image": image,
+        "bucket": "private-bucket",
+        "output_root": "s3://private-bucket/robotwin-output",
+        "run_id": "robotwin-private-run",
+    }
+
+    private_values = live_e2e._robotwin_private_runtime_values(runtime)
+
+    assert image in private_values
+    assert image.rsplit("@", 1)[0] in private_values
+    assert image.partition("/")[0] in private_values
+    assert "registry" not in runtime
+
+
 def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
