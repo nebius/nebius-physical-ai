@@ -118,6 +118,15 @@ or verification starts another login, interrupt and reap the process belonging
 to this attempt. The helper does not own or stop the CLI process. Stop the
 helper too if it is still waiting. Do not use a broad process-name kill.
 
+For disposable live tests, audit the CLI's credential cache separately from its
+profile configuration. On CLI 0.12.211, a temporary `--config` and subsequent
+`profile delete` still left the test credential in `~/.nebius/credentials.yaml`.
+Use a unique test profile, inspect cache metadata privately, and remove only the
+entry belonging to that test after reaping its processes. Verify that unrelated
+profiles and cached credentials remain unchanged; never dump or delete the
+shared credential store. Use a current Workbench checkout for the final Nebius
+preflight check; older checkouts may not recognize `--checks nebius`.
+
 Discard the URLs and clear the clipboard and any saved callback in browser
 history. Hidden input prevents terminal echo; it does not disable session
 recording or clear browser/clipboard history for the operator. A retry uses a
