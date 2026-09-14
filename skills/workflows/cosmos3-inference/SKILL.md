@@ -109,6 +109,17 @@ Inspect the chosen route and effective manifest, preserve the operator's
 configuration, and check access to any newly selected gated guardrail payloads.
 Do not infer one route's posture from another route's defaults.
 
+For containerized `generate`, inspect `guardrail_state` in `generate.json`.
+The compatibility field `guardrails` records the request only; successful
+guarded output requires `status: passed`, `effective: true`, and nonempty,
+matching discovered/evaluated models for both `prompt_input` and
+`generated_media`. The native wrapper restores the shipped media safety model
+when the pinned upstream preset is empty and refuses missing or failed safety
+evaluation. An explicit opt-out records `status: explicit_opt_out`,
+`requested: false`, and `effective: false`; preserve the operator's selection.
+See the [generation guide](../../../docs/workbench/cosmos3-generate.md) for the
+upstream failure modes and the r7 GPU validation that resolved issue #270.
+
 ## Running The Workflow
 
 Before launch, confirm credentials and access:
@@ -153,6 +164,7 @@ GPU:
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_access.py \
   npa/tests/workbench/test_cosmos3_generate.py \
+  npa/tests/workbench/test_cosmos3_guarded_inference.py \
   npa/tests/cli/test_cosmos3_cli.py \
   npa/tests/docker/test_cosmos3_image_contract.py
 ```

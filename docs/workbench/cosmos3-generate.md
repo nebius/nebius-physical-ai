@@ -60,7 +60,7 @@ setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
 failure, and the Xet download workaround for a specific Hugging Face client
 pin.
 
-The current r6 image keeps the faster Xet transfer path enabled with its measured,
+The current r7 image keeps the faster Xet transfer path enabled with its measured,
 compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
 image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
 combination is ever resolved; only non-image/custom environments need the
@@ -87,6 +87,17 @@ successful frame counts. The fallback does not suppress a safety rejection or
 reinterpret an unsafe result.
 `--no-guardrails` remains the only opt-out and is recorded as
 `status: explicit_opt_out`, `requested: false`, and `effective: false`.
+
+The fail-open defect reported in [issue #270](https://github.com/nebius/nebius-physical-ai/issues/270)
+was resolved by [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462),
+merged on 2026-09-12. Its recorded RTX PRO 6000 regression ran 50 text-to-image
+steps with Blocklist and Qwen3Guard evaluating the prompt,
+VideoContentSafetyFilter classifying 1/1 sampled media inputs, and RetinaFace
+postprocessing. The effective receipt passed before a nonblank 960×960 JPEG was
+accepted. Exact release digests and GPU evidence are recorded in
+`npa/docker/workbench/blackwell-dc-images.json`. This result covers the
+containerized `generate` route; other inference routes retain the defaults
+documented in their own guides.
 
 ## Build
 

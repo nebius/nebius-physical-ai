@@ -22,7 +22,11 @@ found — see [Executed validation](#executed-validation).
 
 ## 0.6.0 image follow-up — 2026-09-12
 
-D3 and D6 are now closed for the selectable 0.6.0 image. The current Dockerfile
+D3 and D6, including the rebuild requested in
+[issue #284](https://github.com/nebius/nebius-physical-ai/issues/284), were resolved
+for the selectable 0.6.0 image by
+[PR #462](https://github.com/nebius/nebius-physical-ai/pull/462), merged on
+2026-09-12. The current Dockerfile
 was rebuilt with the `diffusion` and `smolvla` extras through the trusted public
 publisher. The exact bytes passed source/history, payload, vulnerability,
 secret, license, SBOM, provenance, pushed-byte, visibility, and anonymous-pull
