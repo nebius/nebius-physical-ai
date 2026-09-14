@@ -484,7 +484,8 @@ def test_container_archive_inode_swap_is_refused(
         return opened
 
     monkeypatch.setattr(SCAN, "_open_archive_at_parent", swap_after_open)
-    with pytest.raises(ValueError, match="changed while being read"):
+    refusal = "path and descriptor differ|changed while being read"
+    with pytest.raises(ValueError, match=refusal):
         SCAN.scan(image)
 
 
