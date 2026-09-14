@@ -70,7 +70,12 @@ npa/.venv/bin/npa workbench workflow submit workflows/testing/franka-rl-transfer
 The standard runtime owns all four stages. Stages exchange checksum-verified
 S3 directories; the native Isaac process runs inside its assigned GPU task.
 Keep each experiment's prefix and isolated API configuration unchanged while
-it owns jobs. Use a fresh run identity after changing the recipe or source.
+it owns jobs. Use a fresh run identity after changing the experimental recipe.
+An explicit `--resume-run "$NPA_RUN_ID"` reuses successful stages after checking
+their durable outputs. After correcting a terminal implementation failure,
+stage a new immutable source snapshot, use a fresh isolated API directory, and
+explicitly enable the next payload retry with `--retries`. Keep the earlier
+source snapshots and attempt history; completed training need not run again.
 
 ## Protocol and configuration
 
@@ -144,6 +149,11 @@ test scoring. Nine Franka joint positions are recorded with eight control
 actions: seven scaled joint-position targets and one binary gripper command.
 These normalized simulator actions require an explicit controller mapping
 before use on hardware.
+
+The teacher also consumes privileged joint velocities, object position, and a
+commanded goal. The review export contains RGB, joint positions, and actions;
+student training needs an explicit observable-goal contract and additional
+input features as appropriate.
 
 Download and inspect the recording with `rerun <recording.rrd>` and decode the
 LeRobot MP4s before treating an artifact reference as visual evidence. When the

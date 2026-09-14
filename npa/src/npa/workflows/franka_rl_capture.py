@@ -24,7 +24,7 @@ def _orient_camera(env) -> None:
 
 
 def _frame(env) -> np.ndarray:
-    pixels = env.unwrapped.scene["npa_rollout_camera"].data.output["rgb"][0, ..., :3]
+    pixels = env.unwrapped.scene["npa_rollout_camera"].data.output["rgb"].torch[0, ..., :3]
     frame = pixels.detach().cpu().numpy()
     if frame.shape != (480, 640, 3) or frame.dtype != np.uint8:
         raise RuntimeError(f"Invalid Franka RTX frame: {frame.shape}, {frame.dtype}")
@@ -46,7 +46,7 @@ def _capture_episode(wrapped, policy, output: Path, recipe: dict) -> dict:
             action = policy(obs)
             if wrapped.clip_actions is not None:
                 action = action.clamp(-wrapped.clip_actions, wrapped.clip_actions)
-            states.append(wrapped.unwrapped.scene["robot"].data.joint_pos[0].cpu().numpy().copy())
+            states.append(wrapped.unwrapped.scene["robot"].data.joint_pos.torch[0].cpu().numpy().copy())
             actions.append(action[0].cpu().numpy().copy())
             frames.append(_frame(wrapped))
             obs, _, done, _ = wrapped.step(action)

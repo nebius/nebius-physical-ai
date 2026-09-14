@@ -172,6 +172,48 @@ def test_isaac_physics_evidence_decodes_actual_warp_arrays():
     assert evidence["dynamic_friction"] == {"min": 0.25, "max": 1.25}
 
 
+def test_isaac_proxy_geometry_uses_explicit_tensors_for_goal_and_reset_hash(monkeypatch):
+    import sys
+    torch = pytest.importorskip("torch")
+    from npa.workflows.franka_rl_eval import _initial_state_hashes, _observe
+
+    def transform(position, quaternion, command):
+        assert all(isinstance(value, torch.Tensor) for value in (position, quaternion, command))
+        return position + command, quaternion
+
+    monkeypatch.setitem(sys.modules, "isaaclab.utils.math", SimpleNamespace(combine_frame_transforms=transform))
+    def proxy(values):
+        return SimpleNamespace(torch=torch.tensor(values, dtype=torch.float32))
+
+    robot = SimpleNamespace(root_pos_w=proxy([[1, 0, 0], [10, 0, 0]]),
+                            root_quat_w=proxy([[0, 0, 0, 1]] * 2), joint_pos=proxy([[0] * 9] * 2))
+    obj = SimpleNamespace(root_pos_w=proxy([[1.5, 0, 0.3], [10.8, 0, 0.3]]),
+                          root_quat_w=proxy([[0, 0, 0, 1]] * 2), root_lin_vel_w=proxy([[0, 0.02, 0]] * 2))
+    scene = type("Scene", (dict,), {})(robot=SimpleNamespace(data=robot), object=SimpleNamespace(data=obj))
+    scene.env_origins = torch.zeros((2, 3))
+    command = torch.tensor([[0.5, 0, 0.3, 0, 0, 0, 1]] * 2)
+    env = SimpleNamespace(unwrapped=SimpleNamespace(scene=scene,
+        command_manager=SimpleNamespace(get_command=lambda name: command)))
+    distance, speed, height = _observe(env)
+    assert distance == pytest.approx([0, 0.3], abs=1e-6)
+    assert speed == pytest.approx([0.02, 0.02]) and height == pytest.approx([0.3, 0.3])
+    hashes = _initial_state_hashes(env)
+    assert hashes == _initial_state_hashes(env) and len(set(hashes)) == 2
+
+
+def test_isaac_proxy_camera_returns_owned_rgb_pixels():
+    torch = pytest.importorskip("torch")
+    from npa.workflows.franka_rl_capture import _frame
+
+    pixels = torch.full((1, 480, 640, 3), 128, dtype=torch.uint8)
+    camera = SimpleNamespace(data=SimpleNamespace(output={"rgb": SimpleNamespace(torch=pixels)}))
+    env = SimpleNamespace(unwrapped=SimpleNamespace(scene={"npa_rollout_camera": camera}))
+    frame = _frame(env)
+    pixels.zero_()
+    assert frame.shape == (480, 640, 3) and frame.dtype == np.uint8
+    assert np.all(frame == 128)
+
+
 def test_prepare_seals_disjoint_streams_without_isaac(tmp_path, recipe):
     output = tmp_path / "prepared"
     assert franka_rl.main(["prepare", "--run-id", "test-franka", "--output-path", str(output)]) == 0

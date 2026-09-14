@@ -22,10 +22,10 @@ def _observe(env) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     robot = scene["robot"].data
     obj = scene["object"].data
     command = env.unwrapped.command_manager.get_command("object_pose")
-    goal, _ = combine_frame_transforms(robot.root_pos_w, robot.root_quat_w, command[:, :3])
-    values = (torch.linalg.vector_norm(obj.root_pos_w - goal, dim=1),
-              torch.linalg.vector_norm(obj.root_lin_vel_w, dim=1),
-              obj.root_pos_w[:, 2] - scene.env_origins[:, 2])
+    goal, _ = combine_frame_transforms(robot.root_pos_w.torch, robot.root_quat_w.torch, command[:, :3])
+    values = (torch.linalg.vector_norm(obj.root_pos_w.torch - goal, dim=1),
+              torch.linalg.vector_norm(obj.root_lin_vel_w.torch, dim=1),
+              obj.root_pos_w.torch[:, 2] - scene.env_origins[:, 2])
     return tuple(value.detach().cpu().numpy() for value in values)
 
 
@@ -45,8 +45,8 @@ def _initial_state_hashes(env) -> list[str]:
     import torch
 
     scene = env.unwrapped.scene
-    state = torch.cat([scene["robot"].data.joint_pos, scene["object"].data.root_pos_w,
-                       scene["object"].data.root_quat_w,
+    state = torch.cat([scene["robot"].data.joint_pos.torch, scene["object"].data.root_pos_w.torch,
+                       scene["object"].data.root_quat_w.torch,
                        env.unwrapped.command_manager.get_command("object_pose")], dim=1)
     return [hashlib.sha256(row.tobytes()).hexdigest() for row in state.detach().cpu().numpy()]
 
