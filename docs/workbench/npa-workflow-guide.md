@@ -394,6 +394,16 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+Job aggregates and task rows come from separate queue snapshots. A successful
+task row or durable stage record can therefore coexist with a recognized
+nonterminal job observation. Status retains the incomplete workflow lifecycle
+and `--watch` continues. Each stage's `raw_job_scheduler_state` and
+`raw_task_scheduler_state` preserve the distinct observations; neither a poll nor
+stage success proves workflow completion. Missing, unknown, malformed, or failed
+queries still stop live verification. Contradictory terminal job/task outcomes
+remain `UNKNOWN` with explicit stage conflicts; a failed parallel job can
+legitimately include successful member tasks.
+
 The interpreter manifest records successful completion as `completed`. Status
 normalizes that manifest marker to `SUCCEEDED`; `workflow_lifecycle.manifest_evidence`
 retains its raw status, original update time, and authoritative source. The runtime

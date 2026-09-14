@@ -4220,8 +4220,12 @@ def _runtime_handoff_error(
         ):
             return "Recorded successful stage lacks an unambiguous managed-job identity"
         observation = observations.get(stage.get("managed_job_id")) or {}
-        if stage.get("state") == "SUCCEEDED" and str(observation.get("status") or "").upper() != "SUCCEEDED":
-            return "Recorded successful job lacks a matching live success observation"
+        # Job and task queues are separate snapshots. A recognized nonterminal
+        # job can precede stage success without invalidating the live query.
+        if stage.get("state") == "SUCCEEDED" and str(observation.get("status") or "").upper() not in {
+            "SUCCEEDED", "PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING",
+        }:
+            return "Recorded successful stage lacks a compatible live job observation"
     return ""
 
 
@@ -4255,7 +4259,7 @@ def _reconcile_runtime_completion(
         )
     elif not lifecycle["completion_recorded"] and status in {"PLANNED", "SUBMITTED", "RUNNING"}:
         payload.setdefault("diagnostics", []).append(
-            "All recorded jobs succeeded; workflow completion is not yet recorded. "
+            "Recorded stages succeeded; workflow completion is not yet recorded. "
             "The durable lifecycle does not establish whether the submit driver is alive."
         )
     return ""
@@ -4516,7 +4520,7 @@ def _durable_workflow_status(
                 else:
                     observed_status = live.status
                 observed_rows = workflow_task_statuses(
-                    managed_job_id, sky_bin=sky_bin or None
+                    managed_job_id, sky_bin=sky_bin or None, raise_on_error=True
                 )
                 job_observations[managed_job_id] = {
                     "status": observed_status,
@@ -4899,7 +4903,7 @@ def _manifest_pending_status(
                 )
             else:
                 live_status = live.status
-            task_rows = workflow_task_statuses(job_id, sky_bin=sky_bin or None)
+            task_rows = workflow_task_statuses(job_id, sky_bin=sky_bin or None, raise_on_error=True)
         except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
             safe_error = sanitize_reason(f"{type(exc).__name__}: {exc}")
             verification_errors.append(safe_error)

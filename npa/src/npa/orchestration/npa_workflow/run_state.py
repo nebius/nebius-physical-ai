@@ -942,6 +942,28 @@ def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
     return (NORMALIZED_DELETED_RAY_NODE, matches) if matches else ("", 0)
 
 
+def _job_task_outcomes_conflict(
+    job_state: str, task_rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    if job_state.startswith("FAILED"):
+        job_state = "FAILED"
+    if job_state not in {"SUCCEEDED", "FAILED", "CANCELLED"} or not task_rows:
+        return False
+    task_states = [_normalized_stage_state(row.get("status")) for row in task_rows]
+    # The queue aggregate uses the first failed/cancelled row, while task rows
+    # are sorted by task ID. Either represented outcome is compatible in a
+    # mixed parallel job; the sorted task order cannot select its aggregate.
+    unsuccessful_outcomes = set()
+    for state in task_states:
+        if state.startswith("FAILED"):
+            unsuccessful_outcomes.add("FAILED")
+        elif state == "CANCELLED":
+            unsuccessful_outcomes.add(state)
+    if unsuccessful_outcomes:
+        return job_state not in unsuccessful_outcomes
+    return all(state == "SUCCEEDED" for state in task_states) and job_state != "SUCCEEDED"
+
+
 def build_actionable_run_status(
     manifest: RunManifest,
     *,
@@ -1042,7 +1064,12 @@ def build_actionable_run_status(
                 and attempt_state != scheduler_state
             )
         )
-        if outcome_conflict:
+        job_task_conflict = _job_task_outcomes_conflict(scheduler_job_state, observed_rows)
+        if job_task_conflict:
+            outcome_conflict = True
+            state = "UNKNOWN"
+            outcome_provenance = "conflicting_scheduler_job_and_tasks"
+        elif outcome_conflict:
             state = "UNKNOWN"
             outcome_provenance = "conflicting_durable_and_scheduler_evidence"
         elif step_terminal:
@@ -1138,6 +1165,8 @@ def build_actionable_run_status(
             "task_id": row.get("task_id", index),
             "scheduler_state": raw_scheduler or state,
             "raw_scheduler_state": raw_scheduler,
+            "raw_job_scheduler_state": scheduler_job_state,
+            "raw_task_scheduler_state": str(row.get("status") or "").upper(),
             "outcome_provenance": outcome_provenance,
             "outcome_conflict": outcome_conflict,
             "retry_count": retry_count,

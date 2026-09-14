@@ -1,6 +1,8 @@
 """Live status must include jobs written after the initial runtime manifest."""
 
 import json
+from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
@@ -13,6 +15,7 @@ from npa.cli.workbench.workflow import _durable_workflow_status
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore, runtime_manifest_view
 from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
+from npa.orchestration.skypilot.workflow import workflow_task_statuses as _real_task_query
 
 
 def _wave(name, job_id, status, *, attempt=1, iteration=None):
@@ -213,7 +216,250 @@ def test_watch_continues_across_handoff_to_real_completion(observed_status, mock
     assert [call.args[0] for call in jobs.call_args_list] == ["11", "11", "12"]
 
 
-@pytest.mark.parametrize("mode", ["cached", "error", "unknown", "exception", "malformed", "regressed"])
+def _snapshot_ordering(observed_status, mocker, ordering, job_state="RUNNING"):
+    resolution, jobs = observed_status
+    durable_success = ordering == "durable-stage-lag"
+    resolution.manifest.update(updated_at="2001-01-01T00:00:00Z", steps=[
+        {"state": "prepare", "status": "succeeded"},
+        {"state": "generate", "status": "succeeded" if durable_success else "submitted"},
+    ])
+    resolution.runtime_state.update(updated_at="2001-01-01T00:00:00Z", waves=[
+        _wave("prepare", "11", "succeeded"),
+        _wave("generate", "12", "succeeded" if durable_success else "running"),
+    ])
+    order = []
+
+    def job_snapshot(job_id, **kwargs):
+        order.append(("job", job_id))
+        succeeded = job_id == "11" or resolution.runtime_state["status"] == "succeeded"
+        return SimpleNamespace(status="SUCCEEDED" if succeeded else job_state, error="")
+
+    def task_snapshot(job_id, **kwargs):
+        order.append(("task", job_id))
+        succeeded = job_id == "11" or not durable_success or resolution.runtime_state["status"] == "succeeded"
+        return [{"task_id": 0, "task_name": "prepare" if job_id == "11" else "generate",
+                 "status": "SUCCEEDED" if succeeded else job_state}]
+
+    jobs.side_effect = job_snapshot
+    mocker.patch("npa.orchestration.skypilot.workflow.workflow_task_statuses", side_effect=task_snapshot)
+    return resolution, order
+
+
+@pytest.mark.parametrize("ordering", ["task-finalization-lag", "durable-stage-lag"])
+@pytest.mark.parametrize("job_state", ["PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"])
+def test_distinct_nonterminal_snapshots_preserve_incomplete_lifecycle(observed_status, mocker, ordering, job_state):
+    _, order = _snapshot_ordering(observed_status, mocker, ordering, job_state)
+    payload = _durable_workflow_status("run-test")
+    assert order == [("job", "11"), ("task", "11"), ("job", "12"), ("task", "12")]
+    assert payload["status"] == "RUNNING"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["workflow_lifecycle"]["completion_recorded"] is False
+    assert payload["workflow_lifecycle"]["driver_liveness"] == "unknown"
+    assert payload["last_known"]["observed_at"] == "2001-01-01T00:00:00Z"
+    assert payload["last_heartbeat_at"] == ""
+    stage = payload["stages"]["generate"]
+    assert stage["state"] == "SUCCEEDED"
+    assert stage["managed_job_id"] == "12"
+    assert stage["raw_job_scheduler_state"] == job_state
+    assert stage["raw_task_scheduler_state"] == ("SUCCEEDED" if ordering == "task-finalization-lag" else job_state)
+    assert stage["outcome_provenance"] == ("scheduler_final_attempt" if ordering == "task-finalization-lag" else "authoritative_stage_record")
+    assert stage["last_progress_at"] == ""
+    assert "--resume-run" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("ordering", ["task-finalization-lag", "durable-stage-lag"])
+@pytest.mark.parametrize("watch", [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_snapshot_ordering_cli_continues_to_recorded_completion(observed_status, mocker, ordering, watch, json_output):
+    resolution, order = _snapshot_ordering(observed_status, mocker, ordering)
+
+    def complete(_interval):
+        resolution.runtime_state["status"] = "succeeded"
+        resolution.runtime_state["waves"][-1]["status"] = "succeeded"
+        resolution.manifest["status"] = "completed"
+
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=complete)
+    args = (["--json"] if json_output else []) + (["--watch"] if watch else [])
+    result = _status_cli(mocker, *args)
+    assert result.exit_code == 0, result.output
+    if json_output:
+        payloads = _json_documents(result.stdout)
+        assert [payload["status"] for payload in payloads] == (["RUNNING", "SUCCEEDED"] if watch else ["RUNNING"])
+        assert payloads[0]["workflow_lifecycle"]["completion_recorded"] is False
+        if watch:
+            assert payloads[-1]["workflow_lifecycle"]["completion_recorded"] is True
+    else:
+        assert "status: RUNNING" in result.stdout
+        assert ("status: SUCCEEDED" in result.stdout) is watch
+    assert sleep.call_count == int(watch)
+    assert order == [("job", "11"), ("task", "11"), ("job", "12"), ("task", "12")] * (1 + int(watch))
+
+
+def _json_documents(output):
+    documents = []
+    decoder = json.JSONDecoder()
+    while output.strip():
+        document, end = decoder.raw_decode(output.lstrip())
+        documents.append(document)
+        output = output.lstrip()[end:]
+    return documents
+
+
+def test_nonterminal_job_snapshot_does_not_regress_durable_success(observed_status):
+    resolution, jobs = observed_status
+    resolution.runtime_state.update(updated_at="2001-01-01T00:00:00Z",
+                                    waves=[_wave("prepare", "11", "succeeded")])
+    resolution.manifest["steps"] = [{"state": "prepare", "status": "succeeded"}]
+    jobs.side_effect = None
+    jobs.return_value = SimpleNamespace(status="RUNNING", error="")
+    # The former "regressed" refusal case has no contradictory terminal result:
+    # the aggregate snapshot may precede the durable stage's success.
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "RUNNING"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["stages"]["prepare"]["state"] == "SUCCEEDED"
+    assert payload["stages"]["prepare"]["raw_job_scheduler_state"] == "RUNNING"
+    assert payload["stages"]["prepare"]["raw_task_scheduler_state"] == ""
+    assert payload["workflow_lifecycle"]["completion_recorded"] is False
+    assert payload["workflow_lifecycle"]["driver_liveness"] == "unknown"
+    assert payload["last_known"]["observed_at"] == "2001-01-01T00:00:00Z"
+    assert payload["last_heartbeat_at"] == ""
+
+
+@pytest.mark.parametrize("job_state", ["FAILED", "FAILED_SETUP", "CANCELLED"])
+@pytest.mark.parametrize("watch", [False, True])
+def test_successful_task_cannot_hide_terminal_job_disagreement(observed_status, mocker, job_state, watch):
+    resolution, _ = _snapshot_ordering(observed_status, mocker, "task-finalization-lag", job_state)
+
+    def record_failure(_interval):
+        resolution.runtime_state["waves"][-1]["status"] = job_state.lower()
+        mocker.patch("npa.orchestration.skypilot.workflow.workflow_task_statuses", side_effect=lambda job_id, **kwargs: [
+            {"task_id": 0, "task_name": "prepare" if job_id == "11" else "generate",
+             "status": "SUCCEEDED" if job_id == "11" else job_state}])
+
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=record_failure)
+    result = _status_cli(mocker, "--json", *(["--watch"] if watch else []))
+    assert result.exit_code == (1 if watch else 0), result.output
+    payloads = _json_documents(result.stdout)
+    payload = payloads[0]
+    assert payload["status"] == "UNKNOWN"
+    stage = payload["stages"]["generate"]
+    assert stage["outcome_conflict"] is True
+    assert stage["raw_job_scheduler_state"] == job_state
+    assert stage["raw_task_scheduler_state"] == "SUCCEEDED"
+    assert sleep.call_count == int(watch)
+    if watch:
+        assert payloads[-1]["status"] == ("FAILED" if job_state.startswith("FAILED") else "CANCELLED")
+
+
+@pytest.mark.parametrize("mode", ["unknown", "absent", "error", "auth", "exception", "malformed", "runtime-error"])
+@pytest.mark.parametrize("watch", [False, True])
+def test_successful_task_cannot_hide_unavailable_job_verification(observed_status, mocker, mode, watch):
+    resolution, _ = _snapshot_ordering(observed_status, mocker, "task-finalization-lag")
+    _, jobs = observed_status
+    jobs.side_effect = None
+    jobs.return_value = SimpleNamespace(status="RUNNING", error="")
+    if mode in {"unknown", "malformed"}:
+        jobs.return_value.status = "UNKNOWN" if mode == "unknown" else "invalid"
+    elif mode in {"absent", "error", "auth"}:
+        jobs.return_value.error = {"absent": "recorded exact job absent", "error": "query unavailable",
+                                  "auth": "permission denied"}[mode]
+    elif mode == "exception":
+        jobs.side_effect = RuntimeError("query failed")
+    else:
+        resolution.runtime_state_error = "runtime unavailable"
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=AssertionError("must not retry"))
+    result = _status_cli(mocker, "--json", *(["--watch"] if watch else []))
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["automation_may_trust_state"] is False
+    sleep.assert_not_called()
+
+
+def _actual_task_query(mocker, response):
+    from npa.orchestration.skypilot import workflow
+
+    mocker.patch.object(workflow, "workflow_task_statuses", _real_task_query)
+    mocker.patch.object(workflow, "resolve_config", return_value=SimpleNamespace(
+        sky_bin=Path("/synthetic/sky"), global_config_path=None, isolated_config_dir=None))
+    mocker.patch.object(workflow, "ensure_skypilot_version", side_effect=lambda path: path)
+    mocker.patch.object(workflow, "sky_environment", return_value={})
+    mocker.patch.object(workflow, "_stable_sky_cwd", return_value="/synthetic")
+    return mocker.patch.object(workflow.subprocess, "run", return_value=response)
+
+
+@pytest.mark.parametrize("detail", [
+    "permission denied token=synthetic-private-value",
+    "permission denied Authorization: Bearer synthetic-private-value",
+    "permission denied https://example.test/request?token=synthetic-private-value",
+])
+def test_direct_strict_task_query_errors_redact_credentials(mocker, detail):
+    _actual_task_query(mocker, subprocess.CompletedProcess([], 1, "", detail))
+    with pytest.raises(RuntimeError, match="SkyPilot task queue query failed") as error:
+        _real_task_query("11", raise_on_error=True)
+    assert "permission denied" in str(error.value)
+    assert "synthetic-private-value" not in str(error.value)
+
+
+@pytest.mark.parametrize(("returncode", "stdout", "stderr"), [
+    (1, "", "permission denied token=synthetic-private"),
+    (2, "", "query failed"),
+    (0, "{broken-json", ""),
+    (0, "[]", "permission denied"),
+    (0, '{"jobs": []}', "error: queue unavailable"),
+    (0, "[]\n[]", ""),
+])
+@pytest.mark.parametrize("surface", ["callback", "json", "watch"])
+def test_actual_task_query_failure_cannot_verify_durable_success(observed_status, mocker, returncode, stdout, stderr, surface):
+    _snapshot_ordering(observed_status, mocker, "durable-stage-lag")
+    query = _actual_task_query(mocker, subprocess.CompletedProcess([], returncode, stdout, stderr))
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=AssertionError("must not retry"))
+    if surface == "callback":
+        payload = _durable_workflow_status("run-test")
+    else:
+        result = _status_cli(mocker, "--json", *(["--watch"] if surface == "watch" else []))
+        assert result.exit_code == 2, result.output
+        payload = json.loads(result.stdout)
+    assert query.call_count == 2
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["automation_may_trust_state"] is False
+    assert payload["live_verification"]["reason"]
+    assert "synthetic-private" not in json.dumps(payload)
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize(("returncode", "stdout", "stderr"), [
+    (0, "[]", ""), (0, '{"jobs": []}', ""),
+    (0, "Warning: optional display unavailable\n[]", ""),
+    (1, "", "No in-progress managed jobs."),
+])
+@pytest.mark.parametrize("surface", ["callback", "json", "watch"])
+def test_actual_empty_task_snapshot_preserves_handoff(observed_status, mocker, returncode, stdout, stderr, surface):
+    resolution, _ = _snapshot_ordering(observed_status, mocker, "durable-stage-lag")
+    query = _actual_task_query(mocker, subprocess.CompletedProcess([], returncode, stdout, stderr))
+
+    def complete(_interval):
+        resolution.runtime_state["status"] = "succeeded"
+        resolution.manifest["status"] = "completed"
+
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=complete)
+    if surface == "callback":
+        payloads = [_durable_workflow_status("run-test")]
+    else:
+        result = _status_cli(mocker, "--json", *(["--watch"] if surface == "watch" else []))
+        assert result.exit_code == 0, result.output
+        payloads = _json_documents(result.stdout)
+    assert payloads[0]["status"] == "RUNNING"
+    assert payloads[0]["verification_status"] == "VERIFIED"
+    assert payloads[0]["workflow_lifecycle"]["completion_recorded"] is False
+    assert sleep.call_count == int(surface == "watch")
+    assert query.call_count == (4 if surface == "watch" else 2)
+    if surface == "watch":
+        assert payloads[-1]["status"] == "SUCCEEDED"
+
+
+@pytest.mark.parametrize("mode", ["cached", "error", "unknown", "exception", "malformed"])
 def test_handoff_cannot_hide_unavailable_live_verification(observed_status, mocker, mode):
     resolution, jobs = observed_status
     resolution.runtime_state.update(updated_at="2001-01-01T00:00:00Z",
@@ -226,10 +472,10 @@ def test_handoff_cannot_hide_unavailable_live_verification(observed_status, mock
         jobs.return_value = SimpleNamespace(status="UNKNOWN", error="")
     elif mode == "exception":
         jobs.side_effect = RuntimeError("malformed response token=synthetic-private")
-    elif mode in {"malformed", "regressed"}:
+    elif mode == "malformed":
         resolution.manifest["steps"] = [{"state": "prepare", "status": "succeeded"}]
         jobs.side_effect = None
-        jobs.return_value = SimpleNamespace(status="invalid" if mode == "malformed" else "RUNNING", error="")
+        jobs.return_value = SimpleNamespace(status="invalid", error="")
     payload = _durable_workflow_status("run-test", cached=mode == "cached")
     assert payload["status"] == ("CACHED" if mode == "cached" else "VERIFICATION_UNAVAILABLE")
     assert payload["automation_may_trust_state"] is False

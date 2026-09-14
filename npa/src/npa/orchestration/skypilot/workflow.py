@@ -44,6 +44,7 @@ from npa.orchestration.skypilot.json_output import (
     is_verified_empty_queue_result,
     parse_single_json_document,
     queue_rows_from_output,
+    verified_structured_queue_rows,
 )
 from npa.orchestration.skypilot.launch_transaction import (
     ControllerState,
@@ -1245,6 +1246,21 @@ def workflow_status(
     )
 
 
+def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
+    from npa.verification import sanitize_reason
+
+    if is_verified_empty_queue_result(result):
+        return
+    detail = sanitize_reason(redact_text(_command_detail(result)))
+    if result.returncode != 0:
+        raise RuntimeError(f"SkyPilot task queue query failed: {detail}")
+    if verified_structured_queue_rows(result) is None:
+        raise RuntimeError(
+            "SkyPilot task queue response is malformed or has conflicting diagnostics: "
+            + detail
+        )
+
+
 def workflow_task_statuses(
     job_id: str,
     *,
@@ -1252,6 +1268,7 @@ def workflow_task_statuses(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     timeout: int = 300,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Return per-task rows for a managed job (pipeline tasks or JobGroup members).
 
@@ -1259,6 +1276,23 @@ def workflow_task_statuses(
     (``submitted_at`` / ``start_at`` / ``end_at``), which is how a JobGroup can be
     shown to have run its members *concurrently* and how a barrier state can be
     shown to have started only after its predecessors finished.
+
+    Args:
+        job_id: Exact managed-job identity to select from the queue.
+        isolated_config_dir: Optional isolated SkyPilot configuration directory.
+        config_path: Optional global SkyPilot configuration path.
+        sky_bin: Optional SkyPilot executable override.
+        timeout: Queue subprocess timeout in seconds.
+        raise_on_error: Require a verified queue response for authoritative status.
+            The default preserves empty results for optional diagnostics callers.
+
+    Returns:
+        Task rows sorted by task ID, including an empty list for verified empties.
+
+    Raises:
+        RuntimeError: Strict observation encountered a failed or malformed query.
+        subprocess.SubprocessError: The queue subprocess could not complete.
+        OSError: The queue executable could not be started.
     """
 
     runtime_config = resolve_config(
@@ -1286,6 +1320,8 @@ def workflow_task_statuses(
         timeout=timeout,
         check=False,
     )
+    if raise_on_error:
+        _verify_task_queue_result(result)
     if result.returncode != 0:
         return []
     return parse_task_statuses(result.stdout, job_id)

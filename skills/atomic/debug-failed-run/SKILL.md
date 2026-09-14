@@ -45,6 +45,15 @@ progress heartbeats. Keep the original driver running and let `--watch` cross th
 handoff; do not recommend resume solely from this state. Actual query failures
 still exit nonzero, and terminal workflow/artifact proof remains required.
 
+The job aggregate and task rows are separate queue snapshots. A recognized
+nonterminal job can coexist with a successful task or durable stage record while
+the workflow remains incomplete. Compare each stage's `raw_job_scheduler_state`
+and `raw_task_scheduler_state`; keep the original driver and watch running through
+this transition. Missing/unknown/malformed job evidence and query/authentication
+failures still stop verification. Contradictory terminal job/task outcomes remain
+`UNKNOWN` with explicit stage conflicts; a failed parallel job may still have
+successful individual tasks.
+
 At finalization, the interpreter manifest's `completed` marker is normalized to
 `SUCCEEDED`. Inspect `workflow_lifecycle.manifest_evidence` for its unchanged raw
 status, timestamp, and authoritative source. This alias applies only to the
