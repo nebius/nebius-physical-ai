@@ -25,7 +25,9 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
     for token in (
         '"manifest.json"',
         '_scan_decoded_member_bytes("exact image config", config_raw)',
-        'config_name != f"{config_digest}.json"',
+        "_docker_save_config_digest(config_name) != config_digest",
+        're.fullmatch(r"([0-9a-f]{64})\\.json", config_name)',
+        're.fullmatch(r"blobs/sha256/([0-9a-f]{64})", config_name)',
         'config_rootfs.get("diff_ids") != layer_diff_ids',
         '_scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)',
         '_scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)',
