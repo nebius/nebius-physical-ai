@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import sys
 import tarfile
@@ -176,6 +177,68 @@ def _installer(stage: Path, requirements: Path) -> None:
     python.parent.mkdir(parents=True)
     python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     python.chmod(0o700)
+
+
+def _python_installer(stage: Path, requirements: Path) -> None:
+    _installer(stage, requirements)
+    python = stage / "runtime/bin/python"
+    shutil.copyfile(sys.executable, python)
+    python.chmod(0o700)
+    base_executable = Path(sys._base_executable).resolve()
+    (stage / "runtime/pyvenv.cfg").write_text(
+        f"home = {base_executable.parent}\n"
+        "include-system-site-packages = false\n"
+        f"version = {sys.version_info.major}.{sys.version_info.minor}\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
+        ("prepare", "runtime preparation"),
+        ("exec", "runtime run-smoke execution"),
+    ],
+)
+def test_cli_runtime_paths_refuse_uid_zero_before_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(BOOTSTRAP.os, "geteuid", lambda: 0)
+    arguments = [
+        "--manifest",
+        str(tmp_path / "missing-lock"),
+        "--requirements",
+        str(tmp_path / "missing-requirements"),
+        "--cache-root",
+        str(tmp_path / "cache"),
+        command,
+    ]
+    if command == "exec":
+        arguments.extend(["--", "missing-script"])
+    assert BOOTSTRAP.main(arguments) == 65
+    assert message in capsys.readouterr().err
+    assert not (tmp_path / "cache").exists()
+
+
+def test_library_prepare_refuses_uid_zero_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(BOOTSTRAP.os, "geteuid", lambda: 0)
+    calls: list[str] = []
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="non-root runtime user"):
+        BOOTSTRAP.prepare(
+            tmp_path / "missing-lock",
+            tmp_path / "missing-requirements",
+            tmp_path / "cache",
+            opener=_opener({}, calls),
+            installer=_installer,
+        )
+    assert calls == []
+    assert not (tmp_path / "cache").exists()
 
 
 def test_repository_lock_refuses_before_any_network_access(tmp_path: Path) -> None:
@@ -385,6 +448,36 @@ def test_unsafe_installer_tree_is_removed_before_publication(tmp_path: Path) -> 
     assert not any(path.name.startswith(".") for path in (cache / "versions").iterdir())
 
 
+def test_staging_cleanup_refuses_when_exact_target_remains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    (stage / "partial").write_bytes(b"runtime payload")
+    original_rmtree = BOOTSTRAP.shutil.rmtree
+
+    def leave_exact_stage(path: Path, *args: object, **kwargs: object) -> None:
+        if Path(path) == stage:
+            return
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(BOOTSTRAP.shutil, "rmtree", leave_exact_stage)
+    try:
+        with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="target remains"):
+            BOOTSTRAP._discard_stage(stage)
+        assert stage.is_dir()
+    finally:
+        monkeypatch.setattr(BOOTSTRAP.shutil, "rmtree", original_rmtree)
+
+
+def test_staging_cleanup_verifies_exact_target_absent(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    (stage / "partial").write_bytes(b"runtime payload")
+    BOOTSTRAP._discard_stage(stage)
+    assert not stage.exists()
+
+
 def test_failed_post_publish_validation_removes_only_the_exact_sealed_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -430,6 +523,7 @@ def test_exec_handles_remain_bound_when_validated_target_path_is_swapped(
     target = Path(str(result["runtime_root"]))
     directory_fd = int(result["_runtime_directory_fd"])
     python_fd = int(result["_runtime_python_fd"])
+    monitor_fd = int(result["_runtime_monitor_fd"])
     displaced = target.with_name("displaced")
     target.rename(displaced)
     target.mkdir(mode=0o700)
@@ -443,6 +537,7 @@ def test_exec_handles_remain_bound_when_validated_target_path_is_swapped(
         assert os.read(python_fd, 64) == b"#!/bin/sh\nexit 0\n"
         assert (replacement / "python").read_text() == "malicious replacement"
     finally:
+        os.close(monitor_fd)
         os.close(python_fd)
         os.close(directory_fd)
         BOOTSTRAP._discard_stage(displaced)
@@ -453,9 +548,79 @@ def test_exec_path_uses_descriptor_bound_interpreter_and_runtime_root() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert 'bound_root = Path(f"/proc/self/fd/{directory_fd}")' in source
     assert 'f"/proc/self/fd/{directory_fd}"' in source
-    assert 'python_name = f"/proc/self/fd/{python_fd}"' in source
+    assert (
+        'python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"' in source
+    )
     assert "os.execve(" in source
     assert "python_fd," in source
+    assert 'result["_runtime_monitor_fd"]' in source
+    assert "_wait_for_runtime_child" in source
+
+
+def test_descriptor_bound_runtime_executes_unchanged_tree(tmp_path: Path) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    result = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        tmp_path / "cache",
+        opener=_opener(content, []),
+        installer=_python_installer,
+        retain_runtime_handles=True,
+    )
+    script = tmp_path / "exit-cleanly.py"
+    script.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "expected = Path(os.environ['NPA_GYMNASIUM_RUNTIME_ROOT']) / 'runtime'\n"
+        "assert Path(sys.prefix).samefile(expected)\n",
+        encoding="utf-8",
+    )
+    status = BOOTSTRAP._execute_validated_runtime(
+        int(result["_runtime_directory_fd"]),
+        int(result["_runtime_python_fd"]),
+        int(result["_runtime_monitor_fd"]),
+        [str(script)],
+    )
+    assert status == 0
+
+
+@pytest.mark.parametrize("mutation", ["content", "replacement"])
+def test_descriptor_bound_execution_refuses_same_uid_descendant_race(
+    tmp_path: Path, mutation: str
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    result = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        tmp_path / "cache",
+        opener=_opener(content, []),
+        installer=_python_installer,
+        retain_runtime_handles=True,
+    )
+    script = tmp_path / "mutate-runtime.py"
+    operation = (
+        "target.chmod(0o600); target.write_text('changed')"
+        if mutation == "content"
+        else "target.parent.chmod(0o700); target.replace(target.with_suffix('.old'))"
+    )
+    script.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "target = Path(os.environ['NPA_GYMNASIUM_RUNTIME_ROOT']) / "
+        "'source/pyproject.toml'\n"
+        f"{operation}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="changed during descriptor-bound execution"
+    ):
+        BOOTSTRAP._execute_validated_runtime(
+            int(result["_runtime_directory_fd"]),
+            int(result["_runtime_python_fd"]),
+            int(result["_runtime_monitor_fd"]),
+            [str(script)],
+        )
 
 
 @pytest.mark.parametrize(

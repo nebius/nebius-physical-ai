@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Iterator
 import contextlib
+import ctypes
 from dataclasses import dataclass
 import fcntl
 import hashlib
@@ -20,7 +21,9 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -54,6 +57,20 @@ REQUIREMENT = re.compile(
 MAX_ARTIFACTS = 256
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_RUNTIME_ENTRIES = 200_000
+INOTIFY_CHANGE_MASK = (
+    0x00000002  # IN_MODIFY
+    | 0x00000004  # IN_ATTRIB
+    | 0x00000008  # IN_CLOSE_WRITE
+    | 0x00000040  # IN_MOVED_FROM
+    | 0x00000080  # IN_MOVED_TO
+    | 0x00000100  # IN_CREATE
+    | 0x00000200  # IN_DELETE
+    | 0x00000400  # IN_DELETE_SELF
+    | 0x00000800  # IN_MOVE_SELF
+    | 0x00002000  # IN_UNMOUNT
+)
+INOTIFY_DONT_FOLLOW = 0x02000000
+INOTIFY_EXCLUDE_UNLINKED = 0x04000000
 RIGHTS_BOUNDARY = (
     "Runtime fetch changes delivery only; it does not grant or resolve use, "
     "derivative-work, output, or hosted-service rights."
@@ -89,6 +106,13 @@ class RuntimeLock:
 
 def _refuse(message: str) -> NoReturn:
     raise BootstrapRefusal(message)
+
+
+def _refuse_root_runtime(operation: str) -> None:
+    """Keep runtime acquisition and execution outside uid 0."""
+
+    if os.geteuid() == 0:
+        _refuse(f"{operation} must run as the non-root runtime user")
 
 
 def _sha256(path: Path) -> str:
@@ -739,17 +763,45 @@ def _seal_runtime_tree(root: Path) -> None:
 
 
 def _discard_stage(stage: Path) -> None:
-    if not stage.exists():
+    try:
+        metadata = stage.lstat()
+    except FileNotFoundError:
         return
-    for path in sorted(stage.rglob("*"), key=lambda item: len(item.parts)):
-        with contextlib.suppress(OSError):
-            if path.is_dir() and not path.is_symlink():
-                path.chmod(0o700)
-            elif not path.is_symlink():
-                path.chmod(0o600)
-    with contextlib.suppress(OSError):
+    except OSError as error:
+        _refuse(f"runtime staging cleanup cannot inspect its target: {error}")
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+    ):
+        _refuse("runtime staging cleanup target is unsafe or unowned")
+    cleanup_errors = 0
+    try:
         stage.chmod(0o700)
-    shutil.rmtree(stage, ignore_errors=True)
+    except OSError:
+        cleanup_errors += 1
+    for directory, directories, files in os.walk(stage, followlinks=False):
+        for name in [*directories, *files]:
+            path = Path(directory) / name
+            try:
+                entry = path.lstat()
+                if not stat.S_ISLNK(entry.st_mode):
+                    path.chmod(0o700 if stat.S_ISDIR(entry.st_mode) else 0o600)
+            except OSError:
+                cleanup_errors += 1
+    try:
+        shutil.rmtree(stage)
+    except OSError:
+        cleanup_errors += 1
+    try:
+        stage.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        _refuse(f"runtime staging cleanup cannot verify absence: {error}")
+    _refuse(
+        f"runtime staging cleanup failed; target remains after {cleanup_errors} errors"
+    )
 
 
 def _discard_published(
@@ -902,9 +954,68 @@ def _validated_existing(
     return receipt
 
 
+def _add_runtime_watch(
+    add_watch: Callable[[int, bytes, int], int],
+    monitor_fd: int,
+    path: Path,
+    *,
+    no_follow: bool,
+) -> None:
+    flags = INOTIFY_CHANGE_MASK | INOTIFY_EXCLUDE_UNLINKED
+    if no_follow:
+        flags |= INOTIFY_DONT_FOLLOW
+    result = add_watch(monitor_fd, os.fsencode(path), flags)
+    if result < 0:
+        error = OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        _refuse(f"runtime integrity watch cannot bind a descendant: {error}")
+
+
+def _open_runtime_monitor(root: Path) -> int:
+    """Watch every validated runtime inode until its workload exits."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    initialize = libc.inotify_init1
+    initialize.argtypes = [ctypes.c_int]
+    initialize.restype = ctypes.c_int
+    add_watch = libc.inotify_add_watch
+    add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+    add_watch.restype = ctypes.c_int
+    monitor_fd = initialize(os.O_CLOEXEC | os.O_NONBLOCK)
+    if monitor_fd < 0:
+        error = OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        _refuse(f"runtime integrity monitor is unavailable: {error}")
+    watched = 0
+    try:
+        for directory, directories, files in os.walk(root, followlinks=False):
+            current = Path(directory)
+            _add_runtime_watch(
+                add_watch, monitor_fd, current, no_follow=current != root
+            )
+            for name in files:
+                _add_runtime_watch(
+                    add_watch, monitor_fd, current / name, no_follow=True
+                )
+            watched += 1 + len(files)
+            if watched > MAX_RUNTIME_ENTRIES + 1:
+                _refuse("runtime integrity watch count exceeds its bound")
+        return monitor_fd
+    except BaseException:
+        os.close(monitor_fd)
+        raise
+
+
+def _runtime_monitor_changed(monitor_fd: int) -> bool:
+    try:
+        return bool(os.read(monitor_fd, 64 * 1024))
+    except BlockingIOError:
+        return False
+    except OSError as error:
+        _refuse(f"runtime integrity monitor failed: {error}")
+
+
 def _open_validated_runtime(
     target: Path, runtime_lock: RuntimeLock
-) -> tuple[dict[str, object], int, int]:
+) -> tuple[dict[str, object], int, int, int]:
     """Bind validation and execution to one directory and interpreter inode."""
 
     try:
@@ -916,6 +1027,7 @@ def _open_validated_runtime(
     except OSError as error:
         _refuse(f"runtime target cannot be opened safely: {error}")
     python_fd: int | None = None
+    monitor_fd: int | None = None
     try:
         opened = os.fstat(directory_fd)
         if (
@@ -976,10 +1088,20 @@ def _open_validated_runtime(
             }
         ]:
             _refuse("runtime Python differs from the validated tree manifest")
+        monitor_fd = _open_runtime_monitor(bound_root)
+        receipt = _validated_existing(
+            bound_root,
+            runtime_lock,
+            root_metadata=opened,
+        )
+        if _runtime_monitor_changed(monitor_fd):
+            _refuse("runtime cache changed while its integrity monitor was armed")
         os.set_inheritable(directory_fd, True)
         os.set_inheritable(python_fd, True)
-        return receipt, directory_fd, python_fd
+        return receipt, directory_fd, python_fd, monitor_fd
     except BaseException:
+        if monitor_fd is not None:
+            os.close(monitor_fd)
         if python_fd is not None:
             os.close(python_fd)
         os.close(directory_fd)
@@ -997,6 +1119,7 @@ def prepare(
 ) -> dict[str, object]:
     """Fetch, validate, materialize, and atomically select one runtime version."""
 
+    _refuse_root_runtime("runtime preparation")
     runtime_lock = load_lock(manifest, requirements)
     cache_root = _validate_cache_root(cache_root)
     versions = cache_root / "versions"
@@ -1112,12 +1235,12 @@ def prepare(
             os.replace(temporary_link, link)
         finally:
             temporary_link.unlink(missing_ok=True)
-        handles: tuple[int, int] | None = None
+        handles: tuple[int, int, int] | None = None
         if retain_runtime_handles:
-            receipt, directory_fd, python_fd = _open_validated_runtime(
+            receipt, directory_fd, python_fd, monitor_fd = _open_validated_runtime(
                 target, runtime_lock
             )
-            handles = (directory_fd, python_fd)
+            handles = (directory_fd, python_fd, monitor_fd)
     result: dict[str, object] = {
         **receipt,
         "runtime_root": str(target),
@@ -1127,7 +1250,75 @@ def prepare(
     if handles is not None:
         result["_runtime_directory_fd"] = handles[0]
         result["_runtime_python_fd"] = handles[1]
+        result["_runtime_monitor_fd"] = handles[2]
     return result
+
+
+def _terminate_runtime_child(process_id: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(process_id, signal.SIGKILL)
+    while True:
+        try:
+            os.waitpid(process_id, 0)
+            return
+        except InterruptedError:
+            continue
+        except ChildProcessError:
+            return
+
+
+def _wait_for_runtime_child(process_id: int, monitor_fd: int) -> int:
+    while True:
+        try:
+            readable, _, _ = select.select([monitor_fd], [], [], 0.05)
+        except OSError as error:
+            _terminate_runtime_child(process_id)
+            _refuse(f"runtime integrity monitor failed: {error}")
+        if readable and _runtime_monitor_changed(monitor_fd):
+            _terminate_runtime_child(process_id)
+            _refuse("runtime cache changed during descriptor-bound execution")
+        try:
+            finished, status = os.waitpid(process_id, os.WNOHANG)
+        except InterruptedError:
+            continue
+        if finished:
+            if _runtime_monitor_changed(monitor_fd):
+                _refuse("runtime cache changed during descriptor-bound execution")
+            return os.waitstatus_to_exitcode(status)
+
+
+def _execute_validated_runtime(
+    directory_fd: int, python_fd: int, monitor_fd: int, command: list[str]
+) -> int:
+    environment = {
+        **os.environ,
+        "NPA_GYMNASIUM_RUNTIME_ROOT": f"/proc/self/fd/{directory_fd}",
+    }
+    python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"
+    try:
+        process_id = os.fork()
+    except OSError as error:
+        os.close(monitor_fd)
+        os.close(python_fd)
+        os.close(directory_fd)
+        _refuse(f"descriptor-bound runtime process cannot start: {error}")
+    if process_id == 0:
+        os.close(monitor_fd)
+        try:
+            os.execve(python_fd, [python_name, "-I", "-B", *command], environment)
+        except OSError as error:
+            message = f"descriptor-bound runtime execution failed: {error}\n"
+            os.write(2, message.encode())
+            os._exit(65)
+    try:
+        return _wait_for_runtime_child(process_id, monitor_fd)
+    except BaseException:
+        _terminate_runtime_child(process_id)
+        raise
+    finally:
+        os.close(monitor_fd)
+        os.close(python_fd)
+        os.close(directory_fd)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1144,6 +1335,12 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        operation = (
+            "runtime preparation"
+            if args.command == "prepare"
+            else "runtime run-smoke execution"
+        )
+        _refuse_root_runtime(operation)
         receipt = prepare(
             args.manifest,
             args.requirements,
@@ -1152,6 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         directory_fd = receipt.pop("_runtime_directory_fd", None)
         python_fd = receipt.pop("_runtime_python_fd", None)
+        monitor_fd = receipt.pop("_runtime_monitor_fd", None)
         rendered = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
         if args.json:
             args.json.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1163,24 +1361,16 @@ def main(argv: list[str] | None = None) -> int:
                 command.pop(0)
             if not command:
                 _refuse("exec requires a script or module argument")
-            if not isinstance(directory_fd, int) or not isinstance(python_fd, int):
+            if not all(
+                isinstance(descriptor, int)
+                for descriptor in (directory_fd, python_fd, monitor_fd)
+            ):
                 _refuse("exec did not retain descriptor-bound runtime handles")
             if os.execve not in os.supports_fd:
                 _refuse("this platform cannot execute a descriptor-bound runtime")
-            os.environ["NPA_GYMNASIUM_RUNTIME_ROOT"] = (
-                f"/proc/self/fd/{directory_fd}"
+            return _execute_validated_runtime(
+                directory_fd, python_fd, monitor_fd, command
             )
-            python_name = f"/proc/self/fd/{python_fd}"
-            try:
-                os.execve(
-                    python_fd,
-                    [python_name, "-I", "-B", *command],
-                    os.environ,
-                )
-            except OSError as error:
-                os.close(python_fd)
-                os.close(directory_fd)
-                _refuse(f"descriptor-bound runtime execution failed: {error}")
         print(rendered, end="")
         return 0
     except BootstrapRefusal as error:

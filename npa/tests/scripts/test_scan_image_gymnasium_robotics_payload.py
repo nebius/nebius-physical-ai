@@ -768,6 +768,28 @@ def test_live_non_root_verifier_defers_only_root_private_paths() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "root",
+    [Path("/"), Path("/tmp/.."), Path("/proc/self/root")],
+)
+def test_uid_zero_verifier_refuses_every_live_root_spelling(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: 0)
+    with pytest.raises(ValueError, match="non-root runtime user"):
+        VERIFIER.verify(root)
+
+
+def test_uid_zero_verifier_refuses_live_root_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alias = tmp_path / "live-root"
+    alias.symlink_to("/", target_is_directory=True)
+    monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: 0)
+    with pytest.raises(ValueError, match="non-root runtime user"):
+        VERIFIER.verify(alias)
+
+
 def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(
     tmp_path: Path, structural_scan: None
 ) -> None:
