@@ -1259,6 +1259,31 @@ def _workflow_lifecycle_state(value: object) -> str:
     return status
 
 
+def manifest_workflow_lifecycle_state(value: object) -> str:
+    """Normalize the interpreter's completion marker at the manifest boundary.
+
+    Args:
+        value: Lifecycle status read from the authoritative workflow manifest.
+
+    Returns:
+        Validated lifecycle state, with manifest completion represented as success.
+
+    Raises:
+        ValueError: The manifest lifecycle status is missing or unsupported.
+    """
+    if isinstance(value, str) and value.upper() == "COMPLETED":
+        return "SUCCEEDED"
+    return _workflow_lifecycle_state(value)
+
+
+def _manifest_lifecycle_evidence(manifest: RunManifest) -> dict[str, str]:
+    return {
+        "status": manifest.status,
+        "updated_at": manifest.updated_at,
+        "source": "authoritative_manifest",
+    }
+
+
 def runtime_workflow_lifecycle(
     manifest: RunManifest, runtime_state: Mapping[str, Any],
 ) -> tuple[str, dict[str, Any]]:
@@ -1274,7 +1299,7 @@ def runtime_workflow_lifecycle(
     Raises:
         ValueError: A workflow lifecycle status is missing or unsupported.
     """
-    manifest_status = _workflow_lifecycle_state(manifest.status)
+    manifest_status = manifest_workflow_lifecycle_state(manifest.status)
     runtime_status = _workflow_lifecycle_state(runtime_state.get("status"))
     terminal = {
         state for state in (manifest_status, runtime_status)
@@ -1286,6 +1311,7 @@ def runtime_workflow_lifecycle(
         status = "EVIDENCE_INCONSISTENT"
     return status, {
         "manifest_status": manifest_status,
+        "manifest_evidence": _manifest_lifecycle_evidence(manifest),
         "runtime_status": runtime_status,
         "completion_recorded": "SUCCEEDED" in terminal and len(terminal) == 1,
         "driver_liveness": "unknown",

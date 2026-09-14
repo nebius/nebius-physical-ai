@@ -394,6 +394,12 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+The interpreter manifest records successful completion as `completed`. Status
+normalizes that manifest marker to `SUCCEEDED`; `workflow_lifecycle.manifest_evidence`
+retains its raw status, original update time, and authoritative source. The runtime
+ledger continues to use `succeeded`. Conflicting terminal outcomes and failed
+latest attempts still prevent a successful status.
+
 `npa workbench workflow status <run-id> --json` includes the latest supervisor
 classification, recovery action, exact attempt identity, output/checkpoint
 validation, preflight evidence, and remediation. Evidence is credential-redacted.

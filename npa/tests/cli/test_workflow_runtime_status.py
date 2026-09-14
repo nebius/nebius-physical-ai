@@ -11,7 +11,7 @@ import pytest
 
 from npa.cli.workbench.workflow import _durable_workflow_status
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
-from npa.orchestration.npa_workflow.run_state import RunManifest, runtime_manifest_view
+from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore, runtime_manifest_view
 from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 
 
@@ -139,6 +139,7 @@ def test_handoff_preserves_lifecycle_without_fabricating_progress(observed_statu
     assert payload["verification_status"] == "VERIFIED"
     assert payload["workflow_lifecycle"] == {
         "manifest_status": "RUNNING", "runtime_status": "RUNNING",
+        "manifest_evidence": {"status": "running", "updated_at": durable_time, "source": "authoritative_manifest"},
         "completion_recorded": False, "driver_liveness": "unknown",
         "source": "durable_runtime_ledger", "updated_at": durable_time,
     }
@@ -334,3 +335,190 @@ def test_invalid_manifest_status_is_not_normalized_to_healthy_handoff(observed_s
     payload = _durable_workflow_status("run-test")
     assert payload["status"] == "VERIFICATION_UNAVAILABLE"
     assert payload["automation_may_trust_state"] is False
+
+
+@pytest.fixture()
+def completed_interpreter_run(observed_status, tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import run_workflow
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    resolution, jobs = observed_status
+    spec_path = tmp_path / "workflow.yaml"
+    spec_path.write_text("""apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: completion-fixture
+config: {}
+initial: finalize
+states:
+  finalize:
+    run:
+      argv: [echo, fixture]
+    terminal: true
+""")
+    objects = {}
+    store = RunStateStore(
+        bucket="bucket", prefix="run-test",
+        writer=lambda bucket, key, body: objects.__setitem__((bucket, key), body),
+        reader=lambda bucket, key: objects[(bucket, key)].decode(),
+    )
+    executor = SimpleNamespace(execute=lambda step: {"state": step.state, "status": "ok", "job_id": "11"})
+    run_workflow(load_spec(spec_path), run_id="run-test", execute=True, state_store=store, step_executor=executor)
+    raw = objects[("bucket", "run-test/npa-workflow/manifest.json")]
+    resolution.manifest = json.loads(raw)
+    assert resolution.manifest["status"] == "completed"
+    assert resolution.manifest["steps"][0]["status"] == "ok"
+    resolution.runtime_state.update(status="succeeded", updated_at="2026-01-02T03:04:06Z",
+                                    waves=[_wave("finalize", "11", "succeeded")])
+    return resolution, jobs, raw
+
+
+@pytest.mark.parametrize("runtime_status", ["running", "succeeded"])
+@pytest.mark.parametrize("watch", [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_real_interpreter_completion_succeeds_in_status_and_watch(
+    completed_interpreter_run, mocker, runtime_status, watch, json_output,
+):
+    resolution, jobs, raw = completed_interpreter_run
+    resolution.runtime_state["status"] = runtime_status
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=AssertionError("Unexpected second poll"))
+    args = ["--watch"] if watch else []
+    if json_output:
+        args.append("--json")
+    result = _status_cli(mocker, *args)
+    assert result.exit_code == 0, result.output
+    assert [call.args[0] for call in jobs.call_args_list] == ["11"]
+    sleep.assert_not_called()
+    assert resolution.manifest == json.loads(raw)
+    if json_output:
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "SUCCEEDED"
+        assert payload["verification_status"] == "VERIFIED"
+        assert payload["workflow_lifecycle"]["manifest_evidence"] == {
+            "status": "completed", "updated_at": json.loads(raw)["updated_at"], "source": "authoritative_manifest",
+        }
+    else:
+        assert "status: SUCCEEDED" in result.stdout
+
+
+@pytest.mark.parametrize("runtime_status", ["failed", "cancelled"])
+def test_completed_producer_manifest_conflicts_with_runtime_failure(completed_interpreter_run, runtime_status):
+    resolution, _, raw = completed_interpreter_run
+    resolution.runtime_state["status"] = runtime_status
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "EVIDENCE_INCONSISTENT"
+    assert payload["workflow_lifecycle"]["manifest_evidence"]["status"] == "completed"
+    assert resolution.manifest == json.loads(raw)
+
+
+@pytest.mark.parametrize("failed_status", ["failed", "cancelled"])
+@pytest.mark.parametrize("watch", [False, True])
+def test_completed_producer_manifest_cannot_hide_latest_failed_wave(
+    completed_interpreter_run, mocker, failed_status, watch,
+):
+    resolution, jobs, _ = completed_interpreter_run
+    resolution.runtime_state["waves"] = [_wave("finalize", "11", failed_status)]
+    sleep = mocker.patch("npa.cli.workbench.workflow.time.sleep", side_effect=AssertionError("Unexpected second poll"))
+    result = _status_cli(mocker, "--json", *(["--watch"] if watch else []))
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["status"] == "EVIDENCE_INCONSISTENT"
+    assert [call.args[0] for call in jobs.call_args_list] == ["11"]
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", [None, "", "unknown", "complete", "done", {"status": "completed"}])
+def test_real_completion_does_not_admit_invalid_manifest_states(completed_interpreter_run, invalid):
+    resolution, _, _ = completed_interpreter_run
+    resolution.manifest["status"] = invalid
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["automation_may_trust_state"] is False
+
+
+@pytest.mark.parametrize("invalid", ["completed", "COMPLETED"])
+def test_runtime_completed_remains_invalid_with_real_manifest(completed_interpreter_run, invalid):
+    resolution, _, _ = completed_interpreter_run
+    resolution.runtime_state["status"] = invalid
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["automation_may_trust_state"] is False
+
+
+def test_real_completion_cannot_hide_live_query_failure(completed_interpreter_run):
+    _, jobs, _ = completed_interpreter_run
+    jobs.side_effect = None
+    jobs.return_value = SimpleNamespace(status="SUCCEEDED", error="synthetic authentication denied")
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert "authentication denied" in payload["live_verification"]["reason"]
+    assert payload["automation_may_trust_state"] is False
+
+
+def test_real_completion_cached_mode_stays_non_authoritative(completed_interpreter_run):
+    _, jobs, _ = completed_interpreter_run
+    payload = _durable_workflow_status("run-test", cached=True)
+    assert payload["status"] == "CACHED"
+    assert payload["automation_may_trust_state"] is False
+    jobs.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_real_completion_controls_final_artifact_loading(completed_interpreter_run, mocker, invalid):
+    resolution, _, _ = completed_interpreter_run
+    if invalid:
+        resolution.runtime_state["waves"] = [_wave("finalize", "11", "failed")]
+    loader = mocker.patch("npa.cli.workbench.workflow._load_paidf_artifact", return_value={"status": "verified", "verified": True})
+    result = CliRunner().invoke(app, ["workbench", "workflow", "load-artifact", "run-test", "--project", "test", "--json"])
+    if invalid:
+        assert result.exit_code == 1
+        assert "EVIDENCE_INCONSISTENT" in result.output
+        loader.assert_not_called()
+    else:
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["verified"] is True
+        loader.assert_called_once_with(project="test", run_id="run-test", run_prefix_uri="s3://bucket/run-test", s3_endpoint="", agent_name="")
+
+
+def test_real_completion_cannot_hide_runtime_identity_mismatch(completed_interpreter_run, mocker):
+    from npa.orchestration.npa_workflow.run_resolution import _attach_runtime_state
+
+    resolution, jobs, _ = completed_interpreter_run
+    wrong = {**resolution.runtime_state, "run_id": "different-run",
+             "waves": [_wave("foreign", "99", "succeeded")]}
+    jobs.side_effect = None
+    jobs.return_value = SimpleNamespace(status="SUCCEEDED", error="")
+    mocker.patch("npa.orchestration.skypilot.workflow_state.get_json", return_value=wrong)
+    resolution.runtime_state = {}
+    _attach_runtime_state(resolution, resolution.state)
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert "does not match" in payload["live_verification"]["reason"]
+    assert payload["automation_may_trust_state"] is False
+    assert [call.args[0] for call in jobs.call_args_list] == ["11"]
+
+
+def test_real_completion_retains_success_after_historical_failed_attempt(completed_interpreter_run):
+    resolution, jobs, _ = completed_interpreter_run
+    resolution.runtime_state["waves"] = [
+        _wave("finalize", "10", "failed"), _wave("finalize", "11", "succeeded", attempt=2),
+    ]
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "SUCCEEDED"
+    assert [call.args[0] for call in jobs.call_args_list] == ["11"]
+    assert len(payload["stages"]["finalize"]["managed_job_attempts"]) == 2
+
+
+def test_real_completion_still_requires_actual_final_artifact(completed_interpreter_run, mocker):
+    head = mocker.Mock(side_effect=KeyError("synthetic missing artifact"))
+    paginator = SimpleNamespace(paginate=lambda **kwargs: [{"Contents": []}])
+    client = SimpleNamespace(s3=SimpleNamespace(head_object=head, get_paginator=lambda name: paginator))
+    mocker.patch("npa.orchestration.npa_workflow.src_staging._storage_client", return_value=client)
+    mocker.patch("npa.orchestration.npa_workflow.submission_state.update_submission_state")
+    agents = mocker.patch("npa.cli.agent.resolve_project_agents")
+    result = CliRunner().invoke(app, ["workbench", "workflow", "load-artifact", "run-test", "--project", "test", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "partial" and payload["verified"] is False
+    assert "no .rrd artifact exists" in payload["detail"]
+    head.assert_called_once_with(Bucket="bucket", Key="run-test/reports/sim2real.rrd")
+    agents.assert_not_called()

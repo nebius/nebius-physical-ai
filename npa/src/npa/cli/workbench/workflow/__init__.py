@@ -4434,6 +4434,7 @@ def _durable_workflow_status(
         from npa.orchestration.npa_workflow.run_state import (
             RunManifest,
             build_actionable_run_status,
+            manifest_workflow_lifecycle_state,
             reconstruct_stage_job_attribution,
             reconcile_submitted_manifest,
             runtime_manifest_view,
@@ -4601,7 +4602,10 @@ def _durable_workflow_status(
             )
             if completion_error:
                 verification_errors.append(completion_error)
-        manifest_terminal = recorded_manifest_status
+        try:
+            manifest_terminal = manifest_workflow_lifecycle_state(recorded_manifest_status)
+        except ValueError:
+            manifest_terminal = ""
         runtime_terminal_states = _latest_runtime_wave_states(runtime_waves)
         if (
             manifest_terminal == "SUCCEEDED"

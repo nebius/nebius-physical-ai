@@ -45,6 +45,12 @@ progress heartbeats. Keep the original driver running and let `--watch` cross th
 handoff; do not recommend resume solely from this state. Actual query failures
 still exit nonzero, and terminal workflow/artifact proof remains required.
 
+At finalization, the interpreter manifest's `completed` marker is normalized to
+`SUCCEEDED`. Inspect `workflow_lifecycle.manifest_evidence` for its unchanged raw
+status, timestamp, and authoritative source. This alias applies only to the
+manifest; runtime ledgers require `succeeded`. Keep latest-attempt conflicts,
+live-query failures, and final-artifact validation as separate checks.
+
 Runtime-supervised runs also expose `supervisor.classification` and
 `supervisor.recovery` in JSON status. `actionable_configuration` means automatic
 retry has stopped and only the exact recorded attempt was cancelled;
