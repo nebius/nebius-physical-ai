@@ -10,9 +10,17 @@ The wheel has no standalone license file or structured license metadata field.
 Recipients receive the full Apache-2.0 text at `/opt/isaac-arena/LICENSE.md`,
 alongside the retained Lightwheel copyright and license notices. The image
 inherits the accepted payload-clean `npa-isaac-lab` digest and does not contain
-Isaac Sim, Isaac Lab, Omniverse Kit, model weights, datasets, operator inputs,
-generated evaluations, Lightwheel registry assets, credentials, or populated
-runtime caches.
+Isaac Sim, Isaac Lab, or Omniverse Kit runtime payloads, Arena evaluation policy
+checkpoints or replay datasets, operator inputs, generated evaluations,
+Lightwheel registry objects, credentials, or populated runtime caches.
+
+The inherited open-source dependency distributions retain packaged examples
+and test fixtures, including Newton 1.2.1 example assets and its sample policy,
+and ONNX 1.21.0 conformance models. Their distribution metadata declares
+Apache-2.0, and their full license texts and bundled notices remain installed.
+These dependency fixtures are not Arena evaluation inputs or task-success
+evidence and do not grant rights to provider-controlled assets. See
+`THIRD_PARTY_NOTICES.md` for their installed license locations.
 
 NPA applies source-visible integration changes to the pinned Arena runner,
 viewport recorder, revolute metric, and embodiment setup. The runner restores

@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "fc22c5b953a4464647faf6e3e00d77658ea0e7024aeeefb0027c9f0ddbeb34bd",
+  "workflow_sha256": "848cf87a7d749f21ebe9f4bcf7017ebe49faa4ffd165e5d103b9be8318f2ec54",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The plan requests a GR1 open-microwave replay, CUDA execution, exact initial-state application, and successful task/video qualification without held actions. The new candidate still needs the exact worker input and current-run ground-truth/video checks.",
+      "reason": "The plan requests a GR1 open-microwave replay with CPU physics/tensors and RTX viewport rendering, exact initial-state application, and successful task/video qualification without held actions. This follows upstream tutorial replay guidance; the small fixture has no source-device metadata and the replacement candidate needs fresh validation.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
         "npa/src/npa/workbench/isaac_arena/runtime.py"
@@ -47,7 +47,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Replacement-candidate RTX qualification is pending. Historical run arena-replay-rtx-7dd3a2bf-r1 is rejected as visual/task evidence: success rate 0.0, 80 source actions followed by 170 held-action steps, and stochastic render grain accepted by the former pixel-only gate.",
+      "reason": "Replacement-candidate RTX qualification is pending. Historical run arena-replay-rtx-7dd3a2bf-r1 is rejected for zero task success, 170 held-action steps, and render grain. Candidate run arena-replay-rtx-0bc59afc-20260914-r1 executed its 80 source actions but completed no scored episode and remained dark/grainy; it correctly failed acceptance.",
       "evidence": [
         "docs/workbench/isaac-arena.md"
       ]

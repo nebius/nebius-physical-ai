@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 
 from .errors import IsaacArenaError
+from .hashing import file_sha256 as _file_sha256
+from .simulator_video import _RENDER_SETTINGS
 
 _SAMPLE_WIDTH = 160
 _SAMPLE_HEIGHT = 90
@@ -402,14 +404,6 @@ def probe_mp4(
     return metadata
 
 
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _render_denoised_video(source: Path, target: Path) -> None:
     arguments = ["ffmpeg", "-v", "error", "-i", str(source)]
     arguments += ["-vf", _DENOISE_FILTER, "-an", "-vsync", "0"]
@@ -459,7 +453,7 @@ def _capture_sidecar(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         ) from exc
     if (
         not isinstance(payload, dict)
-        or payload.get("schema") != "npa.isaac-arena.video-capture.v1"
+        or payload.get("schema") != "npa.isaac-arena.video-capture.v2"
         or payload.get("capture_phase") != "recorder_post_step_before_autoreset"
         or type(payload.get("captured_action_steps")) is not int
         or payload["captured_action_steps"] < 1
@@ -548,6 +542,8 @@ def _verify_capture_png(
         or record.get("decoded_rgb_sha256") != pixel_digest
     ):
         raise IsaacArenaError("simulator capture PNG hash or dimensions disagree")
+    if not np.any(pixels):
+        raise IsaacArenaError("simulator capture PNG is entirely black")
     return {**record, "sha256": digest, "decoded_rgb_sha256": pixel_digest}
 
 
@@ -590,6 +586,105 @@ def _capture_action_count(
     return total
 
 
+def _frozen_field_valid(row: dict[str, Any], prefix: str) -> bool:
+    before, after = row.get(f"{prefix}_before"), row.get(f"{prefix}_after")
+    if type(before) is not type(after) or before != after:
+        return False
+    if prefix == "physics_time":
+        return type(before) in (float, int) and math.isfinite(before) and before >= 0
+    if prefix in ("physics_step", "native_physics_step"):
+        return type(before) is int and before >= 0
+    return (
+        isinstance(before, str)
+        and len(before) == 64
+        and all(c in "0123456789abcdef" for c in before)
+    )
+
+
+def _freeze_row_valid(row: Any, step: int) -> bool:
+    if (
+        not isinstance(row, dict)
+        or type(row.get("action_step")) is not int
+        or row["action_step"] != step
+    ):
+        return False
+    if not all(
+        _frozen_field_valid(row, prefix)
+        for prefix in (
+            "physics_time",
+            "physics_step",
+            "native_physics_step",
+            "state_sha256",
+        )
+    ):
+        return False
+    return (
+        type(row.get("render_calls")) is int
+        and row["render_calls"] >= 5
+        and type(row.get("accumulation_render_calls")) is int
+        and row["accumulation_render_calls"] == 4
+        and all(
+            row.get(field) is True
+            for field in ("stage_streaming_idle", "stage_assets_loaded", "nonblack_rgb")
+        )
+    )
+
+
+def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
+    rendering = capture.get("rendering")
+    expected = {
+        "mode": "PathTracing",
+        "denoiser": "OptiX",
+        "samples_per_pixel_per_render": 32,
+        "accumulation_renders_per_frame": 4,
+    }
+    if not isinstance(rendering, dict) or any(
+        type(rendering.get(key)) is not type(value) or rendering[key] != value
+        for key, value in expected.items()
+    ):
+        raise IsaacArenaError("invalid simulator capture rendering configuration")
+    settings = rendering.get("settings")
+    if (
+        not isinstance(settings, dict)
+        or set(settings) != set(_RENDER_SETTINGS)
+        or any(
+            type(settings[key]) is not type(value) or settings[key] != value
+            for key, value in _RENDER_SETTINGS.items()
+        )
+    ):
+        raise IsaacArenaError(
+            "simulator renderer readback disagrees with capture settings"
+        )
+    return rendering
+
+
+def _physics_freeze_proof(capture: dict[str, Any], total: int) -> dict[str, Any]:
+    rows = capture.get("physics_freeze_checks")
+    if (
+        capture.get("physics_clock") != "native_physx_step_events_since_capture_setup"
+        or not isinstance(rows, list)
+        or len(rows) != total + 1
+        or not all(_freeze_row_valid(row, step) for step, row in enumerate(rows))
+    ):
+        raise IsaacArenaError(
+            "missing or inconsistent render-only physics freeze evidence"
+        )
+    for before, after in zip(rows, rows[1:]):
+        if any(
+            after[f"{field}_before"] <= before[f"{field}_after"]
+            for field in ("physics_time", "physics_step", "native_physics_step")
+        ):
+            raise IsaacArenaError(
+                "physics observation did not advance between real actions"
+            )
+    return {
+        "verified_capture_count": len(rows),
+        "simulation_advanced_during_render": False,
+        "physics_state_changed_during_render": False,
+        "rendering": _rendering_proof(capture),
+    }
+
+
 def verify_capture_evidence(
     run_dir: Path,
     raw_mp4: Path,
@@ -613,6 +708,7 @@ def verify_capture_evidence(
     metadata, _ = _video_metadata(raw_mp4)
     total = _capture_action_count(capture, metadata, expected_steps)
     terminal = _capture_step_mapping(task_motion, total)
+    physics_freeze = _physics_freeze_proof(capture, total)
     dimensions = (metadata["width"], metadata["height"])
     initial = _verify_capture_png(run_dir, capture.get("initial"), 0, dimensions)
     final = _verify_capture_png(run_dir, capture["terminals"][0], terminal, dimensions)
@@ -622,6 +718,7 @@ def verify_capture_evidence(
         "initial": initial,
         "terminal": final,
         "captured_action_steps": total,
+        "physics_freeze": physics_freeze,
         "source_mp4_sha256": _file_sha256(raw_mp4),
         "terminal_frame_comparison": comparison,
     }

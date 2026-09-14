@@ -19,6 +19,9 @@ npa workbench isaac-arena evaluate \
   --policy-type replay \
   --input-path "$REPLAY_PATH" \
   --embodiment gr1_pink \
+  --object tomato_soup_can \
+  --execution-device cpu \
+  --num-envs 1 \
   --num-episodes 1 \
   --record-video \
   --output-format json

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
 
 from .errors import IsaacArenaError
+from .hashing import file_sha256
 
 MICROWAVE_SUCCESS_THRESHOLD = 0.8
 MICROWAVE_MINIMUM_OPENNESS_DELTA = 0.5
@@ -129,8 +129,7 @@ def _read_evidence(run_dir: Path) -> tuple[list[dict], list[dict], list[Any]]:
         raise IsaacArenaError("upstream evaluation retained no simulator ground-truth HDF5")
     files, records, traces = [], [], []
     for path in paths:
-        with path.open("rb") as handle:
-            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        digest = file_sha256(path)
         files.append({"path": path.name, "bytes": path.stat().st_size, "sha256": digest})
         file_records, file_traces = _read_file(path)
         records.extend(file_records)

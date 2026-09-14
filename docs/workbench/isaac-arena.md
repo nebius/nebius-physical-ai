@@ -15,7 +15,7 @@ do not make the broader upstream project production-ready.
 The public `npa-isaac-arena` image adds the Apache-2.0 Arena source at commit
 `ed0fd12be862078be316c73eb7cf423ba9b1c5cd` and the upstream-declared
 Apache-2.0 `lightwheel-sdk==1.0.3` client to the accepted payload-clean Isaac
-Lab image. The source archive and Python wheels are SHA-256 verified. Upstream
+Lab image. The source archive and Python wheels are SHA-256 verified. Arena
 tests, sample checkpoints, demonstration data, and documentation media are
 removed.
 
@@ -31,10 +31,15 @@ source corrects replay-state initialization and visual acceptance. A new image
 must pass fresh digest-bound B200 and RTX qualification before promotion; the
 historical release is not evidence for these corrections.
 
-The image contains no Isaac Sim/Lab/Omniverse Kit payload, weights, replay data,
-operator checkpoints, Lightwheel registry assets, credentials, results, or
-populated runtime cache. On
-first use, `/isaac-sim/python.sh` fetches the pinned Isaac runtime from NVIDIA
+The image excludes Isaac Sim/Lab/Omniverse Kit runtime payloads, Arena policy
+checkpoints and replay datasets, operator inputs, Lightwheel registry assets,
+credentials, evaluation results, and populated runtime caches. Its inherited
+open-source Python environment includes public dependency examples and test
+fixtures, such as the Newton sample policy and ONNX conformance models, with
+their installed package licenses. Those fixtures are not a ready-to-run Arena
+policy or validation evidence.
+
+On first use, `/isaac-sim/python.sh` fetches the pinned Isaac runtime from NVIDIA
 under the operator's `ACCEPT_EULA` setting. The compatible NPA baseline is Isaac
 Lab `3.0.0b2.post1` with Isaac Sim `6.0.1.0`.
 
@@ -76,7 +81,7 @@ The evaluator supports the three local policy adapters registered by upstream:
   and missing or static state histories remain valid ordinary evaluation inputs;
   replay visual qualification additionally requires measured nonzero source
   actions. The generic upstream loader otherwise
-  copies every recorded observation/state tensor to CUDA even though its replay
+  copies every recorded observation/state tensor to the execution device even though its replay
   adapter consumes only actions and the initial state, so NPA materializes
   exactly those required fields in owner-private scratch. The runner applies
   the recorded initial state through Isaac Lab's `reset_to(is_relative=True)`
@@ -104,6 +109,7 @@ npa workbench isaac-arena evaluate \
   --input-path ./test_demo_gr1_open_microwave.hdf5 \
   --embodiment gr1_pink \
   --object tomato_soup_can \
+  --execution-device cpu \
   --record-video \
   --run-id "<run-id>"
 ```
@@ -147,11 +153,30 @@ without requiring successful visual qualification.
 NPA's context-bound source patch applies replay initial state, retains the
 simulator metric-recorder HDF5, captures the initial revolute-joint state, and
 records actual viewport frames after each action and before automatic reset.
-The Gym recorder uses those cached simulator frames. The patch preserves early Kit
+The Gym recorder uses those cached simulator frames. Capture freezes Kit's
+simulation updates and checks native PhysX step-event counts and elapsed event
+time, the Lab physics step counter, and
+uncached robot/object state before and after every render. The version-2 capture
+sidecar must contain one matching check for the initial frame and every action.
+The retained native subscription must observe progress between real actions;
+an inactive observer cannot provide a freeze proof. Its elapsed time starts at
+capture setup and is not an absolute simulation clock.
+Texture streaming and asset loading must finish before capture requests 32
+samples per pixel on each of four frozen path-tracing updates with the
+NGX-independent OptiX denoiser. The proof records settings and update counts;
+it does not measure the renderer's actual accumulated sample count.
+The initial and terminal PNGs must also contain nonblack pixels; real task
+progress and coherent motion remain separate required checks. Renderer settings
+are read back and verified. The patch preserves early Kit
 camera enablement required by `env.render()`, but prevents that recorder choice from also adding
 the embodiment's unused observation cameras. Upstream camera-observation video
 is not exposed by this adapter. The patch is context-bound to the pinned source
 and the image build fails if that source block changes.
+
+When the action sequence ends before an episode finishes, a separate unscored
+diagnostic retains the remaining metric buffer and simulator state. It does not
+create a completed episode, success flag, or scored HDF5 record. This keeps a
+failed replay diagnosable while preserving the upstream result.
 
 The viewport path also fails closed on the target graphics stack. NPA first
 probes native NVIDIA EGL and Vulkan. A CUDA-only managed image can expose
@@ -176,7 +201,7 @@ result = evaluate(
     environment="gr1_open_microwave",
     policy_type="replay",
     input_path="./test_demo_gr1_open_microwave.hdf5",
-    execution_device="cuda:0",
+    execution_device="cpu",
     object_name="tomato_soup_can",
     record_video=True,
     run_id="<run-id>",
@@ -229,11 +254,18 @@ external-plugin support claim.
   no RT cores, so this path makes no render or meaningful-motion claim.
 - `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the nonzero
   operator-owned trajectory on RTX PRO 6000 and requires successful task
-  execution plus simulator-ground-truth-bound viewport motion. It uses CUDA
-  physics while the NPA source patch avoids constructing unrelated
+  execution plus simulator-ground-truth-bound viewport motion. It selects CPU
+  physics and replay tensors following the upstream GR1 tutorial, with RTX GPU
+  viewport rendering. The NPA source patch avoids constructing unrelated
   embodiment-camera sensors;
   native graphics is preferred and the exact-driver private extraction above is
   used only when required by the target.
+
+Upstream documents CPU physics for its generated demonstrations and recommends
+the CPU replay path, while warning that reset nondeterminism can still prevent
+reproduction. The small test fixture does not record its source physics device;
+the selected workflow must pass fresh task and visual validation.
+See the [pinned upstream replay guidance](https://github.com/isaac-sim/IsaacLab-Arena/blob/ed0fd12be862078be316c73eb7cf423ba9b1c5cd/docs/pages/example_workflows/static_manipulation/step_3_data_generation.rst#L124-L143).
   The result records both the execution device and measured GPU identity.
 
 Validate and plan before submission, substitute an operator-owned bucket, and

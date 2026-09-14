@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -11,6 +10,7 @@ import sys
 from typing import Any, Callable
 
 from .errors import IsaacArenaError
+from .hashing import file_sha256 as _sha256
 
 _NVIDIA_DRIVER_VERSION = re.compile(r"^[0-9]{3}\.[0-9]+\.[0-9]+$")
 _VULKAN_MANIFEST_VERSION = re.compile(r"^[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}$")
@@ -21,11 +21,6 @@ _SIGNED_APT_OPTIONS = [
     "-o",
     "APT::Get::AllowUnauthenticated=false",
 ]
-
-
-def _sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _graphics_probe(env: dict[str, str], *, runner: _Runner = subprocess.run) -> bool:

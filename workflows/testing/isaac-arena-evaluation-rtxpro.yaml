@@ -25,7 +25,10 @@ config:
   # The runtime prefers native NVIDIA EGL/Vulkan and otherwise extracts the
   # exact loaded-driver package plus a validated private headless EGL ICD into
   # run-private scratch; it never mutates the node.
-  execution_device: cuda:0
+  # Follow upstream's GR1 tutorial replay path: CPU physics and replay tensors,
+  # with the reserved RTX GPU retained for viewport rendering. The small test
+  # fixture does not record its source physics device; validate this run anew.
+  execution_device: cpu
   num_episodes: "1"
   num_envs: "1"
   seed: "42"

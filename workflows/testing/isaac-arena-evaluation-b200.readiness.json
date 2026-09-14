@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "44e524f0bcb53f71eeff832b926ba16113cc8d73cce63529160cca68eed11d41",
+  "workflow_sha256": "a78610661e118b90e47fca97a3847521aca9645816f9e353774ea8516214850e",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-14; the registered toolRef resolves to the shared Arena evaluator.",
+      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-14; each single-environment CUDA state requests eight CPU cores and the registered toolRef resolves to the shared Arena evaluator.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-b200.yaml",
         "npa/src/npa/orchestration/npa_workflow/catalog.py"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The four planned states invoke real upstream zero-action cube-goal-pose evaluations with distinct seeds and output prefixes. No policy input or visual qualification is claimed.",
+      "reason": "The four planned states invoke real upstream zero-action cube-goal-pose evaluations with distinct seeds and output prefixes, one environment per eight-CPU state. No policy input or visual qualification is claimed.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-b200.yaml",
         "npa/src/npa/workbench/isaac_arena/runtime.py"

@@ -52,6 +52,22 @@ and license metadata is available from:
 - <https://github.com/darnstrom/daqp>
 - <https://github.com/qpsolvers/qpsolvers>
 
+## Inherited open-source dependency fixtures
+
+The pinned parent environment includes Newton 1.2.1 and ONNX 1.21.0 with their
+packaged examples and test fixtures. Newton includes example USD assets and
+`newton/examples/assets/anymal_walking_policy.pt`; ONNX includes conformance
+models under `onnx/backend/test/data`. Their distribution metadata declares
+Apache-2.0. Full license texts remain in the image's Python environment at
+`newton-1.2.1.dist-info/licenses/LICENSE.md` and
+`onnx-1.21.0.dist-info/licenses/LICENSE`, with Newton's additional bundled
+notices under `newton/licenses` and its distribution license directory.
+
+These are public dependency fixtures inherited unchanged from the pinned base.
+They are not Arena evaluation policy checkpoints, replay datasets, provider
+registry objects, or evidence of task success. The runtime-only boundary for
+operator inputs and Lightwheel assets remains separate from these packages.
+
 ## NVIDIA Isaac Sim and Isaac Lab
 
 Not included in image layers. They download at runtime from NVIDIA under the

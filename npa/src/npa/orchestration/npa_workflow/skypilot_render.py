@@ -1122,7 +1122,7 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
 #: NVIDIA's documented, run-scoped gate on Isaac acquisition/use.
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
-ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
+ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "isaac-arena", "sonic"})
 
 
 def routes_at_an_isaac_image(
@@ -1163,7 +1163,7 @@ def routes_at_an_isaac_image(
     raw = resources or {}
     image = str(resolved_image or raw.get("image") or raw.get("image_id") or "").lower()
     image = image.removeprefix("docker:")
-    if "isaac-lab" in image or "npa-sonic" in image:
+    if any(name in image for name in ("isaac-lab", "npa-isaac-arena", "npa-sonic")):
         return True
     pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
     for container in pod.get("containers") or []:

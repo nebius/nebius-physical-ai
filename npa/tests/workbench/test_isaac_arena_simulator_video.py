@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -32,6 +33,46 @@ class _Wrapper:
         return self.env.step(action)
 
 
+class _Settings:
+    def __init__(self):
+        self.values = {simulator_video._PLAY_SIMULATIONS: True}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value):
+        self.values[key] = value
+
+
+class _Subscription:
+    def __init__(self, callback):
+        self.callback = callback
+
+
+def _subscribe(runtime, callback):
+    subscription = _Subscription(callback)
+    runtime.subscriptions.append(weakref.ref(subscription))
+    return subscription
+
+
+def _emit_native_step(runtime, delta):
+    for reference in runtime.subscriptions:
+        subscription = reference()
+        if subscription is not None:
+            subscription.callback(delta)
+
+
+def _install_physx(monkeypatch, runtime):
+    omni = ModuleType("omni")
+    physx = ModuleType("omni.physx")
+    physx.get_physx_interface = lambda: SimpleNamespace(
+        subscribe_physics_step_events=lambda callback: _subscribe(runtime, callback)
+    )
+    omni.physx = physx
+    monkeypatch.setitem(sys.modules, "omni", omni)
+    monkeypatch.setitem(sys.modules, "omni.physx", physx)
+
+
 @pytest.fixture
 def simulator_modules(monkeypatch):
     managers = ModuleType("isaaclab.managers.recorder_manager")
@@ -48,35 +89,101 @@ def simulator_modules(monkeypatch):
     monkeypatch.setattr(
         simulator_video, "_step_tensor", lambda step, env: np.array([[step]])
     )
+    runtime = SimpleNamespace(
+        settings=_Settings(), env=None, resets=0, subscriptions=[]
+    )
+    context = SimpleNamespace(
+        get_stage_streaming_status=lambda: (
+            runtime.env.renders < runtime.env.streaming_renders
+        ),
+        get_stage_loading_status=lambda: (
+            "",
+            int(runtime.env.renders >= runtime.env.loading_renders),
+            1,
+        ),
+        reset_renderer_accumulation=lambda: setattr(
+            runtime, "resets", runtime.resets + 1
+        ),
+    )
+    monkeypatch.setattr(
+        simulator_video, "_kit_interfaces", lambda: (runtime.settings, context)
+    )
+    _install_physx(monkeypatch, runtime)
+    return runtime
 
 
 class _AutoResetEnvironment:
-    def __init__(self, directory: Path, *, warmup_renders: int = 0):
+    def __init__(self, directory: Path, runtime, *, warmup_renders: int = 0):
+        self.runtime = runtime
+        runtime.env = self
         self.cfg = SimpleNamespace(
-            recorders=SimpleNamespace(dataset_export_dir_path=str(directory))
+            recorders=SimpleNamespace(dataset_export_dir_path=str(directory)),
+            sim=SimpleNamespace(render=SimpleNamespace(carb_settings={})),
         )
         self.num_envs = 1
         self.device = "cpu"
         self.state = 0
+        self.physics_time = 0.0
+        self.physics_steps = 0
         self.renders = 0
+        self.env_renders = 0
+        self.streaming_renders = 0
+        self.loading_renders = 0
+        self.stopped = False
         self.action_steps = []
         self.warmup_renders = warmup_renders
-        self.sim = SimpleNamespace(is_stopped=lambda: False)
+        self.sim = SimpleNamespace(
+            is_stopped=lambda: self.stopped,
+            get_physics_step_count=lambda: self.physics_steps,
+            physics_manager=SimpleNamespace(forward=lambda: None),
+        )
+        self.scene = self._physics_scene()
         annotator = SimpleNamespace(get_data=self._annotator_data)
         self.video_recorder = SimpleNamespace(
-            _capture=SimpleNamespace(_rgb_annotator=annotator)
+            _capture=SimpleNamespace(_rgb_annotator=annotator),
+            render_rgb_array=self._native_render,
         )
         simulator_video.configure_video_capture(self.cfg)
+        runtime.settings.values.update(self.cfg.sim.render.carb_settings)
         recorder_cfg = self.cfg.recorders.npa_video
         self.recorder = recorder_cfg.class_type(recorder_cfg, self)
+
+    def _physics_scene(self):
+        view = SimpleNamespace(
+            get_root_transforms=lambda: np.array([[self.state, 0.0, 0.0]]),
+            get_root_velocities=lambda: np.zeros((1, 6)),
+            get_dof_positions=lambda: np.array([[self.state * 0.1]]),
+            get_dof_velocities=lambda: np.zeros((1, 1)),
+        )
+        return SimpleNamespace(
+            articulations={"robot": SimpleNamespace(root_view=view)},
+            rigid_objects={},
+            rigid_object_collections={},
+            deformable_objects={},
+        )
 
     def _pixels(self):
         return np.full((24, 32, 3), 40 + self.state * 40, dtype=np.uint8)
 
     def _annotator_data(self):
-        return self._pixels() if self.renders >= self.warmup_renders else np.array([])
+        # An initialized annotator can still return a nonempty black buffer.
+        return (
+            self._pixels()
+            if self.renders >= self.warmup_renders
+            else np.zeros((24, 32, 3), dtype=np.uint8)
+        )
 
     def render(self):
+        self.env_renders += 1
+        # Mirror upstream KitVisualizer restoring True before native capture.
+        self.runtime.settings.set(simulator_video._PLAY_SIMULATIONS, True)
+        return self._native_render()
+
+    def _native_render(self):
+        if self.runtime.settings.get(simulator_video._PLAY_SIMULATIONS):
+            self.state += 1
+            self.physics_time += 0.005
+            _emit_native_step(self.runtime, 0.005)
         self.renders += 1
         return (
             self._pixels()
@@ -91,6 +198,10 @@ class _AutoResetEnvironment:
 
     def step(self, action):
         self.state += action
+        self.physics_steps += 4
+        self.physics_time += 0.02
+        for _ in range(4):
+            _emit_native_step(self.runtime, 0.005)
         key, value = self.recorder.record_post_step()
         assert key == "npa_video/action_step"
         self.action_steps.append(int(value[0, 0]))
@@ -102,10 +213,22 @@ class _AutoResetEnvironment:
         return self.state, terminal
 
 
+def _assert_freeze_trace(evidence, expected_steps):
+    assert [
+        check["action_step"] for check in evidence["physics_freeze_checks"]
+    ] == expected_steps
+    for check in evidence["physics_freeze_checks"]:
+        assert check["state_sha256_before"] == check["state_sha256_after"]
+        assert check["physics_time_before"] == check["physics_time_after"]
+        assert check["physics_step_before"] == check["physics_step_after"]
+        assert check["native_physics_step_before"] == check["native_physics_step_after"]
+        assert check["render_calls"] == 5
+
+
 def test_video_records_terminal_frame_before_autoreset(
     simulator_modules, tmp_path: Path
 ) -> None:
-    env = _AutoResetEnvironment(tmp_path)
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
     wrapper = simulator_video.cached_frame_env(env)
     env.reset()
     frames = []
@@ -115,9 +238,13 @@ def test_video_records_terminal_frame_before_autoreset(
     assert env.state == 0
     assert [int(frame[0, 0, 0]) for frame in frames] == [80, 120, 160]
     assert env.action_steps == [1, 2, 3]
-    assert env.renders == 4
+    assert env.renders == 20
+    assert env.env_renders == 0
+    assert env.physics_time == 0.06
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
     assert evidence["captured_action_steps"] == 3
+    assert evidence["schema"] == "npa.isaac-arena.video-capture.v2"
+    assert evidence["physics_clock"] == "native_physx_step_events_since_capture_setup"
     assert evidence["capture_phase"] == "recorder_post_step_before_autoreset"
     assert evidence["initial"]["action_step"] == 0
     assert evidence["terminals"][0]["action_step"] == 3
@@ -128,15 +255,18 @@ def test_video_records_terminal_frame_before_autoreset(
         evidence["terminals"][0]["decoded_rgb_sha256"]
         == hashlib.sha256(final.tobytes()).hexdigest()
     )
+    _assert_freeze_trace(evidence, [0, 1, 2, 3])
 
 
 def test_initial_renderer_warmup_adds_no_action_or_video_frames(
     simulator_modules, tmp_path: Path
 ) -> None:
-    env = _AutoResetEnvironment(tmp_path, warmup_renders=3)
+    env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=3)
     wrapper = simulator_video.cached_frame_env(env)
     env.reset()
-    assert env.renders == 3
+    assert env.renders == 7
+    assert env.physics_time == 0.0
+    assert env.state == 0
     assert env.action_steps == []
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
     initial = np.asarray(Image.open(tmp_path / evidence["initial"]["path"]))
@@ -152,21 +282,21 @@ def test_initial_renderer_warmup_adds_no_action_or_video_frames(
 def test_outer_video_reads_copy_without_rerendering(
     simulator_modules, tmp_path: Path
 ) -> None:
-    env = _AutoResetEnvironment(tmp_path)
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
     wrapper = simulator_video.cached_frame_env(env)
     env.reset()
     wrapper.step(1)
     rendered = wrapper.render()
     rendered[:] = 0
     assert int(wrapper.render()[0, 0, 0]) == 80
-    assert env.renders == 2
+    assert env.renders == 10
 
 
 def test_capture_requires_real_renderer_frame(
     simulator_modules, tmp_path: Path
 ) -> None:
-    env = _AutoResetEnvironment(tmp_path)
-    env.render = lambda: None
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    env.video_recorder.render_rgb_array = lambda: None
     with pytest.raises(RuntimeError, match="no RGB uint8 frame"):
         env.reset()
     assert not (tmp_path / "simulator-initial.png").exists()
@@ -179,13 +309,214 @@ def test_capture_setup_preserves_existing_metric_configuration(
     cfg = SimpleNamespace(
         recorders=SimpleNamespace(
             success=success_recorder, dataset_export_dir_path=str(tmp_path)
-        )
+        ),
+        sim=SimpleNamespace(
+            render=SimpleNamespace(
+                carb_settings={"/rtx/sceneDb/ambientLightIntensity": 0.0}
+            )
+        ),
     )
     simulator_video.configure_video_capture(cfg)
     assert cfg.recorders.success is success_recorder
+    assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
+    assert cfg.sim.render.carb_settings["/rtx/rendermode"] == "PathTracing"
     assert (
         cfg.recorders.npa_video.class_type.__mro__[1]
         is simulator_video._VideoCaptureMethods
     )
     with pytest.raises(RuntimeError, match="requires the task's metric recorder"):
         simulator_video.configure_video_capture(SimpleNamespace(recorders=None))
+
+
+def test_texture_streaming_and_asset_loading_finish_before_accumulation(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=3)
+    env.loading_renders = 5
+    env.streaming_renders = 7
+    env.reset()
+    assert env.renders == 11
+    assert simulator_modules.resets == 1
+    assert env.state == 0
+    assert env.physics_time == 0.0
+    evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
+    check = evidence["physics_freeze_checks"][0]
+    assert check["stage_streaming_idle"] is True
+    assert check["stage_assets_loaded"] is True
+    assert check["accumulation_render_calls"] == 4
+
+
+@pytest.mark.parametrize("previous", [True, False])
+def test_native_render_freezes_physics_and_restores_original_setting(
+    simulator_modules, tmp_path: Path, previous: bool
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    settings = simulator_modules.settings
+    settings.set(simulator_video._PLAY_SIMULATIONS, previous)
+    env.reset()
+    assert settings.get(simulator_video._PLAY_SIMULATIONS) is previous
+    assert env.physics_time == 0.0
+    assert env.state == 0
+    assert env._npa_video_initial_physics_state["state"]["articulations/robot"][
+        "get_dof_positions"
+    ] == [[0.0]]
+
+
+@pytest.mark.parametrize("previous", [True, False])
+def test_renderer_exception_restores_setting_and_retains_no_initial_frame(
+    simulator_modules, tmp_path: Path, previous: bool
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    simulator_modules.settings.set(simulator_video._PLAY_SIMULATIONS, previous)
+
+    def broken_renderer():
+        assert (
+            simulator_modules.settings.get(simulator_video._PLAY_SIMULATIONS) is False
+        )
+        raise RuntimeError("renderer failed")
+
+    env.video_recorder.render_rgb_array = broken_renderer
+    with pytest.raises(RuntimeError, match="renderer failed"):
+        env.reset()
+    assert simulator_modules.settings.get(simulator_video._PLAY_SIMULATIONS) is previous
+    assert not (tmp_path / "simulator-initial.png").exists()
+
+
+@pytest.mark.parametrize("changed", ["state", "native_event", "physics_steps"])
+def test_capture_rejects_unreported_physics_changes(
+    simulator_modules, tmp_path: Path, changed: str
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native = env.video_recorder.render_rgb_array
+
+    def drifting_renderer():
+        if changed == "native_event":
+            _emit_native_step(simulator_modules, 0.005)
+        else:
+            setattr(env, changed, getattr(env, changed) + 1)
+        return native()
+
+    env.video_recorder.render_rgb_array = drifting_renderer
+    with pytest.raises(RuntimeError, match="advanced physics time, steps, or state"):
+        env.reset()
+    assert simulator_modules.settings.get(simulator_video._PLAY_SIMULATIONS) is True
+    assert not (tmp_path / "simulator-initial.png").exists()
+
+
+def test_zero_duration_native_step_during_render_fails_freeze_check(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native = env.video_recorder.render_rgb_array
+
+    def invisible_step():
+        _emit_native_step(simulator_modules, 0.0)
+        return native()
+
+    env.video_recorder.render_rgb_array = invisible_step
+    with pytest.raises(RuntimeError, match="advanced physics time, steps, or state"):
+        env.reset()
+    assert env._npa_video_physics_clock.elapsed == 0.0
+    assert env._npa_video_physics_clock.steps == 5
+    assert not (tmp_path / "simulator-initial.png").exists()
+
+
+@pytest.mark.parametrize("delta", [float("nan"), float("inf"), -0.005, None, "bad"])
+def test_invalid_native_step_duration_cannot_be_silently_ignored(
+    simulator_modules, tmp_path: Path, delta
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    _emit_native_step(simulator_modules, delta)
+    assert env._npa_video_physics_clock.steps == 1
+    with pytest.raises(RuntimeError, match="invalid native PhysX step duration"):
+        env.reset()
+    assert env.renders == 0
+
+
+def test_native_subscription_remains_live_and_observes_real_action_steps(
+    simulator_modules, tmp_path: Path
+) -> None:
+    import gc
+
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    env.reset()
+    gc.collect()
+    assert simulator_modules.subscriptions[0]() is not None
+    env.step(1)
+    env.step(1)
+    evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
+    checks = evidence["physics_freeze_checks"]
+    assert [check["native_physics_step_before"] for check in checks] == [0, 4, 8]
+    assert checks[-1]["physics_time_before"] == pytest.approx(0.04)
+    _assert_freeze_trace(evidence, [0, 1, 2])
+
+
+def test_disconnected_native_observer_fails_after_first_actual_action(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    env.reset()
+    simulator_modules.subscriptions.clear()
+    with pytest.raises(RuntimeError, match="did not observe native physics steps"):
+        env.step(1)
+    evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
+    assert evidence["captured_action_steps"] == 0
+    assert len(evidence["physics_freeze_checks"]) == 1
+
+
+def test_nonempty_black_annotator_does_not_become_evidence(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=100)
+    native = env.video_recorder.render_rgb_array
+
+    def stops_without_ready_frame():
+        frame = native()
+        env.stopped = env.renders == 2
+        return frame
+
+    env.video_recorder.render_rgb_array = stops_without_ready_frame
+    with pytest.raises(
+        RuntimeError, match="stopped before its RGB annotator was ready"
+    ):
+        env.reset()
+    assert env.renders == 2
+    assert not (tmp_path / "simulator-initial.png").exists()
+
+
+def test_capture_refuses_realtime_or_disabled_optix_readback(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
+    with pytest.raises(RuntimeError, match="required capture settings"):
+        env.reset()
+    assert env.renders == 0
+
+
+def test_explicit_finalization_retains_diagnostic_before_simulator_teardown(
+    simulator_modules, tmp_path: Path, monkeypatch
+) -> None:
+    from npa.workbench.isaac_arena import simulator_diagnostics
+
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    env.reset()
+    env.step(1)
+    calls = []
+
+    def retain(actual_env, directory, count):
+        calls.append((actual_env, directory, count))
+        return {"path": "simulator-unscored-episode.json", "sha256": "a" * 64}
+
+    monkeypatch.setattr(simulator_diagnostics, "retain_unscored_episode", retain)
+    wrapper = SimpleNamespace(unwrapped=env)
+    simulator_video.finalize_video_capture(wrapper)
+    assert calls == [(env, tmp_path, 1)]
+    # The actual environment deletes these during close; later idempotent
+    # finalization must not try to read stopped physics or removed managers.
+    del env.scene
+    simulator_video.finalize_video_capture(wrapper)
+    assert calls == [(env, tmp_path, 1)]
+    evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
+    assert evidence["unscored_diagnostic"]["path"] == "simulator-unscored-episode.json"
+    assert evidence["terminals"] == []

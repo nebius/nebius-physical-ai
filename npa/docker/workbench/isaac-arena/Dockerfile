@@ -1,7 +1,9 @@
 # Public Isaac Lab-Arena worker. The exact Apache-2.0 Arena source and its
 # Apache-2.0 Lightwheel client dependency are baked; NVIDIA Isaac Sim/Lab and
-# Lightwheel registry assets remain operator runtime fetches. No model, dataset,
-# generated result, registry asset, or populated cache is present in the image.
+# Lightwheel registry assets remain operator runtime fetches. No Arena policy
+# checkpoint, replay dataset, operator input, generated evaluation, credential,
+# registry object, or populated runtime cache is baked. Inherited OSS packages
+# retain their public examples/test fixtures and installed licenses.
 FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
 
 ARG ISAAC_ARENA_VERSION=0.3.0
@@ -69,6 +71,8 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && grep -q 'Applied replay initial state with Isaac Lab reset_to' \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
     && grep -q 'simulator_ground_truth_rank' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && grep -q 'finalize_video_capture(env)' \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
     && grep -q 'step_trigger=lambda step: step == 0' \
       /opt/isaac-arena/isaaclab_arena/video/video_recording.py \

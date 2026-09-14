@@ -13,6 +13,7 @@ from PIL import Image
 
 from npa.workbench.isaac_arena.errors import IsaacArenaError
 from npa.workbench.isaac_arena.video_evidence import verify_capture_evidence
+from npa.workbench.isaac_arena.simulator_video import _RENDER_SETTINGS
 
 
 def _frame(column: int) -> np.ndarray:
@@ -67,11 +68,38 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
     video = tmp_path / "raw.mp4"
     _encode(video, frames)
     payload = {
-        "schema": "npa.isaac-arena.video-capture.v1",
+        "schema": "npa.isaac-arena.video-capture.v2",
         "capture_phase": "recorder_post_step_before_autoreset",
+        "physics_clock": "native_physx_step_events_since_capture_setup",
         "captured_action_steps": 20,
         "initial": _png_record(tmp_path / "initial.png", _frame(17), 0),
         "terminals": [_png_record(tmp_path / "terminal.png", frames[-1], 20)],
+        "rendering": {
+            "mode": "PathTracing",
+            "denoiser": "OptiX",
+            "samples_per_pixel_per_render": 32,
+            "accumulation_renders_per_frame": 4,
+            "settings": dict(_RENDER_SETTINGS),
+        },
+        "physics_freeze_checks": [
+            {
+                "action_step": step,
+                "physics_time_before": step / 50,
+                "physics_time_after": step / 50,
+                "physics_step_before": step,
+                "physics_step_after": step,
+                "native_physics_step_before": step,
+                "native_physics_step_after": step,
+                "state_sha256_before": hashlib.sha256(str(step).encode()).hexdigest(),
+                "state_sha256_after": hashlib.sha256(str(step).encode()).hexdigest(),
+                "render_calls": 5,
+                "accumulation_render_calls": 4,
+                "stage_streaming_idle": True,
+                "stage_assets_loaded": True,
+                "nonblack_rgb": True,
+            }
+            for step in range(21)
+        ],
     }
     _write_sidecar(tmp_path, payload)
     motion = {
@@ -185,4 +213,77 @@ def test_capture_after_reset_is_an_invalid_evidence_phase(capture) -> None:
     payload["capture_phase"] = "after_autoreset"
     _write_sidecar(video.parent, payload)
     with pytest.raises(IsaacArenaError, match="schema or phase"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("physics_time_after", 99.0),
+        ("physics_step_after", 99),
+        ("native_physics_step_after", 99),
+        ("state_sha256_after", "f" * 64),
+        ("stage_streaming_idle", False),
+        ("stage_assets_loaded", False),
+        ("nonblack_rgb", False),
+        ("render_calls", 1),
+        ("accumulation_render_calls", 0),
+        ("action_step", True),
+    ],
+)
+def test_render_side_effects_and_unready_frames_cannot_qualify(capture, field, value):
+    video, payload, motion, _ = capture
+    payload["physics_freeze_checks"][10][field] = value
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="physics freeze evidence"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+@pytest.mark.parametrize("mutation", ["absent", "skipped", "repeated", "extra"])
+def test_every_capture_including_initial_requires_its_own_freeze_check(
+    capture, mutation
+):
+    video, payload, motion, _ = capture
+    rows = payload["physics_freeze_checks"]
+    if mutation == "absent":
+        del payload["physics_freeze_checks"]
+    elif mutation == "skipped":
+        rows.pop(0)
+    elif mutation == "repeated":
+        rows[10] = rows[9]
+    else:
+        rows.append(rows[-1])
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="physics freeze evidence"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_allblack_initial_png_cannot_qualify_with_consistent_hashes(capture):
+    video, payload, motion, frames = capture
+    payload["initial"] = _png_record(
+        video.parent / "initial.png", np.zeros_like(frames[0]), 0
+    )
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="entirely black"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_renderer_readback_must_confirm_independent_denoising(capture):
+    video, payload, motion, _ = capture
+    payload["rendering"]["settings"]["/rtx/pathtracing/optixDenoiser/enabled"] = False
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="renderer readback"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+@pytest.mark.parametrize(
+    "field", ["physics_time", "native_physics_step", "physics_step"]
+)
+def test_inactive_physics_observation_cannot_claim_rendering_is_frozen(capture, field):
+    video, payload, motion, _ = capture
+    for row in payload["physics_freeze_checks"]:
+        row[f"{field}_before"] = 0.0 if field == "physics_time" else 0
+        row[f"{field}_after"] = row[f"{field}_before"]
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="did not advance between real actions"):
         verify_capture_evidence(video.parent, video, task_motion=motion)

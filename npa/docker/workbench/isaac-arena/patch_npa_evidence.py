@@ -78,6 +78,29 @@ POLICY_RUNNER_CAMERA_CONTEXT = """\
             args_cli.enable_cameras = True
 """
 
+POLICY_RUNNER_ROLLOUT_END = """\
+        if hasattr(env.unwrapped.cfg, "metrics") and env.unwrapped.cfg.metrics is not None:
+            return env.unwrapped.compute_metrics()
+        return None
+
+
+def list_variations(args_parser: argparse.ArgumentParser) -> None:
+"""
+
+POLICY_RUNNER_ROLLOUT_END_PATCHED = """\
+        if hasattr(env.unwrapped.cfg, "metrics") and env.unwrapped.cfg.metrics is not None:
+            return env.unwrapped.compute_metrics()
+        return None
+    finally:
+        # Retain unfinished measurements before env.close stops physics and
+        # deletes the scene/recorder managers. This never scores an episode.
+        from npa.workbench.isaac_arena.simulator_video import finalize_video_capture
+        finalize_video_capture(env)
+
+
+def list_variations(args_parser: argparse.ArgumentParser) -> None:
+"""
+
 VIDEO_TRIGGER = """\
         env = RecordVideo(
             env,
@@ -167,6 +190,12 @@ def _patch_runner(policy_runner: Path) -> None:
         POLICY_RUNNER_ENVIRONMENT,
         POLICY_RUNNER_ENVIRONMENT_PATCHED,
         "ground-truth-output",
+    )
+    _replace_once(
+        policy_runner,
+        POLICY_RUNNER_ROLLOUT_END,
+        POLICY_RUNNER_ROLLOUT_END_PATCHED,
+        "live-diagnostic-finalization",
     )
     policy_text = policy_runner.read_text(encoding="utf-8")
     if policy_text.count(POLICY_RUNNER_CAMERA_CONTEXT) != 1:

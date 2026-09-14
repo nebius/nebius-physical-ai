@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import asdict, dataclass
-import hashlib
 import json
 import math
 import os
@@ -39,6 +38,7 @@ from .identity import (
 from .viewport_graphics import _prepare_viewport_graphics
 from .replay_input import _prepare_replay_execution_input, _input_evidence, _checkpoint_input
 from .errors import IsaacArenaError
+from .hashing import file_sha256 as _sha256
 from .video_evidence import probe_mp4 as _probe_mp4, denoise_mp4 as _denoise_mp4
 from .video_evidence import verify_capture_evidence as _verify_capture_evidence
 from .ground_truth import simulator_ground_truth as _simulator_ground_truth
@@ -235,14 +235,6 @@ def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
     if viewport_only:
         env["NPA_ISAAC_ARENA_VIEWPORT_ONLY"] = "1"
     return env
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _numeric_metrics(log_text: str) -> dict[str, float]:

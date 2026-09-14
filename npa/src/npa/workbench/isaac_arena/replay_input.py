@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .errors import IsaacArenaError
+from .hashing import file_sha256 as _sha256
 
 if TYPE_CHECKING:
     from .runtime import IsaacArenaRequest
-
-
-def _sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _replay_dependencies(operation: str) -> tuple[Any, Any]:

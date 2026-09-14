@@ -100,7 +100,7 @@ def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Pat
     module = _evidence_patch()
     policy = tmp_path / "policy_runner.py"
     policy.write_text(module.POLICY_RUNNER_RESET + module.POLICY_RUNNER_ENVIRONMENT
-                      + module.POLICY_RUNNER_CAMERA_CONTEXT)
+                      + module.POLICY_RUNNER_CAMERA_CONTEXT + module.POLICY_RUNNER_ROLLOUT_END)
     embodiment = tmp_path / "embodiment.py"
     embodiment.write_text(module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT)
     video = tmp_path / "video.py"
@@ -112,6 +112,7 @@ def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Pat
     assert "simulator_ground_truth_rank" in policy.read_text()
     assert ").unwrapped" in policy.read_text()
     assert module.POLICY_RUNNER_CAMERA_CONTEXT in policy.read_text()
+    assert module.POLICY_RUNNER_ROLLOUT_END_PATCHED in policy.read_text()
     assert "self.enable_cameras = enable_cameras and not viewport_only" in embodiment.read_text()
     assert "step_trigger=lambda step: step == 0" in video.read_text()
     assert "episode_trigger" not in video.read_text()
@@ -148,6 +149,34 @@ def test_replay_reset_applies_exact_state_once_before_policy_reset(tmp_path: Pat
     program = tmp_path / "patched_replay_reset.py"
     program.write_text("def apply_reset(env, policy):\n" + module.POLICY_RUNNER_RESET_PATCHED
                        + "    finally:\n        pass\n    return obs\n" + _replay_reset_assertions())
+    completed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_rollout_finalizes_live_evidence_on_success_and_failure(tmp_path: Path, fail: bool) -> None:
+    module = _evidence_patch()
+    ending = module.POLICY_RUNNER_ROLLOUT_END_PATCHED.split("\n\ndef list_variations", 1)[0]
+    program = tmp_path / "patched_rollout_finalization.py"
+    body = "def rollout(env, fail):\n    try:\n        if fail:\n            raise RuntimeError('rollout failed')\n    except RuntimeError:\n        raise\n    else:\n"
+    assertions = textwrap.dedent("""\
+        from types import SimpleNamespace
+        events = []
+        recorder = SimpleNamespace(finalize=lambda: events.append('finalized-live'))
+        base = SimpleNamespace(cfg=SimpleNamespace(metrics=True), compute_metrics=lambda: 0.0,
+                               _npa_video_capture_recorder=recorder)
+        env = SimpleNamespace(unwrapped=base)
+        try:
+            result = rollout(env, FAIL)
+        except RuntimeError as error:
+            assert FAIL and str(error) == 'rollout failed'
+        else:
+            assert not FAIL and result == 0.0
+        del base._npa_video_capture_recorder
+        events.append('teardown')
+        assert events == ['finalized-live', 'teardown']
+    """).replace("FAIL", repr(fail))
+    program.write_text(body + ending + "\n" + assertions)
     completed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, check=False)
     assert completed.returncode == 0, completed.stderr
 
@@ -194,5 +223,8 @@ def test_isaac_arena_golden_smoke_uses_hash_pinned_nonzero_replay() -> None:
     assert "--policy-type replay" in text
     assert "--input-path" in text
     assert "--embodiment gr1_pink" in text
+    assert "--object tomato_soup_can" in text
+    assert "--execution-device cpu" in text
+    assert "--num-envs 1" in text
     assert "--record-video" in text
     assert "zero_action" not in text

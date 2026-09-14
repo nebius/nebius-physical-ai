@@ -27,7 +27,7 @@ resources:
   gpu:
     cloud: kubernetes
     accelerators: B200:1
-    cpus: 16
+    cpus: 8
     memory: 64Gi
 
 initial: evaluate-seed-42

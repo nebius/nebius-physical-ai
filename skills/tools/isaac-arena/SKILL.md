@@ -40,6 +40,11 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
   Never install, retain, publish, or redistribute it.
 - Replay HDF5 and RSL-RL checkpoints: operator runtime inputs; never bake or
   publish them. The result records source hashes, not storage locations.
+- Inherited open-source dependencies retain public examples and test fixtures,
+  including Newton's sample policy and USD assets and ONNX conformance models,
+  with their installed licenses. Describe this boundary precisely: those
+  fixtures are not Arena policy inputs or qualification evidence, and the
+  image does contain model-shaped dependency files.
 - Arena 0.3.0 is tested against Isaac Lab 3.0 beta 2. NPA uses the compatible
   patched Lab `3.0.0b2.post1` / Isaac Sim `6.0.1.0` baseline and must requalify
   every changed image digest.
@@ -57,9 +62,11 @@ PRO 6000 for the independent graphics qualification and require a non-empty
 MP4 with successful task and coherent-motion evidence. NPA's context-bound source
 patch must keep Kit camera support
 enabled while leaving unused embodiment-mounted observation cameras disabled;
-the upstream camera-video recorder remains unsupported. Use `cuda:0` for the
-RTX qualification and record both the execution device and measured renderer
-GPU. Treat CPU execution as diagnostic and unvalidated for complex GR1 scenes.
+the upstream camera-video recorder remains unsupported. The RTX replay workflow
+selects CPU physics and replay tensors following upstream's GR1 tutorial, while
+the viewport still uses the reserved RTX GPU. Record both devices separately.
+The fixture does not record its original physics device; this selection needs
+fresh task/video validation and is not proof of successful reproduction.
 
 ```bash
 npa workbench health preflight --checks nebius,s3
@@ -92,7 +99,7 @@ qualification additionally requires measured nonzero source actions.
 RSL-RL requires a `model*.pt` checkpoint beside `params/agent.yaml`, matching
 upstream's real runner contract. Use `--input-path` with a local path or S3 URI;
 NPA materializes the input before starting the simulator. The upstream replay
-loader eagerly moves every episode field to CUDA, even though the policy uses
+loader eagerly moves every episode field to the execution device, even though the policy uses
 only `actions` and `initial_state`; NPA therefore creates a private minimal
 execution HDF5 and never publishes either input. Its result binds the source and
 executed hashes. Replay supports one episode in one environment. Apply its
@@ -130,7 +137,18 @@ nonzero-policy video qualification remains unsupported.
 Capture actual initial and terminal PNGs before automatic reset. Verify
 `simulator-video-evidence.json` against their file and decoded-RGB hashes,
 contiguous HDF5 action steps, and the matching decoded terminal MP4 frame within
-encoding tolerances. Preserve the raw MP4 and label any denoised derivative with
+encoding tolerances. Require the version-2 sidecar's initial-plus-every-action
+physics checks: native PhysX step-event counts and elapsed event time, the Lab
+physics counter, and uncached robot/object state must remain unchanged during
+rendering. The native subscription must also observe progress between real
+actions; elapsed event time starts at capture setup, not an absolute clock.
+Verify asset/texture readiness
+and the path-tracing/OptiX settings readback: request 32 samples per pixel on each
+of four frozen render updates without NGX. These are configured samples and
+observed update calls, not measured accumulated samples. Rendering must not add physics steps or
+video frames. An unfinished recorder buffer belongs only in the separate
+unscored diagnostic and cannot create upstream success or completed episodes.
+Preserve the raw MP4 and label any denoised derivative with
 its source hash and transform. Validate coherent motion over the same progress
 interval after temporal/spatial denoising; a noisy static scene must fail.
 Zero-action output is always a baseline and never task-qualified. If video is
