@@ -14,6 +14,9 @@ _HELP = """Usage: npa studio [--registry studio.json] <film> <command> [options]
 Commands: list, brief, scenes, narrate, draft, watch, preview, final.
 Example: npa studio inference draft --scene 01-opening --open
 
+Search accessible object storage using external NPA configuration:
+  npa studio search --all-projects --query cosmos --kind video
+
 Create an empty portable studio from the repository renderer:
   npa studio init --directory ./my-studio --renderer docs/demos/executive-film
 
@@ -75,6 +78,10 @@ def _dispatch(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--registry", type=Path, default=Path("studio.json"))
     args, options = parser.parse_known_args(arguments)
+    if options and options[0] == "search":
+        from npa.studio_artifacts import run_search
+
+        return run_search(options[1:])
     registry = args.registry.resolve()
     data = json.loads(registry.read_text())
     if not isinstance(data, dict) or set(data) - {"renderer", "projects"}:

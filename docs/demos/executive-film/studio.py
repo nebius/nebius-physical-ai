@@ -17,8 +17,8 @@ def _projects(path):
         raise ValueError("Studio projects must be a mapping of names to project files")
     resolved = {}
     for name, value in projects.items():
-        if name == "list" or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name) is None:
-            raise ValueError("Film names must be lowercase names; list is reserved")
+        if name in {"list", "init", "search"} or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name) is None:
+            raise ValueError("Film names must be lowercase names; list, init and search are reserved")
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Film {name} requires a project file path")
         project = Path(value).expanduser()

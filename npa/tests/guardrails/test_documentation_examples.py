@@ -137,6 +137,9 @@ def test_heading_anchors_handle_formatting_and_duplicate_collisions(tmp_path: Pa
         ("npa workbench workflow submit '$SPEC' --invented", "unknown option --invented"),
         ("npa workbench workflow submit demo.yaml --var 'prompt=--literal' --runtime", ""),
         ("npa --help", ""),
+        ("npa studio search --discover-tenant --project demo --kind video", ""),
+        ("npa studio search --invented", "unknown option --invented"),
+        ("npa studio search --query '--literal' --read-metadata", ""),
         ("npa workbench nurec check --output json | jq .", ""),
     ],
 )

@@ -8,6 +8,9 @@ Usage: npa studio [--registry studio.json] <film> <command> [options]
 Commands: list, brief, scenes, narrate, draft, watch, preview, final.
 Example: npa studio inference draft --scene 01-opening --open
 
+Search accessible object storage using external NPA configuration:
+npa studio search --all-projects --query cosmos --kind video
+
 Create an empty portable studio from the repository renderer:
 npa studio init --directory ./my-studio --renderer docs/demos/executive-film
 

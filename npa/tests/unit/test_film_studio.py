@@ -42,7 +42,7 @@ def test_registry_resolves_independent_projects_relative_to_registry(studio, tmp
     assert projects["exec"] != projects["inference"]
 
 
-@pytest.mark.parametrize("projects", [[], {"list": "p.json"}, {"exec": {}}, {"Exec": "p.json"}])
+@pytest.mark.parametrize("projects", [[], {"list": "p.json"}, {"init": "p.json"}, {"search": "p.json"}, {"exec": {}}, {"Exec": "p.json"}])
 def test_invalid_registry_fails_before_running_a_command(studio, tmp_path, projects):
     path = tmp_path / "studio.json"
     path.write_text(json.dumps({"projects": projects}))

@@ -201,6 +201,8 @@ def _option_parameters(command) -> dict:
 
 
 def _command_error(root, argv: list[str]) -> str:
+    if argv[1:3] == ["studio", "search"]:
+        return _studio_search_error(argv[3:])
     command = root
     names = ["npa"]
     index = 1
@@ -227,6 +229,27 @@ def _command_error(root, argv: list[str]) -> str:
             command = child
             names.append(argument)
         index += 1
+    return ""
+
+
+def _studio_search_error(arguments: list[str]) -> str:
+    """Validate the import-light command against its actual argparse options."""
+    from npa.studio_artifacts import _parser
+
+    actions = _parser()._option_string_actions
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in _SHELL_BOUNDARIES or argument == "--" or argument.startswith("..."):
+            break
+        if not argument.startswith("-"):
+            index += 1
+            continue
+        option = argument.split("=", 1)[0]
+        action = actions.get(option)
+        if action is None:
+            return f"npa studio search: unknown option {option}"
+        index += 1 if action.nargs == 0 or "=" in argument else 2
     return ""
 
 

@@ -47,6 +47,46 @@ regenerating speech. Use `brief` to change the audience, request or duration,
 then author the corresponding storyboard. Both executive and inference films
 share this workflow; two minutes is an example, not a renderer limit.
 
+## Find footage in object storage
+
+`npa studio search` discovers assets before a film project exists. It uses the
+operator's external NPA configuration and credentials, follows every listing
+page, and keeps unknown formats visible as downloads. It does not provision,
+upload, download media, or run a background watcher.
+
+```bash
+npa studio search --all-projects --query cosmos --kind video
+npa studio search --project <your-project-alias> --discover-tenant --kind video
+npa studio search --project <your-project-alias> --bucket <your-bucket> \
+  --prefix runs/ --since 2026-01-01T00:00:00Z --read-metadata
+```
+
+By default, search enumerates buckets visible to the selected S3 credentials;
+`--all-projects` repeats this with each configured project's own credentials.
+`--discover-tenant` instead uses the selected project's tenant and the configured
+Nebius CLI profile to inventory projects and buckets. Known project aliases use
+their own storage credentials; other discovered buckets are probed with the
+selected credential context. Resource discovery never grants object access.
+Regional endpoints come from the discovered project region. This mode selects
+one project context and cannot be combined with `--all-projects`.
+
+Some credentials can list objects but cannot enumerate buckets. Search still
+checks the configured bucket and reports partial discovery. An explicit
+`--bucket` searches that scope without requiring bucket enumeration. JSON output
+is the default; `--output-format text` prints a compact inventory. Exit code 1
+means discovery or listing was incomplete, with successful results retained and
+per-source error codes. A completed listing does not prove every object can be
+downloaded. `--query` matches object keys, case-insensitively.
+
+`--read-metadata` issues HEAD requests only for matching objects. It reports
+declared tool, model, run ID, GPU and SHA-256 fields from S3 metadata, along with
+their evidence basis. Missing attribution stays unknown; a filename or ETag is
+never treated as proof of a generating tool or content hash. Unreadable metadata
+is reported separately from listing coverage. Verify run manifests and actual
+media before making claims in a film. Keep search JSON private: it includes
+source endpoints, project identities, bucket names and object keys, but no
+credentials or signed URLs. None of these values belongs in `studio.json`.
+
 ## Isaac Arena inference film
 
 [Before the real world](storyboard-inference-arena.json) is a separate 120-second
