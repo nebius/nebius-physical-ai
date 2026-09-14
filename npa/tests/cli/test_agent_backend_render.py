@@ -3811,6 +3811,33 @@ def test_rendered_backend_skips_unreadable_ssh_key_candidates(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
+    monkeypatch, tmp_path
+) -> None:
+    """The service backend must emit the Terraform-compatible HCL object form."""
+    module_name = "npa_rendered_hcl_ssh_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    candidate = "/home/ubuntu/.ssh/id_ed25519.pub"
+    real_isfile = module.os.path.isfile
+    real_access = module.os.access
+    monkeypatch.delenv("TF_VAR_ssh_public_key", raising=False)
+    monkeypatch.setattr(
+        module.os.path,
+        "isfile",
+        lambda value: True if str(value) == candidate else real_isfile(value),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "access",
+        lambda value, mode: True if str(value) == candidate else real_access(value, mode),
+    )
+    try:
+        env = module._agent_command_env()
+        assert env["TF_VAR_ssh_public_key"] == '{path="/home/ubuntu/.ssh/id_ed25519.pub"}'
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 @pytest.fixture
 def preload_backend_body(monkeypatch):
     from npa.cli import agent as agent_module

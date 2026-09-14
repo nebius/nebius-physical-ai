@@ -2753,6 +2753,20 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
     assert f'ssh_public_key={{path="{key}"}}' in apply_call
 
 
+def test_resolve_shared_ssh_public_key_accepts_json_path_from_older_agent(
+    tmp_path: Path,
+) -> None:
+    """Preserve provisioning compatibility with agents deployed before HCL output."""
+    key = tmp_path / "id_ed25519.pub"
+    key.write_text("ssh-ed25519 AAAAC3Nz older-agent@example\n", encoding="utf-8")
+
+    resolved = tf_mod._resolve_shared_ssh_public_key(
+        {}, {"TF_VAR_ssh_public_key": json.dumps({"path": str(key)})}
+    )
+
+    assert resolved == "ssh-ed25519 AAAAC3Nz older-agent@example"
+
+
 def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     monkeypatch, tmp_path: Path
 ) -> None:

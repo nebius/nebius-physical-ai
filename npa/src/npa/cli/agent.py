@@ -3425,7 +3425,10 @@ def _agent_command_env() -> dict:
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
             if os.path.isfile(candidate) and os.access(candidate, os.R_OK):
-                env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
+                # Terraform variables use HCL object syntax, not JSON. JSON
+                # string quoting remains valid inside the HCL value and keeps
+                # paths with special characters safely escaped.
+                env["TF_VAR_ssh_public_key"] = "{{path=" + json.dumps(candidate) + "}}"
                 break
         if not env.get("TF_VAR_ssh_public_key"):
             for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
@@ -3435,7 +3438,7 @@ def _agent_command_env() -> dict:
                 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
                     value = line.strip()
                     if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
-                        env["TF_VAR_ssh_public_key"] = json.dumps({{"key": value}})
+                        env["TF_VAR_ssh_public_key"] = "{{key=" + json.dumps(value) + "}}"
                         break
                 if env.get("TF_VAR_ssh_public_key"):
                     break

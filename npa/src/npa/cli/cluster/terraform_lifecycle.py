@@ -2470,6 +2470,24 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if raw is None:
         raw = env.get("TF_VAR_ssh_public_key", "")
     document = str(raw or "").strip()
+    # ``TF_VAR_*`` is commonly set from shell or service-manager environments.
+    # Accept the JSON object representation too: an earlier agent backend used
+    # ``json.dumps({"path": ...})`` while Terraform's CLI examples use HCL.
+    # Keeping both forms makes an in-place agent upgrade safe.
+    try:
+        json_object = json.loads(document)
+    except json.JSONDecodeError:
+        json_object = None
+    if isinstance(json_object, dict):
+        key = json_object.get("key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+        path_value = json_object.get("path")
+        if isinstance(path_value, str) and path_value.strip():
+            path = Path(path_value).expanduser()
+            if not path.is_file():
+                raise typer.BadParameter(f"SSH public key path does not exist: {path}")
+            return path.read_text(encoding="utf-8").strip()
     key_match = re.search(r'\bkey\s*=\s*"([^"]+)"', document, re.DOTALL)
     if key_match:
         return key_match.group(1).strip()
