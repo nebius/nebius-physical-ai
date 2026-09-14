@@ -160,8 +160,10 @@ from npa.cli.agent_site import (
 from npa.cli.agent_service_install import install_agent_services
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
+    adopt_legacy_remote_identity,
     assert_remote_owner_if_present,
     build_deployment_manifest,
+    read_remote_owner_if_present,
     verify_remote_deployment,
 )
 from npa.deploy import provisioner
@@ -385,6 +387,43 @@ def _ensure_bootstrap_ingress(
             allow_world_open=allow_world_open_application,
             tool="agent-bootstrap",
         )
+
+
+def _adopt_legacy_bootstrap_identity(
+    *,
+    record: dict[str, Any],
+    host: str,
+    ssh_user: str,
+    ssh_key_path: str,
+    project_alias: str,
+    agent_name: str,
+    backend_port: int,
+) -> dict[str, str]:
+    """Adopt only a matching remote owner for an explicitly requested refresh."""
+    if isinstance(record.get("deployment"), dict) and record["deployment"]:
+        raise DeploymentIdentityError(
+            "agent record already has an immutable deployment owner; refusing legacy adoption"
+        )
+    ssh = SSHClient(
+        config=resolve_ssh_config(
+            ssh_host=host,
+            ssh_user=ssh_user,
+            ssh_key=ssh_key_path,
+            project=None,
+            name=None,
+        ).ssh
+    )
+    remote = read_remote_owner_if_present(ssh, backend_port=backend_port)
+    if not remote:
+        raise DeploymentIdentityError(
+            "remote agent has no owner manifest to adopt; bootstrap without adoption"
+        )
+    expected = build_deployment_manifest(
+        project_alias=project_alias,
+        name=agent_name,
+        require_clean=False,
+    )
+    return adopt_legacy_remote_identity(expected, remote)
 
 
 def _cleanup_agent_ingress(instance_id: str) -> None:
@@ -9735,6 +9774,8 @@ def _transactional_agent_command(command: str):
                 resume_argv.append("--allow-world-open-ssh")
             if bool(bound.arguments.get("allow_world_open_application")):
                 resume_argv.append("--allow-world-open-application")
+            if bool(bound.arguments.get("adopt_remote_identity")):
+                resume_argv.append("--adopt-remote-identity")
             if bool(bound.arguments.get("agent_only")):
                 resume_argv.append("--agent-only")
             if "wait_ssh" in bound.arguments:
@@ -10830,6 +10871,13 @@ def bootstrap_cmd(
         "--allow-world-open-application",
         help="Acknowledge an agent UI source CIDR of /0.",
     ),
+    adopt_remote_identity: bool = typer.Option(
+        False,
+        "--adopt-remote-identity",
+        help=(
+            "Adopt a matching remote owner only when this legacy local record has no deployment identity."
+        ),
+    ),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -11064,6 +11112,24 @@ def bootstrap_cmd(
             "agent record and supplied CIDRs, then retry. "
             f"({type(exc).__name__})"
         )
+    deployment: dict[str, str] | None = None
+    if adopt_remote_identity:
+        try:
+            deployment = _adopt_legacy_bootstrap_identity(
+                record=record,
+                host=public_ip,
+                ssh_user=ssh_user,
+                ssh_key_path=ssh_key_path,
+                project_alias=project,
+                agent_name=name,
+                backend_port=backend_port,
+            )
+        except (DeploymentIdentityError, SSHError, ConfigError) as exc:
+            _fail(
+                "Could not adopt the legacy remote deployment identity. Verify "
+                "this is the matching agent owner, then retry. "
+                f"({type(exc).__name__})"
+            )
     convergence = converge_remote_agent_setup(
         operation=operation,
         # `bootstrap` is an explicit UI/backend refresh. A prior interrupted
@@ -11109,6 +11175,7 @@ def bootstrap_cmd(
             "foxglove_cloud_import_timeout_seconds": foxglove_settings[
                 "cloud_import_timeout_seconds"
             ],
+            **({"deployment": deployment} if deployment is not None else {}),
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -11169,6 +11236,8 @@ def bootstrap_cmd(
     updated["ssh_key_path"] = ssh_key_path
     updated["foxglove"] = foxglove_settings
     updated["llm"] = llm_runtime["persisted"]
+    if deployment is not None:
+        updated["deployment"] = deployment
     updated["setup_state"] = "healthy"
     if artifact_sources:
         updated["artifact_sources"] = list(artifact_sources)

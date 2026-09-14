@@ -1474,6 +1474,7 @@ def test_bootstrap_exposes_explicit_ingress_recovery_options() -> None:
     assert "--application-cidr-block" in result.output
     assert "--allow-world-open-ssh" in result.output
     assert "--allow-world-open-application" in result.output
+    assert "--adopt-remote-identity" in result.output
 
 
 def test_bootstrap_refreshes_local_source_after_an_interrupted_prior_attempt() -> None:
@@ -6446,6 +6447,7 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
             "203.0.113.50/32",
             "--application-cidr-block",
             "198.51.100.60/32",
+            "--adopt-remote-identity",
         ],
     )
 
@@ -6458,6 +6460,7 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
     assert resume_argv[ssh_option + 1] == "203.0.113.50/32"
     application_option = resume_argv.index("--application-cidr-block")
     assert resume_argv[application_option + 1] == "198.51.100.60/32"
+    assert "--adopt-remote-identity" in resume_argv
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:

@@ -94,6 +94,12 @@ The optional `--allow-world-open-ssh` and
 `--allow-world-open-application` flags are required independently when either
 source is intentionally `/0`.
 
+When a pre-identity agent record belongs to an existing VM from the same
+repository, project alias, and agent name but was originally deployed from a
+different branch, bootstrap refuses to overwrite it by default. After verifying
+that exact owner, opt in once with `--adopt-remote-identity`; NPA retains the
+remote deployment namespace while recording the current committed source revision.
+
 For one custom OpenAI-compatible provider, keep its settings outside the
 checkout in a mode-`0600` JSON file. The API key stays in a separate mode-`0600`
 file and is never passed on the command line:
