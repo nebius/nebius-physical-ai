@@ -1476,6 +1476,17 @@ def test_bootstrap_exposes_explicit_ingress_recovery_options() -> None:
     assert "--allow-world-open-application" in result.output
 
 
+def test_agent_ui_treats_restricted_tenant_listing_as_partial_access_notice() -> None:
+    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert ".access-errors.is-notice" in ui
+    assert "const tenantListingOnly" in ui
+    assert "Tenant-wide project listing is restricted." in ui
+    assert "errorsHost.classList.toggle(\"is-notice\", limitedDiscovery)" in ui
+
+
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
     None
 ):

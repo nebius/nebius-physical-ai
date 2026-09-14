@@ -568,6 +568,7 @@
       }
       .access-action-run-copy { min-width: 0; overflow-wrap: anywhere; }
       .access-errors { margin-top: 8px; color: var(--danger-text); font-size: 12px; }
+      .access-errors.is-notice { color: var(--muted); }
       @media (max-width: 760px) {
         .access-picker-grid { grid-template-columns: 1fr; }
         .access-capabilities { grid-template-columns: 1fr; }
@@ -7390,9 +7391,18 @@
         }
         const errors = Array.isArray(report && report.errors) ? report.errors : [];
         if (errorsHost) {
-          errorsHost.textContent = errors.length
-            ? errors.map((item) => String((item && item.message) || "Access probe unavailable.")).join(" ")
-            : "";
+          const tenantListingOnly = errors.length > 0 && errors.every((item) =>
+            String((item && item.scope) || "") === "list tenant projects" &&
+            String((item && item.code) || "") === "permission_denied"
+          );
+          const limitedDiscovery = tenantListingOnly && String((report && report.status) || "") === "partial" &&
+            projects.length > 0 && resourceCount > 0;
+          errorsHost.classList.toggle("is-notice", limitedDiscovery);
+          errorsHost.textContent = limitedDiscovery
+            ? "Tenant-wide project listing is restricted. The available project resources above remain usable."
+            : errors.length
+              ? errors.map((item) => String((item && item.message) || "Access probe unavailable.")).join(" ")
+              : "";
         }
       }
       async function refreshAccess(force) {
