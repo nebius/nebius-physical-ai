@@ -388,7 +388,11 @@ def _obj(key: str, size: int = 1, ts: str = "2026-06-30T00:00:00+00:00") -> dict
     return {
         "Key": key,
         "Size": size,
-        "LastModified": datetime.fromisoformat(ts).astimezone(timezone.utc),
+        # RFC 3339 permits ``Z``; Python 3.10's ISO parser requires the
+        # equivalent explicit UTC offset.
+        "LastModified": datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        ),
     }
 
 
