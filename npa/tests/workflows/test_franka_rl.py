@@ -262,6 +262,43 @@ def test_isaac_proxy_camera_returns_owned_rgb_pixels():
     assert np.all(frame == 128)
 
 
+def test_capture_can_reset_tensors_retained_from_preceding_inference_episode(tmp_path, monkeypatch, recipe):
+    torch = pytest.importorskip("torch")
+    from npa.workflows import franka_rl_capture, franka_rl_eval
+
+    robot = SimpleNamespace(data=SimpleNamespace(joint_pos=SimpleNamespace(torch=torch.zeros((1, 9)))))
+    wrapped = SimpleNamespace(unwrapped=SimpleNamespace(scene={"robot": robot}), clip_actions=None,
+                              metric=torch.zeros(1), steps=0)
+
+    def reset():
+        wrapped.metric[0] = 0.0
+        return torch.zeros((1, 36)), {}
+
+    def step(action):
+        wrapped.metric = torch.ones(1)
+        wrapped.steps += 1
+        return torch.zeros((1, 36)), None, torch.tensor([False]), {}
+
+    def frame(env):
+        pixels = np.zeros((480, 640, 3), dtype=np.uint8)
+        pixels[0, 0] = 255
+        pixels[1, 1] = wrapped.steps
+        return pixels
+
+    wrapped.reset, wrapped.step = reset, step
+    monkeypatch.setattr(franka_rl_capture, "_orient_camera", lambda env: None)
+    monkeypatch.setattr(franka_rl_capture, "_frame", frame)
+    monkeypatch.setattr(franka_rl_eval, "_observe", lambda env: (np.array([0.2]), np.array([0.0]), np.array([0.0])))
+    recipe = dict(recipe, episode_steps=2)
+    for index in range(2):
+        result = franka_rl_capture._capture_episode(wrapped, lambda obs: torch.zeros((1, 8)),
+                                                    tmp_path / str(index), recipe)
+        assert result["length"] == 2
+    assert wrapped.metric.is_inference() and wrapped.steps == 4
+    with pytest.raises(RuntimeError, match="outside InferenceMode"):
+        wrapped.metric.zero_()
+
+
 def test_prepare_seals_disjoint_streams_without_isaac(tmp_path, recipe):
     output = tmp_path / "prepared"
     assert franka_rl.main(["prepare", "--run-id", "test-franka", "--output-path", str(output)]) == 0

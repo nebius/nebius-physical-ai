@@ -36,12 +36,13 @@ def _capture_episode(wrapped, policy, output: Path, recipe: dict) -> dict:
 
     from npa.workflows.franka_rl_eval import _observe
 
-    obs, _ = wrapped.reset()
-    _orient_camera(wrapped)
-    metrics = PlacementMetrics(1, recipe)
-    metrics.closest = _observe(wrapped)[0]
     states, actions, frames = [], [], []
     with torch.inference_mode():
+        # Isaac can retain tensors created by the preceding inference rollout.
+        obs, _ = wrapped.reset()
+        _orient_camera(wrapped)
+        metrics = PlacementMetrics(1, recipe)
+        metrics.closest = _observe(wrapped)[0]
         for _ in range(recipe["episode_steps"]):
             action = policy(obs)
             if wrapped.clip_actions is not None:
