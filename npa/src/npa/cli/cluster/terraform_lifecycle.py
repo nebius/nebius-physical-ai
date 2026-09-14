@@ -2463,6 +2463,20 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
 
 
+def _authorized_key_from_file(path: Path) -> str:
+    """Return the first plain public-key entry from an ``authorized_keys`` file."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        value = line.strip()
+        if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+            return value
+    return ""
+
+
 def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) -> str:
     """Resolve legacy path-or-key tfvars into the shared recipe's key value."""
 
@@ -2500,6 +2514,12 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if document and document.startswith(("ssh-", "ecdsa-")):
         return document
     explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    if explicit:
+        explicit_path = Path(explicit).expanduser()
+        if explicit_path.name == "authorized_keys":
+            authorized_key = _authorized_key_from_file(explicit_path)
+            if authorized_key:
+                return authorized_key
     candidates = (
         [Path(explicit).expanduser()]
         if explicit
@@ -2544,6 +2564,13 @@ def _ssh_public_key_var_args(
     )
     for candidate in candidates:
         if candidate.is_file():
+            if candidate.name == "authorized_keys":
+                authorized_key = _authorized_key_from_file(candidate)
+                if authorized_key:
+                    return [
+                        "-var",
+                        "ssh_public_key={key=" + json.dumps(authorized_key) + "}",
+                    ]
             return ["-var", f'ssh_public_key={{path="{candidate}"}}']
     if allow_placeholder:
         return [

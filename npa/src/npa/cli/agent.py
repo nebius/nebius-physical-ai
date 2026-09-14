@@ -1062,6 +1062,9 @@ server {{
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     expected_agent_service_account_id = shlex.quote(service_account_id.strip())
     expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
+    agent_ssh_home = "/root" if ssh_user == "root" else f"/home/{ssh_user}"
+    agent_cluster_ssh_key_path = f"{agent_ssh_home}/.ssh/authorized_keys"
+    agent_cluster_ssh_env = f"NPA_SSH_PUBLIC_KEY={agent_cluster_ssh_key_path}"
     nebius_cli_version = shlex.quote(supported_tool_version("nebius-cli", __file__))
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
     rerun_recording_arg = "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
@@ -1154,6 +1157,16 @@ NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
 NPA_AGENT_PRELOAD_STOCK_DEMO={preload_stock_demo_value}
 ENV
+# The root backend provisions worker node groups in-process. Give it the same
+# public key that authorized this agent VM through NPA's generic key-file
+# contract; the cluster lifecycle extracts the first actual key entry rather
+# than passing the entire authorized_keys file to Terraform.
+if sudo test -r {shlex.quote(agent_cluster_ssh_key_path)}; then
+  printf '%s\\n' {shlex.quote(agent_cluster_ssh_env)} | sudo tee /opt/npa-agent/cluster.env >/dev/null
+  sudo chmod 0644 /opt/npa-agent/cluster.env
+else
+  sudo rm -f /opt/npa-agent/cluster.env
+fi
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
 NPA_FOXGLOVE_EMBED_SRC={foxglove_env["embed_src"]}
@@ -9247,6 +9260,7 @@ EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/artifact-sources.env
 EnvironmentFile=-/opt/npa-agent/public.env
+EnvironmentFile=-/opt/npa-agent/cluster.env
 EnvironmentFile=-/opt/npa-agent/foxglove.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 127.0.0.1 --port {backend_port} --log-level warning --no-access-log --ws websockets --ws-max-size 4194304 --ws-max-queue 4 --ws-ping-interval 10 --ws-ping-timeout 10 --ws-per-message-deflate false
 WorkingDirectory=/opt/npa-agent

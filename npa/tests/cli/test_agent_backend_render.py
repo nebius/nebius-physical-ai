@@ -3838,6 +3838,15 @@ def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
         sys.modules.pop(module_name, None)
 
 
+def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
+    from npa.cli import agent as agent_module
+
+    script_source = Path(agent_module.__file__).read_text(encoding="utf-8")
+
+    assert "NPA_SSH_PUBLIC_KEY={agent_cluster_ssh_key_path}" in script_source
+    assert "EnvironmentFile=-/opt/npa-agent/cluster.env" in script_source
+
+
 @pytest.fixture
 def preload_backend_body(monkeypatch):
     from npa.cli import agent as agent_module
