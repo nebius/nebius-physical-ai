@@ -119,6 +119,8 @@ def _validate(storyboard, assets, scene_id=None):
             raise ValueError(f"SHA-256 mismatch for asset {role}")
         if asset["kind"] not in {"image", "video"}:
             raise ValueError(f"Unsupported asset kind for {role}")
+        if asset.get("playback", "loop") not in ("loop", "hold"):
+            raise ValueError(f"Unsupported playback mode for {role}")
         crop = asset.get("crop")
         if crop and (len(crop) != 4 or any(type(v) is not int or v < 0 for v in crop)
                      or crop[2] == 0 or crop[3] == 0):
@@ -136,6 +138,8 @@ def _validate(storyboard, assets, scene_id=None):
 def _input(asset):
     if asset["kind"] == "image":
         return ["-loop", "1", "-framerate", "30", "-i", asset["path"]]
+    if asset.get("playback") == "hold":
+        return ["-i", asset["path"]]
     return ["-stream_loop", "-1", "-i", asset["path"]]
 
 
@@ -152,6 +156,8 @@ def _media_filter(index, asset, rectangle, duration, profile):
     if asset["kind"] == "image":
         filters.append(f"zoompan=z='1+0.018*on/{30 * duration}':"
                        f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps=30")
+    elif asset.get("playback") == "hold":
+        filters.append(f"tpad=stop_mode=clone:stop_duration={duration}")
     filters += [f"trim=duration={duration}", "format=yuv420p"]
     layer = f"[{index}:v]{','.join(filters)}[media{index}]"
     overlay = f"[base{index - 1}][media{index}]overlay={x}:{y}:shortest=1[base{index}]"
@@ -276,8 +282,9 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                 "ffmpeg_version": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0],
                 "assets": {role: {"sha256": asset["sha256"], "kind": asset["kind"],
                                   "crop": asset.get("crop"),
+                                  "playback": asset.get("playback", "loop") if asset["kind"] == "video" else None,
                                   "provenance": asset.get("provenance")} for role, asset in assets.items()},
-                "editorial": "Separate saved run outputs; editorial assembly applies crops, loops and presentation zooms."}
+                "editorial": "Separate saved run outputs; editorial assembly applies crops, configured loops or final-frame holds, and presentation zooms."}
 
 
 def _evidence(target, storyboard, assets, directory, storyboard_path=None):

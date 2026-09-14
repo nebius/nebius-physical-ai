@@ -434,6 +434,10 @@ mapping these editorial roles to files you are entitled to use:
 | `rerun` | Actual Rerun viewer recording of the verified Wan run artifact |
 
 Every entry has `path`, `kind` (`video` or `image`), and the complete `sha256`.
+Video entries optionally set `playback: "hold"` to preserve their final frame
+when a scene outlasts the source clip. The default, `"loop"`, repeats the clip.
+Playback choice participates in scene caching and the rendered asset manifest;
+changing it rebuilds the affected scenes. Neither mode changes the source file.
 Paths may be absolute or relative to `assets.json`. Images can reference the
 same original file with `crop: [x, y, width, height]` in source pixels. Crops
 must fit inside the decoded image. Compute each digest with
@@ -512,7 +516,7 @@ training data and a held-out ACT evaluation; it does not assert task success.
 FiftyOne shows saved candidate decisions, including rejected candidates. Rerun
 shows the actual generated video and its recorded settings. Alpamayo is a saved
 inference visualization; the presentation zoom is not continuous driving video.
-Short clips may loop to fill an editorial shot. Preserve these distinctions
+Short clips loop by default or hold their last frame when configured. Preserve these distinctions
 when replacing media or changing narration.
 
 The quoted driving rationale must match `trajectory.json` for every
