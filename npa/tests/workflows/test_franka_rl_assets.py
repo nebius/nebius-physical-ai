@@ -44,3 +44,23 @@ def test_asset_mutation_refuses_simulation_instead_of_falling_back(tmp_path, mon
     Path(tmp_path / "assets/hex_nut.usda").write_text("changed")
     with pytest.raises(ValueError, match="asset bytes changed"):
         configure_assets(SimpleNamespace(), manifest, tmp_path)
+
+
+@pytest.mark.parametrize("target", ASSET_NAMES)
+def test_sealed_distractors_rest_on_authored_tray_surface(tmp_path, target):
+    usd = pytest.importorskip("pxr.Usd")
+    manifest = write_assets(tmp_path, target)
+    for name, position in manifest["distractor_positions_m"].items():
+        stage = usd.Stage.Open(str(tmp_path / f"assets/{name}.usda"))
+        lower = []
+        for prim in stage.Traverse():
+            if prim.GetTypeName() == "Cylinder":
+                z = prim.GetAttribute("xformOp:translate").Get()[2]
+                lower.append(z - prim.GetAttribute("height").Get() / 2)
+            elif prim.GetTypeName() == "Mesh":
+                lower.extend(point[2] for point in prim.GetAttribute("points").Get())
+        tray = usd.Stage.Open(str(tmp_path / "assets/fixture.usda"))
+        base = tray.GetPrimAtPath("/Asset/TrayBase")
+        top = (base.GetAttribute("xformOp:translate").Get()[2]
+               + base.GetAttribute("xformOp:scale").Get()[2] / 2)
+        assert position[2] + min(lower) == pytest.approx(top)

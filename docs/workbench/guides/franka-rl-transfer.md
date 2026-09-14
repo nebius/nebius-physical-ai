@@ -175,7 +175,9 @@ label sent to the model.
 Each request identifies the target by shape and color and sends up to 16 actual
 frames, including the beginning, the whole rollout, and a denser final half-second.
 Every image has its measured timestamp and frame index. The sealed rubric asks
-for three visual events: **lifted**, **held at the end**, and **scene disturbed**.
+for three visual events: **object elevated** (`lifted`), **held at the end**, and **scene disturbed**.
+Elevation does not establish a grasp: a tossed object counts as elevated, while
+the final-hold judgment separately requires visible retention in the gripper.
 Each receives `yes`, `no`, or `uncertain`, cited frame indices, and an explanation.
 Failure tags distinguish missed grasps, slipping/dropping, unstable holding,
 wrong-object handling, fixture contact, and occlusion.
@@ -186,9 +188,16 @@ final hold without support from both final frames. It retains sampled JPEGs,
 the exact prompt, raw provider response, model ID, rubric hash, request ID, usage,
 latency, and retries. Provider cost is recorded only when returned; otherwise it
 is null. There is no stub or score-override path.
+If a judgment fails, available requests, raw responses, and sampled images are
+published under a unique `visual-failures/` directory beside `visual/`. A failure
+record cannot satisfy the workflow's completion output. Storage failure is
+reported separately without replacing the original evaluation error.
 
 The report compares visual lift judgments against synchronized simulator height
-measurements, including sensitivity, specificity, uncertainty, and false positives.
+measurements at the exact supplied frame indices. The reference requires the
+object center above 10 cm in at least two supplied frames; an event occurring
+only between samples does not count. This elevation proxy reports sensitivity,
+specificity, uncertainty, and false positives, without claiming grasp detection.
 The predeclared audit gate requires balanced lift agreement of at least 80%, with
 both positive and negative references present; uncertain judgments count against
 agreement. The visual task gate requires at least 70% observed final holds in

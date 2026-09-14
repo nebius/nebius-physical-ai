@@ -5,6 +5,7 @@ import hashlib
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 from npa.workbench.vlm_eval.temporal import RUBRIC
 from npa.workflows.franka_rl import _recipe
@@ -94,3 +95,66 @@ def test_audit_without_both_reference_classes_is_unqualified(visual_case):
     summary = summarize_visual(rows, recipe)
     assert summary["lift_balanced_accuracy"] is None
     assert not summary["visual_audit_passed"]
+
+
+@pytest.mark.parametrize("elevated,expected", [([3, 4], False), ([35], False), ([0, 35], True)])
+def test_elevation_reference_uses_only_frames_supplied_to_judge(tmp_path, monkeypatch, elevated, expected):
+    from npa.workflows import franka_rl_vlm
+
+    trajectory = tmp_path / "trajectories/episode_000000"
+    trajectory.mkdir(parents=True)
+    np.save(trajectory / "rgb.npy", np.zeros((250, 2, 2, 3), dtype=np.uint8))
+    geometry = np.zeros((250, 3))
+    geometry[elevated, 2] = 0.2
+    np.save(trajectory / "object_metrics.npy", geometry)
+    supplied = [0, 35, 249]
+    monkeypatch.setattr(franka_rl_vlm, "judge_manipulation", lambda **kwargs: {
+        "frames": [{"index": index} for index in supplied]})
+    recipe = {"assets": {"description": "orange spool"}, "minimum_object_height_m": 0.1,
+              "visual_eval": {"frame_count": 16, "model": "test"}}
+    metadata = {"episode_results": [{"length": 250}], "fps": 50}
+    row = franka_rl_vlm._judge_episode(tmp_path, tmp_path / "output", 0, metadata, recipe, None)
+    assert row["reference_lifted"] is expected
+    assert row["reference_sample_indices"] == supplied
+
+
+@pytest.mark.parametrize("publication_fails", [False, True])
+def test_failed_judge_retains_diagnostics_without_success_manifest(tmp_path, monkeypatch, publication_fails):
+    from npa.workflows import franka_rl, franka_rl_vlm
+    from npa.workflows.lerobot_transfer_data import materialize
+
+    def fail_judge(prepared, output):
+        episode = output / "episode-000000"
+        episode.mkdir(parents=True)
+        (episode / "request.json").write_text('{"model":"test"}')
+        (episode / "response.json").write_text('{"choices":[]}')
+        raise ValueError("invalid judge response")
+
+    monkeypatch.setattr(franka_rl_vlm, "evaluate_captures", fail_judge)
+    monkeypatch.setattr(franka_rl, "materialize", lambda *args: tmp_path)
+    if publication_fails:
+        def fail_publish(*args):
+            raise OSError("storage unavailable")
+        monkeypatch.setattr(franka_rl, "publish", fail_publish)
+    with pytest.raises(ValueError, match="invalid judge response"):
+        franka_rl.main(["visual-evaluate", "--input-path", str(tmp_path),
+                       "--output-path", str(tmp_path / "visual")])
+    assert not (tmp_path / "visual").exists()
+    if not publication_fails:
+        evidence = next((tmp_path / "visual-failures").iterdir())
+        materialize(str(evidence), tmp_path / "unused")
+        assert (evidence / "episode-000000/response.json").read_text() == '{"choices":[]}'
+        assert (evidence / "failure.json").is_file()
+        assert not (evidence / "visual-evaluation.json").exists()
+
+
+def test_failure_directory_error_does_not_replace_judge_error(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+    from npa.workflows.franka_rl import _publish_visual_failure
+
+    def fail_mkdir(*args, **kwargs):
+        raise OSError("filesystem unavailable")
+
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    _publish_visual_failure(tmp_path, str(tmp_path / "visual"), ValueError("invalid judge"))
+    assert '"failure_evidence_published": false' in capsys.readouterr().out

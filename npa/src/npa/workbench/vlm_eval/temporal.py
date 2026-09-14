@@ -14,11 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from npa.clients.token_factory import TokenFactoryClient
 
-RUBRIC_VERSION = "manipulation-visible-events-v1"
+RUBRIC_VERSION = "manipulation-visible-events-v2"
 RUBRIC = """Judge only the supplied timestamped images of one continuous robot episode.
 Identify the requested target by its shape and color; other parts are distractors.
-For lifted, require the target visibly separated from its initial support and held
-by the gripper in at least two frames. Gripper movement alone is insufficient.
+For lifted, judge visible object elevation: require the target clearly elevated
+above its initial support in at least two supplied frames. This event does not
+require a grasp; a tossed object also counts as elevated. Gripper movement alone
+is insufficient. Judge grasp and retention separately using held_at_end.
 For held_at_end, require the target still visibly grasped and approximately steady
 in the last two supplied frames. This is a visual observation, not proof of exact
 position, speed, duration between samples, force, or physical robot readiness.

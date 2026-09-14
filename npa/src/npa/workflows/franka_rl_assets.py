@@ -14,6 +14,8 @@ ASSET_DESCRIPTIONS = {
     "bottle": "blue bottle-shaped part with a narrow neck",
 }
 _COLORS = {"spool": (0.9, 0.28, 0.04), "hex_nut": (0.65, 0.45, 0.12), "bottle": (0.05, 0.35, 0.8)}
+_LOWER_BOUNDS = {"spool": -0.026, "hex_nut": -0.018, "bottle": -0.038}
+_TRAY_TOP = 0.012
 _HEADER = '#usda 1.0\n(defaultPrim = "Asset"; metersPerUnit = 1; upAxis = "Z")\n'
 
 
@@ -83,6 +85,11 @@ def _fixture() -> str:
     return _HEADER + 'def Xform "Asset" {\n' + '\n'.join(pieces) + '\n}\n'
 
 
+def _distractor_positions(target: str) -> dict[str, list[float]]:
+    return {name: [0.69 + index * 0.065, 0.38, _TRAY_TOP - _LOWER_BOUNDS[name]]
+            for index, name in enumerate(candidate for candidate in ASSET_NAMES if candidate != target)}
+
+
 def write_assets(output: Path, target: str) -> dict:
     """Write original collision-bearing parts and seal their exact bytes.
 
@@ -106,6 +113,8 @@ def write_assets(output: Path, target: str) -> dict:
     return {"schema": "npa.franka-rl.assets.v1", "target": target,
             "description": ASSET_DESCRIPTIONS[target], "source": "npa_original_procedural_usd",
             "license": "Apache-2.0", "units": "metres", "nominal_mass_kg": 0.08,
+            "fixture_position_m": [0.72, 0.34, 0.0],
+            "distractor_positions_m": _distractor_positions(target),
             "files": {f"assets/{name}.usda": file_sha256(directory / f"{name}.usda") for name in contents}}
 
 
@@ -134,10 +143,10 @@ def configure_assets(config, manifest: dict, root: Path) -> None:
     config.scene.object.init_state.pos = (0.5, 0.0, 0.06)
     config.scene.npa_fixture = AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Fixture",
         spawn=sim.UsdFileCfg(usd_path=str(root / "assets/fixture.usda")),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.72, 0.34, 0.0)))
-    for index, name in enumerate(candidate for candidate in ASSET_NAMES if candidate != target):
+        init_state=AssetBaseCfg.InitialStateCfg(pos=tuple(manifest["fixture_position_m"])))
+    for index, (name, position) in enumerate(manifest["distractor_positions_m"].items()):
         setattr(config.scene, f"npa_distractor_{index}", AssetBaseCfg(
             prim_path=f"{{ENV_REGEX_NS}}/Distractor{index}",
             spawn=sim.UsdFileCfg(usd_path=str(root / f"assets/{name}.usda"),
                 rigid_props=sim.RigidBodyPropertiesCfg(kinematic_enabled=True)),
-            init_state=AssetBaseCfg.InitialStateCfg(pos=(0.69 + index * 0.065, 0.38, 0.065))))
+            init_state=AssetBaseCfg.InitialStateCfg(pos=tuple(position))))

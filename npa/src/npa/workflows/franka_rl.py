@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import uuid
 
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
 
@@ -131,9 +132,33 @@ def _run_stage(args, prepared: Path, output: Path, workspace: Path) -> None:
     elif args.stage == "visual-evaluate":
         from npa.workflows.franka_rl_vlm import evaluate_captures
 
-        evaluate_captures(prepared, output)
+        try:
+            evaluate_captures(prepared, output)
+        except Exception as error:
+            _publish_visual_failure(output, args.output_path, error)
+            raise
     else:
         _run_native(args.stage, prepared, output)
+
+
+def _publish_visual_failure(output: Path, destination: str, error: Exception) -> None:
+    """Retain diagnostic bytes separately without claiming stage completion."""
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "visual-evaluation.json").unlink(missing_ok=True)
+        failure_destination = destination.rstrip("/") + "-failures/" + uuid.uuid4().hex + "/"
+        write_json(output / "failure.json", {
+            "schema": "npa.franka-rl.visual-failure.v1", "status": "failed",
+            "error_type": type(error).__name__,
+            "completed_judgments": len(list(output.glob("episode-*/verdict.json"))),
+            "complete_visual_audit": False,
+        })
+        publish(output, failure_destination)
+        print(json.dumps({"status": "failed", "evidence_uri": failure_destination}), flush=True)
+    except Exception as publication_error:
+        # Publication failure must never replace the judge's original traceback.
+        print(json.dumps({"status": "failed", "failure_evidence_published": False,
+                          "publication_error_type": type(publication_error).__name__}), flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

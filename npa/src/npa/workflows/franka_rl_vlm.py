@@ -68,9 +68,11 @@ def _judge_episode(evaluated: Path, output: Path, index: int, metadata: dict, re
     result = judge_manipulation(rgb_path=trajectory / "rgb.npy", output=output / f"episode-{index:06d}",
         task=task, fps=metadata["fps"], frame_count=recipe["visual_eval"]["frame_count"],
         model=recipe["visual_eval"]["model"], client=client)
-    high = geometry[:, 2] > recipe["minimum_object_height_m"]
+    sampled = [frame["index"] for frame in result["frames"]]
+    high = geometry[sampled, 2] > recipe["minimum_object_height_m"]
     return {"episode_index": index, **row, "visual": result,
-            "reference_lifted": bool(np.any(high[1:] & high[:-1])),
+            "reference_lifted": bool(np.count_nonzero(high) >= 2),
+            "reference_sample_indices": sampled,
             "rgb_sha256": file_sha256(trajectory / "rgb.npy"),
             "geometry_sha256": file_sha256(trajectory / "object_metrics.npy")}
 
@@ -110,7 +112,7 @@ def summarize_visual(rows: list[dict], recipe: dict) -> dict:
             "quality_role": "Additional gate; cannot override failed simulator success",
             "calibrated_on_independent_human_labels": False,
             "limitations": ["Sampled monocular frames cannot verify exact speed, force, goal distance, or continuous stability.",
-                            "Agreement measures visible lift only; it does not validate the strict lift-and-hold predicate.",
+                            "Agreement uses object height in the same supplied frames as an elevation proxy; it does not verify grasp or strict lift-and-hold success.",
                             "Capture episodes are independent of held-out test episodes; their denominators differ."]}
 
 
