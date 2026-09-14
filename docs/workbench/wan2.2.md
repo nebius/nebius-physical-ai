@@ -28,6 +28,15 @@ stamp matches exactly; empty or deliberately stale caches fail closed with exit
 69. Installation and use remain governed by the upstream package/container terms;
 NPA adds no per-run consent variable. `HF_TOKEN` is optional for the public model
 and may be forwarded through `--secret-env HF_TOKEN` for rate limits or overrides.
+
+The image declares volumes at `/workspace/.cache/npa/wan2-2/runtime` and
+`/workspace/model-cache/wan2.2`. Mount storage at those exact paths. A parent
+mount such as `/workspace/model-cache` can leave the image's nested volume on
+the node's boot disk. For a Kubernetes memory-backed cache, set each exact
+`volumeMount.mountPath` and use `emptyDir.medium: Memory`; account for both
+downloaded weights and inference allocations in the pod's memory request.
+Check the filesystem at the actual cache path before downloading, for example
+`df -T /workspace/model-cache/wan2.2`. A memory-backed volume reports `tmpfs`.
 The image build validates the dependency union from two independent sources:
 the metadata of every distribution actually installed in `/opt/wan-base`, and
 PEP 658 core-metadata sidecars selected by the exact wheel hashes in
