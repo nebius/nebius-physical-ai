@@ -11047,10 +11047,6 @@ def bootstrap_cmd(
                 }
             )
     operation = current_operation()
-    resuming = str(record.get("setup_state") or "") in {
-        "remote_bootstrap_pending",
-        "reconciliation_indeterminate",
-    }
     try:
         _ensure_bootstrap_ingress(
             instance_id=str(record.get("instance_id") or "").strip(),
@@ -11070,7 +11066,12 @@ def bootstrap_cmd(
         )
     convergence = converge_remote_agent_setup(
         operation=operation,
-        resuming=resuming,
+        # `bootstrap` is an explicit UI/backend refresh. A prior interrupted
+        # bootstrap may have left a healthy but older service on the VM; merely
+        # adopting that service would silently discard the caller's local source
+        # changes. Always run this refresh, while convergence still reconciles
+        # exact remote health after a transport failure.
+        resuming=False,
         bootstrap=_bootstrap_agent_stack,
         reconcile=_reconcile_agent_setup,
         bootstrap_kwargs={

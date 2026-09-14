@@ -1476,6 +1476,15 @@ def test_bootstrap_exposes_explicit_ingress_recovery_options() -> None:
     assert "--allow-world-open-application" in result.output
 
 
+def test_bootstrap_refreshes_local_source_after_an_interrupted_prior_attempt() -> None:
+    import inspect
+
+    source = inspect.getsource(agent_module.bootstrap_cmd)
+
+    assert "A prior interrupted" in source
+    assert "resuming=False" in source
+
+
 def test_agent_ui_treats_restricted_tenant_listing_as_partial_access_notice() -> None:
     ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
         encoding="utf-8"
