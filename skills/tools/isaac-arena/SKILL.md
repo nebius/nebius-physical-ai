@@ -185,6 +185,9 @@ policy, Pink IK, environment, and capture operations. It never contains their
 arguments, input arrays, or exception text. Treat its last unfinished phase as
 an observation, not a timeout decision or task result; journal writes are best
 effort and preserve the original operation's result or exception.
+An `unavailable` method-phase event means the native binding could not be
+overridden on its instance. Keep that binding untouched and use the enclosing
+simulator phase; availability is neither execution evidence nor task progress.
 Preserve the raw MP4 and label any denoised derivative with
 its source hash and transform. Validate coherent motion over the same progress
 interval after temporal/spatial denoising; a noisy static scene must fail.

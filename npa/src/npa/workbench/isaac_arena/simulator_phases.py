@@ -18,6 +18,10 @@ _PHASES = {
     "action_apply", "scene_write", "scene_update", "simulation_step",
     "simulation_render", "physics_wait", "physics_step",
 }
+_METHOD_PHASES = {
+    "pink_ik", "action_apply", "scene_write", "scene_update", "simulation_step",
+    "simulation_render", "physics_wait", "physics_step",
+}
 _READINESS_FIELDS = {"stage_ready", "annotator_ready", "nonblack_rgb"}
 _CLASS_OWNERS: dict[type, Any] = {}
 
@@ -106,6 +110,10 @@ def _validate_event(phase: Any, event: Any, action_step: Any, fields: dict) -> N
             raise ValueError("invalid simulator readiness event")
         readiness = {key: value for key, value in fields.items() if key != "render_call"}
         _validate_readiness(fields["render_call"], readiness)
+        return
+    if event == "unavailable":
+        if phase not in _METHOD_PHASES or fields:
+            raise ValueError("invalid simulator observer availability event")
         return
     if phase not in _PHASES or event not in {"begin", "end", "failed"}:
         raise ValueError("invalid simulator phase event")
@@ -218,7 +226,10 @@ def _observe_method(target: Any, name: str, phase: str, env: Any) -> None:
     original = getattr(target, name, None)
     if not callable(original):
         return
-    local = vars(target)
+    local = getattr(target, "__dict__", None)
+    if local is None:
+        _journal(env).emit(phase, "unavailable", 0)
+        return
     had_local, previous = name in local, local.get(name)
     if isinstance(target, type):
         descriptor = inspect.getattr_static(target, name)
@@ -228,10 +239,24 @@ def _observe_method(target: Any, name: str, phase: str, env: Any) -> None:
         installed = _wrapped_classmethod(descriptor, phase, env)
     else:
         installed = _wrapped_method(original, phase, env)
-    setattr(target, name, installed)
+    if not _install_observer(target, name, installed, phase, env):
+        return
     _journal(env).observers.append(
         _ObservedMethod(target, name, previous, installed, had_local)
     )
+
+
+def _install_observer(target: Any, name: str, installed: Any, phase: str, env: Any) -> bool:
+    try:
+        setattr(target, name, installed)
+    except AttributeError:
+        if isinstance(target, type):
+            raise
+        # Some native bindings expose attributes but prohibit instance overrides.
+        # Their enclosing simulator call remains observable without changing them.
+        _journal(env).emit(phase, "unavailable", 0)
+        return False
+    return True
 
 
 def _observe_environment(env: Any) -> None:

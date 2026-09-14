@@ -65,6 +65,42 @@ def test_failed_simulator_publishes_hashed_diagnostics_before_raising(tmp_path):
     _assert_failed_evidence(destination)
 
 
+def test_pre_rollout_failure_reports_prepared_replay_without_execution_claim(tmp_path):
+    import h5py
+    import numpy as np
+
+    source = tmp_path / "source.hdf5"
+    with h5py.File(source, "w") as dataset:
+        episode = dataset.create_group("data/demo_0")
+        episode.create_dataset("actions", data=np.ones((8, 3), dtype=np.float32))
+        episode.create_dataset(
+            "initial_state/articulation/robot/joint_position",
+            data=np.zeros((1, 3), dtype=np.float32),
+        )
+        episode.attrs["success"] = True
+    destination = tmp_path / "failed"
+    observed = {}
+
+    def failed_before_rollout(argv, **kwargs):
+        prepared = Path(argv[argv.index("--replay_file_path") + 1])
+        observed["prepared_sha256"] = hashlib.sha256(prepared.read_bytes()).hexdigest()
+        return _failed_process(argv, **kwargs)
+
+    request = runtime.IsaacArenaRequest(
+        output_path=str(destination), policy_type="replay", input_path=str(source),
+    )
+    with pytest.raises(runtime.IsaacArenaError, match="policy_runner failed"):
+        runtime.evaluate(request, runner=failed_before_rollout)
+    result = json.loads((destination / "result.json").read_text())
+    prepared = result["input"]["execution"]
+    assert prepared["source_steps"] == prepared["prepared_steps"] == 8
+    assert prepared["prepared_sha256"] == observed["prepared_sha256"]
+    assert prepared["runtime_outcome_claim"] is False
+    assert not {"executed_steps", "executed_sha256"}.intersection(prepared)
+    assert result["input"]["trajectory"]["source_recorded_success"] is True
+    assert result["status"] == "failed" and "summary" not in result
+
+
 def test_publication_failure_preserves_private_local_evidence_after_scratch_cleanup(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime.tempfile, "tempdir", str(tmp_path))
 

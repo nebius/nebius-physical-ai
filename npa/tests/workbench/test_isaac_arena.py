@@ -399,15 +399,16 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
             "conversion": "upstream_root_pose_only",
         },
         "source_sha256": evidence["sha256"],
-        "executed_sha256": normalized["executed_sha256"],
+        "prepared_sha256": normalized["prepared_sha256"],
         "source_steps": 4,
-        "executed_steps": 4,
+        "prepared_steps": 4,
+        "runtime_outcome_claim": False,
         "action_padding_steps": 0,
         "initial_state_application": "isaac_lab_reset_to_relative",
         "fields": ["actions", "initial_state"],
         "published": False,
     }
-    assert len(normalized["executed_sha256"]) == 64
+    assert len(normalized["prepared_sha256"]) == 64
 
 
 def _isolated_optix_weights(tmp_path: Path, monkeypatch) -> Path:
@@ -740,7 +741,7 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "upstream_run_directory": "2026-09-12_01-02-03",
         "policy_type": "zero_action",
         "input_sha256": "",
-        "executed_input_sha256": "",
+        "execution_input_sha256": "",
         "simulator_ground_truth_sha256": [ground_truth["files"][0]["sha256"]],
     }
     raw_video = next(
@@ -839,7 +840,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     assert video["video"]["simulator_capture"] == {"verified": True}
     assert video["video"]["task_qualified"] is True
     assert video["video"]["binding"]["input_sha256"] == "a" * 64
-    assert len(video["video"]["binding"]["executed_input_sha256"]) == 64
+    assert len(video["video"]["binding"]["execution_input_sha256"]) == 64
     assert video["video"]["binding"]["simulator_ground_truth_sha256"] == [
         result["summary"]["simulator_ground_truth"]["files"][0]["sha256"]
     ]
@@ -849,7 +850,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     assert task_motion["final_openness"] == pytest.approx(0.81)
     assert task_motion["openness_delta"] == pytest.approx(0.61)
     assert result["input"]["execution"]["source_steps"] == 4
-    assert result["input"]["execution"]["executed_steps"] == 4
+    assert result["input"]["execution"]["prepared_steps"] == 4
     assert result["input"]["execution"]["action_padding_steps"] == 0
     assert not (tmp_path / "published" / "private").exists()
     assert all("replay-execution" not in entry["path"] for entry in result["artifacts"])

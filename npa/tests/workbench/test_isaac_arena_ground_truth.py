@@ -23,7 +23,7 @@ def _write_episode(root: Path, *, trace, success=True, episode_length=None):
 def _validate(root, *, successes=1, steps=80, required=True):
     return simulator_ground_truth(
         root, environment="gr1_open_microwave", expected_episodes=1,
-        expected_successes=successes, executed_steps=steps, require_task_success=required,
+        expected_successes=successes, expected_action_steps=steps, require_task_success=required,
     )
 
 
@@ -98,7 +98,7 @@ def test_matching_aggregate_success_count_cannot_hide_swapped_episodes(tmp_path)
     (tmp_path / "episode_results_rank0.jsonl").write_text("\n".join(map(json.dumps, entries)))
     with pytest.raises(IsaacArenaError, match="success flags disagree"):
         simulator_ground_truth(tmp_path, environment="gr1_open_microwave", expected_episodes=2,
-                               expected_successes=1, executed_steps=80, require_task_success=True)
+                               expected_successes=1, expected_action_steps=80, require_task_success=True)
 
 
 @pytest.mark.parametrize("steps", [[1, 1], [2, 3], [1, 3]])

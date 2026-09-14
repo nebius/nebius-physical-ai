@@ -127,7 +127,7 @@ def test_minimal_replay_normalization_preserves_every_action_and_initial_tensor(
         assert set(executed["data/demo_0"]) == {"actions", "initial_state"}
     assert source.read_bytes() == original_bytes
     assert execution.stat().st_mode & 0o777 == 0o600
-    assert record["executed_steps"] == record["source_steps"] == 80
+    assert record["prepared_steps"] == record["source_steps"] == 80
     assert record["action_padding_steps"] == 0
     assert record["published"] is False
 

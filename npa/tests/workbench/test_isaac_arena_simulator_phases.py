@@ -167,6 +167,8 @@ def test_readiness_records_only_observed_boolean_or_null_flags(tmp_path):
     ("env_step", "private error", {}),
     ("env_step", "failed", {"exception": "private exception content"}),
     ("env_step", "begin", {"render_call": "private value"}),
+    ("capture", "unavailable", {}),
+    ("physics_step", "unavailable", {"reason": "private binding details"}),
     ("capture_readiness", "observed", {
         "render_call": 1, "stage_ready": True, "annotator_ready": True,
         "nonblack_rgb": "private image contents",
@@ -417,3 +419,68 @@ def test_unsupported_native_binding_rolls_back_previously_installed_hooks(tmp_pa
     assert inspect.getattr_static(Unsupported, "wait_for_playing") is original_wait
     assert not hasattr(env, "_npa_phase_journal")
     assert Unsupported not in phases._CLASS_OWNERS
+
+
+def _immutable_physics(binding, calls, result, error):
+    class SlottedPhysics:
+        __slots__ = ()
+
+        def wait_for_playing(self):
+            calls.append("wait")
+
+        def step(self, value, *, fail=False):
+            calls.append((value, fail))
+            if fail:
+                raise error
+            return result
+
+    class ReadOnlyPhysics(SlottedPhysics):
+        def __setattr__(self, name, value):
+            raise AttributeError("native method is read-only")
+
+    return SlottedPhysics() if binding == "slotted" else ReadOnlyPhysics()
+
+
+@pytest.mark.parametrize("binding", ["slotted", "read_only"])
+@pytest.mark.parametrize("fail", [False, True])
+def test_immutable_native_binding_never_blocks_or_changes_rollout(tmp_path, binding, fail):
+    calls, result, argument = [], object(), object()
+    error = RuntimeError("private native failure")
+    physics = _immutable_physics(binding, calls, result, error)
+    original = inspect.getattr_static(type(physics), "step")
+
+    def step(value, *, fail=False):
+        physics.wait_for_playing()
+        return physics.step(value, fail=fail)
+
+    env = SimpleNamespace(sim=SimpleNamespace(physics_manager=physics, step=step))
+    phases.configure_phase_journal(env, tmp_path)
+    try:
+        with phases.phase_scope(env, "env_step", 1):
+            if fail:
+                with pytest.raises(RuntimeError) as caught:
+                    env.sim.step(argument, fail=True)
+                assert caught.value is error
+            else:
+                assert env.sim.step(argument) is result
+    finally:
+        phases.finalize_phase_journal(env)
+    _assert_immutable_rollout(tmp_path, env, physics, original, step, fail)
+    assert calls == ["wait", (argument, fail)]
+
+
+def _assert_immutable_rollout(directory, env, physics, original, step, fail):
+    assert env.sim.step is step
+    assert inspect.getattr_static(type(physics), "step") is original
+    assert type(physics) not in phases._CLASS_OWNERS
+    assert not hasattr(env, "_npa_phase_journal")
+    rows = _rows(directory)
+    assert [(row["phase"], row["event"]) for row in rows[:2]] == [
+        ("physics_wait", "unavailable"), ("physics_step", "unavailable"),
+    ]
+    assert all(row["action_step"] == 0 for row in rows[:2])
+    assert [(row["phase"], row["event"]) for row in rows[2:]] == [
+        ("env_step", "begin"), ("simulation_step", "begin"),
+        ("simulation_step", "failed" if fail else "end"), ("env_step", "end"),
+    ]
+    assert "private" not in json.dumps(rows)

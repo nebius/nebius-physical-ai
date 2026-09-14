@@ -206,6 +206,9 @@ When the action sequence ends before an episode finishes, a separate unscored
 diagnostic retains the remaining metric buffer and simulator state. It does not
 create a completed episode, success flag, or scored HDF5 record. This keeps a
 failed replay diagnosable while preserving the upstream result.
+Replay input metadata reports `prepared_steps` and `prepared_sha256`; these
+describe the private execution input prepared before launch. They do not count
+actions actually executed or imply a task result, including when setup fails.
 
 When emitted, `simulator-phases-rank*.jsonl` records fixed phase/event labels,
 monotonic timestamps, rank, action/render counters, and observed readiness
@@ -215,6 +218,10 @@ and individual render calls without retaining their arguments, input arrays,
 or exception text. Native classmethod binding, arguments, return values, and
 exceptions remain unchanged; journal I/O adds wall-clock overhead. The rollout
 finalizer restores only its own method bindings, including on failure.
+Bindings without a writable instance attribute dictionary remain untouched and
+emit an `unavailable` event for that method phase. Their enclosing simulator
+operation can still be observed; unavailable hooks do not block a rollout or
+claim that the underlying operation ran.
 An unfinished phase identifies the last observed operation;
 it does not establish a timeout, a failed task, or successful progress. Journal
 writing is best effort and does not replace the native result or exception.

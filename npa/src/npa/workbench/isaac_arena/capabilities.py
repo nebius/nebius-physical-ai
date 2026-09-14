@@ -477,6 +477,7 @@ _CAPABILITY_MANIFEST = {
         "phase_diagnostics": {
             "artifact": "simulator-phases-rank*.jsonl, when emitted",
             "fields": "fixed phase/event labels, monotonic timestamps, rank, action/render counters, and observed readiness booleans",
+            "unavailable_binding": "An unavailable method-phase event leaves an immutable native binding untouched; enclosing simulator calls can still be observed. It does not claim execution or progress.",
             "scope": "Best-effort observations of policy, Pink IK, environment, and capture progress; no arguments, input arrays, exception contents, timeout decisions, or task-success claims.",
         },
         "early_failure": "Request validation or input/setup failures may occur before any result tree exists; an interrupted worker may leave only workflow logs. Completed-episode JSONL, scored HDF5, and HTML reports are not guaranteed on failure.",

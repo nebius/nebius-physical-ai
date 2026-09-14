@@ -70,7 +70,7 @@ def test_legacy_pink_targets_preserve_rotation_and_every_other_command(
         assert after.dtype == before.dtype
         assert prepared.attrs["format_version"] == 1
     assert source.read_bytes() == source_bytes
-    assert evidence["source_steps"] == evidence["executed_steps"] == 3
+    assert evidence["source_steps"] == evidence["prepared_steps"] == 3
     assert evidence["action_padding_steps"] == 0
     assert evidence["pose_representation"]["conversion"] == "wxyz_to_xyzw_gr1_pink"
     assert evidence["pose_representation"]["action_quaternion_slices"] == [[3, 7], [10, 14]]

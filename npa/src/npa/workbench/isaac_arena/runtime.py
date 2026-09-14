@@ -497,10 +497,10 @@ def _validated_summary(request: IsaacArenaRequest, run_dir: Path, log_text: str,
     success_rate = summary["metrics"].get("success_rate")
     if success_rate is None or not math.isclose(success_rate, summary["success_rate"], abs_tol=1e-9, rel_tol=0.0):
         raise IsaacArenaError("upstream numeric success metric disagrees with episode JSONL")
-    steps = ((evidence or {}).get("execution") or {}).get("executed_steps")
+    steps = ((evidence or {}).get("execution") or {}).get("prepared_steps")
     summary["simulator_ground_truth"] = _simulator_ground_truth(
         run_dir, environment=request.environment, expected_episodes=summary["episodes"],
-        expected_successes=summary["successes"], executed_steps=steps,
+        expected_successes=summary["successes"], expected_action_steps=steps,
         require_task_success=request.record_video and request.policy_type != "zero_action",
     )
     return summary
@@ -529,7 +529,7 @@ def _video_binding(request: IsaacArenaRequest, run_dir: Path, evidence: dict | N
     return {
         "run_id": request.run_id or run_dir.name, "upstream_run_directory": run_dir.name,
         "policy_type": request.policy_type, "input_sha256": source_hash,
-        "executed_input_sha256": str(((evidence or {}).get("execution") or {}).get("executed_sha256") or source_hash),
+        "execution_input_sha256": str(((evidence or {}).get("execution") or {}).get("prepared_sha256") or source_hash),
         "simulator_ground_truth_sha256": [item["sha256"] for item in ground_truth["files"]],
     }
 
@@ -558,7 +558,7 @@ def _video_artifacts(request, run_dir, evidence, ground_truth, video_preparer) -
     for source in videos:
         capture = _verify_capture_evidence(
             run_dir, source, task_motion=_capture_context(request, ground_truth),
-            expected_steps=((evidence or {}).get("execution") or {}).get("executed_steps"),
+            expected_steps=((evidence or {}).get("execution") or {}).get("prepared_steps"),
         )
         video, derivation = video_preparer(source)
         metadata = _probe_mp4(video, evidence_interval=interval)

@@ -137,7 +137,7 @@ def _read_evidence(run_dir: Path) -> tuple[list[dict], list[dict], list[Any]]:
     return files, records, traces
 
 
-def _microwave_trace(trace: Any, *, executed_steps: int | None) -> Any:
+def _microwave_trace(trace: Any, *, expected_action_steps: int | None) -> Any:
     import numpy as np
 
     if trace is None:
@@ -147,7 +147,7 @@ def _microwave_trace(trace: Any, *, executed_steps: int | None) -> Any:
         values = values[:, 0]
     if values.ndim != 1 or values.size < 2:
         raise IsaacArenaError("microwave simulator ground truth has no usable revolute-joint trace")
-    if executed_steps is not None and values.size - 1 > executed_steps:
+    if expected_action_steps is not None and values.size - 1 > expected_action_steps:
         raise IsaacArenaError("microwave simulator trace exceeds the exact replay action horizon")
     return values
 
@@ -166,8 +166,8 @@ def _progress_interval(trace: Any, total_steps: int) -> dict[str, int]:
     }
 
 
-def _door_motion(record: dict, trace: Any, executed_steps: int | None, require_progress: bool) -> dict:
-    values = _microwave_trace(trace, executed_steps=executed_steps)
+def _door_motion(record: dict, trace: Any, expected_action_steps: int | None, require_progress: bool) -> dict:
+    values = _microwave_trace(trace, expected_action_steps=expected_action_steps)
     initial, final, maximum = float(values[0]), float(values[-1]), float(values.max())
     if final <= MICROWAVE_SUCCESS_THRESHOLD:
         raise IsaacArenaError("microwave success is not supported by final simulator door openness")
@@ -181,25 +181,25 @@ def _door_motion(record: dict, trace: Any, executed_steps: int | None, require_p
         "openness_delta": delta, "success_threshold": MICROWAVE_SUCCESS_THRESHOLD,
         "minimum_required_delta": MICROWAVE_MINIMUM_OPENNESS_DELTA,
         "samples": int(values.size), "task_success": True,
-        "progress_interval": (_progress_interval(values, executed_steps or int(values.size - 1))
+        "progress_interval": (_progress_interval(values, expected_action_steps or int(values.size - 1))
                               if delta >= MICROWAVE_MINIMUM_OPENNESS_DELTA else None),
         "visual_progress_qualified": delta >= MICROWAVE_MINIMUM_OPENNESS_DELTA,
         "video_capture": record.get("video_capture"),
     }
 
 
-def _task_motion(records: list[dict], traces: list[Any], executed_steps: int | None,
+def _task_motion(records: list[dict], traces: list[Any], expected_action_steps: int | None,
                  require_success: bool) -> dict | None:
     for record, trace in zip(records, traces, strict=True):
         if record["success"]:
-            return _door_motion(record, trace, executed_steps, require_success)
+            return _door_motion(record, trace, expected_action_steps, require_success)
     if require_success:
         raise IsaacArenaError("gr1_open_microwave produced no upstream-defined successful task episode")
     return None
 
 
 def simulator_ground_truth(run_dir: Path, *, environment: str, expected_episodes: int,
-                           expected_successes: int, executed_steps: int | None,
+                           expected_successes: int, expected_action_steps: int | None,
                            require_task_success: bool) -> dict[str, Any]:
     """Bind retained simulator metrics to the current run's episode JSONL.
 
@@ -208,7 +208,7 @@ def simulator_ground_truth(run_dir: Path, *, environment: str, expected_episodes
         environment: Requested registered Arena environment.
         expected_episodes: Number of completed JSONL episodes.
         expected_successes: Number of JSONL successes.
-        executed_steps: Exact replay action count, if applicable.
+        expected_action_steps: Prepared replay length used to bound the observed trace.
         require_task_success: Require demonstrable microwave opening for visual proof.
 
     Returns:
@@ -225,7 +225,7 @@ def simulator_ground_truth(run_dir: Path, *, environment: str, expected_episodes
         raise IsaacArenaError("simulator ground-truth success flags disagree with upstream episode JSONL")
     motion = None
     if environment == "gr1_open_microwave":
-        motion = _task_motion(records, traces, executed_steps, require_task_success)
+        motion = _task_motion(records, traces, expected_action_steps, require_task_success)
     return {
         "source": "current-run Arena metric-recorder HDF5", "files": files,
         "episodes": records, "successes": successes, "task_motion": motion,
