@@ -93,6 +93,11 @@ See [configuration](../docs/configuration.md) for project setup, credential
 precedence, the credential-file layout, token access, and cross-project storage.
 Use the [first-run prompts](../docs/workbench/agent-first-run.md) with a coding agent.
 
+For an existing Agent, `npa agent bootstrap --output-prefix <subtree>` selects
+and persists its deployment-bucket output scope. Keep live-verification fixtures
+in a dedicated subtree; `--artifact-source-file` configures separate read-only
+evidence sources. See [Agent storage configuration](../docs/agent.md).
+
 Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.

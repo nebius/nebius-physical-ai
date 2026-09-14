@@ -131,13 +131,14 @@ redistribution:
     restricted:
       description: >
         Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
-        Sim) that means the Kit SDK, models and textures, which are proprietary
-        even though the Isaac Sim SOURCE is Apache-2.0 (both the isaacsim and
-        isaaclab PyPI packages list their license as "NVIDIA Proprietary
-        Software"). Such an image may be built and run by the operator who owns
-        the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
-        public/anonymous registry would make us the third-party redistributor,
-        which requires an NVIDIA AI Enterprise license.
+        Sim) that means the proprietary Kit SDK and runtime payloads, even
+        though the Isaac Sim SOURCE is Apache-2.0. Classify exact wheel versions
+        separately: the Arena-selected isaaclab 3.0.0b2.post1 wheel declares
+        BSD-3-Clause; that grant does not cover Isaac Sim 6.0.1.0 or its
+        proprietary runtime dependencies. Such an image may be built and run by
+        the operator who owns the registry (internal R&D, build-your-own), but
+        hosting it PREBUILT on a public/anonymous registry would make us the
+        third-party redistributor, which requires an NVIDIA AI Enterprise license.
         Membership is deliberately generic and may be empty. Historical
         Cosmos3-serving and SONIC-MuJoCo digests remain quarantined because they
         inherited restricted baked bytes; new zero-payload/independent builds do

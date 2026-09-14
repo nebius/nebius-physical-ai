@@ -42,6 +42,7 @@ from npa.cli.agent_artifact_sources import (
     resolve_agent_artifact_sources as _resolve_agent_artifact_sources,
     resolve_agent_service_account_id as _resolve_agent_service_account_id,
     resolve_agent_storage_credentials,
+    resolve_agent_output_prefix,
     resolve_configured_artifact_storage_credentials as _resolve_configured_artifact_storage_credentials,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
@@ -233,6 +234,7 @@ _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ACCESS_EMBED = "__NPA_AGENT_ACCESS_EMBED__"
 _AGENT_ACCESS_RUNTIME_EMBED = "__NPA_AGENT_ACCESS_RUNTIME_EMBED__"
+_AGENT_STORAGE_RUNTIME_EMBED = "__NPA_AGENT_STORAGE_RUNTIME_EMBED__"
 _AGENT_ARTIFACT_CONTENT_EMBED = "__NPA_AGENT_ARTIFACT_CONTENT_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
@@ -858,6 +860,7 @@ def _bootstrap_agent_stack(
     s3_secret_key: str = "",
     s3_region: str = "eu-north1",
     artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+    artifact_storage: tuple[str, str, str, str, str, str] | None = None,
     nebius_project_id: str = "",
     nebius_tenant_id: str = "",
     public_https: bool = True,
@@ -897,6 +900,7 @@ def _bootstrap_agent_stack(
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_access_source = _embedded_agent_access_source()
     agent_access_runtime_source = _embedded_agent_access_runtime_source()
+    agent_storage_runtime_source = _embedded_agent_module_source("agent_storage_runtime.py")
     agent_artifact_content_source = _embedded_agent_artifact_content_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
@@ -1341,14 +1345,11 @@ def _state_scope_parts() -> tuple[str, str, str]:
     return project_alias, agent_name, session_scope
 
 def _state_s3_settings() -> dict[str, str]:
-    return {{
-        "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
-        "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
-        "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
-        "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
-        "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
-        "prefix": str(os.environ.get("NPA_AGENT_STATE_S3_PREFIX", "npa-agent/session-state")).strip().strip("/"),
-    }}
+    settings = _agent_output_s3_settings()
+    settings["prefix"] = _agent_state_s3_prefix(
+        os.environ.get("NPA_AGENT_STATE_S3_PREFIX", "")
+    )
+    return settings
 
 def _state_s3_key() -> str:
     settings = _state_s3_settings()
@@ -2065,15 +2066,7 @@ def _safe_artifact_key(key: str) -> str:
     return value
 
 
-def _agent_s3_settings() -> dict[str, str]:
-    return {{
-        "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
-        "prefix": str(os.environ.get("NPA_AGENT_S3_PREFIX", "")).strip().strip("/"),
-        "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
-        "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
-        "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
-        "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
-    }}
+{_AGENT_STORAGE_RUNTIME_EMBED}
 
 
 def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
@@ -2089,7 +2082,7 @@ def _agent_insights_settings() -> dict[str, str]:
     endpoint = str(os.environ.get("NPA_INSIGHTS_ENDPOINT", "")).strip().rstrip("/")
     store_uri = str(os.environ.get("NPA_INSIGHTS_STORE_URI", "")).strip()
     if not store_uri:
-        s3 = _agent_s3_settings()
+        s3 = _agent_output_s3_settings()
         bucket = str(s3.get("bucket") or "").strip()
         if bucket:
             prefix = _join_agent_s3_prefix(str(s3.get("prefix") or ""), "insights/store")
@@ -2126,27 +2119,6 @@ def _discovery_exclude_roots() -> set:
     return roots
 
 
-def _agent_s3_client():
-    settings = _agent_s3_settings()
-    if not settings["bucket"] or not settings["access_key"] or not settings["secret_key"]:
-        raise HTTPException(
-            status_code=400,
-            detail="S3 discovery is not configured on this agent (missing bucket or credentials).",
-        )
-    try:
-        client_kwargs = {{
-            "endpoint_url": settings["endpoint"],
-            "aws_access_key_id": settings["access_key"],
-            "region_name": settings["region"],
-        }}
-        secret_param = "aws" + "_secret_access_key"
-        client_kwargs[secret_param] = settings["secret_key"]
-        client = build_s3_client(**client_kwargs)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"failed to initialize S3 client: {{exc}}") from exc
-    return client, settings
-
-
 {_AGENT_ACCESS_RUNTIME_EMBED}
 
 
@@ -2165,7 +2137,8 @@ def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
     project_alias, agent_name, _session_scope = _state_scope_parts()
     fallback = _slug(f"{{project_alias}}-{{agent_name}}", fallback="agent")
     deployment_id = _slug(str(DEPLOYMENT.get("deployment_id") or ""), fallback=fallback)
-    return f"npa-agent/tenants/{{tenant}}/deployments/{{deployment_id}}/chat-sessions"
+    base_prefix = (settings or _agent_output_s3_settings()).get("prefix", "")
+    return _join_agent_s3_prefix(base_prefix, f"npa-agent/tenants/{{tenant}}/deployments/{{deployment_id}}/chat-sessions")
 
 
 def _chat_memory_uri_matches_deployment(memory_uri: str) -> bool:
@@ -2184,7 +2157,7 @@ def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -
 
 
 def _chat_memory_uri(session_id: str, settings: dict[str, str] | None = None) -> str:
-    resolved = settings or _agent_s3_settings()
+    resolved = settings or _agent_output_s3_settings()
     bucket = str(resolved.get("bucket") or "")
     if not bucket:
         return ""
@@ -2286,7 +2259,7 @@ def _local_chat_sessions(state: dict) -> dict[str, dict]:
 
 
 def _load_chat_session_from_s3(session_id: str) -> dict | None:
-    s3, settings = _agent_s3_client_optional()
+    s3, settings = _agent_output_s3_client_optional()
     if s3 is None or not settings.get("bucket"):
         return None
     key = _chat_session_key(session_id, settings)
@@ -2303,7 +2276,7 @@ def _load_chat_session_from_s3(session_id: str) -> dict | None:
 
 
 def _persist_chat_session_to_s3(session: dict) -> str:
-    s3, settings = _agent_s3_client_optional()
+    s3, settings = _agent_output_s3_client_optional()
     if s3 is None or not settings.get("bucket"):
         return ""
     session_id = _sanitize_chat_session_id(str(session.get("id") or "default"))
@@ -2403,7 +2376,7 @@ def _append_chat_turn(session_id: str, history_base: list, assistant_msg: dict |
 
 def _list_chat_sessions(state: dict) -> list[dict]:
     sessions = _local_chat_sessions(state)
-    s3, settings = _agent_s3_client_optional()
+    s3, settings = _agent_output_s3_client_optional()
     if s3 is not None and settings.get("bucket"):
         prefix = _chat_memory_prefix(settings) + "/"
         try:
@@ -3297,7 +3270,9 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
 
 
 def _agent_command_env() -> dict:
-    env = dict(os.environ)
+    env = {{key: value for key, value in os.environ.items()
+           if not key.startswith("NPA_AGENT_ARTIFACT_S3_")
+           and key != "NPA_AGENT_ARTIFACT_SOURCES_B64"}}
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
     env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
     env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
@@ -3508,7 +3483,6 @@ def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") ->
 
 
 def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
-    settings = _agent_s3_settings()
     cmd = [
         str(AGENT_PYTHON),
         "-m",
@@ -3654,10 +3628,10 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     def _upload_output_file(path: Path, relative_key: str) -> str:
         if not path.is_file():
             return ""
-        settings = _agent_s3_settings()
+        settings = _agent_output_s3_settings()
         if not settings.get("bucket"):
             return ""
-        s3, settings = _agent_s3_client()
+        s3, settings = _agent_output_s3_client()
         key = _join_agent_s3_prefix(
             _join_agent_s3_prefix(str(settings.get("prefix") or ""), "sim2real-b"),
             f"{{run_id}}/{{relative_key}}",
@@ -4423,7 +4397,7 @@ def _maybe_toolground_chat_reply(
                 draft = authored
         if draft is None:
             infra_context = _agent_k8s_backends()
-            s3_context = _agent_s3_settings()
+            s3_context = _agent_output_s3_settings()
             draft = generate_workflow_draft(
                 user_text=user_text,
                 intent=intent,
@@ -6106,7 +6080,7 @@ def session_bootstrap():
         "chat_sessions": _list_chat_sessions(state),
         "chat_memory": {{
             "tenant": _chat_memory_tenant(),
-            "s3_configured": bool(_agent_s3_settings().get("bucket") and _agent_s3_settings().get("access_key")),
+            "s3_configured": bool(_agent_output_s3_settings().get("bucket") and _agent_output_s3_settings().get("access_key")),
             "prefix": _chat_memory_prefix(),
         }},
         "llm": {{
@@ -6121,7 +6095,7 @@ def session_bootstrap():
 def chat_sessions():
     state = _load_state()
     active_id = str(state.get("active_chat_session_id") or "default")
-    settings = _agent_s3_settings()
+    settings = _agent_output_s3_settings()
     return {{
         "ok": True,
         "active_session_id": active_id,
@@ -6407,40 +6381,49 @@ def sim_viz_load_run(payload: dict | None = None):
     # contain JSON artifacts from prior clicks, which otherwise makes Load Run
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
-        s3, _settings = _agent_s3_client()
-        bucket, key, _authorized_run = _authorize_agent_artifact_uri(
-            s3=s3,
-            settings=_settings,
-            uri=requested_rrd_uri,
-            run_id=run_id,
+        owned_source = _recorded_output_source(
+            state=_load_state(), run_id=run_id, uri=requested_rrd_uri, run_ref=requested_run_ref,
         )
+        if owned_source is not None:
+            s3, _settings = _agent_output_s3_client()
+            bucket, key = owned_source["bucket"], owned_source["key"]
+            source_bucket, source_project = bucket, owned_source["project_id"]
+            source_prefix, requested_run_ref = owned_source["resolved_prefix"], owned_source["run_ref"]
+        else:
+            s3, _settings = _agent_s3_client()
+            bucket, key, _authorized_run = _authorize_agent_artifact_uri(
+                s3=s3,
+                settings=_settings,
+                uri=requested_rrd_uri,
+                run_id=run_id,
+            )
+            source_bucket, source_project, source_prefix = _artifact_source_metadata(
+                _agent_access_report(), bucket, key, run_id
+            )
+            if requested_run_ref:
+                resolution = resolve_run_artifacts(
+                    _agent_s3_buckets(s3, _settings),
+                    base_prefix=_settings.get("prefix", ""),
+                    run_ref_or_id=requested_run_ref,
+                    s3=s3,
+                )
+                if resolution is None or not any(
+                    item.key == key and item.s3_uri == requested_rrd_uri
+                    for item in resolution.artifacts
+                ):
+                    raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
+                run_id = resolution.run_id
+                requested_run_ref = resolution.run_ref
+                source_bucket = resolution.bucket
+                source_prefix = resolution.source_prefix
+                source_project = artifact_bucket_projects(_agent_access_report()).get(
+                    source_bucket, ""
+                )
+            elif source_bucket:
+                requested_run_ref = encode_run_ref(source_bucket, source_prefix, run_id)
         key = _safe_artifact_key(key)
         if render_hint_for_object(key=key) != "rerun":
             raise HTTPException(status_code=400, detail="rrd_uri must identify an RRD artifact")
-        source_bucket, source_project, source_prefix = _artifact_source_metadata(
-            _agent_access_report(), bucket, key, run_id
-        )
-        if requested_run_ref:
-            resolution = resolve_run_artifacts(
-                _agent_s3_buckets(s3, _settings),
-                base_prefix=_settings.get("prefix", ""),
-                run_ref_or_id=requested_run_ref,
-                s3=s3,
-            )
-            if resolution is None or not any(
-                item.key == key and item.s3_uri == requested_rrd_uri
-                for item in resolution.artifacts
-            ):
-                raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
-            run_id = resolution.run_id
-            requested_run_ref = resolution.run_ref
-            source_bucket = resolution.bucket
-            source_prefix = resolution.source_prefix
-            source_project = artifact_bucket_projects(_agent_access_report()).get(
-                source_bucket, ""
-            )
-        elif source_bucket:
-            requested_run_ref = encode_run_ref(source_bucket, source_prefix, run_id)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -9138,6 +9121,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ACCESS_EMBED, agent_access_source)
         .replace(_AGENT_ACCESS_RUNTIME_EMBED, agent_access_runtime_source)
+        .replace(_AGENT_STORAGE_RUNTIME_EMBED, agent_storage_runtime_source)
         .replace(_AGENT_ARTIFACT_CONTENT_EMBED, agent_artifact_content_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
@@ -9177,6 +9161,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         access_key=s3_access_key,
         secret_key=s3_secret_key,
         region=s3_region,
+        artifact_storage=artifact_storage,
     )
     _write_agent_artifact_sources_env(ssh, artifact_sources=artifact_sources)
     _write_agent_operator_profile(
@@ -9540,6 +9525,7 @@ def _transactional_agent_command(command: str):
                 ("backend_port", "--backend-port", bound.arguments.get("backend_port")),
                 ("rerun_port", "--rerun-port", bound.arguments.get("rerun_port")),
                 ("llm_model", "--llm-model", bound.arguments.get("llm_model")),
+                ("output_prefix", "--output-prefix", bound.arguments.get("output_prefix")),
                 (
                     "artifact_source_file",
                     "--artifact-source-file",
@@ -10662,6 +10648,11 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
+    output_prefix: str = typer.Option(
+        "", "--output-prefix",
+        help=("Deployment-bucket subtree for Agent outputs and live verification fixtures; "
+              "persisted independently of read-only artifact sources."),
+    ),
     artifact_source_file: str = typer.Option(
         "",
         "--artifact-source-file",
@@ -10749,25 +10740,6 @@ def bootstrap_cmd(
         s3_secret_key,
         service_account_id,
     ) = _resolve_agent_storage_credentials(project, record)
-    (
-        s3_bucket,
-        s3_prefix,
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        service_account_id,
-    ) = _resolve_configured_artifact_storage_credentials(
-        artifact_sources,
-        deployment_project_id=project_id,
-        current=(
-            s3_bucket,
-            s3_prefix,
-            s3_endpoint,
-            s3_access_key,
-            s3_secret_key,
-            service_account_id,
-        ),
-    )
     if not service_account_id:
         service_account_id = _resolve_agent_service_account_id(project, record)
     agent_credentials: dict[str, str] | None = None
@@ -10856,11 +10828,26 @@ def bootstrap_cmd(
                     }
                 }
             )
+    try:
+        s3_prefix = resolve_agent_output_prefix(
+            record, requested=output_prefix, bucket=s3_bucket, current_prefix=s3_prefix,
+            artifact_sources=artifact_sources,
+        )
+        artifact_storage = (
+            _resolve_configured_artifact_storage_credentials(
+                artifact_sources, deployment_project_id=project_id,
+                current=(s3_bucket, s3_prefix, s3_endpoint, s3_access_key,
+                         s3_secret_key, service_account_id),
+            ) if artifact_sources else None
+        )
+    except AgentStorageCredentialError as exc:
+        _fail(str(exc))
     operation = current_operation()
-    resuming = str(record.get("setup_state") or "") in {
-        "remote_bootstrap_pending",
-        "reconciliation_indeterminate",
-    }
+    # A healthy older VM does not prove an explicitly requested storage scope
+    # was staged. Reapply that configuration before persisting the new selector.
+    resuming = not (output_prefix or artifact_source_file) and str(
+        record.get("setup_state") or ""
+    ) in {"remote_bootstrap_pending", "reconciliation_indeterminate"}
     convergence = converge_remote_agent_setup(
         operation=operation,
         resuming=resuming,
@@ -10890,6 +10877,7 @@ def bootstrap_cmd(
             "s3_secret_key": s3_secret_key,
             "s3_region": region,
             "artifact_sources": artifact_sources,
+            "artifact_storage": artifact_storage,
             "nebius_project_id": project_id,
             "nebius_tenant_id": tenant_id,
             "service_account_id": service_account_id,
@@ -10926,6 +10914,13 @@ def bootstrap_cmd(
     )
     reconciliation = convergence.evidence
     bootstrap_error = convergence.primary_error
+    if bootstrap_error is not None and (output_prefix or artifact_source_file):
+        _store_agent_record(project, name, {**record, "setup_state": "remote_bootstrap_pending"})
+        _fail(
+            "The requested Agent storage configuration could not be confirmed after "
+            "transport loss. Rerun this same bootstrap command to restage it; an "
+            "older healthy Agent does not establish the requested storage scope."
+        )
     if reconciliation.get("state") != "healthy":
         updated_incomplete = dict(record)
         updated_incomplete["setup_state"] = "reconciliation_indeterminate"
@@ -10962,6 +10957,7 @@ def bootstrap_cmd(
     updated["foxglove"] = foxglove_settings
     updated["llm"] = llm_runtime["persisted"]
     updated["setup_state"] = "healthy"
+    updated["output_prefix"] = s3_prefix
     if artifact_sources:
         updated["artifact_sources"] = list(artifact_sources)
     else:

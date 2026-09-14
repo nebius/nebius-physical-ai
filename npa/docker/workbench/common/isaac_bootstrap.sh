@@ -3,18 +3,17 @@
 # isaac_bootstrap.sh - fetch NVIDIA Isaac Sim / Isaac Lab at FIRST RUN, never at build.
 #
 # WHY THIS EXISTS
-#   The npa Isaac workbench images (npa-isaac-lab, npa-sonic, npa-sonic-mujoco,
-#   npa-groot) contain no NVIDIA Isaac bytes at all. Isaac Sim's Omniverse Kit SDK and
-#   the isaacsim/isaaclab wheels are NVIDIA-proprietary - both wheels literally declare
-#   `License: NVIDIA Proprietary Software` - so an image that baked them could not be
-#   published to a public registry without making us the third-party redistributor.
+#   Public Isaac-backed images keep the Isaac Sim/Lab wheels and restricted Kit
+#   runtime payloads out of their layers. License findings are version-specific:
+#   the Arena-selected isaaclab 3.0.0b2.post1 wheel declares BSD-3-Clause, while
+#   Isaac Sim 6.0.1.0 and its proprietary runtime dependencies have separate NVIDIA
+#   terms. Arena's baked Apache-2.0 application source is a separate component.
 #
 #   A download token cannot fix a baked image: a token gates a download, and the bytes
-#   are already in the layers. So instead of arguing about the statement, this makes the
-#   statement true. NVIDIA delivers Isaac to the operator's own machine, on first run,
-#   under the operator's OWN EULA acceptance. That is the same pattern the workbench
-#   already uses for runtime model weights, which is why
-#   those images are already public.
+#   are already in the layers. This bootstrap keeps the runtime closure outside the
+#   public image: NVIDIA delivers it to the operator's cache on first run after the
+#   shared EULA preflight. That preflight applies the runtime's acceptance requirement;
+#   it does not change the individual source or wheel licenses.
 #
 # DEFAULT ACCEPTANCE
 #   NPA defaults NVIDIA's documented ACCEPT_EULA to Y for Isaac-backed workloads so
