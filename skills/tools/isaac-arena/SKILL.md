@@ -29,9 +29,11 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
   or redistributed by NPA. Applicable environments name their exact selector
   or layout requirement in the capability payload. NPA supplies no Lightwheel
   credential or asset-license grant; confirm upstream access before GPU spend.
-- Isaac Sim/Lab: NVIDIA-proprietary wheels, absent from the image and fetched
-  into the operator cache by `/isaac-sim/python.sh` after the shared
-  `ACCEPT_EULA` preflight.
+- Isaac Lab 3.0.0b2.post1: its wheel declares BSD-3-Clause. It is absent from
+  the image and fetched into the operator cache with its runtime dependencies.
+- Isaac Sim and its proprietary runtime dependencies: absent from the image
+  and fetched by `/isaac-sim/python.sh` after the shared `ACCEPT_EULA` preflight.
+  The Lab wheel's BSD license does not replace those separate runtime terms.
 - NVIDIA viewport graphics userspace: prefer and validate the target's native
   headless EGL/Vulkan. If a CUDA-only target omits it, fetch only the Ubuntu
   signed `libnvidia-gl-<branch>-server` package whose version exactly matches
@@ -93,7 +95,7 @@ video spec. This is an exact placement pin, not cross-platform fallback.
 `zero_action`, `replay`, and `rsl_rl` policies. Replay requires one HDF5 file;
 NPA selects its first sorted episode, requiring finite multi-step actions and a
 finite `initial_state` group. Source success and recorded-state histories are
-optional diagnostics, never runtime outcomes. Zero-action recordings and missing
+optional diagnostics, never runtime outcomes. Zero-action recordings in compatible action spaces and missing
 or static state histories remain valid ordinary evaluation inputs. Replay visual
 qualification additionally requires measured nonzero source actions.
 RSL-RL requires a `model*.pt` checkpoint beside `params/agent.yaml`, matching
@@ -107,6 +109,19 @@ recorded initial state with Isaac Lab `reset_to(is_relative=True)` and execute
 every source action once. Do not pad, repeat, truncate, or hold actions to
 manufacture a completed episode. A source recording that cannot complete the
 task is an input/qualification limitation, not permission to fabricate success.
+
+Use the declared HDF5 quaternion format: missing/integer 0 is legacy WXYZ;
+integer 1 is XYZW. Reject unknown or malformed versions. The pinned native
+loader converts only root poses; it leaves embedded Pink action quaternions
+untouched. For the resolved `gr1_pink` embodiment, NPA validates the 36-column
+layout, nonzero quaternion norms, and single-environment initial robot root
+pose. It reorders legacy hand-target slices `3:7` and `10:14` and all initial
+root quaternions into XYZW before marking the private execution file version 1.
+Preserve physical orientations, non-quaternion values, action order/count, and
+original source bytes. Retain source/execution hashes and representation-change
+metadata. Never guess the convention from values or select Pink conversion
+from action width: `gr1_joint` also has 36 columns. Other action contracts keep
+native root-pose handling and require compatible embedded action values.
 
 Successful evaluation requires:
 
@@ -204,7 +219,8 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
 - No episode JSONL: use `--num-episodes`, not an incomplete step-only smoke.
 - Replay ends before an episode result: verify that the recorded initial state
   was applied and the input matches the environment/embodiment/action space.
-  Keep every action unchanged. A recording that still cannot complete a scored
+  Inspect the declared quaternion representation and its recorded conversion;
+  preserve every physical command and its ordering. A recording that still cannot complete a scored
   episode needs a compatible input; do not extend it with held actions.
 - Missing `params/agent.yaml`: stage the complete RSL-RL checkpoint directory.
 - Missing `lightwheel_sdk`: reject that image as incomplete; the accepted image

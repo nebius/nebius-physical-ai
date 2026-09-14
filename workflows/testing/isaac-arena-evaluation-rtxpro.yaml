@@ -17,8 +17,11 @@ config:
   input_uri: "s3://{{config.bucket}}/operator-inputs/isaac-arena/gr1-open-microwave.hdf5"
   environment: gr1_open_microwave
   policy_type: replay
+  # Legacy WXYZ Pink hand targets and initial root poses are represented as
+  # XYZW in private execution scratch, with both file hashes and the conversion
+  # recorded. Physical commands and source action count/order are preserved.
   # NPA applies the episode's recorded initial_state through Isaac Lab reset_to,
-  # then executes all 80 recorded commands exactly once. It never pads, repeats,
+  # then executes every source command exactly once. It never pads, repeats,
   # truncates, or holds an action to manufacture a completed episode.
   # The NPA viewport-only source patch keeps Kit and environment rendering
   # enabled without adding the GR1 embodiment's unused observation cameras.

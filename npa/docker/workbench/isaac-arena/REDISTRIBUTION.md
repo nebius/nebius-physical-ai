@@ -37,6 +37,9 @@ to the operator's writable cache after the shared `ACCEPT_EULA` preflight. An
 explicit negative value refuses before download. Replay data and RSL-RL
 checkpoints are always operator-supplied runtime inputs and are never copied
 into an image layer.
+The Isaac Lab wheel itself declares BSD-3-Clause; Isaac Sim and its proprietary
+runtime dependencies retain their separate NVIDIA terms. Runtime-fetch delivery
+does not imply that all fetched components have the same license.
 
 Viewport recording also validates that the target provides usable NVIDIA
 headless EGL and Vulkan libraries. If a CUDA-capable managed node omits that

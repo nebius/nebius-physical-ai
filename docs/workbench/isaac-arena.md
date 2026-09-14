@@ -77,7 +77,7 @@ The evaluator supports the three local policy adapters registered by upstream:
 - `replay`: `--input-path` resolves to an Isaac Lab episode HDF5 file. NPA
   selects the first sorted episode and requires finite multi-step actions and a
   finite `initial_state` group. Recorded-state histories and source success are
-  optional diagnostics, never the current run's outcome. Zero-action recordings
+  optional diagnostics, never the current run's outcome. Zero-action recordings in compatible action spaces
   and missing or static state histories remain valid ordinary evaluation inputs;
   replay visual qualification additionally requires measured nonzero source
   actions. The generic upstream loader otherwise
@@ -90,6 +90,24 @@ The evaluator supports the three local policy adapters registered by upstream:
   environment.
 - `rsl_rl`: `--input-path` resolves to `model*.pt` or a directory containing
   exactly one such checkpoint with sibling `params/agent.yaml`.
+
+Replay follows Isaac Lab's dataset format metadata: absent or integer `0` means
+legacy WXYZ quaternions; integer `1` means XYZW. Unknown or malformed versions
+are rejected. The pinned Lab loader converts legacy root poses but does not
+convert quaternions embedded in Pink actions. For the resolved `gr1_pink`
+embodiment, NPA requires its 36-column action layout and single-environment
+initial robot root pose. It converts both hand-target quaternion slices (`3:7`
+and `10:14`) and initial-state root quaternions to XYZW in the private execution
+file, then marks that file version 1. Quaternion norms must be nonzero. The
+conversion preserves physical orientations, positions, hand commands, other
+state values, and the number and order of actions. Source bytes remain
+untouched; the result records both file hashes and the exact representation
+change. Native version-1 Pink inputs are not converted again. Other embodiments
+retain upstream root-pose handling and require actions that already match their
+native controller; NPA does not infer a Pink layout from action width or
+numerical values.
+The [pinned dataset loader](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab/isaaclab/utils/datasets/hdf5_dataset_file_handler.py)
+defines those format versions and its root-pose conversion boundary.
 
 The pinned source also contains separate OpenPI, GR00T, Cosmos, and DreamZero
 remote-policy packages. NPA does not expose those adapters through this public
@@ -115,17 +133,27 @@ npa workbench isaac-arena evaluate \
 ```
 
 Inputs and outputs may be local or operator-owned S3 paths. The simulator
-subprocess receives no cloud, model, or HTTP admission credentials. Each result
-contains raw episode JSONL, upstream static HTML, the current run's simulator
+subprocess receives no cloud, model, or HTTP admission credentials. A completed
+evaluation contains raw episode JSONL, upstream static HTML, the current run's simulator
 ground-truth HDF5, the credential-isolated simulator log, and `result.json` with
-aggregate metrics, GPU identity, byte sizes, and hashes.
+aggregate metrics, GPU identity, byte sizes, and hashes. After evaluation setup
+succeeds, handled runtime or evidence failures write a failed `result.json`,
+retain the artifacts actually produced, and attempt publication. A storage
+publication failure retains the private local copy. Artifacts may be partial logs, raw video,
+a capture sidecar, or initial/terminal PNGs; completed-episode JSONL, scored HDF5,
+and an HTML report are not guaranteed. An unfinished recorder buffer is retained
+separately as unscored diagnostic data when finalization runs. Request validation
+or input/setup failures can occur before a result tree exists, and interrupted
+workers may leave only workflow logs.
 The original operator input and the normalized execution HDF5 are never output
 artifacts. The result redacts their location and binds both the source SHA-256
 and exact executed-input SHA-256, along with source and executed step counts.
 A completed evaluation may truthfully report a success rate of zero. Nonzero
 actions and movement metrics never substitute for the upstream task result.
 
-`--record-video` requires one episode in one environment and H.264 at least
+Replay evaluation requires `--num-episodes 1` and `--num-envs 1`, including
+state-only replay. NPA selects the first sorted episode in the input HDF5.
+`--record-video` also requires one episode in one environment and H.264 at least
 320×240 and one second long. The untouched source MP4 is retained beside a
 labeled FFmpeg-denoised derivative. Acceptance checks temporal-median samples
 for coherent spatial change and binds that interval to the same run's simulator
@@ -138,8 +166,8 @@ first measured door progress to the first threshold crossing, excluding idle
 and reset frames. Other registered scored environments remain available for
 ordinary evaluation; their nonzero-policy video qualification is unsupported.
 
-The result retains `simulator-video-evidence.json`, an actual initial PNG, and
-an actual terminal PNG captured before automatic reset. The sidecar binds each
+Successful video qualification retains `simulator-video-evidence.json`, an actual
+initial PNG, and an actual terminal PNG captured before automatic reset. The sidecar binds each
 PNG's file and decoded-RGB SHA-256 to its action step; contiguous capture indices
 must match the simulator HDF5. The terminal PNG must also match the corresponding
 decoded source-MP4 frame within encoding tolerances. The result records these
@@ -264,7 +292,9 @@ external-plugin support claim.
 Upstream documents CPU physics for its generated demonstrations and recommends
 the CPU replay path, while warning that reset nondeterminism can still prevent
 reproduction. The small test fixture does not record its source physics device;
-the selected workflow must pass fresh task and visual validation.
+the selected workflow must pass fresh task and visual validation. CPU physics
+with RTX rendering is qualified only by a readiness record for the exact image
+digest, target hardware, and task; selecting the device alone establishes no result.
 See the [pinned upstream replay guidance](https://github.com/isaac-sim/IsaacLab-Arena/blob/ed0fd12be862078be316c73eb7cf423ba9b1c5cd/docs/pages/example_workflows/static_manipulation/step_3_data_generation.rst#L124-L143).
   The result records both the execution device and measured GPU identity.
 
@@ -358,6 +388,13 @@ shared clusters, operator storage, and reserved GPU nodes were retained.
 Arena emits MP4 and HTML/JSON evidence, not a native `.rrd`. The Agent UI must
 use its authenticated video renderer for this workload; an unrelated Rerun
 recording must not be substituted or relabeled.
+
+Inspection of the selected legacy replay also found a controller compatibility
+defect: its WXYZ hand-target quaternions reached the installed Lab 3 Pink
+controller's XYZW parser without conversion. Interpreting the same targets in
+the wrong order changes their physical orientations. The replacement normalizer
+handles this declared representation change explicitly; a successful source
+recording still does not establish a successful live replay.
 
 The replacement candidate's image/security gates, B200 state regression, RTX
 successful task video, independent artifact readback, and authenticated playback

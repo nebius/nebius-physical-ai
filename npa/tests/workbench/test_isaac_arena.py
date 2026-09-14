@@ -319,7 +319,7 @@ def _write_ground_truth(run: Path, *, success: bool, microwave: bool = False) ->
             )
 
 
-def _make_replay(path: Path, *, steps: int = 4) -> None:
+def _make_replay(path: Path, *, steps: int = 4, pink: bool = False) -> None:
     import h5py
     import numpy as np
 
@@ -330,13 +330,19 @@ def _make_replay(path: Path, *, steps: int = 4) -> None:
         episode = data.create_group("demo_0")
         episode.attrs["num_samples"] = steps
         episode.attrs["success"] = True
-        episode.create_dataset(
-            "actions",
-            data=np.arange(steps * 3, dtype=np.float32).reshape(steps, 3) / 10,
-        )
+        width = 36 if pink else 3
+        actions = np.arange(steps * width, dtype=np.float32).reshape(steps, width) / 10
+        if pink:
+            actions[:, 3:7] = [1, 0, 0, 0]
+            actions[:, 10:14] = [1, 0, 0, 0]
+        episode.create_dataset("actions", data=actions)
         initial = episode.create_group("initial_state")
         robot = initial.create_group("robot")
         robot.create_dataset("joint_pos", data=np.array([0.1, 0.2]))
+        if pink:
+            initial.create_dataset(
+                "articulation/robot/root_pose", data=[[0, 0, 0, 1, 0, 0, 0]]
+            )
         states = episode.create_group("states")
         states.create_dataset("joint_pos", data=np.arange(steps * 2).reshape(steps, 2))
         observations = episode.create_group("obs")
@@ -382,6 +388,15 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
         assert int(episode.attrs["num_samples"]) == 4
     assert normalized == {
         "strategy": "actions_initial_state_exact_replay",
+        "pose_representation": {
+            "source_format_version": 0,
+            "source_version_defaulted": True,
+            "execution_format_version": 0,
+            "embodiment": "",
+            "action_quaternion_slices": [],
+            "initial_root_poses_converted": 0,
+            "conversion": "upstream_root_pose_only",
+        },
         "source_sha256": evidence["sha256"],
         "executed_sha256": normalized["executed_sha256"],
         "source_steps": 4,
@@ -741,7 +756,7 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     _capture: object, _gpu: object, _probe: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
-    _make_replay(replay)
+    _make_replay(replay, pink=True)
     result = evaluate(
         IsaacArenaRequest(
             output_path=str(tmp_path / "published"),
@@ -821,7 +836,7 @@ def test_nonzero_policy_rejects_movement_without_task_success(
     _gpu: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
-    _make_replay(replay)
+    _make_replay(replay, pink=True)
     result = evaluate(
         IsaacArenaRequest(output_path=str(tmp_path / "scored"), environment="gr1_open_microwave",
                           policy_type="replay", input_path=str(replay)),

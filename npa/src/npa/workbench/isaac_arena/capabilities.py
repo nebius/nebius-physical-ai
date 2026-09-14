@@ -244,9 +244,17 @@ _CAPABILITY_MANIFEST = {
                 "upstream_alpha",
             ],
             "execution_contract": {
+                "num_envs": 1,
+                "num_episodes": 1,
                 "source_evidence": "SHA-256 and action statistics; optional recorded-state history and source success metadata remain diagnostics, never runtime results",
-                "ordinary_evaluation_inputs": "Zero actions and missing or static recorded-state histories remain valid replay inputs; nonzero source actions are additionally required for replay visual qualification.",
-                "gpu_materialization": "private actions plus initial_state only; unused observations and state histories are not copied to CUDA",
+                "ordinary_evaluation_inputs": "Zero actions in compatible action spaces and missing or static recorded-state histories remain valid replay inputs; Pink poses require nonzero quaternion norms. Nonzero source actions are additionally required for replay visual qualification.",
+                "gpu_materialization": "private actions plus initial_state only on the selected execution device (CPU or CUDA); unused observations and state histories are excluded",
+                "pose_representation": {
+                    "format_version": "Integer 0 or absent means legacy WXYZ; integer 1 means XYZW. Unknown or malformed versions are rejected.",
+                    "gr1_pink": "For the resolved gr1_pink embodiment, the exact 36-column action contract and single-environment initial robot root pose are required. Legacy hand-target quaternion slices [3:7] and [10:14] and initial root_pose quaternions are reordered to XYZW in the private execution file before marking it version 1. Positions, hand commands, state values outside quaternions, action count, and ordering are preserved.",
+                    "other_embodiments": "Embedded action quaternions are not converted. Inputs must match the selected native action layout; the upstream loader retains its root_pose-only legacy conversion. Equal action width never selects the Pink converter.",
+                    "provenance": "The result records source/execution format versions, whether the source version defaulted, conversion scope, and both file hashes. Source bytes remain untouched and private.",
+                },
                 "episode_horizon": (
                     "The upstream policy runner applies the recorded initial_state with "
                     "Isaac Lab reset_to(is_relative=True), then executes every source action "
@@ -392,7 +400,7 @@ _CAPABILITY_MANIFEST = {
         },
     },
     "outputs": {
-        "always": [
+        "completed_evaluation": [
             "result.json",
             "evaluation.log",
             "episode_results_rank*.jsonl",
@@ -400,7 +408,12 @@ _CAPABILITY_MANIFEST = {
             "simulator_ground_truth_rank*.hdf5",
             "SHA-256 and byte size for every retained artifact",
         ],
-        "video_when_requested": [
+        "handled_runtime_or_evidence_failure": {
+            "result": "After evaluation setup succeeds, handled runtime/evidence errors write a failed result.json and hashes for whatever artifacts were produced, then attempt publication. A storage publication failure retains the private local copy.",
+            "partial_artifacts": "Logs, raw video, capture sidecar, and initial or terminal PNGs are retained only if created. An unfinished recorder buffer is separately marked unscored; it never becomes a completed episode or task-success result.",
+        },
+        "early_failure": "Request validation or input/setup failures may occur before any result tree exists; an interrupted worker may leave only workflow logs. Completed-episode JSONL, scored HDF5, and HTML reports are not guaranteed on failure.",
+        "successful_video_qualification": [
             "raw viewport MP4 and a labeled denoised derivative",
             "simulator-video-evidence.json with capture phase and action-step mapping",
             "simulator-initial.png and simulator-episode-0-terminal.png with file and decoded-RGB hashes",
@@ -422,6 +435,7 @@ _CAPABILITY_MANIFEST = {
     "rendering": {
         "viewport_video": {
             "npa_status": ["implemented", "upstream_alpha"],
+            "request_constraints": {"num_envs": 1, "num_episodes": 1},
             "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
             "graphics_userspace": (
                 "Native NVIDIA EGL/Vulkan is preferred. If CUDA is healthy but those libraries are absent, "
@@ -447,7 +461,7 @@ _CAPABILITY_MANIFEST = {
             "visual_interval": "Coherent denoised motion is measured from the first door progress through its first crossing of the upstream success threshold, excluding subsequent reset or idle frames.",
             "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification has no task-specific binding and is unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",
-            "live_validation": "Pending for replacement candidate bytes; implementation status does not establish a physical-GPU result.",
+            "live_validation": "Consult the external readiness record for the exact image digest, target hardware, execution device, and task. The baked implementation status does not establish a physical-GPU result.",
         },
         "camera_observation_video": {
             "npa_status": ["unsupported", "upstream_alpha"],
@@ -465,9 +479,9 @@ _CAPABILITY_MANIFEST = {
         "execution_devices": {
             "cuda:0": "Default GPU physics and policy execution path.",
             "cpu": (
-                "Upstream CPU physics/policy selection is exposed for diagnostics, but it "
-                "is not the RTX qualification path; complex GR1 environments can be "
-                "impractically slow and require digest-specific validation."
+                "The canonical RTX GR1 replay workflow uses CPU physics and replay tensors "
+                "following upstream demonstration guidance, while the RTX GPU renders the viewport. "
+                "This is an execution choice; qualification requires digest-specific task and visual evidence."
             ),
         },
         "agent_ui": "Use the authenticated native video renderer; Arena does not emit a truthful native Rerun .rrd.",

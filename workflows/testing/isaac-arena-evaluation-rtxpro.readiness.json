@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "848cf87a7d749f21ebe9f4bcf7017ebe49faa4ffd165e5d103b9be8318f2ec54",
+  "workflow_sha256": "8fb410f6466c7f85a740925d155854ad2e025bc1a5455af4030f0b3fe0817d97",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The plan requests a GR1 open-microwave replay with CPU physics/tensors and RTX viewport rendering, exact initial-state application, and successful task/video qualification without held actions. This follows upstream tutorial replay guidance; the small fixture has no source-device metadata and the replacement candidate needs fresh validation.",
+      "reason": "The plan requests a GR1 open-microwave replay with CPU physics/tensors and RTX viewport rendering, exact initial-state application, and successful task/video qualification without held actions. The private execution input explicitly converts declared legacy Pink quaternion representations to the native XYZW contract while preserving physical commands and action count/order. The small fixture has no source-device metadata; fresh candidate validation remains required.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
         "npa/src/npa/workbench/isaac_arena/runtime.py"
@@ -47,7 +47,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Replacement-candidate RTX qualification is pending. Historical run arena-replay-rtx-7dd3a2bf-r1 is rejected for zero task success, 170 held-action steps, and render grain. Candidate run arena-replay-rtx-0bc59afc-20260914-r1 executed its 80 source actions but completed no scored episode and remained dark/grainy; it correctly failed acceptance.",
+      "reason": "Replacement-candidate RTX qualification is pending. Historical run arena-replay-rtx-7dd3a2bf-r1 is rejected for zero task success, 170 held-action steps, and render grain. Candidate run arena-replay-rtx-0bc59afc-20260914-r1 executed its 80 source actions but completed no scored episode and remained dark/grainy; it correctly failed acceptance. Diagnostic candidate e1ff793a was not launched after inspection identified legacy WXYZ Pink targets reaching the XYZW action parser unchanged. The corrected conversion requires fresh candidate-image execution.",
       "evidence": [
         "docs/workbench/isaac-arena.md"
       ]

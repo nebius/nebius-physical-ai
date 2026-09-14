@@ -1,4 +1,4 @@
-"""Validate operator policy inputs and materialize an unchanged private replay."""
+"""Validate policy inputs and preserve replay commands in the runtime's pose format."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
+from .replay_quaternions import dataset_format_version, normalize_pose_representation
 
 if TYPE_CHECKING:
     from .runtime import IsaacArenaRequest
@@ -132,6 +133,7 @@ def _episode_input_evidence(dataset: Any, h5py: Any, np: Any) -> dict[str, Any]:
     state_ranges = _recorded_state_ranges(episode, actions.shape[0], h5py, np)
     return {
         "episode": episode_name,
+        "dataset_format_version": dataset_format_version(dataset),
         "source_recorded_success": (
             bool(episode.attrs["success"]) if "success" in episode.attrs else None
         ),
@@ -180,18 +182,23 @@ def _copy_execution_episode(
     source_episode.copy("initial_state", output_episode)
 
 
-def _write_execution_input(source: Path, destination: Path, episode_name: str) -> int:
+def _write_execution_input(
+    source: Path, destination: Path, episode_name: str, embodiment: str
+) -> tuple[int, dict[str, Any]]:
     h5py, np = _replay_dependencies("normalization")
     try:
         with h5py.File(source, "r") as source_file:
             actions = np.asarray(source_file["data"][episode_name]["actions"])
             with h5py.File(destination, "w") as output_file:
                 _copy_execution_episode(source_file, output_file, episode_name, actions)
+                representation = normalize_pose_representation(
+                    source_file, output_file, episode_name, embodiment
+                )
     except (KeyError, OSError) as exc:
         raise IsaacArenaError(
             "replay input cannot be normalized for execution"
         ) from exc
-    return int(actions.shape[0])
+    return int(actions.shape[0]), representation
 
 
 def _prepare_replay_execution_input(
@@ -199,21 +206,25 @@ def _prepare_replay_execution_input(
     private_dir: Path,
     *,
     source_evidence: dict[str, Any],
+    embodiment: str = "",
 ) -> tuple[Path, dict[str, Any]]:
-    """Keep only actions and initial state without changing the replay sequence.
+    """Keep the replay sequence, translating declared legacy Pink pose coordinates.
 
-    Upstream loads every dataset field onto CUDA, although its replay adapter
-    only consumes these two. Both source and execution input remain private.
+    Upstream loads every field onto the execution device but only consumes
+    actions and initial state. Both source and execution input remain private.
     """
     episode_name = str((source_evidence.get("trajectory") or {}).get("episode") or "")
     if not episode_name:
         raise IsaacArenaError("replay evidence does not identify an episode")
     destination = private_dir / "replay-execution.hdf5"
     private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    source_steps = _write_execution_input(source, destination, episode_name)
+    source_steps, representation = _write_execution_input(
+        source, destination, episode_name, embodiment
+    )
     destination.chmod(0o600)
     return destination, {
         "strategy": "actions_initial_state_exact_replay",
+        "pose_representation": representation,
         "source_sha256": str(source_evidence.get("sha256") or ""),
         "executed_sha256": _sha256(destination),
         "source_steps": source_steps,

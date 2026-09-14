@@ -165,8 +165,8 @@ def build_evaluation_argv(
 
     argv = _runner_options(request, output_dir)
     if request.record_video:
-        # Isaac Lab's balanced preset enables its real-time denoiser. Keep the
-        # choice explicit so evidence cannot inherit a drifting launcher default.
+        # Keep the launcher preset explicit. Capture configures the required
+        # PathTracing/OptiX settings and checks their readback before frames.
         argv.extend(["--rendering_mode", "balanced", "--record_viewport_video"])
     argv.extend(_policy_input_argv(request, local_input))
     # Upstream's subparsers require global and policy flags before the environment.
@@ -364,8 +364,12 @@ def _prepare_inputs(request: IsaacArenaRequest, private_dir: Path) -> tuple[Path
     if request.policy_type != "replay":
         return local_input, evidence
     assert local_input is not None and evidence is not None
+    environment = next(
+        item for item in capabilities()["environments"] if item["name"] == request.environment
+    )
     execution, execution_evidence = _prepare_replay_execution_input(
         local_input, private_dir, source_evidence=evidence,
+        embodiment=request.embodiment or environment["default_embodiment"],
     )
     evidence["execution"] = execution_evidence
     return execution, evidence

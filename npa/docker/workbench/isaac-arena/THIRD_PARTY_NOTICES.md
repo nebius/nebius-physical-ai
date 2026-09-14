@@ -70,10 +70,12 @@ operator inputs and Lightwheel assets remains separate from these packages.
 
 ## NVIDIA Isaac Sim and Isaac Lab
 
-Not included in image layers. They download at runtime from NVIDIA under the
-operator's acceptance of the NVIDIA Omniverse, Isaac Sim additional software,
-and NVIDIA software license terms documented by the inherited
-`npa-isaac-lab` bootstrap.
+Neither is included in image layers. The pinned Isaac Lab 3.0.0b2.post1 wheel
+declares BSD-3-Clause. Its Isaac Sim and proprietary runtime dependencies have
+separate NVIDIA Omniverse, Isaac Sim additional software, and NVIDIA software
+license terms. The inherited `npa-isaac-lab` bootstrap fetches these runtime
+components only after the operator's acceptance of those applicable terms;
+the Lab wheel's BSD license does not replace them.
 
 ## NVIDIA viewport graphics userspace (runtime only)
 
