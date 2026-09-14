@@ -163,6 +163,15 @@ def test_no_tool_ref_argv_passes_a_flag_its_cli_rejects() -> None:
     )
 
 
+def test_habitat_snapshot_contract_does_not_leak_into_generic_byof_toolrefs() -> None:
+    """The dedicated Habitat image owns its snapshot; generic BYOF does not."""
+
+    for tool_ref in ("workbench.byof.repo", "workbench.isaac_lab.byof_repo"):
+        entry = TOOL_CATALOG[tool_ref]
+        assert "--apt-snapshot" not in entry.argv_template
+        assert "apt_snapshot" not in entry.config_defaults
+
+
 #: Top-level CLI groups a toolRef may invoke. `workbench` is the tool layer;
 #: `soperator` and `fleet` are the infra-provisioning groups behind the
 #: `infra.*` toolRefs.
