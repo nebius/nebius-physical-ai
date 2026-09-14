@@ -182,3 +182,13 @@ removing the original local metadata. The temporary API and queue must stop
 before their directory is deleted. If process cleanup cannot be verified, keep
 `<isolated-config-dir>/controller-transactions/` and the original runtime for
 recovery; do not remove their ownership records or use a shared API as a fallback.
+
+The original workflow API remains running after controller cleanup. For a
+unique per-run API, wait for the submit driver and other clients to exit,
+retain verified cancellation/controller receipts, then use the existing
+`stop_isolated_api(Path(owned_run_directory))` helper and verify its stopped
+daemon record. The helper stops local processes only and retains run data.
+Follow the [owned API teardown contract](../teardown.md#owned-local-workflow-api)
+and [receipt-checked PAIDF example](../../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup).
+Its final local-stop block can recover from successful saved receipts without
+repeating cloud deletion. Do not stop a shared API or use `sky api stop`.

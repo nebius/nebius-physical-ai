@@ -659,8 +659,8 @@ Keep this SkyPilot directory for this run's submission, monitoring, resume, and
 cleanup. An isolated API binds the concrete storage prefix, including the run
 ID. Rerun R2 for a new experiment so it gets a fresh run ID and API directory;
 reusing the previous run's API can fail before launch with `different executing
-identity`. After a run finishes, follow the [controller cleanup
-procedure](../../docs/teardown.md) in its original environment before moving on.
+identity`. After a run finishes, follow [R7: finish owned cleanup](#r7-finish-owned-cleanup)
+in its original environment before moving on.
 Keep the run's state and artifacts available for inspection.
 
 ### R3. Submit
@@ -1261,6 +1261,160 @@ reserve a new run ID with R2 and submit with R3. Preserve the original rejected
 run. If you intentionally accept weaker visual matching, set the chosen
 `grade_threshold` and `attribute_threshold` in both plan and submit commands.
 Every variant still needs complete evaluation and verified alignment.
+
+### R7. Finish owned cleanup
+
+Wait for the R3 submit driver to exit, confirm terminal state in R4, and finish
+the [output audit](#inspect-the-outputs). Do not run cleanup while a driver,
+monitor, or another user is still using this API. This procedure applies only
+to the fresh, unique per-run API directory created in R2. Keep the original
+checkout and environment, including `RUN_ID`, `PROJECT_ALIAS`, `KUBE_CONTEXT`,
+and `NPA_SKYPILOT_ISOLATED_CONFIG_DIR`; do not repoint them to shared state.
+
+First finish cloud cleanup. This block stops if either command fails or its
+receipt is unverified. It retains private JSON receipts under the run's API
+directory and leaves their path in `CLEANUP_RECEIPTS` for the final local stop.
+A separate success receipt binds their hashes only after both commands and all
+checks succeed; JSON output alone is not proof of a successful command.
+
+```bash
+CLEANUP_RECEIPTS="$(
+  set -e
+  umask 077
+  : "${RUN_ID:?Keep the original run ID}"
+  : "${PROJECT_ALIAS:?Keep the original project}"
+  : "${KUBE_CONTEXT:?Keep the original context}"
+  : "${NPA_SKYPILOT_ISOLATED_CONFIG_DIR:?Keep the original per-run API directory}"
+  export RUN_ID PROJECT_ALIAS KUBE_CONTEXT
+  npa/.venv/bin/python - <<'PY'
+import json, os, tempfile
+from pathlib import Path
+run_id = os.environ["RUN_ID"]
+root = Path(os.environ["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"]).expanduser().absolute()
+expected = Path.home() / ".npa/workflow-runs" / run_id / "skypilot"
+if Path(run_id).name != run_id or run_id in {".", ".."} or root != expected:
+    raise SystemExit("Cleanup requires the original R2 per-run API directory.")
+record_path = root / "local-api/daemon.json"
+if not record_path.is_file():
+    raise SystemExit("The owned API record is missing; preserve state and investigate.")
+record = json.loads(record_path.read_text())
+if (record.get("schema_version") != 1 or record.get("root") != str(root / "local-api")
+        or not record.get("interpreter") or record.get("project_alias") != os.environ["PROJECT_ALIAS"]):
+    raise SystemExit("The API ownership record does not match this run environment.")
+receipts = Path(tempfile.mkdtemp(prefix="cleanup.", dir=root))
+identity = {key: record[key] for key in ("root", "marker", "interpreter", "pid", "start_ticks")}
+(receipts / "api-identity.json").write_text(json.dumps({"run_id": run_id, "api": identity,
+    "project_alias": os.environ["PROJECT_ALIAS"], "context": os.environ["KUBE_CONTEXT"]}) + "\n")
+print(receipts)
+PY
+)" &&
+export CLEANUP_RECEIPTS RUN_ID PROJECT_ALIAS KUBE_CONTEXT &&
+(
+  set -e
+  umask 077
+  npa workbench workflow cancel "$RUN_ID" --project "$PROJECT_ALIAS" --json \
+    > "$CLEANUP_RECEIPTS/cancel.json"
+  npa/.venv/bin/python - <<'PY'
+import json, os
+from pathlib import Path
+cancel = json.loads((Path(os.environ["CLEANUP_RECEIPTS"]) / "cancel.json").read_text())
+if (cancel.get("run_id") != os.environ["RUN_ID"] or cancel.get("errors")
+        or cancel.get("outcome") not in {"terminal", "no_cancellation_needed", "cancelled"}):
+    raise SystemExit("Exact-run cancellation is unverified; preserve the cleanup receipts.")
+PY
+  npa skypilot cleanup-controller --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT" --yes --json \
+    > "$CLEANUP_RECEIPTS/controller.json"
+  npa/.venv/bin/python - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+receipts = Path(os.environ["CLEANUP_RECEIPTS"])
+controller = json.loads((receipts / "controller.json").read_text())
+verified = ("overall_verified", "remote_absence_verified", "local_metadata_cleared")
+if (any(controller.get(key) is not True for key in verified) or controller.get("errors")
+        or controller.get("outcome") not in {"cleaned", "already_absent"}
+        or controller.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or controller.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Controller cleanup is unverified; preserve the cleanup receipts.")
+sources = ("api-identity.json", "cancel.json", "controller.json")
+(receipts / "cloud-cleanup.json").write_text(json.dumps({"commands_succeeded": True,
+    "sha256": {name: hashlib.sha256((receipts / name).read_bytes()).hexdigest() for name in sources}}) + "\n")
+print("Cloud cleanup verified; keep CLEANUP_RECEIPTS for the final local API stop.")
+PY
+)
+```
+
+Then stop the local API. This block makes no cloud calls and can be run
+independently after an interrupted local stop, using the preserved successful
+receipts and unchanged original environment. If opening a new shell, restore
+`CLEANUP_RECEIPTS` to that private receipt directory. Do not repeat cloud cleanup
+just to stop the API: other controllers may remain on the cluster, and a later
+controller cleanup can correctly refuse after your metadata is gone.
+
+```bash
+(
+  set -e
+  umask 077
+  : "${RUN_ID:?Keep the original run ID}"
+  : "${PROJECT_ALIAS:?Keep the original project}"
+  : "${KUBE_CONTEXT:?Keep the original context}"
+  : "${NPA_SKYPILOT_ISOLATED_CONFIG_DIR:?Keep the original per-run API directory}"
+  : "${CLEANUP_RECEIPTS:?Select the preserved successful cleanup receipts}"
+  export RUN_ID PROJECT_ALIAS KUBE_CONTEXT CLEANUP_RECEIPTS
+  npa/.venv/bin/python - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+from npa.orchestration.skypilot.local_api import stop_isolated_api
+run_id = os.environ["RUN_ID"]
+root = Path(os.environ["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"]).expanduser().absolute()
+expected = Path.home() / ".npa/workflow-runs" / run_id / "skypilot"
+if Path(run_id).name != run_id or run_id in {".", ".."} or root != expected:
+    raise SystemExit("Local stop requires the original R2 per-run API directory.")
+receipts = Path(os.environ["CLEANUP_RECEIPTS"])
+success = json.loads((receipts / "cloud-cleanup.json").read_text())
+sources = ("api-identity.json", "cancel.json", "controller.json")
+if success.get("commands_succeeded") is not True or any(
+        success.get("sha256", {}).get(name) != hashlib.sha256((receipts / name).read_bytes()).hexdigest()
+        for name in sources):
+    raise SystemExit("Successful cloud cleanup is unproven or its receipts changed; keep the API running.")
+saved = json.loads((receipts / "api-identity.json").read_text())
+cancel = json.loads((receipts / "cancel.json").read_text())
+controller = json.loads((receipts / "controller.json").read_text())
+if (saved.get("run_id") != run_id or saved.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or saved.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Cleanup receipts do not match this run environment.")
+if (cancel.get("run_id") != run_id or cancel.get("errors")
+        or cancel.get("outcome") not in {"terminal", "no_cancellation_needed", "cancelled"}):
+    raise SystemExit("Exact-run cancellation is unverified; keep the owned API running.")
+verified = ("overall_verified", "remote_absence_verified", "local_metadata_cleared")
+if (any(controller.get(key) is not True for key in verified) or controller.get("errors")
+        or controller.get("outcome") not in {"cleaned", "already_absent"}
+        or controller.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or controller.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Controller cleanup is unverified; keep the owned API running.")
+record = json.loads((root / "local-api/daemon.json").read_text())
+if any(record.get(key) != saved["api"].get(key) for key in ("root", "marker", "interpreter")):
+    raise SystemExit("The API identity changed after cloud cleanup; preserve its state.")
+already_stopped = record.get("state") == "stopped" and record.get("pid") is None and record.get("start_ticks") is None
+if not already_stopped and any(record.get(key) != saved["api"].get(key) for key in ("pid", "start_ticks")):
+    raise SystemExit("The API process changed after cloud cleanup; preserve its state.")
+stop_isolated_api(root)
+record = json.loads((root / "local-api/daemon.json").read_text())
+if record.get("state") != "stopped" or record.get("pid") is not None or record.get("start_ticks") is not None:
+    raise SystemExit("Owned API shutdown is unverified; retain its state for recovery.")
+(receipts / "local-api.json").write_text(json.dumps({"state": "stopped", "processes_remaining": 0}) + "\n")
+print("Owned local API stopped; private cleanup receipts and run state retained.")
+PY
+)
+```
+
+Controller removal alone does not stop this API. Cluster and storage teardown
+are separate actions described in [the general teardown guide](../../docs/teardown.md).
+Keep the API ownership records, workflow state, and artifacts. The helper
+verifies the exact recorded process identity and waits for its process tree to
+exit; it does not cancel cloud jobs or delete stored outputs. Do not use
+`sky api stop`, which is not scoped to this owned API, or delete state to hide a
+failed cleanup. If a check fails, keep the original environment and receipts
+while resolving that exact failed phase.
 
 ## Troubleshooting
 

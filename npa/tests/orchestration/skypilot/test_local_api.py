@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import subprocess
 import sys
@@ -1057,3 +1058,286 @@ def test_live_logs_refuse_failed_api_identity_without_shared_fallback(monkeypatc
     with pytest.raises(api.IsolatedApiError, match=reason):
         workflow_state.tail_live_job_logs(sky_bin=str(executable), job_id="7")
     assert calls == []
+
+
+_PAIDF_CLEANUP_COMMAND = '''import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+if args[:3] == ['workbench', 'workflow', 'cancel']:
+    phase = 'cancel'
+    expected = ['workbench', 'workflow', 'cancel', os.environ['RUN_ID'],
+                '--project', os.environ['PROJECT_ALIAS'], '--json']
+else:
+    phase = 'controller'
+    expected = ['skypilot', 'cleanup-controller', '--project', os.environ['PROJECT_ALIAS'],
+                '--context', os.environ['KUBE_CONTEXT'], '--yes', '--json']
+assert args == expected, args
+with Path(os.environ['FIXTURE_CALLS']).open('a') as stream:
+    stream.write(phase + '\\n')
+response = json.loads(Path(os.environ['FIXTURE_RESPONSES']).read_text())[phase]
+print(response.get('raw', json.dumps(response['payload'])))
+raise SystemExit(response.get('exit', 0))
+'''
+
+
+def _paidf_cleanup_blocks():
+    repository = Path(__file__).resolve().parents[4]
+    guide = (repository / 'workflows/guides/paidf-cosmos3.md').read_text()
+    section = guide.split('### R7. Finish owned cleanup\n', 1)[1].split('\n## ', 1)[0]
+    return [block.split('\n```', 1)[0] for block in section.split('```bash\n')[1:]]
+
+
+def _paidf_cleanup_shell(tmp_path, root):
+    checkout = tmp_path / 'checkout'
+    executable = checkout / 'npa/.venv/bin/python'
+    executable.parent.mkdir(parents=True)
+    executable.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+    executable.chmod(0o700)
+    commands = tmp_path / 'commands'
+    commands.mkdir()
+    (commands / 'npa').write_text(f'#!{sys.executable}\n' + _PAIDF_CLEANUP_COMMAND)
+    (commands / 'npa').chmod(0o700)
+    environment = {**os.environ, 'HOME': str(root.parents[3]),
+                   'PATH': f'{commands}:/usr/bin:/bin',
+                   'PYTHONPATH': str(Path(__file__).resolve().parents[3] / 'src'),
+                   'RUN_ID': root.parent.name, 'PROJECT_ALIAS': 'fixture-project',
+                   'KUBE_CONTEXT': 'fixture-context', 'NPA_SKYPILOT_ISOLATED_CONFIG_DIR': str(root),
+                   'FIXTURE_CALLS': str(tmp_path / 'calls'),
+                   'FIXTURE_RESPONSES': str(tmp_path / 'responses.json')}
+    cancel = dict(run_id=root.parent.name, outcome='terminal', errors=[])
+    controller = dict(overall_verified=True, remote_absence_verified=True,
+                      local_metadata_cleared=True, errors=[], outcome='cleaned',
+                      project_alias='fixture-project', context='fixture-context')
+    responses = dict(cancel=dict(payload=cancel), controller=dict(payload=controller))
+    Path(environment['FIXTURE_RESPONSES']).write_text(json.dumps(responses))
+    return dict(cwd=checkout, environment=environment, responses=responses)
+
+
+@pytest.fixture
+def paidf_cleanup_runtime(local_runtime, tmp_path):
+    root = tmp_path / 'operator/.npa/workflow-runs/fixture-workflow-run/skypilot'
+    (root / 'home').mkdir(parents=True)
+    config = root / 'sky.yaml'
+    config.write_text('{}\n')
+    environment = {**local_runtime['environment'], 'HOME': str(root / 'home'),
+                   'SKYPILOT_GLOBAL_CONFIG': str(config), 'NPA_SKYPILOT_PROJECT': 'fixture-project'}
+    environment.pop('SKYPILOT_API_SERVER_ENDPOINT')
+    environment = api.isolated_api_environment(root, environment)
+    runtime = {**local_runtime, 'isolated_dir': root, 'environment': environment, 'cwd': str(root)}
+    api.ensure_isolated_api(**runtime)
+    shell = _paidf_cleanup_shell(tmp_path, root)
+    yield dict(runtime=runtime, original=_record(runtime), **shell)
+    api.stop_isolated_api(root)
+
+
+def _run_paidf_cleanup(fixture, block):
+    environment = fixture['environment']
+    Path(environment['FIXTURE_RESPONSES']).write_text(json.dumps(fixture['responses']))
+    return subprocess.run(['/bin/bash', '-c', _paidf_cleanup_blocks()[block]],
+                          env=environment, cwd=fixture['cwd'], capture_output=True, text=True, check=False)
+
+
+def _paidf_cleanup_calls(fixture):
+    path = Path(fixture['environment']['FIXTURE_CALLS'])
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def _select_paidf_receipts(fixture):
+    receipts, = fixture['runtime']['isolated_dir'].glob('cleanup.*')
+    fixture['environment']['CLEANUP_RECEIPTS'] = str(receipts)
+    return receipts
+
+
+def _assert_paidf_api_preserved(fixture):
+    record = _record(fixture['runtime'])
+    assert record['pid'] == fixture['original']['pid']
+    assert api._listener_owned(record, api._process(record))
+    assert not list(fixture['runtime']['isolated_dir'].glob('cleanup.*/local-api.json'))
+
+
+def test_paidf_documented_cleanup_stops_only_owned_api_after_verified_cloud_cleanup(
+    paidf_cleanup_runtime, local_runtime,
+):
+    fixture = paidf_cleanup_runtime
+    api.ensure_isolated_api(**local_runtime)
+    foreign = _record(local_runtime)
+    root = fixture['runtime']['isolated_dir']
+    artifact = root / 'preserved-workflow-artifact.json'
+    artifact.write_text('{"outcome":"succeeded"}\n')
+    cloud = _run_paidf_cleanup(fixture, 0)
+    assert cloud.returncode == 0, cloud.stderr
+    assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+    _assert_paidf_api_preserved(fixture)
+    receipts = _select_paidf_receipts(fixture)
+    # Completed controller cleanup can update config; stopping an exact owned
+    # process uses its persisted identity, not the live-operation file guard.
+    (root / 'sky.yaml').write_text('# Updated after controller cleanup\n{}\n')
+    for _ in range(2):
+        stopped = _run_paidf_cleanup(fixture, 1)
+        assert stopped.returncode == 0, stopped.stderr
+        assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+        assert api._listener_owned(foreign, api._process(foreign))
+    record = _record(fixture['runtime'])
+    assert record['state'] == 'stopped' and record['pid'] is None and record['start_ticks'] is None
+    assert api._session_members(fixture['original']) == []
+    assert json.loads((receipts / 'local-api.json').read_text())['processes_remaining'] == 0
+    assert artifact.read_text() == '{"outcome":"succeeded"}\n'
+    assert receipts.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in receipts.iterdir())
+    assert str(root) not in cloud.stdout + stopped.stdout
+
+
+@pytest.mark.parametrize('invalid', [
+    'RUN_ID', 'PROJECT_ALIAS', 'KUBE_CONTEXT', 'NPA_SKYPILOT_ISOLATED_CONFIG_DIR',
+    'different-root', 'missing-record', 'wrong-project',
+])
+def test_paidf_documented_cleanup_rejects_invalid_scope_before_cloud_commands(paidf_cleanup_runtime, invalid):
+    fixture = paidf_cleanup_runtime
+    record_path = fixture['runtime']['isolated_dir'] / 'local-api/daemon.json'
+    original = record_path.read_bytes()
+    if invalid in fixture['environment']:
+        fixture['environment'].pop(invalid)
+    elif invalid == 'different-root':
+        fixture['environment']['NPA_SKYPILOT_ISOLATED_CONFIG_DIR'] = str(record_path.parent)
+    elif invalid == 'missing-record':
+        record_path.unlink()
+    else:
+        record_path.write_text(json.dumps({**fixture['original'], 'project_alias': 'different-project'}))
+    try:
+        result = _run_paidf_cleanup(fixture, 0)
+        assert result.returncode != 0
+        assert _paidf_cleanup_calls(fixture) == []
+    finally:
+        record_path.write_bytes(original)
+    _assert_paidf_api_preserved(fixture)
+
+
+@pytest.mark.parametrize(('phase', 'change'), [
+    ('cancel', {'exit': 2}),
+    ('cancel', {'raw': 'not-json'}),
+    ('cancel', {'payload': {'run_id': 'different-run'}}),
+    ('cancel', {'payload': {'outcome': 'partial'}}),
+    ('cancel', {'payload': {'errors': ['fixture refusal']}}),
+    ('controller', {'exit': 1}),
+    ('controller', {'raw': 'not-json'}),
+    ('controller', {'payload': {'overall_verified': False}}),
+    ('controller', {'payload': {'remote_absence_verified': False}}),
+    ('controller', {'payload': {'local_metadata_cleared': False}}),
+    ('controller', {'payload': {'overall_verified': 'true'}}),
+    ('controller', {'payload': {'outcome': 'degraded'}}),
+    ('controller', {'payload': {'errors': ['fixture refusal']}}),
+    ('controller', {'payload': {'project_alias': 'different-project'}}),
+    ('controller', {'payload': {'context': 'different-context'}}),
+])
+def test_paidf_documented_cleanup_refuses_failed_or_unverified_cloud_receipts(paidf_cleanup_runtime, phase, change):
+    fixture = paidf_cleanup_runtime
+    response = fixture['responses'][phase]
+    response['payload'].update(change.get('payload', {}))
+    response.update({key: value for key, value in change.items() if key != 'payload'})
+    result = _run_paidf_cleanup(fixture, 0)
+    assert result.returncode != 0
+    assert _paidf_cleanup_calls(fixture) == (['cancel'] if phase == 'cancel' else ['cancel', 'controller'])
+    _assert_paidf_api_preserved(fixture)
+    _select_paidf_receipts(fixture)
+    local = _run_paidf_cleanup(fixture, 1)
+    # Nonzero CLI exits can still print plausible JSON; recovery needs proof
+    # that the commands and predicates succeeded, not just their output files.
+    assert local.returncode != 0
+    _assert_paidf_api_preserved(fixture)
+
+
+@pytest.mark.parametrize(('filename', 'key', 'value'), [
+    ('api-identity.json', 'run_id', 'different-run'),
+    ('api-identity.json', 'project_alias', 'different-project'),
+    ('api-identity.json', 'context', 'different-context'),
+    ('api-identity.json', 'api', {'root': 'different-root'}),
+    ('cancel.json', 'run_id', 'different-run'),
+    ('controller.json', 'overall_verified', False),
+])
+def test_paidf_documented_local_stop_rejects_mismatched_receipts(paidf_cleanup_runtime, filename, key, value):
+    fixture = paidf_cleanup_runtime
+    assert _run_paidf_cleanup(fixture, 0).returncode == 0
+    receipts = _select_paidf_receipts(fixture)
+    path = receipts / filename
+    payload = json.loads(path.read_text())
+    path.write_text(json.dumps({**payload, key: value}))
+    assert _run_paidf_cleanup(fixture, 1).returncode != 0
+    assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+    _assert_paidf_api_preserved(fixture)
+
+
+@pytest.mark.parametrize('key', ['marker', 'interpreter', 'pid', 'start_ticks'])
+def test_paidf_documented_local_stop_rejects_changed_api_identity(paidf_cleanup_runtime, key):
+    fixture = paidf_cleanup_runtime
+    assert _run_paidf_cleanup(fixture, 0).returncode == 0
+    _select_paidf_receipts(fixture)
+    path = fixture['runtime']['isolated_dir'] / 'local-api/daemon.json'
+    original = path.read_bytes()
+    record = json.loads(original)
+    record[key] = 'different-identity'
+    path.write_text(json.dumps(record))
+    try:
+        assert _run_paidf_cleanup(fixture, 1).returncode != 0
+        assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+        assert api._listener_owned(fixture['original'], api._process(fixture['original']))
+    finally:
+        path.write_bytes(original)
+    _assert_paidf_api_preserved(fixture)
+
+
+def test_paidf_documented_local_stop_preserves_api_restarted_after_cleanup(paidf_cleanup_runtime):
+    fixture = paidf_cleanup_runtime
+    assert _run_paidf_cleanup(fixture, 0).returncode == 0
+    _select_paidf_receipts(fixture)
+    api.stop_isolated_api(fixture['runtime']['isolated_dir'])
+    api.ensure_isolated_api(**fixture['runtime'])
+    restarted = _record(fixture['runtime'])
+    assert restarted['pid'] != fixture['original']['pid']
+    result = _run_paidf_cleanup(fixture, 1)
+    assert result.returncode != 0
+    assert 'process changed' in result.stderr
+    assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+    assert api._listener_owned(restarted, api._process(restarted))
+
+
+@pytest.mark.parametrize('missing', ['cloud-cleanup.json', 'daemon.json'])
+def test_paidf_documented_local_stop_requires_success_and_owned_record(paidf_cleanup_runtime, missing):
+    fixture = paidf_cleanup_runtime
+    assert _run_paidf_cleanup(fixture, 0).returncode == 0
+    receipts = _select_paidf_receipts(fixture)
+    directory = receipts if missing == 'cloud-cleanup.json' else fixture['runtime']['isolated_dir'] / 'local-api'
+    path = directory / missing
+    original = path.read_bytes()
+    path.unlink()
+    try:
+        assert _run_paidf_cleanup(fixture, 1).returncode != 0
+        assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+        assert api._listener_owned(fixture['original'], api._process(fixture['original']))
+    finally:
+        path.write_bytes(original)
+    _assert_paidf_api_preserved(fixture)
+
+
+@pytest.mark.parametrize('variable', ['RUN_ID', 'NPA_SKYPILOT_ISOLATED_CONFIG_DIR'])
+def test_paidf_documented_local_stop_rejects_changed_scope(paidf_cleanup_runtime, variable):
+    fixture = paidf_cleanup_runtime
+    assert _run_paidf_cleanup(fixture, 0).returncode == 0
+    _select_paidf_receipts(fixture)
+    fixture['environment'][variable] += '-different'
+    result = _run_paidf_cleanup(fixture, 1)
+    assert result.returncode != 0
+    assert 'original R2 per-run API directory' in result.stderr
+    assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+    _assert_paidf_api_preserved(fixture)
+
+
+def test_paidf_documented_cleanup_keeps_receipt_selection_in_original_shell(paidf_cleanup_runtime):
+    fixture = paidf_cleanup_runtime
+    script = '\n'.join(_paidf_cleanup_blocks())
+    result = subprocess.run(['/bin/bash', '-c', script], env=fixture['environment'],
+                            cwd=fixture['cwd'], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert _paidf_cleanup_calls(fixture) == ['cancel', 'controller']
+    record = _record(fixture['runtime'])
+    assert record['state'] == 'stopped' and record['pid'] is None and record['start_ticks'] is None
+    assert api._session_members(fixture['original']) == []

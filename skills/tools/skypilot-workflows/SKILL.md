@@ -42,6 +42,15 @@ select a different shared SkyPilot API. Let NPA manage the validation session;
 preserve its state and original environment if workload removal is unverified.
 Workflow submission still uses its separate run-scoped API directory.
 
+After a workflow finishes, `cleanup-controller` removes only its verified
+controller and temporary transaction API; the original owned workflow API
+remains. For a unique per-run API, finish the receipt-checked local shutdown in
+`workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup` after its driver and
+other API clients exit. Preserve the successful cancellation/controller receipts
+and exact API identity so the final `stop_isolated_api` step can recover without
+repeating cloud deletion. It stops local processes only and retains run state.
+See `docs/teardown.md#owned-local-workflow-api`; never use unscoped `sky api stop`.
+
 Nebius CLI `0.12.254` selects profiles with `--config`, `--profile`, and
 `NEBIUS_PROFILE`; it ignores `NEBIUS_CONFIG_DIR` and keeps its renewable cache
 under `HOME/.nebius/credentials.yaml` even with `--config`. Do not infer a private
