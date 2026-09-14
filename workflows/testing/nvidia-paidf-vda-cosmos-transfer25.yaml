@@ -73,6 +73,9 @@ kind: Workflow
 
 metadata:
   name: nvidia-paidf-vda-cosmos-transfer25
+  # Dynamic refinement decisions must be read from the durable evaluator
+  # artifact; a flattened assumed-decision plan is never an execution mode.
+  executionMode: runtime
   description: >
     NVIDIA-derived Physical AI Data Factory VDA translated to Nebius + SkyPilot
     without OSMO, using Cosmos Transfer 2.5:

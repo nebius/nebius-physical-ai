@@ -66,6 +66,10 @@ def _memory_gi(value: object) -> int:
     return int(match.group(1))
 
 
+def test_blueprint_requires_runtime_decision_execution() -> None:
+    assert _spec()["metadata"]["executionMode"] == "runtime"
+
+
 def test_blueprint_uses_no_stub_toolrefs() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")
