@@ -112,7 +112,8 @@ help_for() {
 prefetch_help() {
   local path
   for path in "$@"; do
-    # shellcheck disable=SC2086 - deliberate word split: the path is a command.
+    # shellcheck disable=SC2086
+    # Deliberate word split: the path is a command.
     ( help_for $path >/dev/null ) &
   done
   wait

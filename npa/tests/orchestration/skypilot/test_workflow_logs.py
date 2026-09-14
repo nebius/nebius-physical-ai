@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -12,6 +13,9 @@ import yaml
 
 from npa.orchestration.skypilot import _bin, local_api
 from npa.orchestration.skypilot.workflow_state import tail_live_job_logs
+
+
+_COMPATIBLE_RUNTIME_EVIDENCE = "3.12 33.1.0"
 
 
 def _write_sky(executable: Path, body: str) -> Path:
@@ -27,10 +31,23 @@ def _write_sky(executable: Path, body: str) -> Path:
     # This is the isolated SkyPilot interpreter's compatibility response, not
     # the host running pytest (which can be newer and lack kubernetes).
     interpreter.write_text(
-        f"#!{sys.executable}\nprint('3.12 33.1.0')\n"
+        f"#!{sys.executable}\nprint({_COMPATIBLE_RUNTIME_EVIDENCE!r})\n"
     )
     interpreter.chmod(0o700)
     return executable
+
+
+def test_synthetic_sky_runtime_reports_compatible_evidence(tmp_path: Path) -> None:
+    executable = _write_sky(tmp_path / "sky", "")
+    result = subprocess.run(
+        [str(executable.with_name("python")), "-c", "ignored"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == _COMPATIBLE_RUNTIME_EVIDENCE
 
 
 @pytest.fixture

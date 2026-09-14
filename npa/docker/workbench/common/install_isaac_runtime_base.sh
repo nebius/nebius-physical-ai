@@ -90,8 +90,9 @@ system_packages=(
   libx11-6 \
   libxext6 \
   libxrender1 \
-  libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
-          # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
+  # MaterialX render libraries dlopen libXt.so.6. Without it, Kit logs failures
+  # to load the MaterialXRender shared libraries.
+  libxt6 \
   vulkan-tools
 )
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then

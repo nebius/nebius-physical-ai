@@ -393,6 +393,8 @@ ensure() {
   # Serialise installers. Up to 8 pods per GPU node race the same cache, so this is a
   # real contention path, not a theoretical one. flock is fd-based: a killed pod
   # releases automatically, so there is no stale-lock recovery to get wrong.
+  command -v flock >/dev/null 2>&1 \
+    || die "$EX_SOFTWARE" "flock is required to install an Isaac cache; use an image with util-linux or pre-warm the cache"
   exec 9>"${CACHE_DIR}/.lock" || die "$EX_CONFIG" "cannot open ${CACHE_DIR}/.lock"
   if ! flock -w 5 9; then
     log "another process is installing Isaac into ${CACHE_DIR}; waiting (up to ${LOCK_TIMEOUT}s)"
