@@ -676,6 +676,32 @@ def test_self_hosted_retries_connect_errors_then_succeeds(monkeypatch) -> None:
     assert result.score == 0.9
 
 
+@pytest.mark.parametrize("served_model", ["deployed-model-revision", None])
+def test_self_hosted_retains_server_model_without_inventing_identity(
+    monkeypatch, served_model
+) -> None:
+    payload = dict(_OK_PAYLOAD)
+    if served_model is not None:
+        payload["model"] = served_model
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload)
+
+    result = _call_single("self-hosted")
+
+    assert result.served_model == served_model
+    assert result.score == 0.9
+    assert result.success is True
+    assert result.rationale == "ok"
+
+
+@pytest.mark.parametrize("served_model", ["", "  ", 123, {"name": "model"}])
+def test_self_hosted_rejects_invalid_server_model_identity(monkeypatch, served_model) -> None:
+    payload = dict(_OK_PAYLOAD, model=served_model)
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="model must be a nonempty string"):
+        _call_single("self-hosted")
+
+
 def test_api_backend_does_not_retry_connect_error(monkeypatch) -> None:
     # Hosted API is expected up: a connect error fails fast with the old message.
     _FakeClient.calls = 0
