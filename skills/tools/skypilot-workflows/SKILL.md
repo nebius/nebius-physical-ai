@@ -42,6 +42,14 @@ select a different shared SkyPilot API. Let NPA manage the validation session;
 preserve its state and original environment if workload removal is unverified.
 Workflow submission still uses its separate run-scoped API directory.
 
+Nebius CLI `0.12.254` selects profiles with `--config`, `--profile`, and
+`NEBIUS_PROFILE`; it ignores `NEBIUS_CONFIG_DIR` and keeps its renewable cache
+under `HOME/.nebius/credentials.yaml` even with `--config`. Do not infer a private
+CLI cache from that environment variable. The owned API binds supported RSA
+service-account refreshes to the actual profile and key, while explicit bearer
+files, mixed auth, and durable credential changes remain strictly checked.
+Keep legacy ownership records unchanged when resolving an identity mismatch.
+
 The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). The VM controller exists only as a fallback.
 
 For workflows that write S3 state or artifacts, supply `config.bucket` and a

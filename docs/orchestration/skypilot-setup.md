@@ -107,6 +107,18 @@ when one is selected. Keep `current-session.json` and its referenced
 the next invocation creates a new session so it can use newly selected
 credentials or an updated interpreter without changing an active session.
 
+The owned API follows Nebius CLI `0.12.254` authentication selection: `--config`
+selects the profile file, `--profile` overrides `NEBIUS_PROFILE` and the saved
+default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
+`NEBIUS_CONFIG_DIR` does not redirect either CLI file. Isolated SkyPilot homes
+retain the incoming CLI home configuration. For a verified RSA service-account
+profile, normal cache refresh, creation, and pruning preserve API identity;
+the effective profile file, account, key, and explicit credential sources remain
+bound. Unsupported or mixed authentication formats remain byte-strict.
+Existing API ownership records are never silently rebound to a new file model.
+Preserve the original environment and exact controller records when an older
+session reports a credential mismatch; do not edit its ownership record.
+
 ## Managed-Jobs Controller
 
 NPA defaults SkyPilot managed jobs to a Kubernetes controller:

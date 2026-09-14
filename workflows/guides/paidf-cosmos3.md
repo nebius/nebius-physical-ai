@@ -1048,9 +1048,15 @@ and stop an existing driver with `credential configuration changed after
 verification`, even when its credentials are unchanged. Finish the active run
 before changing that configuration, or use separate NPA configuration stores
 for independently isolated controllers. The check also covers the Nebius CLI
-credential cache: another process refreshing a shared cache can interrupt the
-driver. Use a dedicated operator environment for a long run and keep its
-configuration stable. Preserve the run records and original authentication
+authentication sources. Normal renewable-cache refresh for a supported RSA
+service-account profile preserves API identity while the effective profile,
+account, key, and explicit credential sources remain unchanged. Nebius CLI
+`0.12.254` keeps this cache under `HOME/.nebius` even with `--config`;
+`NEBIUS_CONFIG_DIR` does not select a different CLI configuration or cache.
+Unsupported or mixed authentication formats remain byte-strict. Use a dedicated
+operator environment for a long run and keep its configuration stable.
+Existing ownership records are not silently rebound. Preserve the run records
+and original authentication
 state; do not edit API ownership records or assume that restarting the API
 accepts changed credentials. Ask the platform operator to reconcile the exact
 controller before retrying after this error.

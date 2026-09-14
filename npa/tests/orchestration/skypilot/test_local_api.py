@@ -662,11 +662,14 @@ def service_account_runtime(local_runtime, request):
                "public-key-id": "fixture-key", "private-key-file-path": str(key),
                "endpoint": "fixture.invalid:443", "parent-id": "fixture-project", "tenant-id": "fixture-tenant"}
     (provider / "config.yaml").write_text(yaml.safe_dump({"default": "selected", "profiles": {"selected": profile}}))
-    cache = provider / "credentials.yaml"
+    cache = home / ".nebius" / "credentials.yaml"
+    cache.parent.mkdir(exist_ok=True)
     cache.write_text(yaml.safe_dump({"tokens": {
         "service-account/fixture-account/fixture-key": {"token": "fixture-old-bearer", "expires_at": 100},
         "service-account/retired-account/retired-key": {"token": "fixture-unrelated-bearer", "expires_at": 50}}}))
     local_runtime["environment"].update(NEBIUS_CONFIG_DIR=str(provider), NPA_CONFIG_DIR=str(home / ".npa"))
+    if provider != cache.parent:
+        _select_nebius_exec(local_runtime, ["--config", str(provider / "config.yaml")])
     return local_runtime, provider, key, cache
 
 
@@ -875,6 +878,7 @@ def test_explicit_credential_file_cannot_be_reclassified_as_provider_cache(servi
     assert api._identity_files(runtime["environment"])[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
 def test_service_account_legacy_full_hash_record_is_not_silently_rebound(service_account_runtime):
     runtime, _, _, cache = service_account_runtime
     api.ensure_isolated_api(**runtime)
@@ -886,6 +890,24 @@ def test_service_account_legacy_full_hash_record_is_not_silently_rebound(service
     with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
         api.ensure_isolated_api(**runtime)
     assert record_path.read_bytes() == legacy
+
+
+@pytest.mark.parametrize("service_account_runtime", ["custom-nebius"], indirect=True)
+def test_legacy_config_directory_cache_binding_is_not_reclassified(service_account_runtime):
+    runtime, provider, _, cache = service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    record = _record(runtime)
+    record["identity_files"][str(provider / "credentials.yaml")] = record["identity_files"][str(cache)]
+    record["identity_files"][str(cache)] = hashlib.sha256(cache.read_bytes()).hexdigest()
+    record_path = runtime["isolated_dir"] / "local-api/daemon.json"
+    api._write(record_path, record)
+    legacy = record_path.read_bytes()
+
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+
+    assert record_path.read_bytes() == legacy
+    assert api._process(record, verify_files=False)["pid"] == record["pid"]
 
 
 @pytest.mark.parametrize("role", ["npa-config", "npa-json", "npa-token", "provider-json", "provider-token"])
@@ -915,28 +937,45 @@ def test_designated_provider_cache_alias_uses_same_durable_identity(service_acco
 
 
 @pytest.mark.parametrize("service_account_runtime", ["custom-nebius"], indirect=True)
-def test_custom_provider_does_not_relax_an_unselected_default_cache(service_account_runtime):
-    runtime, _, _, selected_cache = service_account_runtime
-    default_cache = Path(runtime["environment"]["HOME"]) / ".nebius/credentials.yaml"
-    default_cache.parent.mkdir()
-    default_cache.write_bytes(selected_cache.read_bytes())
+def test_ignored_custom_provider_cache_remains_byte_strict(service_account_runtime):
+    runtime, provider, _, selected_cache = service_account_runtime
+    custom_cache = provider / "credentials.yaml"
+    custom_cache.write_bytes(selected_cache.read_bytes())
     before = api._identity_files(runtime["environment"])
+    assert before[str(custom_cache)] == hashlib.sha256(custom_cache.read_bytes()).hexdigest()
 
     selected_cache.write_text("tokens: {}\n")
     assert api._identity_files(runtime["environment"]) == before
-    default_cache.write_text("tokens: {}\n")
+    custom_cache.write_text("tokens: {}\n")
     assert api._identity_files(runtime["environment"]) != before
 
 
-def test_exec_override_of_provider_directory_keeps_cache_byte_strict(service_account_runtime):
+def test_exec_ignored_config_directory_does_not_move_cli_cache(service_account_runtime):
     runtime, provider, _, cache = service_account_runtime
     _select_nebius_exec(runtime, ["--config", str(provider / "config.yaml")], [
         {"name": "NEBIUS_CONFIG_DIR", "value": str(provider / "other")},
     ])
     before = api._identity_files(runtime["environment"])
-    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    assert before[str(cache)].startswith("derived-nebius-sa-cache-v1:")
     cache.write_text("tokens: {}\n")
-    assert api._identity_files(runtime["environment"]) != before
+    assert api._identity_files(runtime["environment"]) == before
+
+
+def test_ignored_config_directory_cannot_select_the_cli_profile(service_account_runtime):
+    runtime, _, _, cache = service_account_runtime
+    ignored = runtime["isolated_dir"] / "ignored-provider"
+    ignored.mkdir()
+    (ignored / "config.yaml").write_text("profiles: {selected: {auth-type: federation}}\n")
+    runtime["environment"]["NEBIUS_CONFIG_DIR"] = str(ignored)
+    _select_nebius_exec(runtime, ["--profile", "selected"])
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+
+    cache.write_text("tokens: {}\n")
+
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    assert api._process(original)["pid"] == _record(runtime)["pid"] == original["pid"]
+    assert original["identity_files"][str(cache)].startswith("derived-nebius-sa-cache-v1:")
 
 
 def test_unreadable_selected_key_fails_without_credential_diagnostics(service_account_runtime, monkeypatch):
