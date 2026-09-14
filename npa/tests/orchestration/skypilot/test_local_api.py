@@ -173,6 +173,20 @@ def test_stopped_owned_daemon_restarts_same_endpoint_and_scope(local_runtime):
     assert second["pid"] != first["pid"]
 
 
+def test_stopped_owned_daemon_refuses_changed_interpreter_before_restart(local_runtime):
+    api.ensure_isolated_api(**local_runtime)
+    api.stop_isolated_api(local_runtime["isolated_dir"])
+    stopped = _record(local_runtime)
+    assert api._process(stopped) is None
+    changed = {**local_runtime, "sky_executable": "/different-install/bin/sky"}
+    with pytest.raises(api.IsolatedApiError, match="original recorded interpreter"):
+        api.ensure_isolated_api(**changed)
+    assert _record(local_runtime) == stopped
+    assert api._process(stopped) is None
+    api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime)["interpreter"] == stopped["interpreter"]
+
+
 def test_foreign_listener_at_reserved_port_is_never_adopted_or_stopped(local_runtime):
     record = _record(local_runtime)
     with socket.socket() as foreign:

@@ -90,6 +90,23 @@ Every SkyPilot check, GPU discovery, launch, status poll, and cleanup remains
 scoped to the selected context, and the command succeeds only after the GPU task
 completes and its ephemeral SkyPilot cluster is removed.
 
+Cluster validation uses one owned local API session for the credential check,
+GPU discovery, launch, and cleanup. It selects the requested SkyPilot interpreter
+and a durable working directory even when another SkyPilot API is already
+running on the host. Concurrent validation using the same state is serialized.
+After confirming removal of the smoke workload, NPA stops the session's API.
+When removal cannot be verified, keep the reported validation state and the
+original environment for recovery. Rerun the original validation command with
+that environment: NPA removes its recorded smoke before launching another.
+NPA preserves the existing shared API.
+
+Validation state lives under `cluster-validation/` in the selected NPA
+configuration directory, or under the configured SkyPilot isolated directory
+when one is selected. Keep `current-session.json` and its referenced
+`session-*/` directory together. Completed sessions retain their evidence;
+the next invocation creates a new session so it can use newly selected
+credentials or an updated interpreter without changing an active session.
+
 ## Managed-Jobs Controller
 
 NPA defaults SkyPilot managed jobs to a Kubernetes controller:

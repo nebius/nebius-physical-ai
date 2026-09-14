@@ -36,6 +36,12 @@ SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. 
 Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`
 venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
 
+The cluster GPU smoke uses an owned validation API session across its credential
+check, discovery, launch, and cleanup. Selecting a CLI executable alone does not
+select a different shared SkyPilot API. Let NPA manage the validation session;
+preserve its state and original environment if workload removal is unverified.
+Workflow submission still uses its separate run-scoped API directory.
+
 The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). The VM controller exists only as a fallback.
 
 For workflows that write S3 state or artifacts, supply `config.bucket` and a

@@ -156,6 +156,14 @@ node. A name mismatch fails as `FAILED_PRECHECKS` or "cluster does not contain
 any instances satisfying the request", which reads like a capacity shortage and
 is not one.
 
+Use `npa provision-if-absent --sky-smoke` with the selected topology, driver
+settings, kubeconfig, and SkyPilot binary to prove actual GPU dispatch. Cluster
+validation keeps checks, discovery, launch, and cleanup in one owned API session
+with a durable working directory. Success requires workload removal before the
+API stops. If removal is unverified, retain the reported session state and its
+original environment for recovery; do not stop an unowned shared API or delete
+its state to make the smoke pass.
+
 ## Triage: nodes exist but GPUs do not work
 
 1. **`NebiusGPUError=True`, fabric not ready, CUDA "system not yet initialized"**

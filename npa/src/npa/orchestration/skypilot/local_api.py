@@ -38,8 +38,7 @@ class IsolatedApiError(ValueError):
     """Secret-safe failure; no fallback to a shared daemon is permitted."""
 
 
-@contextmanager
-def _locked(root: Path):
+def _require_linux_host() -> None:
     if sys.platform != "linux" or not Path("/proc/self").is_dir():
         raise IsolatedApiError(
             "isolated SkyPilot execution requires a Linux operator host with /proc "
@@ -47,6 +46,11 @@ def _locked(root: Path):
             "monitoring, recovery, and cleanup on that same Linux host. "
             "See docs/orchestration/skypilot-setup.md"
         )
+
+
+@contextmanager
+def _locked(root: Path):
+    _require_linux_host()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     with open(root / "lock", "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as handle:
@@ -624,6 +628,8 @@ def ensure_isolated_api(
         if record is None or environment.get(_ENDPOINT) != _endpoint(record):
             raise IsolatedApiError("isolated SkyPilot API endpoint intent is missing or inconsistent")
         interpreter = str(Path(sky_executable).absolute().parent / "python")
+        if record.get("interpreter") and record["interpreter"] != interpreter:
+            raise IsolatedApiError("isolated SkyPilot API recovery requires the original recorded interpreter")
         config_source = Path(environment.get("SKYPILOT_GLOBAL_CONFIG") or "")
         if not config_source.is_file():
             raise IsolatedApiError("isolated SkyPilot API requires the verified runtime configuration")
@@ -659,7 +665,7 @@ def ensure_isolated_api(
         spawned = None
         process = _process(record) if record.get("interpreter") else None
         if process:
-            if record.get("interpreter") != interpreter or record.get("config_sha256") != config_hash:
+            if record.get("config_sha256") != config_hash:
                 raise IsolatedApiError("running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting")
             if record["environment_binding"] != binding or record.get("identity_files") != files:
                 raise IsolatedApiError("running isolated SkyPilot API has a different executing identity or changed credential configuration")

@@ -454,7 +454,12 @@ npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 
 Verification must report Kubernetes enabled for this context. The smoke checks
 actual GPU dispatch, including supported accelerator-label setup, and removes
-its temporary workload before succeeding. It also runs against an existing
+its temporary workload before succeeding. Cluster validation uses an owned
+SkyPilot API for its checks, GPU discovery, launch, and cleanup, with the
+selected SkyPilot interpreter and a durable working directory. It stops that
+API after verifying workload removal. If removal cannot be verified, retain
+the reported validation state and original environment for recovery; an older
+shared API must remain untouched. It also runs against an existing
 cluster; it is not enabled by default in S5's provisioning command. Copy the exact
 GPU spelling from discovery; for example, an RTX PRO 6000 cluster may advertise
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`. Use it with the requested count in the run
@@ -651,6 +656,9 @@ Keep the run's state and artifacts available for inspection.
 ### R3. Submit
 
 ```bash
+NPA_E2E_PAIDF_STARTER_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" || exit 1
+export NPA_E2E_PAIDF_STARTER_FRESH_AFTER
+printf 'Save this run freshness timestamp: %s\n' "$NPA_E2E_PAIDF_STARTER_FRESH_AFTER"
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
@@ -669,6 +677,9 @@ The first run needs no input preparation: submit fetches and verifies the
 pinned upstream starter video, stages it for the run, and passes the source
 to the Cosmos 3 workflow. It also stages source code and forwards the four
 named secrets without requiring their values in the command.
+Keep the pre-submission UTC timestamp with this run's records. The
+[completed starter audit](#audit-a-completed-default-starter-run) uses it to
+reject artifacts that predate this submission.
 Both starter variants passed the exploratory default quality gate in the
 recorded live run. Review generated data separately for training suitability.
 Generation and evaluator results can vary, and a new run can still be rejected.
@@ -1420,6 +1431,40 @@ Rejection-route adapter checks passed
 against retained live reports; a full rejected runtime replay was not completed.
 
 ## Inspect the outputs
+
+### Audit a completed default-starter run
+
+After R3 reaches successful finalization, run the read-only audit below from
+the checkout that submitted it. Restore its saved pre-submission timestamp
+if using another shell. This audit requires the default starter and batch
+settings; R3a and R3b have separate audits for their selected inputs.
+
+Install the test dependencies in the separate contributor environment once:
+
+```bash
+python3.12 -m venv npa/.venv
+npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]'
+```
+
+Then run the audit:
+
+```bash
+(
+  set -e
+  : "${NPA_E2E_PAIDF_STARTER_FRESH_AFTER:?Restore the saved pre-submission UTC timestamp for this run}"
+  export NPA_E2E_PAIDF_STARTER_FRESH_AFTER
+  export NPA_INTEGRATION_E2E=1
+  export NPA_E2E_PROJECT="$PROJECT_ALIAS"
+  export NPA_E2E_PAIDF_STARTER_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/"
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_starter_live.py -q
+)
+```
+
+Require **one passed test**, with no skip. It verifies fresh run objects,
+the pinned starter bytes, successful stages without replay or adoption,
+both default variants and quality thresholds, complete native transfer and
+evaluation evidence, accepted annotation and real curation, and both Rerun
+recordings. It reads existing outputs without submitting or resuming work.
 
 ### Check every stage and full pipeline completion
 
