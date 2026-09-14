@@ -696,6 +696,46 @@ def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_chat_mk8s_cpu_only_request_binds_confirmed_shape(
+    monkeypatch, tmp_path
+) -> None:
+    """A CPU-only chat request must preserve its exact shape through confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_cpu_only_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-cpu-only-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+
+    def provision(_project, _cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    prompt = "Deploy a CPU-only MK8s cluster for the Token Factory workload."
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert calls[0][1]["cpu_nodes"] == 1
+    assert calls[0][1]["gpu_nodes"] == 0
+    assert "CPU-only" in initial["reply"]
+
+
 def test_rendered_chat_mk8s_unknown_preflight_never_issues_confirmation(
     monkeypatch, tmp_path
 ) -> None:

@@ -4333,6 +4333,17 @@ def _safe_infra_chat_status(response: object) -> str:
     return status if status in {{"blocked", "invalid", "unavailable", "unknown", "partial", "error"}} else "unavailable"
 
 
+def _mk8s_chat_desired(user_text: str) -> dict:
+    # Translate the one safe, explicit resource-shape request chat supports.
+    text = str(user_text or "").lower()
+    if re.search(r"\\b(?:cpu[- ]only|no[- ]gpu|without[- ]gpus?)\\b", text):
+        # Keep this deliberately narrow: do not infer a GPU model, a capacity
+        # class, or preemptible consent from natural language. A CPU-only shape
+        # is fully specified and is useful for hosted-inference workflow stages.
+        return {{"cpu_nodes": 1, "gpu_nodes": 0}}
+    return {{}}
+
+
 def _maybe_toolground_chat_reply(
     user_text: str,
     *,
@@ -4350,7 +4361,13 @@ def _maybe_toolground_chat_reply(
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
     if intent == "mk8s_provision":
-        request = {{"dry_run": True, "validate": False, "skip_s3": True}}
+        desired = _mk8s_chat_desired(user_text)
+        request = {{"dry_run": True, "validate": False, "skip_s3": True, **desired}}
+        shape_note = (
+            "- **shape**: CPU-only (one CPU node; no GPU node).\\n"
+            if desired
+            else ""
+        )
         if confirm_token:
             request.update({{"dry_run": False, "validate": True, "confirm_token": confirm_token}})
             response = provision_infra(request)
@@ -4359,8 +4376,9 @@ def _maybe_toolground_chat_reply(
             reply = (
                 "**Nebius infrastructure deployment submitted**\\n"
                 "- The configured Kubernetes backend was handed to the NPA provisioner.\\n"
-                f"- **status**: `{{status}}`\\n"
-                "- I will keep using the configured backend for future workflow planning and submission."
+                + shape_note
+                + f"- **status**: `{{status}}`\\n"
+                + "- I will keep using the configured backend for future workflow planning and submission."
                 if completed
                 else "**Nebius infrastructure deployment needs attention**\\n"
                 f"- **status**: `{{status}}`\\n"
@@ -4378,7 +4396,9 @@ def _maybe_toolground_chat_reply(
             )
             details = {{"phase": "preflight", "status": status, "needs_confirmation": False}}
             return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details}}, intent
-        confirmation = provision_infra({{"dry_run": False, "validate": True, "skip_s3": True}})
+        confirmation = provision_infra(
+            {{"dry_run": False, "validate": True, "skip_s3": True, **desired}}
+        )
         token = str(confirmation.get("confirm_token") or "") if isinstance(confirmation, dict) else ""
         if not token:
             reply = (
@@ -4391,8 +4411,9 @@ def _maybe_toolground_chat_reply(
         reply = (
             "**Nebius infrastructure preflight complete**\\n"
             "- I checked the configured Kubernetes deployment path with a non-mutating dry-run.\\n"
-            "- **status**: `ready`\\n"
-            "- No cloud resources have been created. Use the confirmation card below to create or reuse the configured backend."
+            + shape_note
+            + "- **status**: `ready`\\n"
+            + "- No cloud resources have been created. Use the confirmation card below to create or reuse the configured backend."
         )
         details = {{"phase": "ready_for_confirmation", "status": "ready", "needs_confirmation": bool(token)}}
         return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details, "confirm_token": token}}, intent
