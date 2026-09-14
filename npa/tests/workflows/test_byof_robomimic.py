@@ -960,6 +960,32 @@ def test_robomimic_runner_recognizes_accepted_digest_under_renamed_image(
     assert runner._is_robomimic_request(args) is True
 
 
+@pytest.mark.parametrize(
+    "registry",
+    (
+        "docker.io:443/example",
+        "quay.io:5000/example",
+        "public.ecr.aws.:80/example",
+    ),
+)
+def test_robomimic_registry_guard_normalizes_public_hosts(registry: str) -> None:
+    runner = _byof_runner_module()
+    assert runner._is_public_robomimic_registry(registry) is True
+
+
+def test_robomimic_registry_guard_normalizes_configured_public_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _byof_runner_module()
+    monkeypatch.setattr(
+        runner,
+        "public_container_registry",
+        lambda: "ghcr.io.:443/example/workbench/",
+    )
+    assert runner._is_public_robomimic_registry("ghcr.io/example/workbench") is True
+    assert runner._is_public_robomimic_registry("ghcr.io/operator/private") is False
+
+
 def test_workflow_refusal_recognizes_exact_source_ref_through_renaming() -> None:
     spec = SimpleNamespace(
         name="renamed",

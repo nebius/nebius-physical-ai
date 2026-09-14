@@ -23,6 +23,7 @@ from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
     is_public_registry,
+    public_container_registry,
     wan_accepted_image_manifest,
 )
 from npa.workflows.byof.live import (
@@ -123,6 +124,28 @@ def _immutable_image_digest(value: str) -> str:
         str(value or "").strip().removeprefix("docker:")
     )
     return match.group(1).lower() if match else ""
+
+
+def _normalized_robomimic_registry(registry: str) -> str:
+    """Canonicalize a registry only for the governed robomimic boundary."""
+
+    candidate = str(registry or "").strip().rstrip("/")
+    host, separator, path = candidate.partition("/")
+    if not host.startswith("[") and ":" in host:
+        hostname, port = host.rsplit(":", 1)
+        if port.isdigit():
+            host = hostname
+    host = host.rstrip(".")
+    return f"{host}{separator}{path}".lower()
+
+
+def _is_public_robomimic_registry(registry: str) -> bool:
+    """Fail the robomimic gate for alternate spellings of public registries."""
+
+    candidate = _normalized_robomimic_registry(registry)
+    return is_public_registry(candidate) or candidate == _normalized_robomimic_registry(
+        public_container_registry()
+    )
 
 
 def _is_robomimic_request(args: argparse.Namespace) -> bool:
@@ -366,14 +389,14 @@ def _require_robomimic_manager_context(
         raise ValueError(
             "robomimic registry does not match the manager-issued registry"
         )
-    if is_public_registry(selected_registry):
+    if _is_public_robomimic_registry(selected_registry):
         raise ValueError("robomimic requires an operator-private registry")
     effective_registry = _registry_path(image).rstrip("/")
     if effective_registry != selected_registry:
         raise ValueError(
             "robomimic image does not target the manager-issued private registry"
         )
-    if is_public_registry(effective_registry):
+    if _is_public_robomimic_registry(effective_registry):
         raise ValueError("robomimic image must not target a public registry")
     if selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower() != "private":
         raise ValueError(
@@ -682,10 +705,10 @@ def _dockerfile_text() -> str:
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
-        '    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url="$(cat /run/secrets/npa_byof_repo_url)"; fi; \\\n'
-        '    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref="$(cat /run/secrets/npa_byof_repo_ref)"; fi; \\\n'
+        "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
+        "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
-        '    git_with_auth() { git "$@"; }; \\\n'
+        "    git_with_auth() { git \"$@\"; }; \\\n"
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
         "      printf '%s\\n' '#!/bin/sh' \\\n"
         "        '[ \"$1\" = get ] || exit 0' \\\n"
@@ -694,19 +717,19 @@ def _dockerfile_text() -> str:
         "        'printf \"\\\\n\\\\n\"' \\\n"
         "        > /tmp/npa-byof-git-credential; \\\n"
         "      chmod 700 /tmp/npa-byof-git-credential; \\\n"
-        '      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential "$@"; }; \\\n'
+        "      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential \"$@\"; }; \\\n"
         "    fi; \\\n"
         f'    git_with_auth clone --depth 1 --branch "$repo_ref" "$repo_url" {BYOF_REPO_MOUNT} \\\n'
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
-        f'      cd {BYOF_REPO_MOUNT}; git checkout "$repo_ref"); \\\n'
-        f'    if [ "${{BYOF_SOURCE_VISIBILITY}}" = private ]; then \\\n'
+        f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
+        f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        f'      printf \'{{"source":"private-byof","repository_sha256":"%s","ref_sha256":"%s"}}\\n\' "$repo_sha" "$ref_sha" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
+        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         "    else \\\n"
-        f'      printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' "$repo_url" "$repo_ref" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -1144,34 +1167,34 @@ def _run_byof(
                     )
                     try:
                         build_cmd = [
-                            "docker",
-                            "build",
-                            "--platform",
-                            "linux/amd64",
-                            "--build-arg",
-                            f"BYOF_BASE_IMAGE={base_image}",
-                            "--build-arg",
-                            f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
-                            "--build-arg",
-                            (
-                                "BYOF_SOURCE_CACHE_KEY="
-                                + (
-                                    source_secrets.repository_sha256
-                                    + source_secrets.ref_sha256
-                                    if source_secrets
-                                    else "public"
-                                )
-                            ),
-                            "--build-arg",
-                            f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
-                            "--build-arg",
-                            f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
-                            "--build-arg",
-                            f"BYOF_BUILD_COMMAND={args.build_command}",
-                            "-t",
-                            image,
-                            str(context),
-                        ]
+                                "docker",
+                                "build",
+                                "--platform",
+                                "linux/amd64",
+                                "--build-arg",
+                                f"BYOF_BASE_IMAGE={base_image}",
+                                "--build-arg",
+                                f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
+                                "--build-arg",
+                                (
+                                    "BYOF_SOURCE_CACHE_KEY="
+                                    + (
+                                        source_secrets.repository_sha256
+                                        + source_secrets.ref_sha256
+                                        if source_secrets
+                                        else "public"
+                                    )
+                                ),
+                                "--build-arg",
+                                f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
+                                "--build-arg",
+                                f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
+                                "--build-arg",
+                                f"BYOF_BUILD_COMMAND={args.build_command}",
+                                "-t",
+                                image,
+                                str(context),
+                            ]
                         if source_secrets is None:
                             build_cmd[8:8] = [
                                 "--build-arg",

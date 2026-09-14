@@ -349,9 +349,7 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError(
-            "Content Agents accepted image manifest must be a JSON object"
-        )
+        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -553,9 +551,7 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError(
-            "Public release manifest registry drifted from official GHCR"
-        )
+        raise RuntimeError("Public release manifest registry drifted from official GHCR")
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -567,17 +563,12 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(
-                f"Public release manifest entry {tool!r} must be an object"
-            )
+            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if (
-            re.fullmatch(
-                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-            )
-            is None
-        ):
+        if re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+        ) is None:
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -614,10 +605,7 @@ def supported_tool_version(tool: str) -> str:
         if pyproject.is_file():
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
-            configured = data["tool"]["npa"]["supported-tools"]
-            if tool in configured:
-                return str(configured[tool])
-            break
+            return str(data["tool"]["npa"]["supported-tools"][tool])
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
@@ -709,10 +697,7 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if (
-                token == "blackwell"
-                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
-            ):
+            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
                 continue
             if token in normalized:
                 if not requested:
@@ -1047,17 +1032,6 @@ def development_image_for_tool(
     )
 
 
-def _normalized_registry(registry: str) -> str:
-    candidate = str(registry or "").strip().rstrip("/")
-    host, separator, path = candidate.partition("/")
-    if not host.startswith("[") and ":" in host:
-        hostname, port = host.rsplit(":", 1)
-        if port.isdigit():
-            host = hostname
-    host = host.rstrip(".")
-    return f"{host}{separator}{path}".lower()
-
-
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
@@ -1065,16 +1039,16 @@ def is_public_registry(registry: str) -> bool:
     namespace, and the configured public release namespace. GHCR is package-
     scoped, so an arbitrary operator GHCR namespace is not assumed public.
     """
-    candidate = _normalized_registry(registry)
+    candidate = registry.strip().rstrip("/")
     if not candidate:
         return False
-    host = candidate.split("/", 1)[0]
+    host = candidate.split("/", 1)[0].lower()
     if host in PUBLIC_REGISTRY_HOSTS:
         return True
-    if candidate == _normalized_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY):
+    if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():
         return True
-    mirror = _normalized_registry(public_container_registry())
-    return bool(mirror) and candidate == mirror
+    mirror = public_container_registry().strip().rstrip("/")
+    return bool(mirror) and candidate.lower() == mirror.lower()
 
 
 def is_official_container_registry(registry: str) -> bool:
