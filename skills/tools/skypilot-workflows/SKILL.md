@@ -42,6 +42,16 @@ select a different shared SkyPilot API. Let NPA manage the validation session;
 preserve its state and original environment if workload removal is unverified.
 Workflow submission still uses its separate run-scoped API directory.
 
+Standalone Kubernetes `npa skypilot verify --cluster ... --kubeconfig ...` and
+targeted `npa workbench workflow gpus --context ...` also use owned check-only
+sessions by default. Keep one exact kubeconfig file selected. The existing GPU
+discovery `--isolated-config-dir` selects the session parent root with explicit
+precedence; optional `--project` verifies local project/context identity. These
+commands refuse a prior pending smoke before checks and stop only their own API
+before reporting success. Preserve original pending-smoke settings for the
+cluster/provision recovery path. Bare legacy verification, native Nebius checks,
+and untargeted all-context discovery retain their existing semantics.
+
 After a workflow finishes, `cleanup-controller` removes only its verified
 controller and temporary transaction API; the original owned workflow API
 remains. For a unique per-run API, finish the receipt-checked local shutdown in

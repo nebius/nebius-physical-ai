@@ -53,7 +53,7 @@ export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-npa skypilot verify --cluster "<npa-cluster-context>"
+npa skypilot verify --cluster "<npa-cluster-context>" --kubeconfig "<selected-kubeconfig>"
 ```
 
 Passing the NPA cluster context is important on workstations that already use
@@ -64,6 +64,30 @@ remains a legacy runtime/dependency check and does not require Kubernetes merely
 because Kubernetes is the default controller backend; `--cluster`,
 `--kubeconfig`, or an explicit `--controller-backend kubernetes` opts into the
 strict Kubernetes gate.
+
+An explicit Kubernetes `--cluster` or `--kubeconfig` selects a durable owned API
+session using that pinned SkyPilot interpreter and one validated kubeconfig
+file. The selected context and its cluster/user references must exist uniquely;
+a multi-file `KUBECONFIG` must be reduced to one selected file for targeted
+checks. No authentication method is substituted. The check uses its own durable
+working directory, stops only that session's API, and reports success after
+local shutdown is verified. Bare legacy checks and native Nebius verification
+retain their existing behavior.
+
+Targeted `npa workbench workflow gpus --context <context>` (also `--cluster` or
+`KUBECONTEXT`) uses the same owned check-only lifecycle. Its optional
+`--isolated-config-dir` precedes the environment/saved root, and `--project`
+checks local project/cluster identity without consulting a shared controller.
+Discovery passes its selected kubeconfig directly and does not alter the shell
+or process environment. An omitted target retains legacy all-context discovery.
+A nested check leaves the existing owned session to its outer caller.
+
+These check-only commands cannot take over a pending GPU smoke. Keep its private
+session records and original settings, then recover with the original
+cluster/provision command. If only local API shutdown is unverified, retain the
+session records and rerun the same targeted check with unchanged settings; NPA
+must verify that prior cleanup before creating another session. A failed check
+remains a failure when cleanup also fails.
 
 To prove GPU execution without creating a managed-jobs controller, use NPA's
 built-in smoke task:

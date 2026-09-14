@@ -317,8 +317,27 @@ def test_resolution_is_skipped_when_disabled(
     )
 
 
+@pytest.fixture
+def owned_gpu_discovery(tmp_path, monkeypatch, sky_bin):
+    from npa.orchestration.skypilot import _bin, local_api
+
+    selected = tmp_path / "selected-kubeconfig"
+    selected.write_text(
+        "apiVersion: v1\ncurrent-context: npa-cluster\n"
+        "contexts:\n- name: npa-cluster\n  context: {cluster: selected}\n"
+        "clusters:\n- name: selected\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(selected))
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa/config.yaml")
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda _value: Path(sky_bin))
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
+    return selected
+
+
 def test_workflow_gpus_prints_the_export_line(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -336,18 +355,18 @@ def test_workflow_gpus_prints_the_export_line(
 
 
 def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     monkeypatch.setenv("KUBECONTEXT", "unrelated-ambient-context")
     kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    kubeconfig.write_text(owned_gpu_discovery.read_text().replace("npa-cluster", "selected-cluster"))
     monkeypatch.setattr(
         "npa.cluster.state.kubeconfig_file", lambda _cluster: kubeconfig
     )
     seen: dict[str, str] = {}
 
-    def discover_inventory(*, context: str):
+    def discover_inventory(*, context: str, kubeconfig: Path):
         seen["inventory_context"] = context
         return type(
             "Inventory",
@@ -362,7 +381,7 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
             },
         )()
 
-    def discover_catalog(*, context: str, sky_bin: str):
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
         seen["catalog_context"] = context
         return KubernetesGpuCatalog({}, context=context)
 
@@ -398,7 +417,7 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
 
 
 def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -424,8 +443,8 @@ def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
     assert result.exit_code == 0, result.output
 
 
-def test_workflow_gpus_shared_state_still_rejects_another_owner_context(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+def test_workflow_gpus_owned_discovery_ignores_another_shared_owner_context(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -446,8 +465,8 @@ def test_workflow_gpus_shared_state_still_rejects_another_owner_context(
         ],
     )
 
-    assert result.exit_code == 2, result.output
-    assert "Shared controller owner context does not match" in result.output
+    assert result.exit_code == 0, result.output
+    assert not json.loads(result.stdout)["skypilot_error"]
 
 
 def test_submit_isolated_state_skips_shared_owner_verification(
@@ -496,7 +515,7 @@ def test_submit_shared_state_still_verifies_controller_owner(
 
 
 def test_workflow_gpus_resolves_a_spec(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -519,7 +538,7 @@ def test_workflow_gpus_resolves_a_spec(
 
 
 def test_workflow_gpus_json_reports_the_exact_alias_resolution(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -550,7 +569,7 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
 
 
 def test_workflow_gpus_resolves_templated_accelerator_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)

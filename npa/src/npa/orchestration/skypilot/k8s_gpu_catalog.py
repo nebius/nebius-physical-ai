@@ -114,6 +114,8 @@ def kubernetes_sky_environment(
         # Validation owns cloud smoke names independently of any ambient
         # workflow user ID; recovering the same child keeps its exact identity.
         env["SKYPILOT_USER_ID"] = "npa-" + hashlib.sha256(str(session.scope.resolve()).encode()).hexdigest()[:12]
+        if session.record.get("project_alias"):
+            env["NPA_SKYPILOT_PROJECT"] = session.record["project_alias"]
     identity = hashlib.sha256(f"{kubeconfig_path}\0{context}".encode()).hexdigest()[:24]
     scope = session.scope if session is not None else isolated_root / "cluster-validation" / identity
     return _owned_validation_environment(scope, context, sky_executable, env)

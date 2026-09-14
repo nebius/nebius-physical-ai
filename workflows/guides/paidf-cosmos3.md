@@ -462,12 +462,19 @@ npa provision-if-absent \
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 ```
 
-Verification must report Kubernetes enabled for this context. The smoke checks
-actual GPU dispatch, including supported accelerator-label setup, and removes
-its temporary workload before succeeding. Cluster validation uses an owned
-SkyPilot API for its checks, GPU discovery, launch, and cleanup, with the
-selected SkyPilot interpreter and a durable working directory. It stops that
-API after verifying workload removal. If removal cannot be verified, retain
+Verification must report Kubernetes enabled for this context. The targeted
+`verify` and `workflow gpus` commands each use a durable owned API session with
+the selected SkyPilot interpreter, exact kubeconfig and context. They stop only
+their own check-only API before reporting success; discovery's `--project`
+also checks the selected project's local cluster identity. Neither command uses
+the shared controller API. Keep one kubeconfig file selected for these checks.
+
+The smoke checks actual GPU dispatch, including supported accelerator-label
+setup, and removes its temporary workload before succeeding. Cluster validation
+uses one owned SkyPilot API across its checks, GPU discovery, launch, and cleanup,
+then stops it after verifying workload removal. Standalone verification and
+discovery refuse a recorded pending smoke; recover it through its original
+cluster/provision command before repeating these checks. If removal cannot be verified, retain
 the reported validation state and original environment for recovery; an older
 shared API must remain untouched. It also runs against an existing
 cluster; it is not enabled by default in S5's provisioning command. Copy the exact

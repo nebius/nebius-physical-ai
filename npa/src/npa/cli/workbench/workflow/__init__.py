@@ -7427,117 +7427,85 @@ def preflight_images_cmd(
 
 
 @app.command("gpus")
+@json_stdout_contract
 def gpus_cmd(
-    project: str = typer.Option(
-        "",
-        "--project",
-        help="Project alias used to verify shared-controller ownership.",
-    ),
-    cluster: str = typer.Option(
-        "",
-        "--cluster",
-        "--cluster-name",
-        help="NPA cluster name. Resolves ~/.npa/clusters/<name>/kubeconfig.",
-    ),
-    context: str = typer.Option(
-        "",
-        "--context",
-        help="Kubernetes context to inspect. Defaults to KUBECONTEXT or every context.",
-    ),
-    sky_bin: str = typer.Option(
-        "",
-        "--sky-bin",
-        help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
-    ),
-    isolated_config_dir: Path | None = typer.Option(
-        None,
-        "--isolated-config-dir",
-        help=(
-            "Task-scoped SkyPilot state. When set, discovery does not require the "
-            "global shared-controller owner to match this context."
-        ),
-    ),
-    spec: Path | None = typer.Option(
-        None,
-        "--spec",
-        help="npa.workflow spec whose accelerators should be resolved against the cluster.",
-    ),
+    project: str = typer.Option("", "--project", help="Optional project alias checked against the selected context's local cluster identity."),
+    cluster: str = typer.Option("", "--cluster", "--cluster-name", help="NPA cluster name; selects its kubeconfig and context."),
+    context: str = typer.Option("", "--context", help="Exact context. Defaults to KUBECONTEXT or legacy all-context discovery."),
+    sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable; defaults to NPA_SKYPILOT_BIN or saved configuration."),
+    isolated_config_dir: Path | None = typer.Option(None, "--isolated-config-dir", help="Parent directory for owned targeted discovery sessions."),
+    spec: Path | None = typer.Option(None, "--spec", help="Workflow spec whose accelerators should be resolved against the cluster."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
-    """Print the accelerator names this cluster advertises to SkyPilot.
+    """Print advertised GPU names using an owned API for a selected context.
 
-    Kubernetes clusters name GPUs after their node labels, so the string a spec
-    must use is discovered rather than guessed. Run this once after `npa configure`
-    and export the printed NPA_WORKFLOW_GPU_ACCELERATOR line.
+    Args:
+        project: Optional local project identity to verify.
+        cluster: NPA cluster selecting its kubeconfig and context.
+        context: Exact context, otherwise the existing environment/default behavior.
+        sky_bin: Optional selected SkyPilot executable.
+        isolated_config_dir: Optional parent state root, preceding environment/config.
+        spec: Optional workflow whose accelerator names should be resolved.
+        json_output: Emit exactly one JSON document.
+    Returns:
+        None.
+    Raises:
+        Exit: Target, discovery, or owned cleanup could not be verified.
     """
-
-    from npa.orchestration.skypilot.k8s_gpu_catalog import (
-        KubernetesGpuCatalogError,
-        UnsatisfiableAcceleratorError,
-        discover_kubernetes_gpu_catalog,
-        discover_kubernetes_gpu_inventory,
-        resolve_kubernetes_accelerator,
-        spec_accelerators,
+    resolved_context = context.strip() or cluster.strip() or os.environ.get("KUBECONTEXT", "").strip()
+    inventory, catalog, sky_error = _inspect_workflow_gpus(
+        project, cluster, resolved_context, sky_bin, isolated_config_dir
     )
+    resolutions = _gpu_spec_resolutions(spec, catalog)
+    _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output)
 
-    # An explicit NPA cluster selects both its dedicated kubeconfig and its
-    # identically named context.  An unrelated ambient KUBECONTEXT must not
-    # redirect discovery after the operator supplied --cluster.
-    resolved_context = (
-        context.strip() or cluster.strip() or os.environ.get("KUBECONTEXT", "").strip()
-    )
-    env_backup: str | None = None
+
+def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
+    from npa.orchestration.skypilot import _bin
+    from npa.orchestration.skypilot.cluster_validation import resolve_validation_project, resolve_validation_target
+
+    kubeconfig = None
     if cluster.strip():
         from npa.cluster.state import kubeconfig_file
 
         kubeconfig = kubeconfig_file(cluster.strip())
-        if not kubeconfig.exists():
-            _fail(f"Kubeconfig not found for cluster {cluster!r}: {kubeconfig}")
-            return
-        env_backup = os.environ.get("KUBECONFIG")
-        os.environ["KUBECONFIG"] = str(kubeconfig)
-    inventory = discover_kubernetes_gpu_inventory(context=resolved_context)
-    sky_error = ""
-    if resolved_context:
-        try:
-            from npa.orchestration.skypilot._bin import resolve_config as resolve_sky_config
-            from npa.controller_ownership import (
-                verify_controller_owner,
-                verify_recorded_controller_owner,
-            )
+    selected, exact_context = resolve_validation_target(kubeconfig, context)
+    alias = resolve_validation_project(project, exact_context)
+    config = _bin.resolve_config(sky_bin=sky_bin or None, isolated_config_dir=isolated_config_dir)
+    return selected, exact_context, alias, config
 
-            effective_isolated_dir = resolve_sky_config(
-                sky_bin=sky_bin or None,
-                isolated_config_dir=isolated_config_dir,
-            ).isolated_config_dir
-            if effective_isolated_dir is None:
-                if isinstance(project, str) and project.strip():
-                    verify_controller_owner(project, resolved_context)
-                else:
-                    owner = verify_recorded_controller_owner()
-                    if owner is not None and owner.context != resolved_context:
-                        raise RuntimeError(
-                            "Shared controller owner context does not match requested GPU context."
-                        )
-        except (OSError, RuntimeError, ValueError) as exc:
-            sky_error = str(exc)
+
+def _inspect_workflow_gpus(project, cluster, context, sky_bin, isolated_config_dir):
+    from contextlib import nullcontext
+    from npa.orchestration.skypilot import _bin, k8s_gpu_catalog as discovery
+    from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
+
+    inventory = discovery.KubernetesGpuInventory(context, 0, 0, 0, 0, (), {})
+    catalog = discovery.KubernetesGpuCatalog({}, context=context)
     try:
-        if sky_error:
-            raise KubernetesGpuCatalogError(sky_error)
-        catalog = discover_kubernetes_gpu_catalog(
-            context=resolved_context, sky_bin=sky_bin or None
-        )
-    except KubernetesGpuCatalogError as exc:
-        sky_error = str(exc)
-        from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
+        selected, executable, boundary = None, sky_bin or None, nullcontext()
+        if context:
+            selected, context, alias, config = _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir)
+            executable = config.sky_bin
+            boundary = cluster_validation_session(selected, context, isolated_config_dir=config.isolated_config_dir,
+                                                  project_alias=alias, check_only=True)
+        with boundary:
+            if context:
+                _bin.ensure_skypilot_version(executable)
+                discovery.kubernetes_sky_environment(context=context, kubeconfig=selected, sky_executable=str(executable))
+            inventory = discovery.discover_kubernetes_gpu_inventory(context=context, kubeconfig=selected)
+            catalog = discovery.discover_kubernetes_gpu_catalog(context=context, kubeconfig=selected, sky_bin=executable)
+    except (OSError, RuntimeError, ValueError) as exc:
+        from npa.orchestration.skypilot.workflow_state import redact_text
 
-        catalog = KubernetesGpuCatalog({}, context=resolved_context)
-    finally:
-        if cluster.strip():
-            if env_backup is None:
-                os.environ.pop("KUBECONFIG", None)
-            else:
-                os.environ["KUBECONFIG"] = env_backup
+        return inventory, catalog, redact_text(str(exc))
+    return inventory, catalog, ""
+
+
+def _gpu_spec_resolutions(spec, catalog):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        UnsatisfiableAcceleratorError, resolve_kubernetes_accelerator, spec_accelerators,
+    )
 
     resolutions: list[dict[str, object]] = []
     if spec is not None:
@@ -7569,27 +7537,16 @@ def gpus_cmd(
                 }
             )
 
-    if json_output:
-        typer.echo(
-            json.dumps(
-                {
-                    "context": catalog.context,
-                    "kubernetes": inventory.to_dict(),
-                    "skypilot_error": sky_error,
-                    "accelerators": {
-                        name: sorted(quantities)
-                        for name, quantities in catalog.quantities_by_accelerator.items()
-                    },
-                    "spec_resolutions": resolutions,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        if sky_error:
-            raise typer.Exit(code=2)
-        return
+    return resolutions
 
+
+def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output):
+    if json_output:
+        _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions)
+        return
+    if sky_error:
+        typer.echo(f"skypilot_error: {sky_error}", err=True)
+        raise typer.Exit(code=2)
     typer.echo(
         "kubernetes: "
         f"ready_nodes={inventory.ready_nodes} "
@@ -7604,9 +7561,6 @@ def gpus_cmd(
         )
     if catalog.is_empty:
         typer.echo("accelerators: none advertised")
-        if sky_error:
-            typer.echo(f"skypilot_error: {sky_error}", err=True)
-            raise typer.Exit(code=2)
         return
     typer.echo(f"context: {catalog.context or 'all'}")
     for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
@@ -7619,6 +7573,28 @@ def gpus_cmd(
             typer.echo(f"  {item['requested']}: {item['error']}")
         else:
             typer.echo(f"  {item['requested']} -> {item['resolved']}")
+
+
+def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
+    typer.echo(
+        json.dumps(
+            {
+                "context": catalog.context,
+                "kubernetes": inventory.to_dict(),
+                "skypilot_error": sky_error,
+                "accelerators": {
+                    name: sorted(quantities)
+                    for name, quantities in catalog.quantities_by_accelerator.items()
+                },
+                "spec_resolutions": resolutions,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    if sky_error:
+        raise typer.Exit(code=2)
+    return
 
 
 app.add_typer(trigger_app, name="trigger")
