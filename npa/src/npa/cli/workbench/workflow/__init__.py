@@ -954,6 +954,10 @@ def submit_cmd(
             "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
         )
         return
+    if not project:
+        from npa.clients.config import default_project_name
+
+        project = default_project_name()
     workflow_identity = ""
     if is_npa_spec:
         assert merged_npa_spec is not None

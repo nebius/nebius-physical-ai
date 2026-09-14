@@ -321,6 +321,29 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
 
 
+@pytest.mark.parametrize("selected", ["", "review"])
+def test_runtime_keeps_configured_project_selection(
+    fake_runtime, monkeypatch, tmp_path: Path, selected: str,
+) -> None:
+    from npa.clients import config
+
+    path = tmp_path / "project-config.yaml"
+    path.write_text("default_project: research\nprojects:\n  research: {}\n  review: {}\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    arguments = [
+        "workbench", "workflow", "submit", str(FANOUT),
+        "--runtime", "--run-id", "selected-project-run",
+        "--var", "bucket=rt-bucket", "--output-format", "json",
+    ]
+    if selected:
+        arguments.extend(["--project", selected])
+
+    result = RUNNER.invoke(app, arguments)
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].project == (selected or "research")
+
+
 def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
     image = "cr.example.invalid/reg/npa-fiftyone:fixed"
     result = RUNNER.invoke(
