@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import wraps
+import inspect
 import json
 import os
 from pathlib import Path
@@ -11,8 +13,31 @@ import time
 from typing import Any, Iterator
 
 
-_PHASES = {"policy_action", "env_step", "pink_ik", "capture", "render_call"}
+_PHASES = {
+    "policy_action", "env_step", "pink_ik", "capture", "render_call",
+    "action_apply", "scene_write", "scene_update", "simulation_step",
+    "simulation_render", "physics_wait", "physics_step",
+}
 _READINESS_FIELDS = {"stage_ready", "annotator_ready", "nonblack_rgb"}
+_CLASS_OWNERS: dict[type, Any] = {}
+
+
+@dataclass(frozen=True)
+class _ObservedMethod:
+    target: Any
+    name: str
+    previous: Any
+    installed: Any
+    had_local: bool
+
+    def restore(self) -> None:
+        # Another owner may have deliberately replaced a method after setup.
+        if vars(self.target).get(self.name) is not self.installed:
+            return
+        if self.had_local:
+            setattr(self.target, self.name, self.previous)
+        else:
+            delattr(self.target, self.name)
 
 
 class _PhaseJournal:
@@ -22,6 +47,8 @@ class _PhaseJournal:
         self.sequence = 0
         self.action_step = 0
         self.write_failed = False
+        self.observers: list[_ObservedMethod] = []
+        self.class_targets: set[type] = set()
 
     def emit(self, phase: str, event: str, action_step: int, **fields: Any) -> None:
         _validate_event(phase, event, action_step, fields)
@@ -147,14 +174,109 @@ def record_readiness(env: Any, render_call: int, **readiness: bool | None) -> No
 
 
 def _observe_controller(controller: Any, env: Any) -> None:
-    original = controller.compute
+    _observe_method(controller, "compute", "pink_ik", env)
+
+
+def _wrapped_method(original: Any, phase: str, env: Any) -> Any:
+    owner = _journal(env)
 
     @wraps(original)
-    def compute(*args: Any, **kwargs: Any) -> Any:
-        with phase_scope(env, "pink_ik", _journal(env).action_step):
+    def observed(*args: Any, **kwargs: Any) -> Any:
+        if _journal(env) is not owner:
+            return original(*args, **kwargs)
+        with phase_scope(env, phase, owner.action_step):
             return original(*args, **kwargs)
 
-    controller.compute = compute
+    return observed
+
+
+def _wrapped_classmethod(descriptor: classmethod, phase: str, env: Any) -> classmethod:
+    owner = _journal(env)
+
+    @wraps(descriptor.__func__)
+    def observed(cls: type, *args: Any, **kwargs: Any) -> Any:
+        if _journal(env) is not owner:
+            return descriptor.__get__(None, cls)(*args, **kwargs)
+        with phase_scope(env, phase, owner.action_step):
+            return descriptor.__get__(None, cls)(*args, **kwargs)
+
+    return classmethod(observed)
+
+
+def _claim_class(target: type, env: Any) -> None:
+    journal = _journal(env)
+    for observed, owner in _CLASS_OWNERS.items():
+        if owner is not journal and (
+            issubclass(target, observed) or issubclass(observed, target)
+        ):
+            raise RuntimeError("simulator phase class already has an active owner")
+    _CLASS_OWNERS[target] = journal
+    journal.class_targets.add(target)
+
+
+def _observe_method(target: Any, name: str, phase: str, env: Any) -> None:
+    original = getattr(target, name, None)
+    if not callable(original):
+        return
+    local = vars(target)
+    had_local, previous = name in local, local.get(name)
+    if isinstance(target, type):
+        descriptor = inspect.getattr_static(target, name)
+        if not isinstance(descriptor, classmethod):
+            raise RuntimeError("simulator phase observer requires a native classmethod")
+        _claim_class(target, env)
+        installed = _wrapped_classmethod(descriptor, phase, env)
+    else:
+        installed = _wrapped_method(original, phase, env)
+    setattr(target, name, installed)
+    _journal(env).observers.append(
+        _ObservedMethod(target, name, previous, installed, had_local)
+    )
+
+
+def _observe_environment(env: Any) -> None:
+    sim = getattr(env, "sim", None)
+    targets = (
+        (getattr(env, "action_manager", None), "apply_action", "action_apply"),
+        (getattr(env, "scene", None), "write_data_to_sim", "scene_write"),
+        (getattr(env, "scene", None), "update", "scene_update"),
+        (sim, "step", "simulation_step"),
+        (sim, "render", "simulation_render"),
+        (getattr(sim, "physics_manager", None), "wait_for_playing", "physics_wait"),
+        (getattr(sim, "physics_manager", None), "step", "physics_step"),
+    )
+    for target, name, phase in targets:
+        _observe_method(target, name, phase, env)
+
+
+def finalize_phase_journal(env: Any) -> None:
+    """Restore only native method bindings still owned by this environment.
+
+    Args:
+        env: Base or wrapped simulator environment whose rollout has finished.
+    Returns:
+        None; journals remain on disk. An unexpectedly unrestorable binding stays
+        owned for a later retry instead of masking the rollout's native exception.
+    """
+    journal = _journal(env)
+    if journal is None:
+        return
+    pending = []
+    for observer in reversed(journal.observers):
+        try:
+            observer.restore()
+        except Exception:
+            pending.append(observer)
+    journal.observers = list(reversed(pending))
+    if pending:
+        return
+    for target in journal.class_targets:
+        if _CLASS_OWNERS.get(target) is journal:
+            del _CLASS_OWNERS[target]
+    journal.class_targets.clear()
+    base = getattr(env, "unwrapped", env)
+    if getattr(base, "_npa_phase_journal", None) is journal:
+        del base._npa_phase_journal
 
 
 def _observe_pink_controllers(env: Any) -> None:
@@ -179,10 +301,17 @@ def configure_phase_journal(env: Any, directory: str | Path, rank: int = 0) -> N
         None; observation is idempotent for an already configured environment.
     Raises:
         ValueError: The rank is not a nonnegative integer.
+        RuntimeError: A native class binding is unsupported or already observed
+            by a different active environment.
     """
     if not _nonnegative_integer(rank):
         raise ValueError("invalid simulator phase rank")
     if _journal(env) is not None:
         return
     env._npa_phase_journal = _PhaseJournal(Path(directory), rank)
-    _observe_pink_controllers(env)
+    try:
+        _observe_pink_controllers(env)
+        _observe_environment(env)
+    except BaseException:
+        finalize_phase_journal(env)
+        raise

@@ -211,31 +211,56 @@ def test_patched_step_keeps_native_actions_order_and_exception(tmp_path: Path, f
     assert completed.returncode == 0, completed.stderr
 
 
+_ROLLOUT_FINALIZE_ASSERTIONS = """\
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from npa.workbench.isaac_arena.simulator_phases import configure_phase_journal
+fail, capture_fail = sys.argv[2] == 'True', sys.argv[3] == 'True'
+events = []
+capture_error = ValueError('capture finalization failed')
+
+def finalize():
+    events.append('finalized-live')
+    if capture_fail:
+        raise capture_error
+
+recorder = SimpleNamespace(finalize=finalize)
+apply_action = lambda: None
+base = SimpleNamespace(cfg=SimpleNamespace(metrics=True), compute_metrics=lambda: 0.0,
+                       _npa_video_capture_recorder=recorder,
+                       action_manager=SimpleNamespace(apply_action=apply_action))
+configure_phase_journal(base, Path(sys.argv[1]))
+assert base.action_manager.apply_action is not apply_action
+env = SimpleNamespace(unwrapped=base)
+try:
+    result = rollout(env, fail)
+except ValueError as error:
+    assert capture_fail and error is capture_error
+except RuntimeError as error:
+    assert fail and not capture_fail and str(error) == 'rollout failed'
+else:
+    assert not fail and not capture_fail and result == 0.0
+assert base.action_manager.apply_action is apply_action
+assert not hasattr(base, '_npa_phase_journal')
+del base._npa_video_capture_recorder
+events.append('teardown')
+assert events == ['finalized-live', 'teardown']
+"""
+
+
 @pytest.mark.parametrize("fail", [False, True])
-def test_rollout_finalizes_live_evidence_on_success_and_failure(tmp_path: Path, fail: bool) -> None:
-    module = _evidence_patch()
-    ending = module.POLICY_RUNNER_ROLLOUT_END_PATCHED.split("\n\ndef list_variations", 1)[0]
+@pytest.mark.parametrize("capture_fail", [False, True])
+def test_rollout_finalizes_live_evidence_on_success_and_failure(tmp_path, fail, capture_fail):
+    ending = _evidence_patch().POLICY_RUNNER_ROLLOUT_END_PATCHED.split("\n\ndef list_variations", 1)[0]
     program = tmp_path / "patched_rollout_finalization.py"
     body = "def rollout(env, fail):\n    try:\n        if fail:\n            raise RuntimeError('rollout failed')\n    except RuntimeError:\n        raise\n    else:\n"
-    assertions = textwrap.dedent("""\
-        from types import SimpleNamespace
-        events = []
-        recorder = SimpleNamespace(finalize=lambda: events.append('finalized-live'))
-        base = SimpleNamespace(cfg=SimpleNamespace(metrics=True), compute_metrics=lambda: 0.0,
-                               _npa_video_capture_recorder=recorder)
-        env = SimpleNamespace(unwrapped=base)
-        try:
-            result = rollout(env, FAIL)
-        except RuntimeError as error:
-            assert FAIL and str(error) == 'rollout failed'
-        else:
-            assert not FAIL and result == 0.0
-        del base._npa_video_capture_recorder
-        events.append('teardown')
-        assert events == ['finalized-live', 'teardown']
-    """).replace("FAIL", repr(fail))
+    assertions = _ROLLOUT_FINALIZE_ASSERTIONS
     program.write_text(body + ending + "\n" + assertions)
-    completed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        [sys.executable, str(program), str(tmp_path), str(fail), str(capture_fail)],
+        capture_output=True, text=True, check=False,
+    )
     assert completed.returncode == 0, completed.stderr
 
 

@@ -208,11 +208,17 @@ failed replay diagnosable while preserving the upstream result.
 
 When emitted, `simulator-phases-rank*.jsonl` records fixed phase/event labels,
 monotonic timestamps, rank, action/render counters, and observed readiness
-booleans. It distinguishes policy calls, Pink IK, environment steps, capture,
+booleans. It distinguishes policy calls, Pink IK, action application, scene
+writes and updates, simulator steps, native physics waits and steps, capture,
 and individual render calls without retaining their arguments, input arrays,
-or exception text. An unfinished phase identifies the last observed operation;
+or exception text. Native classmethod binding, arguments, return values, and
+exceptions remain unchanged; journal I/O adds wall-clock overhead. The rollout
+finalizer restores only its own method bindings, including on failure.
+An unfinished phase identifies the last observed operation;
 it does not establish a timeout, a failed task, or successful progress. Journal
 writing is best effort and does not replace the native result or exception.
+In particular, a native physics-step phase includes simulation, result fetching,
+and callback handling; entry alone does not isolate a defect in any one of them.
 
 The viewport path also fails closed on the target graphics stack. NPA first
 probes native NVIDIA EGL, Vulkan, and `libnvoptix.so.1`, and requires a readable,

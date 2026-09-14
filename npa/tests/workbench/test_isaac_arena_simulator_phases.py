@@ -1,6 +1,7 @@
 """Prove phase diagnostics expose blocked boundaries without leaking or changing work."""
 
 import json
+import inspect
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -184,3 +185,235 @@ def test_write_sink_rejects_unapproved_fields_even_from_internal_callers(
         env._npa_phase_journal.emit(phase, event, 5, **fields)
     assert "private" not in str(caught.value)
     assert not list(tmp_path.iterdir())
+
+
+def _stepping_environment(block):
+    calls = []
+
+    class Physics:
+        @classmethod
+        def wait_for_playing(cls):
+            calls.append("wait")
+
+        @classmethod
+        def step(cls):
+            calls.append("physics")
+            block()
+
+    def step(*, render):
+        calls.append(("simulation", render))
+        Physics.wait_for_playing()
+        Physics.step()
+
+    env = SimpleNamespace(
+        action_manager=SimpleNamespace(apply_action=lambda: calls.append("action")),
+        scene=SimpleNamespace(
+            write_data_to_sim=lambda: calls.append("write"),
+            update=lambda dt: calls.append(("update", dt)),
+        ),
+        sim=SimpleNamespace(
+            physics_manager=Physics, step=step, render=lambda: calls.append("render"),
+        ),
+    )
+    return env, calls
+
+
+def _step_environment(env):
+    with phases.phase_scope(env, "env_step", 5):
+        env.action_manager.apply_action()
+        env.scene.write_data_to_sim()
+        env.sim.step(render=False)
+        env.sim.render()
+        env.scene.update(0.005)
+
+
+def test_native_step_boundary_is_visible_before_the_blocked_call_returns(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+    env, calls = _stepping_environment(lambda: (entered.set(), release.wait()))
+    phases.configure_phase_journal(env, tmp_path)
+    thread = threading.Thread(target=_step_environment, args=(env,))
+    thread.start()
+    entered.wait()
+    try:
+        rows = _rows(tmp_path)
+        assert (rows[-1]["phase"], rows[-1]["event"]) == ("physics_step", "begin")
+        assert all(row["action_step"] == 5 for row in rows)
+        assert "render" not in calls
+    finally:
+        release.set()
+        thread.join()
+        phases.finalize_phase_journal(env)
+    assert calls == ["action", "write", ("simulation", False), "wait", "physics",
+                     "render", ("update", 0.005)]
+    rows = _rows(tmp_path)
+    entered_phases = [row["phase"] for row in rows if row["event"] == "begin"]
+    assert entered_phases == ["env_step", "action_apply", "scene_write", "simulation_step",
+                              "physics_wait", "physics_step", "simulation_render", "scene_update"]
+    assert len(rows) == 2 * len(entered_phases)
+
+
+def _physics_hierarchy(calls, result, error):
+    class Base:
+        @classmethod
+        def step(cls, value, *, fail=False):
+            calls.append((cls, value, fail))
+            if fail:
+                raise error
+            return result
+
+    class Concrete(Base):
+        pass
+
+    class Derived(Concrete):
+        pass
+
+    return Base, Concrete, Derived
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_native_classmethod_binding_and_exception_survive_observation(tmp_path, inherited):
+    calls, result, argument = [], object(), object()
+    error = RuntimeError("private native state")
+    base, concrete, derived = _physics_hierarchy(calls, result, error)
+    original = inspect.getattr_static(base, "step")
+    env = SimpleNamespace(sim=SimpleNamespace(physics_manager=concrete if inherited else base))
+    phases.configure_phase_journal(env, tmp_path)
+    try:
+        with phases.phase_scope(env, "env_step", 3):
+            for caller in (concrete, concrete(), derived, derived()):
+                assert caller.step(argument) is result
+            with pytest.raises(RuntimeError) as caught:
+                derived.step(argument, fail=True)
+        assert caught.value is error
+    finally:
+        phases.finalize_phase_journal(env)
+    assert calls == [(concrete, argument, False)] * 2 + [
+        (derived, argument, False), (derived, argument, False), (derived, argument, True),
+    ]
+    assert "step" not in vars(concrete)
+    assert inspect.getattr_static(base, "step") is original
+    rows = _rows(tmp_path)
+    assert sum(row["phase"] == "physics_step" for row in rows) == 10
+    assert "private" not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("relationship", ["same", "ancestor", "descendant"])
+def test_overlapping_class_owner_is_rejected_and_released_on_teardown(tmp_path, relationship):
+    base, concrete, derived = _physics_hierarchy([], object(), RuntimeError())
+    first = SimpleNamespace(sim=SimpleNamespace(physics_manager=concrete))
+    target = {"same": concrete, "ancestor": base, "descendant": derived}[relationship]
+    second = SimpleNamespace(sim=SimpleNamespace(physics_manager=target))
+    phases.configure_phase_journal(first, tmp_path)
+    installed = inspect.getattr_static(concrete, "step")
+    try:
+        with pytest.raises(RuntimeError, match="active owner"):
+            phases.configure_phase_journal(second, tmp_path)
+        assert inspect.getattr_static(concrete, "step") is installed
+        assert not hasattr(second, "_npa_phase_journal")
+    finally:
+        phases.finalize_phase_journal(first)
+    phases.configure_phase_journal(second, tmp_path)
+    phases.finalize_phase_journal(second)
+    assert "step" not in vars(concrete)
+
+
+def test_retained_foreign_wrapper_chain_survives_teardown_and_same_env_reuse(tmp_path):
+    env, calls = _stepping_environment(lambda: None)
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    original = env.sim.step
+    phases.configure_phase_journal(env, first)
+    retained = env.sim.step
+
+    def foreign(*args, **kwargs):
+        return retained(*args, **kwargs)
+
+    env.sim.step = foreign
+    _step_environment(env)
+    phases.finalize_phase_journal(env)
+    assert env.sim.step is foreign
+    previous = (first / "simulator-phases-rank0.jsonl").read_bytes()
+    env.sim.step(render=False)
+    phases.configure_phase_journal(env, second)
+    try:
+        _step_environment(env)
+    finally:
+        phases.finalize_phase_journal(env)
+    assert (first / "simulator-phases-rank0.jsonl").read_bytes() == previous
+    assert sum(row["phase"] == "simulation_step" for row in _rows(second)) == 2
+    assert env.sim.step is foreign and original is not foreign
+    assert calls.count(("simulation", False)) == 3
+
+
+def test_restore_failure_preserves_native_exception_and_ownership_until_retry(tmp_path, monkeypatch):
+    env, _calls = _stepping_environment(lambda: None)
+    phases.configure_phase_journal(env, tmp_path)
+    journal = env._npa_phase_journal
+    restore = phases._ObservedMethod.restore
+    error = RuntimeError("native rollout failed")
+
+    def unavailable(_observer):
+        raise RuntimeError("temporary restoration failure")
+
+    monkeypatch.setattr(phases._ObservedMethod, "restore", unavailable)
+    with pytest.raises(RuntimeError) as caught:
+        try:
+            raise error
+        finally:
+            phases.finalize_phase_journal(env)
+    assert caught.value is error
+    assert journal.observers and env._npa_phase_journal is journal
+    assert phases._CLASS_OWNERS[env.sim.physics_manager] is journal
+    monkeypatch.setattr(phases._ObservedMethod, "restore", restore)
+    phases.finalize_phase_journal(env)
+    assert not journal.observers and not hasattr(env, "_npa_phase_journal")
+    assert env.sim.physics_manager not in phases._CLASS_OWNERS
+
+
+def test_retained_foreign_classmethod_keeps_subclass_binding_after_reuse(tmp_path):
+    calls, result, argument = [], object(), object()
+    _base, concrete, derived = _physics_hierarchy(calls, result, RuntimeError())
+    env = SimpleNamespace(sim=SimpleNamespace(physics_manager=concrete))
+    phases.configure_phase_journal(env, tmp_path)
+    retained = inspect.getattr_static(concrete, "step")
+
+    @classmethod
+    def foreign(cls, *args, **kwargs):
+        return retained.__get__(None, cls)(*args, **kwargs)
+
+    concrete.step = foreign
+    phases.finalize_phase_journal(env)
+    assert derived().step(argument) is result
+    assert not list(tmp_path.iterdir())
+    phases.configure_phase_journal(env, tmp_path)
+    try:
+        assert derived.step(argument) is result
+    finally:
+        phases.finalize_phase_journal(env)
+    assert inspect.getattr_static(concrete, "step") is foreign
+    assert calls == [(derived, argument, False)] * 2
+    assert len(_rows(tmp_path)) == 2
+
+
+def test_unsupported_native_binding_rolls_back_previously_installed_hooks(tmp_path):
+    env, _calls = _stepping_environment(lambda: None)
+
+    class Unsupported:
+        @classmethod
+        def wait_for_playing(cls):
+            pass
+
+        @staticmethod
+        def step():
+            pass
+
+    original_wait = inspect.getattr_static(Unsupported, "wait_for_playing")
+    original_step, original_update = env.sim.step, env.scene.update
+    env.sim.physics_manager = Unsupported
+    with pytest.raises(RuntimeError, match="native classmethod"):
+        phases.configure_phase_journal(env, tmp_path)
+    assert env.sim.step is original_step and env.scene.update is original_update
+    assert inspect.getattr_static(Unsupported, "wait_for_playing") is original_wait
+    assert not hasattr(env, "_npa_phase_journal")
+    assert Unsupported not in phases._CLASS_OWNERS

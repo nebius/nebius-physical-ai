@@ -112,7 +112,11 @@ POLICY_RUNNER_ROLLOUT_END_PATCHED = """\
         # Retain unfinished measurements before env.close stops physics and
         # deletes the scene/recorder managers. This never scores an episode.
         from npa.workbench.isaac_arena.simulator_video import finalize_video_capture
-        finalize_video_capture(env)
+        from npa.workbench.isaac_arena.simulator_phases import finalize_phase_journal
+        try:
+            finalize_video_capture(env)
+        finally:
+            finalize_phase_journal(env)
 
 
 def list_variations(args_parser: argparse.ArgumentParser) -> None:
