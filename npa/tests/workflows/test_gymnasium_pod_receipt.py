@@ -793,9 +793,24 @@ def test_cluster_absence_rejects_unknown_status_schema(
         )
 
 
+def test_gymnasium_live_command_uses_direct_runner_without_inner_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT", "s3://bucket/root")
+    monkeypatch.setenv("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", IMAGE)
+    monkeypatch.setattr(live, "live_bucket", lambda _project: "bucket")
+    command, output_root, run_id = live._gymnasium_live_command(None)
+    assert command[:2] == [sys.executable, str(live.GYMNASIUM_CONTAINER_VERIFY_RUNNER)]
+    assert command[command.index("--image") + 1] == IMAGE
+    assert command[command.index("--run-id") + 1] == run_id
+    assert command[command.index("--solution-name") + 1] == "gymnasium-robotics"
+    assert command[-1] == "--no-cleanup"
+    assert "--cleanup" not in command
+    assert not {"--registry", "--project", "--skip-build"}.intersection(command)
+    assert output_root == "s3://bucket/root"
+
+
 def test_live_harness_owns_cleanup_and_covers_late_validation_failures() -> None:
-    command_source = inspect.getsource(live._gymnasium_live_command)
-    assert 'cmd.append("--no-cleanup")' in command_source
     source = inspect.getsource(
         live.test_live_gymnasium_robotics_exact_digest_capability
     )
