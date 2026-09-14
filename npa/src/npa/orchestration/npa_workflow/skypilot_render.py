@@ -55,6 +55,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
+    "workbench.openarm": "openarm",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
     "workbench.mjlab": "sonic",

@@ -1,0 +1,2 @@
+# Exact OpenArm MuJoCo runtime layered onto common/isaac-oss-deps.txt.
+mujoco==3.6.0

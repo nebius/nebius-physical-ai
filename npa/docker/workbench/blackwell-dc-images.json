@@ -837,6 +837,19 @@
       "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
     },
     {
+      "name": "npa-openarm",
+      "dockerfile": "openarm/Dockerfile",
+      "build_script": "openarm/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "torch": "runtime-fetched with Isaac Sim 5.1.0.0 and Isaac Lab 2.3.2.post1",
+      "source_compiled_extensions": [
+        "Isaac Sim and Isaac Lab runtime-fetched extensions"
+      ],
+      "smoke": "real 500-step OpenArm v2 bimanual MuJoCo rollout plus upstream Isaac reach rollout and RSL-RL checkpoint",
+      "notes": "The public image contains Apache-2.0 OpenArm MuJoCo/Isaac source and assets but no Isaac, Kit, credentials, accepted terms, caches, or generated data. RTX PRO 6000 is the supported live-validation target because Isaac requires an RT-capable GPU. Datacenter Blackwell is not claimed until independent exact-digest evidence exists."
+    },
+    {
       "name": "npa-curobo",
       "dockerfile": "curobo/Dockerfile",
       "build_script": "curobo/build.sh",

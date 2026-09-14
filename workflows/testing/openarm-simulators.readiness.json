@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "b9a225887326d988afe40ef58e76fa2735862bd6b9031c932586b745c2ae4aa3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec resolved all three OpenArm stages successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/openarm-simulators.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/openarm-simulators.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved commands invoke the real MuJoCo rollout, Isaac Lab environment rollout, and upstream RSL-RL trainer.",
+      "evidence": [
+        "docs/workbench/openarm.md",
+        "npa/tests/workbench/test_openarm.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Writable output storage has not yet been checked for the live qualification run.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Both workloads use only exact-pinned upstream OpenArm source and repository assets; no external model or dataset is required.",
+      "evidence": [
+        "npa/docker/workbench/openarm/components.json"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Nebius and output-storage credential preflight has not yet run.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The immutable development image has not yet been built, scanned, pushed, or anonymously pulled.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The exact image has not yet completed both simulator integrations on an RT-capable GPU.",
+      "evidence": []
+    }
+  }
+}

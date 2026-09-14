@@ -21,6 +21,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
+| Enactic OpenArm | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -97,6 +98,27 @@ unique and must be tested with its own upstream-named capabilities.
 > (`byof-robocasa.yaml`) is preserved for compatibility, but the native tool is
 > the maintained surface. See `skills/tools/robocasa/SKILL.md` and
 > `workflows/testing/robocasa-smoke.yaml`.
+
+### Enactic OpenArm
+
+OpenArm is split upstream by capability. NPA pins `enactic/openarm_mujoco`
+release 2.2.0 (`a8c979629f2591ad035d99d338ce114969e6cddc`) and the untagged
+`enactic/openarm_isaac_lab` repository at
+`bad82e23716e6941c2de78ccb978f57c78b37734`. Both simulator repositories and
+their included MJCF/USD robot assets are Apache-2.0. The separate hardware/CAD
+repository is not an image input and no rights for it are inferred.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `openarm_mujoco_bimanual_rollout` | qualification pending | `openarm_mujoco.v2.openarm_demo_xml`, `JointResolver`, real `mj_step`, joint/command/energy NPZ, optional rendered MP4 |
+| `Isaac-Reach-OpenArm-v0` rollout | qualification pending | upstream registered Isaac Lab environment, real vectorized reset/step/reward trace on an RT-core GPU |
+| `Isaac-Reach-OpenArm-v0` RSL-RL training | qualification pending | pinned upstream `scripts/reinforcement_learning/rsl_rl/train.py`, real checkpoint required |
+
+The public `npa-openarm` image contains the Apache-2.0 OpenArm sources and
+MuJoCo closure, but no Isaac Sim, Isaac Lab, or Omniverse Kit bytes. Isaac is
+hash-pinned and fetched into the operator's runtime cache through the shared
+acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
+`workflows/testing/openarm-simulators.yaml`.
 
 ### OpenPI
 
