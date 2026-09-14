@@ -118,6 +118,78 @@ Without them, the packet marks the asset `unattributed`; a filename or role name
 does not establish which tool generated it. Keep private evidence in the private
 project and consult the artifact catalog when selecting additional footage.
 
+## One studio, multiple films
+
+The executive and inference films use the same renderer. Each project owns its
+creative brief, scene order, duration, titles, narration, media and provenance.
+Add any number of projects to a private `studio.json`; names are user choices:
+
+```json
+{
+  "projects": {
+    "exec": "projects/exec/film-project.json",
+    "inference": "projects/inference/film-project.json"
+  }
+}
+```
+
+Project paths resolve relative to the registry. Each project retains the four
+paths described below; use distinct working directories for independent edits.
+Keep delivered masters outside those working output directories. The shared
+launcher accepts all existing authoring and rendering commands:
+
+```bash
+npa/.venv/bin/python docs/demos/executive-film/studio.py --registry /path/to/studio.json list
+npa/.venv/bin/python docs/demos/executive-film/studio.py --registry /path/to/studio.json exec scenes
+npa/.venv/bin/python docs/demos/executive-film/studio.py --registry /path/to/studio.json inference brief \
+  --prompt "Explain the simulation loop to engineers" --duration 75
+```
+
+The registry defaults to `studio.json` in the current directory. `list` is a
+reserved name; other film names use lowercase letters, numbers, underscores and
+hyphens. `brief`, `scenes`, `narrate`, `preview` and `final` forward their options
+to the existing editor. `--project` comes from the selected registry entry.
+There are no fixed executive/inference modes or a fixed two-minute runtime.
+
+## Faster development previews
+
+Use `draft` to inspect a single scene's composition and motion before speech or
+other scenes' media are ready. It renders a muted 960 × 540 clip through the
+same verified visual scene cache used by `preview`:
+
+```bash
+npa/.venv/bin/python docs/demos/executive-film/studio.py --registry /path/to/studio.json inference draft \
+  --scene 08-minimax-revise --open
+npa/.venv/bin/python docs/demos/executive-film/studio.py --registry /path/to/studio.json inference watch \
+  --scene 08-minimax-revise
+```
+
+Both commands require a scene ID. `draft --open` opens the completed clip in the
+default video player. Its output is
+`<output_dir>/draft/<scene>/workbench-draft.mp4`, with `draft.json` recording the
+scene, source identities, provenance, cache reuse and elapsed time. It contains
+no narration, music or captions. The selected visual assets still require valid
+hashes and decodable media; missing files from other scenes do not block it.
+Project or media changes during a build fail before replacing the last good
+draft. It never publishes into `preview/` or `final/`.
+
+`watch` checks the selected scene's media, project JSON and shared renderer
+files every 250 ms, then rebuilds after edits settle for 500 ms. Changes during
+a build are picked up next. An invalid JSON save or stale media hash leaves the
+last good clip intact and waits for the next edit. Watching uses file metadata
+to detect edits; each draft still verifies content hashes. Stop with Ctrl+C.
+The watcher prints the completed path; it does not reload an external player.
+
+Measured on the executive and inference working projects on one macOS workstation,
+including process startup and verification, a changed ten-second scene took
+5.0–5.1 seconds. Unchanged or reverted drafts took 0.31–0.36 seconds. These runs
+used local source media and made no speech-service or model calls; timings vary
+with codecs, scene complexity and hardware.
+
+For the complete review with speech, run `narrate` after changing spoken text,
+then `preview` or `final`. Those commands keep their narration and full-output
+validation. Drafting and watching require no speech service or model calls.
+
 ## Fast editing
 
 Use a private project directory for the editable storyboard and media. Keep the
