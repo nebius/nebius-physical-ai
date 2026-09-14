@@ -1244,6 +1244,59 @@ def build_actionable_run_status(
     }
 
 
+_WORKFLOW_NONTERMINAL_STATES = frozenset({"PLANNED", "SUBMITTED", "RUNNING"})
+_WORKFLOW_TERMINAL_STATES = frozenset(
+    {"SUCCEEDED", "FAILED", "FAILED_STARTUP", "CANCELLED", "BLOCKED"}
+)
+
+
+def _workflow_lifecycle_state(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Workflow lifecycle status is missing or malformed")
+    status = value.upper()
+    if status not in _WORKFLOW_NONTERMINAL_STATES | _WORKFLOW_TERMINAL_STATES:
+        raise ValueError("Workflow lifecycle status is missing or unsupported")
+    return status
+
+
+def runtime_workflow_lifecycle(
+    manifest: RunManifest, runtime_state: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Separate durable workflow lifecycle from the observed jobs' outcomes.
+
+    Args:
+        manifest: Original durable manifest, before scheduler projection.
+        runtime_state: Exact run's runtime ledger, including its update time.
+
+    Returns:
+        Lifecycle state and evidence; neither proves the submit driver is alive.
+
+    Raises:
+        ValueError: A workflow lifecycle status is missing or unsupported.
+    """
+    manifest_status = _workflow_lifecycle_state(manifest.status)
+    runtime_status = _workflow_lifecycle_state(runtime_state.get("status"))
+    terminal = {
+        state for state in (manifest_status, runtime_status)
+        if state in _WORKFLOW_TERMINAL_STATES
+    }
+    from_manifest = manifest_status in terminal and runtime_status not in terminal
+    status = manifest_status if from_manifest else runtime_status
+    if len(terminal) > 1:
+        status = "EVIDENCE_INCONSISTENT"
+    return status, {
+        "manifest_status": manifest_status,
+        "runtime_status": runtime_status,
+        "completion_recorded": "SUCCEEDED" in terminal and len(terminal) == 1,
+        "driver_liveness": "unknown",
+        "source": "authoritative_manifest" if from_manifest else "durable_runtime_ledger",
+        "updated_at": (
+            manifest.updated_at if from_manifest
+            else str(runtime_state.get("updated_at") or "")
+        ),
+    }
+
+
 def plan_step_records(
     steps: Sequence[Any],
     *,

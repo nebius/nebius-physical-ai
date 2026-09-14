@@ -4209,6 +4209,58 @@ def _latest_runtime_wave_states(
     return {status for _attempt, _position, status in latest.values() if status}
 
 
+def _runtime_handoff_error(
+    payload: dict[str, object], runtime_state: dict[str, object], observations: dict,
+) -> str:
+    if any(not isinstance(wave, dict) for wave in runtime_state.get("waves") or []):
+        return "Runtime ledger contains malformed wave evidence"
+    for stage in (payload.get("stages") or {}).values():
+        if stage.get("state") == "SUCCEEDED" and (
+            not stage.get("managed_job_id") or stage.get("job_attribution") == "ambiguous"
+        ):
+            return "Recorded successful stage lacks an unambiguous managed-job identity"
+        observation = observations.get(stage.get("managed_job_id")) or {}
+        if stage.get("state") == "SUCCEEDED" and str(observation.get("status") or "").upper() != "SUCCEEDED":
+            return "Recorded successful job lacks a matching live success observation"
+    return ""
+
+
+def _reconcile_runtime_completion(
+    payload: dict[str, object], manifest: dict[str, object], runtime_state: dict[str, object],
+    observations: dict,
+) -> str:
+    from npa.orchestration.npa_workflow.run_state import (
+        RunManifest, runtime_workflow_lifecycle,
+    )
+
+    original_manifest = RunManifest.from_dict(manifest)
+    # Optional legacy timestamps must stay unknown, not become this poll's time.
+    original_manifest.updated_at = str(manifest.get("updated_at") or "")
+    original_manifest.status = str(manifest.get("status") or "")
+    try:
+        status, lifecycle = runtime_workflow_lifecycle(original_manifest, runtime_state)
+    except ValueError as exc:
+        payload["status"] = "UNKNOWN"
+        return str(exc)
+    payload["status"] = status
+    payload["workflow_lifecycle"] = lifecycle
+    if status in {"PLANNED", "SUBMITTED", "RUNNING"}:
+        evidence_error = _runtime_handoff_error(payload, runtime_state, observations)
+        if evidence_error:
+            return evidence_error
+    if status == "EVIDENCE_INCONSISTENT":
+        payload["submission_state"] = status
+        payload.setdefault("diagnostics", []).append(
+            "Terminal workflow manifest and runtime ledger outcomes conflict."
+        )
+    elif not lifecycle["completion_recorded"] and status in {"PLANNED", "SUBMITTED", "RUNNING"}:
+        payload.setdefault("diagnostics", []).append(
+            "All recorded jobs succeeded; workflow completion is not yet recorded. "
+            "The durable lifecycle does not establish whether the submit driver is alive."
+        )
+    return ""
+
+
 def _durable_workflow_status(
     run_id: str,
     *,
@@ -4543,18 +4595,12 @@ def _durable_workflow_status(
             project=project or state.project,
             failure_threshold=startup_failure_threshold,
         )
-        runtime_status = str(resolution.runtime_state.get("status") or "").upper()
-        if (
-            runtime_waves
-            and run_payload.get("status") == "SUCCEEDED"
-            and recorded_manifest_status in {"PLANNED", "SUBMITTED", "RUNNING"}
-            and runtime_status != "SUCCEEDED"
-        ):
-            run_payload["status"] = runtime_status or recorded_manifest_status
-            verification_errors.append(
-                "All recorded jobs succeeded, but workflow completion is not recorded. "
-                "The runtime may need to continue with --resume-run."
+        if runtime_waves and run_payload.get("status") == "SUCCEEDED":
+            completion_error = _reconcile_runtime_completion(
+                run_payload, manifest, resolution.runtime_state, job_observations
             )
+            if completion_error:
+                verification_errors.append(completion_error)
         manifest_terminal = recorded_manifest_status
         runtime_terminal_states = _latest_runtime_wave_states(runtime_waves)
         if (
@@ -4603,7 +4649,7 @@ def _durable_workflow_status(
                 "error": sanitize_reason(exc),
             }
         if diagnostics:
-            run_payload["diagnostics"] = diagnostics
+            run_payload.setdefault("diagnostics", []).extend(diagnostics)
         blockers = [
             blocker
             for managed_job_id, observation in job_observations.items()
@@ -4633,6 +4679,10 @@ def _durable_workflow_status(
         last_known_at = str(
             run_payload.get("last_observed_at") or run_manifest.updated_at or ""
         )
+        lifecycle = run_payload.get("workflow_lifecycle") or {}
+        lifecycle_source = str(lifecycle.get("source") or "")
+        if lifecycle_source:
+            last_known_at = str(lifecycle.get("updated_at") or "")
         if cached:
             return apply_verification(
                 run_payload,
@@ -4640,7 +4690,7 @@ def _durable_workflow_status(
                 target=", ".join(job_ids) or state.uri,
                 last_known_state=last_known,
                 last_known_at=last_known_at,
-                last_known_source="runtime_ledger_or_manifest",
+                last_known_source=lifecycle_source or "runtime_ledger_or_manifest",
                 reason="live controller query intentionally skipped (--cached)",
                 retry_command=retry_command,
                 attempted_at=attempted_at,
@@ -4655,7 +4705,7 @@ def _durable_workflow_status(
                 target=", ".join(job_ids) or state.uri,
                 last_known_state=last_known,
                 last_known_at=last_known_at,
-                last_known_source="runtime_ledger_or_manifest",
+                last_known_source=lifecycle_source or "runtime_ledger_or_manifest",
                 reason="; ".join(verification_errors),
                 retry_command=retry_command,
                 attempted_at=attempted_at,
@@ -4666,7 +4716,9 @@ def _durable_workflow_status(
             target=", ".join(job_ids) or state.uri,
             last_known_state=last_known,
             last_known_at=last_known_at,
-            last_known_source="live_scheduler" if job_ids else "authoritative_manifest",
+            last_known_source=lifecycle_source or (
+                "live_scheduler" if job_ids else "authoritative_manifest"
+            ),
             retry_command=retry_command,
             attempted_at=attempted_at,
         )
@@ -5148,6 +5200,7 @@ def _workflow_status_is_terminal(status: str) -> bool:
             "NOT_SUBMITTED",
             "NOT_FOUND",
             "VERIFICATION_UNAVAILABLE",
+            "EVIDENCE_INCONSISTENT",
         }
     )
 
@@ -5179,6 +5232,13 @@ def _emit_workflow_status(
                 typer.echo(f"retry: {verification.get('retry_command')}")
     typer.echo(f"run_id: {result.get('run_id')}")
     typer.echo(f"status: {result.get('status')}")
+    lifecycle = result.get("workflow_lifecycle")
+    if isinstance(lifecycle, dict):
+        typer.echo(
+            f"workflow completion recorded: {bool(lifecycle.get('completion_recorded'))}; "
+            f"driver liveness: {lifecycle.get('driver_liveness') or 'unknown'}"
+        )
+        typer.echo(f"durable lifecycle observed_at: {lifecycle.get('updated_at') or 'unknown'}")
     if result.get("resolution_source"):
         typer.echo(f"resolution_source: {result.get('resolution_source')}")
     if result.get("manifest_state"):
@@ -5551,7 +5611,7 @@ def status_cmd(
                 normalized = str(result.get("status") or "").upper()
                 if normalized == "NOT_FOUND":
                     raise typer.Exit(code=1)
-                if normalized == "VERIFICATION_UNAVAILABLE":
+                if normalized in {"VERIFICATION_UNAVAILABLE", "EVIDENCE_INCONSISTENT"}:
                     raise typer.Exit(code=2)
                 if normalized in {"PARTIAL", "DEGRADED", "PARTIAL_SUBMISSION"}:
                     raise typer.Exit(code=3)

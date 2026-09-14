@@ -1002,6 +1002,16 @@ npa workbench workflow logs "$RUN_ID" --project "$PROJECT_ALIAS" \
   --stage generate-variants --no-follow
 ```
 
+Between waves and during finalization, all recorded jobs can report `SUCCEEDED`
+while the workflow lifecycle still reports `RUNNING`. Status retains that durable
+lifecycle and reports `workflow_lifecycle.completion_recorded: false` with
+`driver_liveness: unknown`; a successful live job query does not prove the submit
+driver is alive. The original lifecycle timestamp stays separate from the latest
+job observation and real stage heartbeats. `--watch` continues across this
+handoff. Keep the original submit driver running; this observation alone is not
+a reason to resume. Actual live-query failures still exit nonzero, and completed
+workflow evidence and artifact checks remain required before declaring success.
+
 The runtime may submit several managed jobs or attempts. Use NPA's stage records
 to identify the GPU task and each retry; do not assume one job ID or a fixed
 15-row queue describes every run. Repeat the log command to retrieve a fresh

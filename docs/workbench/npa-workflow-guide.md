@@ -380,6 +380,20 @@ unknown POST outcomes remain blocked. Explicit driver recovery is recorded as
 the failed attempt's original local files and writes its refreshed preflight
 files into a separate owned directory.
 
+Status keeps the workflow lifecycle separate from the observed managed jobs.
+When every recorded job has succeeded but the workflow has not recorded
+completion, it retains the durable `RUNNING`/`SUBMITTED` lifecycle instead of
+reporting a failed live query or inferring workflow success. The JSON
+`workflow_lifecycle` includes the original durable status source and update time,
+`completion_recorded`, and `driver_liveness: unknown`. Polling an old completed
+job does not create a workflow heartbeat or establish driver liveness. `--watch`
+continues through inter-wave and finalization handoffs; check the original submit
+driver before deciding to resume. Durable failure/cancellation and conflicting
+outcomes remain visible; conflicting terminal evidence and live query errors
+exit nonzero, and `--cached` remains
+non-authoritative. Completion and declared artifact validation are separate
+requirements.
+
 `npa workbench workflow status <run-id> --json` includes the latest supervisor
 classification, recovery action, exact attempt identity, output/checkpoint
 validation, preflight evidence, and remediation. Evidence is credential-redacted.

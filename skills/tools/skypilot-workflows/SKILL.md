@@ -213,6 +213,15 @@ absence, checkpoints that evidence, and only then converges the matching local
 metadata. Authentication/RBAC/connectivity/identity uncertainty preserves local
 state; never fall back to an ambient context or unrelated SkyPilot profile.
 
+Status verifies recorded managed jobs separately from workflow completion.
+An inter-wave or finalization snapshot may have only succeeded jobs and retain
+the durable `RUNNING` lifecycle. Its `workflow_lifecycle` reports completion as
+not recorded, preserves the original lifecycle timestamp/source, and leaves
+driver liveness unknown. A successful poll is not a new progress heartbeat or
+permission to resume a still-owned driver. `--watch` continues; live-query
+failures, conflicting outcomes, and failure/cancellation remain distinct.
+Conflicting terminal evidence exits nonzero and stops the watch.
+
 Runtime-orchestrated workflows persist one immutable managed-job identity per
 wave and attempt. Status and cancellation use that identity for only the wave's
 encoded stage members; retries remain historical records and the final attempt

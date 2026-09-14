@@ -36,6 +36,15 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+All currently recorded jobs can be `SUCCEEDED` between waves while the workflow
+lifecycle remains `RUNNING`. This is a successful observation of incomplete
+workflow evidence, not a failed query: inspect `workflow_lifecycle` for the
+original durable timestamp, `completion_recorded: false`, and
+`driver_liveness: unknown`. Fresh job polls do not prove driver liveness or create
+progress heartbeats. Keep the original driver running and let `--watch` cross the
+handoff; do not recommend resume solely from this state. Actual query failures
+still exit nonzero, and terminal workflow/artifact proof remains required.
+
 Runtime-supervised runs also expose `supervisor.classification` and
 `supervisor.recovery` in JSON status. `actionable_configuration` means automatic
 retry has stopped and only the exact recorded attempt was cancelled;
