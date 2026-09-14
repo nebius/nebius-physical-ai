@@ -3,7 +3,7 @@
 from film_cache import _fingerprint
 
 _TEXT_FIELDS = ("prompt", "audience", "goal", "tone", "call_to_action")
-_LAYOUTS = {"hero": 1, "cinematic": 1, "feature": 1, "reason": 1,
+_LAYOUTS = {"hero": 1, "cinematic": 1, "immersive": 1, "feature": 1, "reason": 1,
             "evidence": 1, "cameras": 1, "screen": 1, "close": 3,
             "triptych": 3, "split": 2, "comparison": 2, "review": 2, "pipeline": 4}
 

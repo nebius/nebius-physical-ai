@@ -13,8 +13,8 @@ _COMMANDS = {"brief", "scenes", "narrate", "preview", "final", "draft", "watch"}
 
 def _projects(path):
     projects = json.loads(path.read_text())["projects"]
-    if not isinstance(projects, dict) or not projects:
-        raise ValueError("Studio projects must be a nonempty mapping of names to project files")
+    if not isinstance(projects, dict):
+        raise ValueError("Studio projects must be a mapping of names to project files")
     resolved = {}
     for name, value in projects.items():
         if name == "list" or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name) is None:

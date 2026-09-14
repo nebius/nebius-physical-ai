@@ -13,6 +13,9 @@ _ROOT = Path(__file__).parent
 
 def _project(path):
     project = json.loads(path.read_text())
+    allowed = {"storyboard", "assets", "voice_dir", "output_dir", "voice"}
+    if not isinstance(project, dict) or set(project) - allowed:
+        raise ValueError("Film projects support only local editing paths and voice; keep cloud configuration external")
     for field in ["storyboard", "assets", "voice_dir", "output_dir"]:
         value = Path(project[field]).expanduser()
         project[field] = value.resolve() if value.is_absolute() else (path.parent / value).resolve()

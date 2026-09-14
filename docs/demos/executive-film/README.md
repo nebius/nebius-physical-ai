@@ -1,5 +1,80 @@
 # Workbench film studio
 
+Use `npa studio` to select, edit and render independent film projects. Studio
+loads local storyboards, media and narration; its configuration has no tenant,
+project ID, region, bucket or credential fields. GPU runs and hosted inference
+use the operator's separate NPA configuration. Editing a title or rendering a
+film makes no infrastructure or model calls.
+
+```bash
+# From a checkout containing this change, with FFmpeg installed:
+npa/.venv/bin/python -m pip install -e npa -r docs/demos/executive-film/requirements.txt
+npa/.venv/bin/python -m npa studio init \
+  --directory ./my-studio --renderer docs/demos/executive-film
+```
+
+Initialization copies the shared renderer, fonts and official brand assets into
+the new directory. Add project aliases to `studio.json`, using the project
+configuration described below. No operator configuration is copied. The
+generated `studio` launcher uses `NPA_STUDIO_PYTHON` when explicitly set, then
+`.venv/bin/python` inside the studio if available, then `npa` on `PATH`. It
+contains no machine-specific interpreter path. Recreate virtual environments
+after moving to another machine; the renderer and relative project paths move
+with the studio.
+
+```json
+{
+  "renderer": "renderer",
+  "projects": {
+    "exec": "projects/exec/film-project.json",
+    "inference": "projects/inference/film-project.json"
+  }
+}
+```
+
+```bash
+cd my-studio
+./studio list
+./studio inference draft --scene 01-before-reality --open
+./studio inference watch --scene 01-before-reality
+./studio inference narrate
+./studio inference final --open
+```
+
+`draft` and `watch` render only the selected scene without narration. Cached
+media and speech let an editor revise a title without repeating inference or
+regenerating speech. Use `brief` to change the audience, request or duration,
+then author the corresponding storyboard. Both executive and inference films
+share this workflow; two minutes is an example, not a renderer limit.
+
+## Isaac Arena inference film
+
+[Before the real world](storyboard-inference-arena.json) is a separate 120-second
+executive story with 15 scenes. It uses the authentic Isaac Lab–Arena replay
+qualified in [PR #463](https://github.com/nebius/nebius-physical-ai/pull/463),
+followed by the independent MuJoCo planning experiment below. The new
+`immersive` layout gives simulation the full canvas with up to two headline
+lines over a lower gradient. Existing layouts remain available to both films.
+
+The Arena source MP4 is bound to its replay input and has SHA-256
+`a0adc96dd93d6f3fab01e096944127ca5fb38ace192c49ae2dac9550b70b4c7a`.
+It is an RTX PRO 6000 replay evaluation, not a newly trained policy. The joint
+moves, but the episode records task failure. Editorial crops, denoising,
+slow playback and final-frame holds are retained in derivation records; VLM
+evaluation uses the original footage. Arena remains upstream alpha.
+
+Three real `npa workbench vlm-eval run --backend api` evaluations used
+`MiniMaxAI/MiniMax-M3` through Nebius Token Factory, eight keyframes each, and
+a fixed 0.80 threshold: Arena scored 0.10, blocked MuJoCo scored 0.00, and
+revised MuJoCo scored 1.00. Requests, raw responses, returned model identity,
+usage and exact input hashes are retained with the private film artifacts.
+These individual judgments agree with the recorded task outcomes; they do not
+establish general model accuracy or deployment safety. The two simulations
+are explicitly separate experiments, and MuJoCo is a physics engine rather
+than a learned world model.
+
+## Other example films
+
 An editable, cached film renderer with an example two-minute executive showcase
 about Nebius Physical AI Workbench: Cosmos synthetic
 data, Wan video generation, FiftyOne curation, RoboCasa simulation, LeRobot

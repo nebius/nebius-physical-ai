@@ -83,6 +83,8 @@ def _validate_layout(scene):
         raise ValueError(f"Unknown scene layout: {scene['layout']}")
     if len(scene["assets"]) != count or len(scene["labels"]) != count:
         raise ValueError(f"Scene {scene['id']} needs {count} asset roles and labels for {scene['layout']}")
+    if scene["layout"] == "immersive" and len(scene["title"]) > 2:
+        raise ValueError("Immersive scenes support at most two headline lines")
     for field, maximum in (("source_notes", 2), ("review_steps", 3), ("pipeline_labels", 3)):
         if len(scene.get(field, [])) > maximum:
             raise ValueError(f"Scene {scene['id']} supports at most {maximum} {field}")

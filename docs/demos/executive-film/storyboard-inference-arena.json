@@ -1,0 +1,295 @@
+{
+  "title": "Before the real world.",
+  "duration": 120,
+  "footer": "NEBIUS  /  INFERENCE FOR PHYSICAL AI",
+  "brief": {
+    "prompt": "An epic, engaging executive film about why physical AI needs inference and evaluation. Show actual Isaac Lab-Arena evidence from PR 463, Token Factory VLM eval and MuJoCo. No executive-showcase reused footage. Use official Nebius branding. Keep the two simulation experiments and their evidence distinct.",
+    "audience": "C-suite executives evaluating physical AI infrastructure",
+    "goal": "Make the need for simulation, inference and verifiable evaluation tangible.",
+    "tone": "Cinematic, decisive, ambitious and evidence-led",
+    "call_to_action": "github.com/nebius/nebius-physical-ai",
+    "duration_seconds": 120
+  },
+  "scenes": [
+    {
+      "id": "01-before-reality",
+      "duration": 7,
+      "layout": "immersive",
+      "title": [
+        "Before the",
+        "real world."
+      ],
+      "subtitle": "A decision becomes an action.",
+      "assets": [
+        "arena_open"
+      ],
+      "labels": [
+        "ISAAC LAB\u2013ARENA  /  RECORDED REPLAY  /  0.4\u00d7"
+      ],
+      "narration": "In physical AI, every decision becomes an action. Before the real world, put it to the test.",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI"
+    },
+    {
+      "id": "02-movement",
+      "duration": 6,
+      "layout": "immersive",
+      "title": [
+        "A robot moves.",
+        "Has it succeeded?"
+      ],
+      "subtitle": "The goal: open the microwave.",
+      "assets": [
+        "arena_detail"
+      ],
+      "labels": [
+        "ISAAC LAB\u2013ARENA  /  REPLAY DETAIL  /  0.4\u00d7"
+      ],
+      "narration": "A humanoid reaches for a microwave. It moves. But has it succeeded?",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI"
+    },
+    {
+      "id": "03-inspect",
+      "duration": 8,
+      "layout": "feature",
+      "title": [
+        "Ask the model.",
+        "Keep the evidence."
+      ],
+      "subtitle": "Eight frames. One task. A recorded answer.",
+      "assets": [
+        "arena_frames"
+      ],
+      "labels": [
+        "ORIGINAL FRAMES SENT TO THE VLM"
+      ],
+      "narration": "Token Factory brings vision into the loop. NPA evaluates eight frames against the task.",
+      "eyebrow": "NEBIUS TOKEN FACTORY  \u00d7  NPA VLM EVAL"
+    },
+    {
+      "id": "04-arena-gate",
+      "duration": 8,
+      "layout": "screen",
+      "title": [
+        "Motion is not task completion."
+      ],
+      "subtitle": "A VLM judgment, checked against the simulator result.",
+      "assets": [
+        "arena_gate"
+      ],
+      "labels": [
+        "MINIMAX-M3  /  FIXED PASS THRESHOLD 0.80"
+      ],
+      "narration": "MiniMax scores this attempt point one. Below the threshold. Isaac Arena also records failure. The gate holds.",
+      "eyebrow": "EVALUATION THAT CHANGES THE DECISION"
+    },
+    {
+      "id": "05-learning-loop",
+      "duration": 7,
+      "layout": "screen",
+      "title": [
+        "Make the next experiment better."
+      ],
+      "subtitle": "Observe the result. Revise the plan. Test again.",
+      "assets": [
+        "loop"
+      ],
+      "labels": [
+        "DEVELOPMENT LOOP  /  SEPARATE EXPERIMENTS FOLLOW"
+      ],
+      "narration": "Turn a failed attempt into evidence for the next decision, while the experiment stays in simulation.",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI"
+    },
+    {
+      "id": "06-separate-world",
+      "duration": 6,
+      "layout": "immersive",
+      "title": [
+        "Now change",
+        "the world."
+      ],
+      "subtitle": "A separate MuJoCo planning experiment.",
+      "assets": [
+        "mujoco_intro"
+      ],
+      "labels": [
+        "MUJOCO  /  CPU PHYSICS + LOCAL OPENGL"
+      ],
+      "narration": "A separate MuJoCo experiment. Qwen plans a route to push the cube.",
+      "eyebrow": "QWEN  \u00d7  PHYSICS SIMULATION"
+    },
+    {
+      "id": "07-obstacle",
+      "duration": 9,
+      "layout": "comparison",
+      "title": [
+        "One obstacle.",
+        "A different outcome."
+      ],
+      "subtitle": "The same direct plan, tested in two scenes.",
+      "assets": [
+        "nominal_top_new",
+        "blocked_top_new"
+      ],
+      "labels": [
+        "CLEAR SCENE  /  1\u00d7",
+        "OBSTACLE ADDED  /  1\u00d7"
+      ],
+      "narration": "The plan works in a clear scene. Add one obstacle, and it fails. The same instruction. A different consequence.",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI"
+    },
+    {
+      "id": "08-grounding",
+      "duration": 7,
+      "layout": "reason",
+      "title": [
+        "Give inference",
+        "the facts."
+      ],
+      "subtitle": "Images, measured state and task geometry.",
+      "assets": [
+        "blocked_state"
+      ],
+      "labels": [
+        "RECORDED MUJOCO STATE"
+      ],
+      "narration": "Seventy centimeters short. Give MiniMax the images, measured state, and obstacle geometry.",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI",
+      "quote_heading": "MEASURED GOAL DISTANCE",
+      "quote": "703 mm",
+      "source_notes": [
+        "Simulator state is the reference.",
+        "Visual scoring is a separate signal."
+      ]
+    },
+    {
+      "id": "09-replan",
+      "duration": 9,
+      "layout": "feature",
+      "title": [
+        "Reason.",
+        "Revise."
+      ],
+      "subtitle": "MiniMax returns waypoints around the obstacle.",
+      "assets": [
+        "route"
+      ],
+      "labels": [
+        "MINIMAX-M3  /  ACTUAL RETURNED WAYPOINTS"
+      ],
+      "narration": "MiniMax proposes a route around the obstacle. A scripted controller executes its waypoints in the same physics scene. Then we test again.",
+      "eyebrow": "NEBIUS TOKEN FACTORY  /  MINIMAX-M3"
+    },
+    {
+      "id": "10-retest",
+      "duration": 11,
+      "layout": "immersive",
+      "title": [
+        "A new route.",
+        "A new test."
+      ],
+      "subtitle": "Watch the revised plan reach the target.",
+      "assets": [
+        "revised_run_new"
+      ],
+      "labels": [
+        "MUJOCO  /  SCRIPTED CONTROLLER  /  2\u00d7 + FINAL HOLD"
+      ],
+      "narration": "The revised plan clears the obstacle and reaches the target. The simulator records its trajectory and final position. Every result remains available to inspect.",
+      "eyebrow": "FROM MODEL OUTPUT TO MEASURED OUTCOME"
+    },
+    {
+      "id": "11-evaluate",
+      "duration": 8,
+      "layout": "screen",
+      "title": [
+        "Score the outcome. Keep the threshold."
+      ],
+      "subtitle": "The same task, rubric and model evaluate both MuJoCo rollouts.",
+      "assets": [
+        "mujoco_gate"
+      ],
+      "labels": [
+        "NPA VLM EVAL  /  MINIMAX-M3  /  8 FRAMES PER ROLLOUT"
+      ],
+      "narration": "NPA scores the blocked rollout zero, and the revised rollout one. The pass threshold stays at point eight.",
+      "eyebrow": "NEBIUS TOKEN FACTORY  /  REAL HOSTED EVALUATION"
+    },
+    {
+      "id": "12-crosscheck",
+      "duration": 8,
+      "layout": "comparison",
+      "title": [
+        "Vision judges.",
+        "Physics verifies."
+      ],
+      "subtitle": "The revised cube is inside the target; measured center error is 3.9 mm.",
+      "assets": [
+        "blocked_final",
+        "revised_final"
+      ],
+      "labels": [
+        "BLOCKED  /  703 mm FROM GOAL",
+        "REVISED  /  3.9 mm FROM GOAL"
+      ],
+      "narration": "Visual judgment agrees with recorded physics. These individual experiments tell us what happened, and what to try next.",
+      "eyebrow": "INFERENCE FOR PHYSICAL AI"
+    },
+    {
+      "id": "13-choice",
+      "duration": 7,
+      "layout": "screen",
+      "title": [
+        "Choose models for the decision."
+      ],
+      "subtitle": "Planning. Revision. Visual evaluation.",
+      "assets": [
+        "models"
+      ],
+      "labels": [
+        "NEBIUS TOKEN FACTORY  /  QWEN + MINIMAX"
+      ],
+      "narration": "Qwen plans. MiniMax revises and evaluates. Every response is retained.",
+      "eyebrow": "MODEL CHOICE, WITH TRACEABLE RESULTS"
+    },
+    {
+      "id": "14-proof",
+      "duration": 7,
+      "layout": "screen",
+      "title": [
+        "Make every result reviewable."
+      ],
+      "subtitle": "Source footage \u2192 model response \u2192 evaluation \u2192 reproducible film.",
+      "assets": [
+        "proof"
+      ],
+      "labels": [
+        "NPA STUDIO  /  LOCAL EDITING + CACHED SCENE RENDERS"
+      ],
+      "narration": "Keep the footage, prompts, scores, and hashes. Make the story editable.",
+      "eyebrow": "FROM EXPERIMENT TO EXECUTIVE DECISION"
+    },
+    {
+      "id": "15-close",
+      "duration": 12,
+      "layout": "close",
+      "title": [
+        "Build intelligence.",
+        "Demand evidence."
+      ],
+      "subtitle": "Test decisions in simulation. Bring evidence to the real world.",
+      "assets": [
+        "arena_end",
+        "revised_final",
+        "closing"
+      ],
+      "labels": [
+        "ISAAC LAB\u2013ARENA",
+        "MUJOCO",
+        "NEBIUS TOKEN FACTORY"
+      ],
+      "narration": "Build intelligence. Demand evidence. Nebius connects GPU simulation with hosted inference and evaluation. Explore Nebius Physical AI.",
+      "eyebrow": "NEBIUS  /  PHYSICAL AI",
+      "cta": "github.com/nebius/nebius-physical-ai"
+    }
+  ]
+}

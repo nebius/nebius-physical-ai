@@ -44,7 +44,7 @@ def _paragraph(draw, position, text, size, width, color=_MUTED, weight=500):
 
 def _rectangles(scene):
     layout = scene["layout"]
-    if layout in {"hero", "cinematic"}:
+    if layout in {"hero", "cinematic", "immersive"}:
         return [(0, 0, 1920, 1080)]
     if layout in {"close", "triptych"}:
         return [(72 + i * 600, 492, 576, 438) for i in range(3)]
@@ -97,11 +97,19 @@ def _base(scene, index, total):
             draw.line((x, 0, x, _HEIGHT), fill=(8, 13, 18, opacity))
         draw.rectangle((0, 0, 1920, 105), fill=(8, 13, 18, 220))
         draw.rectangle((0, 990, 1920, 1080), fill=(8, 13, 18, 220))
+    if scene["layout"] == "immersive":
+        for y in range(_HEIGHT):
+            opacity = round(245 * max(0, (y - 400) / 680) ** 0.6)
+            draw.line((0, y, _WIDTH, y), fill=(8, 13, 18, opacity))
+        draw.rectangle((0, 0, 1920, 105), fill=(8, 13, 18, 235))
     _branding(image, index, total, scene.get("footer", "PHYSICAL AI WORKBENCH"))
     return image
 
 
 def _headlines(draw, scene):
+    if scene["layout"] == "immersive":
+        _immersive_headlines(draw, scene)
+        return
     feature = scene["layout"] in {"feature", "reason"}
     title_y, size = (256, 73) if feature else (175, 98)
     if scene["layout"] == "screen":
@@ -122,9 +130,22 @@ def _headlines(draw, scene):
                606 if feature else 1650)
 
 
+def _immersive_headlines(draw, scene):
+    size = 82
+    while any(draw.textlength(line, font=_font(size, 700)) > 1776 for line in scene["title"]):
+        size -= 1
+    _text(draw, (72, 648), scene["eyebrow"], 21, _ACCENT, 700)
+    for index, line in enumerate(scene["title"]):
+        _text(draw, (72, 697 + index * 95), line, size, _WHITE if index == 0 else _ACCENT, 700)
+    _paragraph(draw, (72, 917), scene["subtitle"], 27, 1650)
+
+
 def _labels(draw, scene):
     for rectangle, label in zip(_rectangles(scene), scene["labels"], strict=True):
         x, y, width, height = rectangle
+        if scene["layout"] == "immersive":
+            _text(draw, (72, 131), label, 20, _WHITE, 700)
+            continue
         if scene["layout"] in {"hero", "cinematic"}:
             _text(draw, (72, 929), label, 20, _WHITE, 700)
             continue
