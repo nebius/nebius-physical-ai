@@ -86,9 +86,13 @@ class FakeS3:
         response.update(self.head_overrides.get(identity, {}))
         return response
 
-    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+    def get_object(self, *, Bucket: str, Key: str, IfMatch: str = "") -> dict[str, Any]:
         self.events.append(("get", Bucket, Key))
-        return {"Body": StreamingBody(self.objects[(Bucket, Key)])}
+        payload = self.objects[(Bucket, Key)]
+        etag = f'"opaque-{hashlib.sha1(payload).hexdigest()}"'  # noqa: S324
+        if IfMatch and IfMatch.strip('"') != etag.strip('"'):
+            raise RuntimeError("precondition failed")
+        return {"Body": StreamingBody(payload), "ETag": etag, "ContentLength": len(payload)}
 
     def put_object(self, *, Bucket: str, Key: str, Body: Any, **kwargs: Any) -> dict[str, str]:
         payload = Body if isinstance(Body, bytes) else Body.read()

@@ -306,6 +306,8 @@ class ObjectStorageGateway(Protocol):
 
     def head(self, uri: str) -> ObjectMetadata: ...
 
+    def hash_object(self, metadata: ObjectMetadata) -> TransferDigest: ...
+
     def copy(self, source_uri: str, destination_uri: str) -> ObjectMetadata: ...
 
     def download_to_file(self, uri: str, destination: Path) -> TransferDigest: ...
@@ -341,6 +343,38 @@ class S3ObjectStorageGateway:
 
     def head(self, uri: str) -> ObjectMetadata:
         return head_object(self._storage, uri)
+
+    def hash_object(self, metadata: ObjectMetadata) -> TransferDigest:
+        """Hash a conditional full-object read when HEAD has no content checksum."""
+        if not metadata.exists or not metadata.etag:
+            raise ArtifactInvalid("content readback requires an existing object with an ETag")
+        target = authorize_uri(metadata.uri, operation="verify object content")
+        if target.kind != "s3" or not target.bucket or not target.key:
+            raise ArtifactInvalid("content readback requires an exact S3 object URI")
+        response = self._storage.s3.get_object(
+            Bucket=target.bucket, Key=target.key, IfMatch=metadata.etag,
+        )
+        body = response["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            if str(response.get("ETag", "")).strip('"') != metadata.etag:
+                raise ArtifactConflict("content readback returned a different object ETag")
+            if response.get("ContentLength") != metadata.size:
+                raise ArtifactConflict("content readback returned a different object size")
+            for chunk in body.iter_chunks(chunk_size=8 * 1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+            if size != metadata.size:
+                raise ArtifactInvalid("content readback did not return the complete object")
+            current = self.head(metadata.uri)
+            if not current.exists or (current.etag, current.size, current.version_id) != (
+                metadata.etag, metadata.size, metadata.version_id,
+            ):
+                raise ArtifactConflict("destination changed during content readback")
+        finally:
+            body.close()
+        return TransferDigest(size=size, sha256=digest.hexdigest())
 
     def copy(self, source_uri: str, destination_uri: str) -> ObjectMetadata:
         source = self.head(source_uri)

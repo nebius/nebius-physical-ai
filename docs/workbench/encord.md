@@ -90,6 +90,14 @@ A roundtrip is verified only when this command consumes both final artifacts
 and passes exact item identity, destination existence, size, and compatible
 checksum checks.
 
+When the source receipt contains SHA-256 but the destination bucket exposes only
+an opaque ETag, verification streams the destination bytes and computes SHA-256.
+The GET is conditional on the observed ETag, its byte count must match, and a
+second HEAD checks that the object did not change during the read. ETags remain
+opaque version identifiers; they are never treated as content hashes. This path
+requires permission to read the destination object and transfers its full size.
+Read failures and changed or mismatched bytes produce a failed durable report.
+
 Three reference specs are available under
 `npa/workflows/workbench/npa-workflows/`: `encord-push.yaml`,
 `encord-pull.yaml`, and `encord-roundtrip-smoke.yaml`. Each spec writes artifacts
