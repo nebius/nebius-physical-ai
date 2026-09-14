@@ -9,22 +9,33 @@
 
 The upstream documentation and tests are not included in this image. The
 official immutable source archive is checksum-verified during the build. NPA
-then applies a narrow Apache-2.0-compatible source patch that leaves Kit and
-environment rendering enabled while masking unused embodiment-camera
-observations; the context-bound build helper is removed from the final image.
+then applies context-bound NPA integration changes: restore the replay's initial
+state, retain run-bound simulator traces and pre-action revolute state, capture
+viewport frames before automatic episode reset, and mask unused embodiment
+camera observations. The real upstream renderer and task success calculation
+remain in authority. Modified source retains its upstream notices and identifies
+the integration changes; the build helper is removed from the final image.
 
 ## Lightwheel SDK 1.0.3
 
 - Distribution: <https://pypi.org/project/lightwheel-sdk/1.0.3/>
 - License: Apache License 2.0
 - Wheel SHA-256: `841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd`
-- License evidence: the installed distribution metadata carries the complete
-  Apache-2.0 grant and the installed modules carry Apache-2.0 headers
+- License evidence: the exact wheel's package description contains an
+  Apache-2.0 license notice and URL; several client modules repeat the notice.
+  It has no standalone license member or structured license metadata field.
+- Full license text shipped with the image: `/opt/isaac-arena/LICENSE.md`
+- Copyright notice: Copyright 2025 Lightwheel Team; retained in the installed
+  distribution metadata and the applicable client modules
 
 The SDK is the upstream-declared client needed to resolve certain Arena assets.
 The public image includes the SDK but no Lightwheel registry object. Registry
 USDs and generated layouts are provider-controlled runtime downloads; NPA does
 not redistribute them or grant rights to them.
+
+The pinned wheel also contains nested copies of its public client build tree
+and Python tests. These are included in the installed-byte security and license
+inspection; they are not registry assets or evidence of runtime asset rights.
 
 ## Open-source evaluation dependencies
 

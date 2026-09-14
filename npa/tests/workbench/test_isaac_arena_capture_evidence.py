@@ -1,0 +1,188 @@
+"""Bind actual encoded Arena-style frames to simulator capture and action evidence."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from npa.workbench.isaac_arena.errors import IsaacArenaError
+from npa.workbench.isaac_arena.video_evidence import verify_capture_evidence
+
+
+def _frame(column: int) -> np.ndarray:
+    frame = np.full((240, 320, 3), [60, 80, 100], dtype=np.uint8)
+    frame[90:114, column : column + 40] = [240, 180, 90]
+    return frame
+
+
+def _encode(path: Path, frames: list[np.ndarray]) -> None:
+    arguments = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24"]
+    arguments += ["-s", "320x240", "-r", "15", "-i", "pipe:0", "-an"]
+    arguments += [
+        "-c:v",
+        "libx264",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-y",
+        str(path),
+    ]
+    completed = subprocess.run(
+        arguments,
+        input=np.stack(frames).tobytes(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+
+
+def _png_record(path: Path, frame: np.ndarray, step: int) -> dict:
+    Image.fromarray(frame).save(path, format="PNG")
+    return {
+        "path": path.name,
+        "action_step": step,
+        "source_frame_index": step - 1 if step else None,
+        "width": 320,
+        "height": 240,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "decoded_rgb_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
+    }
+
+
+def _write_sidecar(root: Path, payload: dict) -> None:
+    (root / "simulator-video-evidence.json").write_text(json.dumps(payload))
+
+
+@pytest.fixture
+def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
+    frames = [_frame(20 + 3 * step) for step in range(20)]
+    video = tmp_path / "raw.mp4"
+    _encode(video, frames)
+    payload = {
+        "schema": "npa.isaac-arena.video-capture.v1",
+        "capture_phase": "recorder_post_step_before_autoreset",
+        "captured_action_steps": 20,
+        "initial": _png_record(tmp_path / "initial.png", _frame(17), 0),
+        "terminals": [_png_record(tmp_path / "terminal.png", frames[-1], 20)],
+    }
+    _write_sidecar(tmp_path, payload)
+    motion = {
+        "progress_interval": {
+            "start_action_step": 0,
+            "end_action_step": 20,
+            "total_action_steps": 20,
+        },
+        "video_capture": {
+            "initial_action_step": 0,
+            "action_steps": list(range(1, 21)),
+            "terminal_action_step": 20,
+        },
+    }
+    return video, payload, motion, frames
+
+
+def test_capture_verifies_real_png_and_encoded_terminal_frame(capture) -> None:
+    video, payload, motion, _ = capture
+    original = video.read_bytes()
+    result = verify_capture_evidence(
+        video.parent, video, task_motion=motion, expected_steps=20
+    )
+    assert result["source_mp4_sha256"] == hashlib.sha256(original).hexdigest()
+    assert video.read_bytes() == original
+    assert result["initial"]["sha256"] == payload["initial"]["sha256"]
+    assert (
+        result["terminal"]["decoded_rgb_sha256"]
+        == payload["terminals"][0]["decoded_rgb_sha256"]
+    )
+    comparison = result["terminal_frame_comparison"]
+    assert comparison["source_frame_index"] == 19
+    assert comparison["mean_absolute_luma_difference"] < 1
+
+
+def test_autoreset_frame_cannot_replace_successful_terminal_frame(capture) -> None:
+    video, _, motion, frames = capture
+    frames[-1] = _frame(17)
+    _encode(video, frames)
+    with pytest.raises(IsaacArenaError, match="terminal frame disagrees"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_consistent_hashes_cannot_hide_swapped_terminal_png(capture) -> None:
+    video, payload, motion, _ = capture
+    payload["terminals"][0] = _png_record(video.parent / "terminal.png", _frame(17), 20)
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="terminal frame disagrees"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_tampered_png_bytes_fail_even_before_frame_comparison(capture) -> None:
+    video, _, motion, _ = capture
+    Image.fromarray(_frame(17)).save(video.parent / "terminal.png", format="PNG")
+    with pytest.raises(IsaacArenaError, match="PNG hash or dimensions disagree"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+@pytest.mark.parametrize("count", [19, 21])
+def test_capture_counts_must_match_raw_video(capture, count: int) -> None:
+    video, payload, motion, _ = capture
+    payload["captured_action_steps"] = count
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="frame count disagrees"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_replay_source_action_count_is_independently_required(capture) -> None:
+    video, _, motion, _ = capture
+    with pytest.raises(IsaacArenaError, match="frame count disagrees"):
+        verify_capture_evidence(
+            video.parent, video, task_motion=motion, expected_steps=21
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("initial_action_step", 1),
+        ("terminal_action_step", 19),
+        ("action_steps", list(range(1, 20))),
+        ("action_steps", [1] * 20),
+    ],
+)
+def test_hdf_action_steps_cannot_be_missing_repeated_or_shifted(
+    capture, field, value
+) -> None:
+    video, _, motion, _ = capture
+    motion["video_capture"][field] = value
+    with pytest.raises(IsaacArenaError, match="action-step binding disagrees"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_terminal_png_requires_exact_task_success_action_step(capture) -> None:
+    video, payload, motion, _ = capture
+    payload["terminals"][0]["action_step"] = 19
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="frame action step disagrees"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_missing_png_cannot_be_replaced_by_sidecar_claim(capture) -> None:
+    video, _, motion, _ = capture
+    (video.parent / "initial.png").unlink()
+    with pytest.raises(IsaacArenaError, match="missing simulator capture PNG"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_capture_after_reset_is_an_invalid_evidence_phase(capture) -> None:
+    video, payload, motion, _ = capture
+    payload["capture_phase"] = "after_autoreset"
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="schema or phase"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)

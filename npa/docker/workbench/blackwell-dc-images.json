@@ -547,8 +547,8 @@
       "validation": "validated",
       "torch": "2.11.0+cu128 inherited from the exact accepted npa-isaac-lab runtime-fetch base",
       "source_compiled_extensions": [],
-      "smoke": "complete a nonzero replay episode with upstream policy_runner, retain JSONL/report artifacts, and reject a static viewport video",
-      "notes": "The exact public development digest passed source, license, payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-pull gates. A genuine hash-bound replay completed 250 steps on RTX PRO 6000 sm_120, moved the task joint, and emitted a 1280x720 H.264 viewport MP4 that passed independent multi-frame motion validation. The same digest completed the four-seed B200 sm_100 state regression; B200 makes no render claim. Isaac Sim/Lab and provider assets remained operator-authorized runtime fetches. Arena 0.3.0 is upstream alpha, so support is limited to the pinned evaluation contract.",
+      "smoke": "Complete real state evaluation on B200; RTX visual qualification additionally requires current-run task success, simulator-ground-truth progress, and coherent denoised viewport motion.",
+      "notes": "The published r2 coordinate and its packaging/security evidence are retained. Its four-seed B200 state-only regression completed on the exact digest. Its RTX video acceptance is rejected: 80 source actions were followed by 170 held-action steps, success_rate was 0.0, and stochastic render grain could satisfy the old pixel-delta thresholds. A replacement image needs fresh build/security, B200 state, RTX task/visual, and playback qualification. Isaac Sim/Lab and provider-controlled assets remain operator runtime fetches; Arena 0.3.0 remains upstream alpha.",
       "validated_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
       "validated_digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
       "published_tag": "0.3.0-isaaclab3-20260912-r2",
@@ -557,7 +557,9 @@
       "published_registries": [
         "public-development",
         "public-release"
-      ]
+      ],
+      "validation_scope": "Historical r2 B200 state-only evaluation; RTX visual qualification rejected.",
+      "candidate_validation": "pending-build"
     },
     {
       "name": "npa-leisaac",
@@ -727,12 +729,22 @@
         "guardrail_state": {
           "requested": true,
           "discovered": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "evaluated": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "media_attempted_inputs": 1,
           "media_successful_inputs": 1,
@@ -874,22 +886,26 @@
     "npa-isaac-arena": {
       "built": true,
       "payload_scan": "The exact development digest passed the complete filesystem/layer/history Omniverse and secret scans, vulnerability/license policy, SBOM generation, digest-bound provenance and SBOM attestations, and anonymous registry resolution.",
-      "hardware_run": "The exact accepted digest completed the real upstream policy_runner independently and concurrently on physical B200 and RTX PRO 6000. Run arena-replay-rtx-7dd3a2bf-r1 replayed a genuine nonzero 80-step operator-owned trajectory through the 250-step task horizon, recorded revolute_joint_moved_rate 1.0, and retained six independently hash-verified task artifacts. Its 72,519,371-byte H.264 viewport MP4 decoded as 1280x720, 5.04 seconds, and 252 frames; 20 independent samples yielded 19 changed pairs, maximum changed-pixel ratio 0.5391667, and maximum mean absolute luma delta 12.5636111. Run arena-state-b200-7dd3a2bf-r1 completed four 1,050-step zero-action state-regression seeds with object_moved_rate 1.0, totaling 24 independently hash-verified task files / 358,401 bytes and intentionally no video claim. Success rate 0.0 is retained as policy data rather than rewritten as a pass.",
+      "hardware_run": "Historical r2 run arena-state-b200-7dd3a2bf-r1 completed four 1,050-step zero-action state-regression seeds, with 24 independently hash-verified task files / 358,401 bytes and no video claim. RTX run arena-replay-rtx-7dd3a2bf-r1 executed 80 source actions then held the last action for 170 steps; success_rate was 0.0. Its 72,519,371-byte H.264 MP4 decoded as 1280x720, 5.04 seconds, and 252 frames, but noisy pixel variation did not establish useful robot/task motion. That visual proof is rejected; no replacement candidate is qualified yet.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
           "capability": "10.0",
           "result": "REAL_ISAAC_ARENA_STATE_EVALUATION_PASSED"
-        },
-        "RTX PRO 6000": {
-          "platform": "gpu-rtx6000",
-          "capability": "12.0",
-          "result": "REAL_ISAAC_ARENA_VIDEO_EVALUATION_PASSED"
         }
       },
       "validated_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
       "validated_digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
-      "validated_registry_scope": "public-development"
+      "validated_registry_scope": "public-development",
+      "rejected_visual_evidence": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REJECTED_NOISE_SENSITIVE_VIDEO_ACCEPTANCE",
+          "success_rate": 0.0
+        }
+      },
+      "candidate_validation": "pending-build"
     },
     "npa-cosmos3": {
       "built": true,

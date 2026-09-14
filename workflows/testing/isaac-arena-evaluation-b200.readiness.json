@@ -1,15 +1,53 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "63c0c1fc6b2edb7e5613bdfb1eece2b49ef523e58dcd5bbc18980bd559d77298",
+  "workflow_sha256": "44e524f0bcb53f71eeff832b926ba16113cc8d73cce63529160cca68eed11d41",
   "planning": {
-    "validation": {"status": "verified", "reason": "validate-spec and plan-spec both completed successfully against the registered toolRef.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "task_fidelity": {"status": "verified", "reason": "The four planned states resolve to the real upstream zero-action adapter with distinct seeds and output prefixes, the cube-goal-pose environment, and Franka IK embodiment. It is explicitly state-only regression evidence, not the meaningful visual claim.", "evidence": ["npa/src/npa/orchestration/npa_workflow/catalog.py", "npa/src/npa/workbench/isaac_arena/runtime.py", "workflows/testing/isaac-arena-evaluation-b200.yaml"]}
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-14; the registered toolRef resolves to the shared Arena evaluator.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "npa/src/npa/orchestration/npa_workflow/catalog.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The four planned states invoke real upstream zero-action cube-goal-pose evaluations with distinct seeds and output prefixes. No policy input or visual qualification is claimed.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "npa/src/npa/workbench/isaac_arena/runtime.py"
+      ]
+    }
   },
   "prerequisites": {
-    "output_storage": {"status": "verified", "reason": "Run arena-state-b200-7dd3a2bf-r1 passed the owner-bound writable-storage preflight and retained 49 independently readable objects / 502,340 bytes. Its 24 task files / 358,401 bytes were re-downloaded and hash-verified across all four states.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "worker_input": {"status": "verified", "reason": "The zero-action state regression requires no policy, model, or dataset input.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]},
-    "credentials": {"status": "verified", "reason": "The isolated B200 target passed Nebius, S3 ownership, SkyPilot controller, exact-image attestation, anonymous-pull, and target-pull preflights before submission; no model credential was used.", "evidence": ["docs/workbench/isaac-arena.md"]},
-    "source_image": {"status": "verified", "reason": "The exact development image at source 7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1 and digest sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2 passed source, license, full-layer payload, vulnerability, secret, SBOM, provenance, bootstrap, and anonymous-resolution gates.", "evidence": ["npa/docker/workbench/isaac-arena/Dockerfile", "npa/docker/workbench/isaac-arena/smoke_functional.sh"]},
-    "target_runtime": {"status": "verified", "reason": "Run arena-state-b200-7dd3a2bf-r1 completed seeds 42-45 on B200 capability 10.0: four scored 1,050-step episodes (4,200 total), object_moved_rate 1.0 for every seed, five manifest-bound upstream artifacts plus result.json per seed, and intentionally no video or Rerun claim.", "evidence": ["workflows/testing/isaac-arena-evaluation-b200.yaml"]}
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The replacement candidate needs a fresh owner-bound writable-storage preflight and independent output readback; historical storage checks do not qualify the new run.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "not_applicable",
+      "reason": "The zero-action state regression requires no policy, model, or dataset input.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Fresh selected-target Nebius, storage ownership, controller, EULA, accelerator, and runtime asset access checks are pending for the replacement run; no credentials belong in this record.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The replay/evidence source changes require a new full-SHA development image and fresh source, license, complete-layer payload, security, SBOM, provenance, bootstrap, and anonymous-pull gates. The historical r2 digest is not evidence for the new bytes.",
+      "evidence": [
+        "npa/docker/workbench/isaac-arena/Dockerfile"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Replacement-candidate B200 state qualification is pending. Historical run arena-state-b200-7dd3a2bf-r1 completed four scored 1,050-step episodes (4,200 total) with no video; that state-only evidence remains scoped to its historical digest.",
+      "evidence": [
+        "docs/workbench/isaac-arena.md"
+      ]
+    }
   }
 }

@@ -347,11 +347,12 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
-The accepted public-plan audit covers all 33 release tags. The 2026-09-13 Isaac
-Arena update separately resolved its new tag anonymously at the accepted digest
-after the development image passed the complete build/security/attestation
-pipeline, a real four-seed B200 state regression, and a genuine nonzero RTX PRO
-6000 replay with motion-validated video.
+The public-plan inventory retains all 33 published release tags. The historical
+2026-09-13 Isaac Arena r2 tag was resolved anonymously after its image security
+checks and B200 state regression. Its RTX visual acceptance is now rejected:
+render grain satisfied the old pixel-delta test despite a zero-success task
+result and 170 held-action steps. The existing public coordinate remains
+recorded; replacement candidate image, state, and task/visual gates are pending.
 
 See the [public image catalog](container-image-catalog.md) for retained aliases,
 exclusions, and the distinction between current source and released bytes.

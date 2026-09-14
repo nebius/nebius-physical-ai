@@ -1,4 +1,9 @@
+"""Verify Arena packaging, exact-source patches, and replay reset semantics."""
+
 import importlib.util
+import textwrap
+
+import pytest
 from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES, SUPPORTED_TOOL_VERSIONS
@@ -18,8 +23,8 @@ THIRD_PARTY_NOTICES = (
 REDISTRIBUTION = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "REDISTRIBUTION.md"
 )
-VIEWPORT_PATCH = (
-    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "patch_viewport_only.py"
+EVIDENCE_PATCH = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "patch_npa_evidence.py"
 )
 
 
@@ -55,7 +60,7 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "Licensed under the Apache License, Version 2.0" in text
     assert "test ! -e /home/ubuntu/.cache/lightwheel_sdk" in text
     assert "npa workbench isaac-arena evaluate" in text
-    assert "patch_viewport_only.py" in text
+    assert "patch_npa_evidence.py" in text
     assert "NPA_ISAAC_ARENA_VIEWPORT_ONLY" in text
     assert "--dry-run" in text
     assert 'test -z "$(find /opt/isaac-arena' in text
@@ -66,10 +71,10 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
 
 
 def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
-    text = VIEWPORT_PATCH.read_text(encoding="utf-8")
+    text = EVIDENCE_PATCH.read_text(encoding="utf-8")
     assert "pinned Arena viewport-camera patch context changed" in text
-    assert "pinned Arena embodiment-camera patch context changed" in text
-    assert "POLICY_RUNNER_CONTEXT" in text
+    assert "embodiment-camera" in text
+    assert "POLICY_RUNNER_CAMERA_CONTEXT" in text
     assert 'os.environ.get("NPA_ISAAC_ARENA_VIEWPORT_ONLY") == "1"' in text
     assert "args_cli.record_camera_video or args_cli.record_viewport_video" in text
     assert "self.enable_cameras = enable_cameras and not viewport_only" in text
@@ -81,31 +86,61 @@ def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
     )
 
 
-def test_isaac_arena_viewport_patch_preserves_render_and_masks_sensors(
-    tmp_path: Path,
-) -> None:
-    spec = importlib.util.spec_from_file_location(
-        "arena_viewport_patch", VIEWPORT_PATCH
-    )
+def _evidence_patch():
+    spec = importlib.util.spec_from_file_location("arena_evidence_patch", EVIDENCE_PATCH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
 
-    policy_runner = tmp_path / "policy_runner.py"
-    policy_runner.write_text(module.POLICY_RUNNER_CONTEXT, encoding="utf-8")
-    embodiment_base = tmp_path / "embodiment_base.py"
-    embodiment_base.write_text(
-        module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT,
-        encoding="utf-8",
-    )
 
-    module.patch_sources(policy_runner, embodiment_base)
+def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Path) -> None:
+    module = _evidence_patch()
+    policy = tmp_path / "policy_runner.py"
+    policy.write_text(module.POLICY_RUNNER_RESET + module.POLICY_RUNNER_ENVIRONMENT
+                      + module.POLICY_RUNNER_CAMERA_CONTEXT)
+    embodiment = tmp_path / "embodiment.py"
+    embodiment.write_text(module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT)
+    video = tmp_path / "video.py"
+    video.write_text(module.VIDEO_TRIGGER)
+    metric = tmp_path / "metric.py"
+    metric.write_text(module.REVOLUTE_POST_STEP)
+    module.patch_sources(policy, embodiment, video, metric)
+    assert "env.unwrapped.reset_to(initial_state, None, is_relative=True)" in policy.read_text()
+    assert "simulator_ground_truth_rank" in policy.read_text()
+    assert ").unwrapped" in policy.read_text()
+    assert module.POLICY_RUNNER_CAMERA_CONTEXT in policy.read_text()
+    assert "self.enable_cameras = enable_cameras and not viewport_only" in embodiment.read_text()
+    assert "step_trigger=lambda step: step == 0" in video.read_text()
+    assert "episode_trigger" not in video.read_text()
+    assert "def record_post_reset" in metric.read_text()
+    with pytest.raises(RuntimeError, match="context changed"):
+        module.patch_sources(policy, embodiment, video, metric)
 
-    assert policy_runner.read_text(encoding="utf-8") == module.POLICY_RUNNER_CONTEXT
-    patched = embodiment_base.read_text(encoding="utf-8")
-    assert "import os" in patched
-    assert 'os.environ.get("NPA_ISAAC_ARENA_VIEWPORT_ONLY") == "1"' in patched
-    assert "self.enable_cameras = enable_cameras and not viewport_only" in patched
+
+def test_replay_reset_applies_exact_state_once_before_policy_reset() -> None:
+    from types import SimpleNamespace
+
+    module = _evidence_patch()
+    events = []
+    state = {"articulation": {"microwave": {"joint_position": [0.2]}}}
+
+    def reset_to(value, env_ids, *, is_relative):
+        assert value is state and env_ids is None and is_relative is True
+        events.append("recorded_state")
+        return {"observation": "from_recorded_state"}, {}
+
+    env = SimpleNamespace(unwrapped=SimpleNamespace(reset_to=reset_to))
+    policy = SimpleNamespace(get_initial_state=lambda: state,
+                             reset=lambda: events.append("policy_reset"))
+    program = textwrap.dedent(module.POLICY_RUNNER_RESET_PATCHED) + "finally:\n    pass\n"
+    namespace = {"env": env, "policy": policy}
+    exec(compile(program, "patched_replay_reset", "exec"), namespace)
+    assert namespace["obs"] == {"observation": "from_recorded_state"}
+    assert events == ["recorded_state", "policy_reset"]
+    policy.get_initial_state = lambda: None
+    with pytest.raises(RuntimeError, match="did not provide an initial state"):
+        exec(compile(program, "patched_replay_reset", "exec"), namespace)
 
 
 def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:

@@ -71,16 +71,20 @@ from source revision `7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1`. The image
 passed source/license, complete-layer payload, vulnerability, secret, SBOM,
 provenance, worker-bootstrap, and anonymous-pull gates.
 
-Concurrently launched digest-pinned workflows then completed the real upstream
-`policy_runner.py` on B200 `sm_100` and RTX PRO 6000 `sm_120`. The RTX run used
-a hash-verified nonzero replay trajectory for the 250-step task horizon, moved
-the microwave joint, and produced a 72,519,371-byte H.264 viewport MP4. It
-decoded as 1280×720, 5.04 seconds, and 252 frames; all 19 sampled frame pairs
-changed, with peak changed-pixel ratio 0.5391667 and peak mean luma delta
-12.5636111. The four-seed B200 state regression completed 4,200 steps and
-intentionally emitted no video. Isaac Sim/Lab remained an operator-authorized
-runtime fetch. Upstream Arena 0.3.0 remains alpha; NPA supports the pinned
-evaluator contract, not the broader unstable API.
+The published coordinate above is historical. Its four-seed B200 state
+regression completed 4,200 steps and intentionally emitted no video. The RTX
+visual proof is rejected: it executed 80 source actions, held the final action
+for another 170 steps, and reported `success_rate=0.0`. Its 72,519,371-byte
+H.264 MP4 decoded as 1280×720, 5.04 seconds, and 252 frames, but stochastic
+render grain could satisfy the former pixel-delta test without useful task
+motion. The publication and state-execution facts remain valid; this run does
+not qualify RTX visual behavior.
+
+A replacement candidate requires fresh image/security checks, B200 state
+coverage, and a successful RTX task with simulator-ground-truth progress,
+coherent denoised video, and independently retrieved playback evidence. Those
+candidate gates are pending. Isaac Sim/Lab and Lightwheel assets remain
+operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 ## Pending NCore conversion image
 
@@ -239,7 +243,7 @@ published, and anonymously pullable status for this exact digest only.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
-| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r2` | 2026-09-13 | Real completed-episode evaluation through the pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. The exact release passed a genuine nonzero RTX PRO 6000 replay with motion-validated viewport video plus an independent B200 state-only regression. Upstream remains alpha; only the pinned evaluator contract is supported. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r2` | 2026-09-13 | Real completed-episode evaluation through the pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Historical r2 completed an independent B200 state-only regression. Its RTX visual proof is rejected because render grain and held actions obscured useful task behavior, with task success 0.0. Replacement candidate qualification is pending. Upstream remains alpha; only the pinned evaluator contract is supported. |
 
 ## Candidates outside the supported public release plan
 

@@ -21,8 +21,10 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
 
 - Arena source: Apache-2.0, baked from the checksum-verified release commit.
 - Lightwheel SDK 1.0.3: upstream-declared Apache-2.0 client, baked from the
-  exact wheel and SHA-256 in Arena's `uv.lock`. Its package metadata and module
-  headers carry the Apache-2.0 grant.
+  exact wheel and SHA-256 in Arena's `uv.lock`. Its package description and some
+  module headers carry the Apache-2.0 grant and license URL; the wheel has no
+  structured license field or standalone license text. The image includes the
+  complete Apache-2.0 text at `/opt/isaac-arena/LICENSE.md` and the SDK notices.
 - Lightwheel registry assets: provider-controlled runtime inputs, never baked
   or redistributed by NPA. Applicable environments name their exact selector
   or layout requirement in the capability payload. NPA supplies no Lightwheel
@@ -52,7 +54,8 @@ Use the four-seed CUDA state-only workflow on B200; it must not record cameras
 or a viewport because B200 has no RT cores. Its four sequential real evaluation
 states are the comprehensive daily workflow coverage for this image. Use RTX
 PRO 6000 for the independent graphics qualification and require a non-empty
-MP4. NPA's context-bound viewport-only source patch must keep Kit camera support
+MP4 with successful task and coherent-motion evidence. NPA's context-bound source
+patch must keep Kit camera support
 enabled while leaving unused embodiment-mounted observation cameras disabled;
 the upstream camera-video recorder remains unsupported. Use `cuda:0` for the
 RTX qualification and record both the execution device and measured renderer
@@ -64,28 +67,39 @@ npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b2
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
 
-The accepted release is `0.3.0-isaaclab3-20260912-r2`, exact manifest
+The historical release is `0.3.0-isaaclab3-20260912-r2`, exact manifest
 `sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`,
 promoted without rebuilding from development source SHA
 `7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after genuine replay and state-only
-regression qualification. The zero-action predecessor remains historical
-evidence, not meaningful visual evidence. On a target whose accelerator
+regression qualification. Its RTX visual qualification is now rejected: the
+80 source actions were followed by 170 held-action steps, the recorded initial
+state was not applied, success rate was zero, and render grain passed the former
+pixel-change gate. The current source changes require a new immutable image
+and fresh qualification; do not treat that historical digest or its zero-action
+predecessor as meaningful visual evidence. On a target whose accelerator
 spelling has already passed `npa workbench workflow gpus`, set
 `NPA_WORKFLOW_GPU_ACCELERATOR=B200:1` for the state-only spec or
 `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` for the
 video spec. This is an exact placement pin, not cross-platform fallback.
 
 `npa workbench isaac-arena evaluate` supports only upstream-shipped
-`zero_action`, `replay`, and `rsl_rl` policies. Replay requires one HDF5 file.
+`zero_action`, `replay`, and `rsl_rl` policies. Replay requires one HDF5 file;
+NPA selects its first sorted episode, requiring finite multi-step actions and a
+finite `initial_state` group. Source success and recorded-state histories are
+optional diagnostics, never runtime outcomes. Zero-action recordings and missing
+or static state histories remain valid ordinary evaluation inputs. Replay visual
+qualification additionally requires measured nonzero source actions.
 RSL-RL requires a `model*.pt` checkpoint beside `params/agent.yaml`, matching
 upstream's real runner contract. Use `--input-path` with a local path or S3 URI;
 NPA materializes the input before starting the simulator. The upstream replay
 loader eagerly moves every episode field to CUDA, even though the policy uses
 only `actions` and `initial_state`; NPA therefore creates a private minimal
 execution HDF5 and never publishes either input. Its result binds the source and
-executed hashes. For a known longer task horizon, `--replay-target-steps` may
-repeat the last recorded action until the horizon but must never truncate the
-genuine action sequence.
+executed hashes. Replay supports one episode in one environment. Apply its
+recorded initial state with Isaac Lab `reset_to(is_relative=True)` and execute
+every source action once. Do not pad, repeat, truncate, or hold actions to
+manufacture a completed episode. A source recording that cannot complete the
+task is an input/qualification limitation, not permission to fabricate success.
 
 Successful evaluation requires:
 
@@ -93,13 +107,38 @@ Successful evaluation requires:
   `episode_length`;
 - `upstream/<timestamp>/episode_results_rank*.jsonl`;
 - `upstream/<timestamp>/index.html` plus linked pages under `report/`;
-- a required MP4 when `--record-video` is selected; and
+- the current-run simulator metric-recorder HDF5, consistent with the JSONL;
+- a required MP4, capture sidecar, and actual initial/terminal PNGs when
+  `--record-video` is selected; and
 - `result.json` with the source revision, request, measured GPU identity,
   success rate, byte sizes, source/executed input binding, and SHA-256 hashes.
 
-The B200 zero-action qualification is a real baseline evaluation and may correctly
-report zero success. Do not turn that expected policy result into a synthetic
-pass; the capability gate is factual execution and artifact integrity.
+Ordinary evaluation may correctly report zero success for any adapter. Preserve
+failed task results and distinguish completed evaluation from successful task
+execution. The B200 zero-action qualification is a baseline: its capability gate
+is factual execution and artifact integrity, with no visual claim.
+
+Task-qualified video currently supports only `gr1_open_microwave` with `replay`
+or `rsl_rl`. Require matching current-run JSONL/HDF5 success, numeric
+`success_rate > 0`, final door openness above the upstream threshold `0.8`, and
+maximum openness at least `0.5` above the initial state. Retain initial/final
+openness and the full metric trace. Restrict visual acceptance to first measured
+door progress through the first threshold crossing, excluding idle/reset frames.
+Other registered scored environments retain ordinary evaluation support; their
+nonzero-policy video qualification remains unsupported.
+
+Capture actual initial and terminal PNGs before automatic reset. Verify
+`simulator-video-evidence.json` against their file and decoded-RGB hashes,
+contiguous HDF5 action steps, and the matching decoded terminal MP4 frame within
+encoding tolerances. Preserve the raw MP4 and label any denoised derivative with
+its source hash and transform. Validate coherent motion over the same progress
+interval after temporal/spatial denoising; a noisy static scene must fail.
+Zero-action output is always a baseline and never task-qualified. If video is
+requested for that baseline, the same capture and coherent-motion checks still
+apply; static/noisy output fails and retains diagnostic artifacts. Independently
+retrieve and hash every artifact, inspect the playable video for visible
+contact/door progress, and verify authenticated Agent playback before claiming
+qualification. Never infer success from nonzero actions or an arbitrary joint.
 
 Historical exact-digest evidence comprises independent 1,050-step episodes on
 B200 `(10, 0)` and RTX PRO 6000 `(12, 0)`. B200 retained five task artifacts /
@@ -119,6 +158,11 @@ Build only from a clean exact commit. Official public development bytes use
 `dev-<full-git-sha>`; scan the built filesystem and history, not merely the
 Dockerfile.
 
+Publish official public images only through the trusted
+`.github/workflows/publish-public-images.yml` path with its security, licensing,
+SBOM, provenance, and anonymous-access gates. The local build helper refuses
+direct pushes to the official public namespace.
+
 ```bash
 bash npa/docker/workbench/isaac-arena/build.sh
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
@@ -128,10 +172,10 @@ npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
 Require a clean Omniverse payload scan, non-root user, exact Arena source
 labels/license, empty runtime cache, anonymous digest resolution, and real
 completed-episode runs on both B200 (`sm_100`) and RTX PRO 6000 (`sm_120`)
-before promotion. The RTX run must use a nonzero replay/RSL-RL input, observe
-positive behavior, and pass decoded temporal-motion thresholds; a decodable
-static video is failure. Preserve the B200 no-video and RTX required-video
-distinction in evidence.
+before promotion. The RTX run must use a nonzero replay/RSL-RL input, complete a
+successful task, and pass denoised coherent-motion checks bound to current-run
+simulator state; a decodable static or noise-only video is failure. Preserve the
+B200 no-video and RTX required-video distinction in evidence.
 
 Cancel exact workflow runs before removing any dedicated resources. Do not
 destroy shared clusters, buckets, or reserved capacity after a validation run.
@@ -140,8 +184,10 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
 
 - Exit 78 before download: explicit EULA opt-out; do not bypass it.
 - No episode JSONL: use `--num-episodes`, not an incomplete step-only smoke.
-- Replay ends before an episode result: use the environment's exact known task
-  horizon with `--replay-target-steps`; do not guess a horizon or truncate data.
+- Replay ends before an episode result: verify that the recorded initial state
+  was applied and the input matches the environment/embodiment/action space.
+  Keep every action unchanged. A recording that still cannot complete a scored
+  episode needs a compatible input; do not extend it with held actions.
 - Missing `params/agent.yaml`: stage the complete RSL-RL checkpoint directory.
 - Missing `lightwheel_sdk`: reject that image as incomplete; the accepted image
   must contain hash-locked SDK 1.0.3 while retaining an empty asset cache.

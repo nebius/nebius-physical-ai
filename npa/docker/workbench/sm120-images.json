@@ -64,7 +64,9 @@
       "tag": "0.3.0-isaaclab3-20260912-r2",
       "source_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
       "digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
-      "purpose": "Pinned Isaac Lab-Arena 0.3.0 policy evaluation; real sm_120 replay evaluation includes a required motion-validated viewport MP4."
+      "purpose": "Historical published Isaac Lab-Arena r2 coordinate. RTX evaluation executed, but its noisy video proof and zero-success task result do not qualify useful visual behavior; replacement candidate qualification is pending.",
+      "visual_validation": "rejected",
+      "candidate_validation": "pending-build"
     }
   ]
 }

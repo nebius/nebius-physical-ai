@@ -560,20 +560,18 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
 def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
     """The cache interpreter must see packages exposed by image-side .pth hooks."""
 
-    image_site = tmp_path / "image-site"
+    harness = Harness(tmp_path)
+    image_site = harness.base_site
     nested_site = image_site / "nested-site"
-    cache_site = tmp_path / "cache-site"
     nested_module = nested_site / "image_nested_dependency.py"
     nested_site.mkdir(parents=True)
-    cache_site.mkdir()
     nested_module.write_text("VALUE = 'visible'\n", encoding="utf-8")
     (image_site / "nested-dependency.pth").write_text(
         "nested-site\n", encoding="utf-8"
     )
-    (cache_site / "_npa_image_hooks.pth").write_text(
-        f"import site; site.addsitedir({str(image_site)!r})\n",
-        encoding="utf-8",
-    )
+    result = harness.run("ensure")
+    assert result.returncode == 0, result.stderr
+    cache_site = harness.stamp_dir() / "venv/lib/python3.11/site-packages"
 
     completed = subprocess.run(
         [

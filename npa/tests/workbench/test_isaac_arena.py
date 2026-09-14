@@ -219,6 +219,7 @@ def _fake_upstream(
     (run / "report" / "job_cube.html").write_text(
         "<html>episode detail</html>", encoding="utf-8"
     )
+    _write_ground_truth(run, success=False)
     if "--record_viewport_video" in argv:
         (run / "viewport-episode-0.mp4").write_bytes(b"real-video-fixture")
     return subprocess.CompletedProcess(
@@ -239,6 +240,7 @@ def _fake_moving_upstream(
     record.update(
         {
             "success": True,
+            "episode_length": 4,
             "progress": {
                 "overall_score": 1.0,
                 "events": [{"step": 40, "predicate_name": "door_open"}],
@@ -246,6 +248,8 @@ def _fake_moving_upstream(
         }
     )
     results.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    run = results.parent
+    _write_ground_truth(run, success=True, microwave=True)
     return subprocess.CompletedProcess(
         argv,
         0,
@@ -262,6 +266,43 @@ def _fake_viewport_graphics(_root: Path, env: dict[str, str]) -> dict[str, objec
         "baked": False,
         "redistribution": False,
     }
+
+
+def _fake_video_preparer(source: Path) -> tuple[Path, dict[str, object]]:
+    target = source.with_name(f"{source.stem}-evidence-denoised.mp4")
+    target.write_bytes(source.read_bytes())
+    return target, {
+        "kind": "test_spatiotemporal_denoise",
+        "filter": "test",
+        "source_path": source.name,
+        "source_sha256": "b" * 64,
+        "changes_simulator_outcome": False,
+    }
+
+
+def _write_ground_truth(run: Path, *, success: bool, microwave: bool = False) -> None:
+    import h5py
+    import numpy as np
+
+    path = run / "simulator_ground_truth_rank0.hdf5"
+    with h5py.File(path, "w") as dataset:
+        episode = dataset.create_group("data/demo_0")
+        episode.create_dataset("success", data=np.array([success], dtype=bool))
+        steps = 4 if microwave else 300
+        episode.create_dataset("npa_video/initial_action_step", data=[[0]])
+        episode.create_dataset("npa_video/action_step", data=np.arange(1, steps + 1).reshape(-1, 1))
+        episode.create_dataset("npa_video/terminal_action_step", data=[[steps]])
+        if microwave:
+            trace = [0.2, 0.21, 0.36, 0.63, 0.81] if success else [0.2, 0.25, 0.1]
+            episode.create_dataset(
+                "revolute_joint_state",
+                data=np.array(trace, dtype=np.float32).reshape(-1, 1),
+            )
+        else:
+            episode.create_dataset(
+                "object_linear_velocity",
+                data=np.zeros((4, 3), dtype=np.float32),
+            )
 
 
 def _make_replay(path: Path, *, steps: int = 4) -> None:
@@ -305,10 +346,11 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
         replay,
     )
     assert evidence is not None
-    assert evidence["trajectory"]["recorded_success"] is True
+    assert evidence["trajectory"]["source_recorded_success"] is True
+    assert evidence["trajectory"]["runtime_outcome_claim"] is False
 
     execution, normalized = _prepare_replay_execution_input(
-        replay, private, target_steps=6, source_evidence=evidence
+        replay, private, source_evidence=evidence
     )
 
     import h5py
@@ -317,25 +359,25 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
     with h5py.File(execution, "r") as dataset:
         episode = dataset["data"]["demo_0"]
         assert set(episode) == {"actions", "initial_state"}
-        assert episode["actions"].shape == (6, 3)
-        np.testing.assert_array_equal(episode["actions"][-1], episode["actions"][-2])
-        assert int(dataset["data"].attrs["total"]) == 6
-        assert int(episode.attrs["num_samples"]) == 6
+        assert episode["actions"].shape == (4, 3)
+        np.testing.assert_array_equal(
+            episode["actions"],
+            np.arange(12, dtype=np.float32).reshape(4, 3) / 10,
+        )
+        assert int(dataset["data"].attrs["total"]) == 4
+        assert int(episode.attrs["num_samples"]) == 4
     assert normalized == {
-        "strategy": "actions_initial_state_only_hold_final_action",
+        "strategy": "actions_initial_state_exact_replay",
         "source_sha256": evidence["sha256"],
         "executed_sha256": normalized["executed_sha256"],
         "source_steps": 4,
-        "executed_steps": 6,
-        "held_final_action_steps": 2,
+        "executed_steps": 4,
+        "action_padding_steps": 0,
+        "initial_state_application": "isaac_lab_reset_to_relative",
         "fields": ["actions", "initial_state"],
         "published": False,
     }
     assert len(normalized["executed_sha256"]) == 64
-    with pytest.raises(IsaacArenaError, match="cannot truncate"):
-        _prepare_replay_execution_input(
-            replay, private, target_steps=3, source_evidence=evidence
-        )
 
 
 def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path) -> None:
@@ -572,8 +614,9 @@ def test_viewport_graphics_rejects_nonmatching_archive_version(
         "compute_capability": [10, 0],
     },
 )
+@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
 def test_execution_requires_scored_episode_report_and_requested_video(
-    _gpu: object, _probe: object, tmp_path: Path
+    _capture: object, _gpu: object, _probe: object, tmp_path: Path
 ) -> None:
     result = evaluate(
         IsaacArenaRequest(
@@ -582,17 +625,20 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         ),
         runner=_fake_upstream,
         graphics_preparer=_fake_viewport_graphics,
+        video_preparer=_fake_video_preparer,
     )
     assert result["status"] == "ok"
-    assert result["summary"] == {
-        "episodes": 1,
-        "successes": 0,
-        "success_rate": 0.0,
-        "mean_episode_length": 300.0,
-        "max_progress_score": 0.0,
-        "progress_event_count": 0,
-        "metrics": {"success_rate": 0.0},
-    }
+    assert result["summary"]["episodes"] == 1
+    assert result["summary"]["successes"] == 0
+    assert result["summary"]["success_rate"] == 0.0
+    assert result["summary"]["mean_episode_length"] == 300.0
+    assert result["summary"]["max_progress_score"] == 0.0
+    assert result["summary"]["progress_event_count"] == 0
+    assert result["summary"]["metrics"] == {"success_rate": 0.0}
+    ground_truth = result["summary"]["simulator_ground_truth"]
+    assert ground_truth["source"] == "current-run Arena metric-recorder HDF5"
+    assert ground_truth["successes"] == 0
+    assert ground_truth["task_motion"] is None
     assert result["gpu"]["compute_capability"] == [10, 0]
     published = tmp_path / "published"
     manifest = json.loads((published / "result.json").read_text(encoding="utf-8"))
@@ -601,20 +647,48 @@ def test_execution_requires_scored_episode_report_and_requested_video(
     assert "upstream/2026-09-12_01-02-03/index.html" in paths
     assert "upstream/2026-09-12_01-02-03/report/job_cube.html" in paths
     assert "upstream/2026-09-12_01-02-03/viewport-episode-0.mp4" in paths
+    assert (
+        "upstream/2026-09-12_01-02-03/viewport-episode-0-evidence-denoised.mp4"
+        in paths
+    )
+    assert (
+        "upstream/2026-09-12_01-02-03/simulator_ground_truth_rank0.hdf5"
+        in paths
+    )
     assert all(
         len(entry["sha256"]) == 64 and entry["bytes"] > 0
         for entry in manifest["artifacts"]
     )
-    video = next(
-        entry for entry in manifest["artifacts"] if entry["path"].endswith(".mp4")
-    )
+    video = next(entry for entry in manifest["artifacts"] if "video" in entry)
     assert video["video"]["binding"] == {
         "run_id": "2026-09-12_01-02-03",
         "upstream_run_directory": "2026-09-12_01-02-03",
         "policy_type": "zero_action",
         "input_sha256": "",
         "executed_input_sha256": "",
+        "simulator_ground_truth_sha256": [ground_truth["files"][0]["sha256"]],
     }
+    raw_video = next(
+        entry for entry in manifest["artifacts"] if "visual_source" in entry
+    )
+    assert raw_video["visual_source"]["role"] == "raw_upstream_source"
+    assert video["video"]["derivation"]["changes_simulator_outcome"] is False
+    assert video["video"]["task_qualified"] is False
+
+
+@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
+@patch("npa.workbench.isaac_arena.runtime._probe_mp4", return_value={"motion": {"meaningful": True}})
+@patch("npa.workbench.isaac_arena.runtime._gpu_info", return_value={"available": True})
+def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _capture, tmp_path):
+    result = evaluate(
+        IsaacArenaRequest(output_path=str(tmp_path / "out"), environment="gr1_open_microwave", record_video=True),
+        runner=_fake_moving_upstream, graphics_preparer=_fake_viewport_graphics,
+        video_preparer=_fake_video_preparer,
+    )
+    assert result["summary"]["success_rate"] == 1.0
+    assert result["behavior"]["meaningful"] is False
+    video = next(item for item in result["artifacts"] if "video" in item)
+    assert video["video"]["task_qualified"] is False
 
 
 @patch(
@@ -623,7 +697,11 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "kind": "replay_hdf5",
         "bytes": 100,
         "sha256": "a" * 64,
-        "trajectory": {"meaningful": True, "episode": "demo_0"},
+        "trajectory": {
+            "episode": "demo_0",
+            "nonzero_actions": True,
+            "runtime_outcome_claim": False,
+        },
     },
 )
 @patch(
@@ -644,8 +722,9 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "compute_capability": [12, 0],
     },
 )
+@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
 def test_replay_binds_nonzero_input_behavior_and_video_to_run(
-    _gpu: object, _probe: object, _input: object, tmp_path: Path
+    _capture: object, _gpu: object, _probe: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
     _make_replay(replay)
@@ -657,10 +736,10 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
             input_path=str(replay),
             record_video=True,
             run_id="arena-moving-run",
-            replay_target_steps=6,
         ),
         runner=_fake_moving_upstream,
         graphics_preparer=_fake_viewport_graphics,
+        video_preparer=_fake_video_preparer,
     )
     assert result["behavior"]["meaningful"] is True
     assert result["runtime"]["lightwheel_sdk"] == {
@@ -680,14 +759,23 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     assert result["runtime"]["lightwheel_registry_assets"]["runtime_fetch"] is True
     assert result["runtime"]["lightwheel_registry_assets"]["redistribution"] is False
     assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0
-    video = next(
-        entry for entry in result["artifacts"] if entry["path"].endswith(".mp4")
-    )
+    video = next(entry for entry in result["artifacts"] if "video" in entry)
     assert video["video"]["binding"]["run_id"] == "arena-moving-run"
+    assert video["video"]["simulator_capture"] == {"verified": True}
+    assert video["video"]["task_qualified"] is True
     assert video["video"]["binding"]["input_sha256"] == "a" * 64
     assert len(video["video"]["binding"]["executed_input_sha256"]) == 64
+    assert video["video"]["binding"]["simulator_ground_truth_sha256"] == [
+        result["summary"]["simulator_ground_truth"]["files"][0]["sha256"]
+    ]
+    task_motion = result["summary"]["simulator_ground_truth"]["task_motion"]
+    assert task_motion["task_success"] is True
+    assert task_motion["initial_openness"] == pytest.approx(0.2)
+    assert task_motion["final_openness"] == pytest.approx(0.81)
+    assert task_motion["openness_delta"] == pytest.approx(0.61)
     assert result["input"]["execution"]["source_steps"] == 4
-    assert result["input"]["execution"]["executed_steps"] == 6
+    assert result["input"]["execution"]["executed_steps"] == 4
+    assert result["input"]["execution"]["action_padding_steps"] == 0
     assert not (tmp_path / "published" / "private").exists()
     assert all("replay-execution" not in entry["path"] for entry in result["artifacts"])
     assert result["request"]["input_path"] == "<operator-input>"
@@ -700,7 +788,11 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
         "kind": "replay_hdf5",
         "bytes": 100,
         "sha256": "a" * 64,
-        "trajectory": {"meaningful": True, "episode": "demo_0"},
+        "trajectory": {
+            "episode": "demo_0",
+            "nonzero_actions": True,
+            "runtime_outcome_claim": False,
+        },
     },
 )
 @patch(
@@ -711,20 +803,32 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
         "compute_capability": [12, 0],
     },
 )
-def test_nonzero_policy_rejects_no_output_behavior(
+def test_nonzero_policy_rejects_movement_without_task_success(
     _gpu: object, _input: object, tmp_path: Path
 ) -> None:
     replay = tmp_path / "episode.hdf5"
     _make_replay(replay)
-    with pytest.raises(IsaacArenaError, match="no positive task"):
+    result = evaluate(
+        IsaacArenaRequest(output_path=str(tmp_path / "scored"), environment="gr1_open_microwave",
+                          policy_type="replay", input_path=str(replay)),
+        runner=_fake_upstream,
+    )
+    assert result["summary"]["success_rate"] == 0.0
+    assert result["behavior"]["meaningful"] is False
+    assert (tmp_path / "scored" / "result.json").is_file()
+    with pytest.raises(
+        IsaacArenaError, match="no upstream-defined successful task episode"
+    ):
         evaluate(
             IsaacArenaRequest(
                 output_path=str(tmp_path / "published"),
                 environment="gr1_open_microwave",
                 policy_type="replay",
                 input_path=str(replay),
+                record_video=True,
             ),
             runner=_fake_upstream,
+            graphics_preparer=_fake_viewport_graphics,
         )
 
 
@@ -768,7 +872,7 @@ def test_video_probe_accepts_temporal_motion(tmp_path: Path) -> None:
 def test_video_probe_rejects_decodable_static_video(tmp_path: Path) -> None:
     video = tmp_path / "static.mp4"
     _make_test_video(video, "color=c=blue:size=320x240:rate=10:duration=2")
-    with pytest.raises(IsaacArenaError, match="decodable but visually static"):
+    with pytest.raises(IsaacArenaError, match="decodable but.*motion"):
         _probe_mp4(video)
 
 

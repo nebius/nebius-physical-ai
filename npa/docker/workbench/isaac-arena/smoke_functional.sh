@@ -13,7 +13,7 @@ if [[ -z "${NPA_ISAAC_ARENA_REPLAY_PATH:-}" ]]; then
 fi
 printf '%s  %s\n' "$REPLAY_SHA256" "$REPLAY_PATH" | sha256sum -c -
 
-exec npa workbench isaac-arena evaluate \
+npa workbench isaac-arena evaluate \
   --output-path "$OUTPUT_DIR" \
   --environment gr1_open_microwave \
   --policy-type replay \

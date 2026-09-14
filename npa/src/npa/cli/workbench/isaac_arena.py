@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from enum import Enum
+from typing import Any
 
 import typer
 
@@ -23,7 +24,59 @@ app = typer.Typer(
 )
 
 
+_TERMS = {
+    "arena_source": {
+        "license": "Apache-2.0",
+        "baked": True,
+        "version": "0.3.0",
+        "release_channel": "alpha",
+    },
+    "isaac_sim_and_lab": {
+        "license": "NVIDIA proprietary software terms",
+        "baked": False,
+        "runtime_fetch": True,
+        "acceptance_environment": "ACCEPT_EULA",
+    },
+    "lightwheel_sdk": {
+        "license": "Apache-2.0",
+        "version": "1.0.3",
+        "baked": True,
+    },
+    "lightwheel_registry_assets": {
+        "license": "upstream-provider-controlled",
+        "baked": False,
+        "runtime_fetch": True,
+        "redistribution": False,
+        "authorization": (
+            "operator responsibility; NPA supplies no credential or license grant"
+        ),
+    },
+    "nvidia_viewport_graphics_userspace": {
+        "license": "NVIDIA driver package terms",
+        "baked": False,
+        "runtime_fetch": True,
+        "redistribution": False,
+        "scope": "viewport evaluation only",
+        "source": "exact-driver-matched Ubuntu signed package",
+        "installation": False,
+    },
+    "operator_inputs": {"baked": False, "redistribution": False},
+}
+
+
 class OutputFormat(str, Enum):
+    """Select the representation printed by the evaluation command.
+
+    Args:
+        value: ``json`` for the result document or ``text`` for its summary.
+
+    Returns:
+        The matching output-format member.
+
+    Raises:
+        ValueError: The value is not a supported output format.
+    """
+
     json = "json"
     text = "text"
 
@@ -32,7 +85,17 @@ class OutputFormat(str, Enum):
 @resolve_typer_defaults
 @intent_boundary(OperationIntent.OBSERVE)
 def capabilities_cmd() -> None:
-    """Print the pinned upstream surface and NPA support status as JSON."""
+    """Print the pinned upstream surface and NPA support status as JSON.
+
+    Args:
+        None.
+
+    Returns:
+        None. Writes the capability document to standard output.
+
+    Raises:
+        None.
+    """
 
     typer.echo(json.dumps(capabilities(), indent=2, sort_keys=True))
 
@@ -49,12 +112,6 @@ def evaluate_cmd(
     policy_type: str = typer.Option("zero_action", "--policy-type"),
     input_path: str = typer.Option(
         "", "--input-path", help="Replay file or RSL-RL checkpoint tree."
-    ),
-    replay_target_steps: int = typer.Option(
-        0,
-        "--replay-target-steps",
-        min=0,
-        help="Replay horizon; holds the final recorded action without truncating.",
     ),
     execution_device: str = typer.Option(
         "cuda:0",
@@ -75,31 +132,60 @@ def evaluate_cmd(
     dry_run: bool = typer.Option(False, "--dry-run"),
     output_format: OutputFormat = typer.Option(OutputFormat.json, "--output-format"),
 ) -> None:
-    """Evaluate a zero, replay, or RSL-RL policy with upstream's runner."""
+    """Evaluate a zero, replay, or RSL-RL policy with upstream's runner.
 
+    Args:
+        output_path: Local result directory or S3 output prefix.
+        environment: Registered Arena environment name.
+        policy_type: ``zero_action``, ``replay``, or ``rsl_rl`` adapter.
+        input_path: Local or S3 replay file/checkpoint input, when required.
+        execution_device: ``cuda:0`` or diagnostic-only ``cpu`` physics device.
+        num_episodes: Number of scored episodes; replay requires one.
+        num_envs: Number of simulation environments; replay requires one.
+        seed: Upstream random seed.
+        embodiment: Optional registered robot override.
+        object_name: Optional task-compatible object override.
+        record_video: Require viewport video and its visual qualification.
+        run_id: Optional identifier binding the resulting evidence.
+        runtime_image: Optional exact image identity recorded in the manifest.
+        dry_run: Build the request without executing the simulator.
+        output_format: JSON document or concise text summary.
+
+    Returns:
+        None. Writes the evaluation result to standard output.
+
+    Raises:
+        typer.Exit: Evaluation fails; exits with status 1.
+    """
+    request = IsaacArenaRequest(
+        output_path=output_path,
+        environment=environment,
+        policy_type=policy_type,
+        input_path=input_path,
+        execution_device=execution_device,
+        num_episodes=num_episodes,
+        num_envs=num_envs,
+        seed=seed,
+        embodiment=embodiment,
+        object_name=object_name,
+        record_video=record_video,
+        run_id=run_id,
+        runtime_image=runtime_image,
+        dry_run=dry_run,
+    )
+    _evaluate_and_emit(request, output_format)
+
+
+def _evaluate_and_emit(request: IsaacArenaRequest, output_format: OutputFormat) -> None:
     try:
-        result = evaluate(
-            IsaacArenaRequest(
-                output_path=output_path,
-                environment=environment,
-                policy_type=policy_type,
-                input_path=input_path,
-                replay_target_steps=replay_target_steps,
-                execution_device=execution_device,
-                num_episodes=num_episodes,
-                num_envs=num_envs,
-                seed=seed,
-                embodiment=embodiment,
-                object_name=object_name,
-                record_video=record_video,
-                run_id=run_id,
-                runtime_image=runtime_image,
-                dry_run=dry_run,
-            )
-        )
+        result = evaluate(request)
     except IsaacArenaError as exc:
         typer.echo(f"Isaac Arena evaluation failed: {exc}", err=True)
         raise typer.Exit(1) from exc
+    _emit_evaluation(result, output_format)
+
+
+def _emit_evaluation(result: dict[str, Any], output_format: OutputFormat) -> None:
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
     else:
@@ -113,49 +199,16 @@ def evaluate_cmd(
 @app.command("terms")
 @resolve_typer_defaults
 def terms_cmd() -> None:
-    """Describe source and runtime redistribution boundaries."""
+    """Describe source and runtime redistribution boundaries.
 
-    typer.echo(
-        json.dumps(
-            {
-                "arena_source": {
-                    "license": "Apache-2.0",
-                    "baked": True,
-                    "version": "0.3.0",
-                    "release_channel": "alpha",
-                },
-                "isaac_sim_and_lab": {
-                    "license": "NVIDIA proprietary software terms",
-                    "baked": False,
-                    "runtime_fetch": True,
-                    "acceptance_environment": "ACCEPT_EULA",
-                },
-                "lightwheel_sdk": {
-                    "license": "Apache-2.0",
-                    "version": "1.0.3",
-                    "baked": True,
-                },
-                "lightwheel_registry_assets": {
-                    "license": "upstream-provider-controlled",
-                    "baked": False,
-                    "runtime_fetch": True,
-                    "redistribution": False,
-                    "authorization": (
-                        "operator responsibility; NPA supplies no credential or license grant"
-                    ),
-                },
-                "nvidia_viewport_graphics_userspace": {
-                    "license": "NVIDIA driver package terms",
-                    "baked": False,
-                    "runtime_fetch": True,
-                    "redistribution": False,
-                    "scope": "viewport evaluation only",
-                    "source": "exact-driver-matched Ubuntu signed package",
-                    "installation": False,
-                },
-                "operator_inputs": {"baked": False, "redistribution": False},
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    Args:
+        None.
+
+    Returns:
+        None. Writes the terms document to standard output.
+
+    Raises:
+        None.
+    """
+
+    typer.echo(json.dumps(_TERMS, indent=2, sort_keys=True))

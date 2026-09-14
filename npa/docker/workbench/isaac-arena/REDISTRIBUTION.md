@@ -4,18 +4,25 @@
 payload is the Apache-2.0 Isaac Lab-Arena source at commit
 `ed0fd12be862078be316c73eb7cf423ba9b1c5cd` plus its hash-locked open-source
 Lightwheel SDK 1.0.3, Pinocchio, Pink, ONNX Runtime, and solver dependency
-closure. The Lightwheel wheel carries the full Apache-2.0 grant in its package
-metadata and its modules carry Apache-2.0 headers. The image
+closure. The exact Lightwheel wheel's package description includes an
+Apache-2.0 license notice and URL; several client modules repeat that notice.
+The wheel has no standalone license file or structured license metadata field.
+Recipients receive the full Apache-2.0 text at `/opt/isaac-arena/LICENSE.md`,
+alongside the retained Lightwheel copyright and license notices. The image
 inherits the accepted payload-clean `npa-isaac-lab` digest and does not contain
 Isaac Sim, Isaac Lab, Omniverse Kit, model weights, datasets, operator inputs,
 generated evaluations, Lightwheel registry assets, credentials, or populated
 runtime caches.
 
-NPA applies one source-visible, Apache-2.0-compatible integration patch to the
-pinned Arena policy runner. It separates Kit's viewport-rendering enablement
-from construction of embodiment-mounted observation cameras when NPA requests
-only viewport video. The build applies the patch only when its exact upstream
-context matches and removes the build helper afterward.
+NPA applies source-visible integration changes to the pinned Arena runner,
+viewport recorder, revolute metric, and embodiment setup. The runner restores
+the replay's recorded initial state and stores simulator metric traces with
+the run. Viewport capture retains action-bound frames before automatic reset,
+and the revolute trace includes its pre-action value. Only unused embodiment
+camera observations are disabled; the real upstream renderer, task, policy,
+and success calculation remain in use. The build requires exact upstream
+contexts and removes the patch helper afterward. Modified files retain their
+upstream notices and identify the NPA integration changes.
 
 At first execution, NVIDIA delivers the pinned Isaac Sim/Lab wheels directly
 to the operator's writable cache after the shared `ACCEPT_EULA` preflight. An

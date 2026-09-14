@@ -25,8 +25,10 @@ SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 if [[ "$PUSH" == 1 && -z "$REGISTRY" ]]; then
   REGISTRY="$(cd "$NPA_ROOT" && .venv/bin/python -c 'from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY; print(DEFAULT_PUBLIC_CONTAINER_REGISTRY)')"
 fi
-if [[ "$PUSH" == 1 && "$REGISTRY" == "ghcr.io/nebius/nebius-physical-ai" && "$TAG" != "dev-${SOURCE_SHA}" ]]; then
-  echo "ERROR: official public builds must use dev-${SOURCE_SHA}" >&2
+REGISTRY="${REGISTRY%/}"
+if [[ "$PUSH" == 1 && "$REGISTRY" == "ghcr.io/nebius/nebius-physical-ai" ]]; then
+  echo "ERROR: official public publication requires the trusted publish-public-images.yml workflow and its pre-publication gates" >&2
+  echo "Select isaac-arena with development SHA ${SOURCE_SHA}; this helper supports local or operator-private builds only." >&2
   exit 2
 fi
 

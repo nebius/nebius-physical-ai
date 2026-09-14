@@ -7,9 +7,8 @@ success from imports.
 
 Upstream describes 0.3.0 as alpha, with unstable and incomplete APIs, and says
 not to use it in production. NPA therefore supports only the immutable
-evaluation contract documented here. This is a production-quality packaging
-and operations surface around an explicitly pre-release upstream—not a claim
-that the broader upstream project is production-ready.
+evaluation contract documented here. Its packaging and qualification records
+do not make the broader upstream project production-ready.
 
 ## What the image contains
 
@@ -20,12 +19,17 @@ Lab image. The source archive and Python wheels are SHA-256 verified. Upstream
 tests, sample checkpoints, demonstration data, and documentation media are
 removed.
 
-The accepted release is
+The historical published release is
 `npa-isaac-arena:0.3.0-isaaclab3-20260912-r2`, manifest
 `sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`.
 It was promoted without rebuilding from source revision
 `7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after complete payload/security,
 SBOM, provenance, bootstrap, anonymous-pull, and two-platform workload gates.
+Its RTX visual qualification was subsequently rejected: stochastic rendering
+noise passed the former pixel-change checks, while the task failed. The current
+source corrects replay-state initialization and visual acceptance. A new image
+must pass fresh digest-bound B200 and RTX qualification before promotion; the
+historical release is not evidence for these corrections.
 
 The image contains no Isaac Sim/Lab/Omniverse Kit payload, weights, replay data,
 operator checkpoints, Lightwheel registry assets, credentials, results, or
@@ -54,23 +58,31 @@ the pinned alpha surface with explicit `implemented`, `input_required`,
 `unsupported`, and `upstream_alpha` states. Digest-specific `live_validated`
 claims deliberately remain in the readiness and release records: an image
 cannot pre-assert qualification of its own not-yet-published digest. Both Arena
-entries in the authenticated Agent UI's `/api/tools` catalog embed the same
-payload and name the CLI command. Together with those digest-bound records, it
+entries are listed by the authenticated Agent UI's `/api/tools` endpoint; their
+`/api/tools/{tool_ref}` detail responses embed the same payload and name the CLI
+command. Together with those digest-bound records, it
 is the source of truth when a broader upstream feature exists but is not an NPA
 claim.
 
 The evaluator supports the three local policy adapters registered by upstream:
 
-- `zero_action`: no input; useful as a simulator and metric baseline, but never
-  meaningful visual evidence merely because its MP4 decodes.
+- `zero_action`: no input; a simulator and metric baseline, never task-qualified
+  visual evidence. Requested video must still pass the capture and coherent-motion
+  checks; a static or noise-only baseline fails video qualification.
 - `replay`: `--input-path` resolves to an Isaac Lab episode HDF5 file. NPA
-  rejects effectively zero actions or a trajectory with no changing recorded
-  state before starting the simulator. The generic upstream loader otherwise
+  selects the first sorted episode and requires finite multi-step actions and a
+  finite `initial_state` group. Recorded-state histories and source success are
+  optional diagnostics, never the current run's outcome. Zero-action recordings
+  and missing or static state histories remain valid ordinary evaluation inputs;
+  replay visual qualification additionally requires measured nonzero source
+  actions. The generic upstream loader otherwise
   copies every recorded observation/state tensor to CUDA even though its replay
   adapter consumes only actions and the initial state, so NPA materializes
-  exactly those required fields in owner-private scratch. When a recording is
-  shorter than a known task horizon, `--replay-target-steps` may hold its final
-  recorded action through that horizon; it refuses to truncate source actions.
+  exactly those required fields in owner-private scratch. The runner applies
+  the recorded initial state through Isaac Lab's `reset_to(is_relative=True)`
+  and executes the source actions once, without padding, repetition, truncation,
+  or a final-action hold. Replay evaluates one recorded episode in one
+  environment.
 - `rsl_rl`: `--input-path` resolves to `model*.pt` or a directory containing
   exactly one such checkpoint with sibling `params/agent.yaml`.
 
@@ -80,7 +92,7 @@ runner: each requires a separately operated model server, compatible
 embodiment adapter, and its own model/runtime terms. Arbitrary dynamic policy
 and external-environment import paths are also unsupported.
 
-The meaningful replay example uses an operator-owned copy of upstream's
+The replay qualification example uses an operator-owned copy of upstream's
 Apache-2.0 `test_demo_gr1_open_microwave.hdf5` fixture at the exact pinned
 revision. The input is never baked into or redistributed with the public image.
 
@@ -90,7 +102,6 @@ npa workbench isaac-arena evaluate \
   --environment gr1_open_microwave \
   --policy-type replay \
   --input-path ./test_demo_gr1_open_microwave.hdf5 \
-  --replay-target-steps 250 \
   --embodiment gr1_pink \
   --object tomato_soup_can \
   --record-video \
@@ -99,23 +110,45 @@ npa workbench isaac-arena evaluate \
 
 Inputs and outputs may be local or operator-owned S3 paths. The simulator
 subprocess receives no cloud, model, or HTTP admission credentials. Each result
-contains raw episode JSONL, upstream static HTML, the credential-isolated simulator
-log, and `result.json` with aggregate metrics, GPU identity, byte sizes, and hashes.
+contains raw episode JSONL, upstream static HTML, the current run's simulator
+ground-truth HDF5, the credential-isolated simulator log, and `result.json` with
+aggregate metrics, GPU identity, byte sizes, and hashes.
 The original operator input and the normalized execution HDF5 are never output
 artifacts. The result redacts their location and binds both the source SHA-256
-and exact executed-input SHA-256, along with source, executed, and final-action
-hold step counts.
-`--record-video` additionally fails unless upstream writes H.264 at least
-320×240 and one second long, and independent FFmpeg sampling finds at least two
-frame pairs with both mean absolute luma delta ≥1.0 and ≥0.5% of pixels changing
-by at least eight luma levels. The result records full video metadata, decoded
-sample counts, measured change, thresholds, video hash, exact run id, upstream
-run directory, policy adapter, and policy-input hash. A technically valid static
-MP4 therefore fails closed. State-only evaluations retain their original
-contract and do not need video.
+and exact executed-input SHA-256, along with source and executed step counts.
+A completed evaluation may truthfully report a success rate of zero. Nonzero
+actions and movement metrics never substitute for the upstream task result.
 
-NPA's viewport-only source patch preserves the early Kit camera enablement
-required by `env.render()`, but prevents that recorder choice from also adding
+`--record-video` requires one episode in one environment and H.264 at least
+320×240 and one second long. The untouched source MP4 is retained beside a
+labeled FFmpeg-denoised derivative. Acceptance checks temporal-median samples
+for coherent spatial change and binds that interval to the same run's simulator
+metric trace. Task-qualified video currently supports only
+`gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
+`success_rate > 0`, and HDF5 success flag must agree, the final door openness
+must exceed the upstream threshold of `0.8`, and maximum openness must increase
+at least `0.5` from the initial state. The acceptance interval runs from the
+first measured door progress to the first threshold crossing, excluding idle
+and reset frames. Other registered scored environments remain available for
+ordinary evaluation; their nonzero-policy video qualification is unsupported.
+
+The result retains `simulator-video-evidence.json`, an actual initial PNG, and
+an actual terminal PNG captured before automatic reset. The sidecar binds each
+PNG's file and decoded-RGB SHA-256 to its action step; contiguous capture indices
+must match the simulator HDF5. The terminal PNG must also match the corresponding
+decoded source-MP4 frame within encoding tolerances. The result records these
+bindings, initial/final state, measured changes, thresholds, source and derivative
+hashes, run identity, and input hashes. A static scene with rendering noise fails
+the gate. A zero-action baseline is never task-qualified, even if it passes the
+capture and coherent-motion checks. Failed qualification retains diagnostic
+artifacts. State-only evaluation reports scored outcomes, including zero success,
+without requiring successful visual qualification.
+
+NPA's context-bound source patch applies replay initial state, retains the
+simulator metric-recorder HDF5, captures the initial revolute-joint state, and
+records actual viewport frames after each action and before automatic reset.
+The Gym recorder uses those cached simulator frames. The patch preserves early Kit
+camera enablement required by `env.render()`, but prevents that recorder choice from also adding
 the embodiment's unused observation cameras. Upstream camera-observation video
 is not exposed by this adapter. The patch is context-bound to the pinned source
 and the image build fails if that source block changes.
@@ -143,7 +176,6 @@ result = evaluate(
     environment="gr1_open_microwave",
     policy_type="replay",
     input_path="./test_demo_gr1_open_microwave.hdf5",
-    replay_target_steps=250,
     execution_device="cuda:0",
     object_name="tomato_soup_can",
     record_video=True,
@@ -196,9 +228,10 @@ external-plugin support claim.
   four-seed zero-action `cube_goal_pose` state regression on one B200. B200 has
   no RT cores, so this path makes no render or meaningful-motion claim.
 - `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` replays the nonzero
-  operator-owned trajectory for the 250-step task horizon on RTX PRO 6000 and requires a
-  motion-validated viewport MP4. It uses CUDA physics while the NPA
-  viewport-only patch avoids constructing unrelated embodiment-camera sensors;
+  operator-owned trajectory on RTX PRO 6000 and requires successful task
+  execution plus simulator-ground-truth-bound viewport motion. It uses CUDA
+  physics while the NPA source patch avoids constructing unrelated
+  embodiment-camera sensors;
   native graphics is preferred and the exact-driver private extraction above is
   used only when required by the target.
   The result records both the execution device and measured GPU identity.
@@ -208,6 +241,13 @@ pass the standard S3 credentials through workflow secret handling. No model
 credential is required for this replay. Its exact HDF5 input must already exist
 in operator-owned storage, and the worker needs outbound access to the upstream
 Lightwheel registry for the runtime-only microwave asset.
+
+The live-submit test harness downloads the exact pinned upstream replay without
+operator credentials, checks its SHA-256 and HDF5 content, and stages it under
+the invocation's E2E prefix. It rewrites the test's input URI to that private
+key and verifies the stored bytes again. The reusable workflow itself retains
+an operator-supplied input URI; production inputs are never bundled into tests
+or the public image.
 
 ```bash
 npa workbench health preflight --checks nebius,s3
@@ -228,7 +268,7 @@ npa workbench workflow submit \
   --var "bucket=<operator-owned-bucket>"
 ```
 
-## Accepted workload evidence
+## Historical workload evidence and current qualification
 
 The first exact release digest completed zero-action baseline evaluations on
 B200 and RTX PRO 6000. Those runs remain valid simulator/report evidence, but
@@ -244,7 +284,7 @@ and an independent pod audit found no run-owned worker. Run-created controllers
 were removed; the pre-existing shared controller, clusters, and operator storage
 were retained.
 
-The current release passed those gates in two isolated, concurrently launched
+The historical r2 release ran two isolated, concurrently launched
 workflows against reserved capacity. `arena-replay-rtx-7dd3a2bf-r1` ran the
 `replay` adapter for 250 steps on RTX PRO 6000. Its source fixture was 365,180
 bytes with SHA-256
@@ -254,16 +294,18 @@ absolute step delta 0.0183097, and a recorded-success trajectory. The private
 execution copy held the final action for the remaining 170 task steps without
 truncating or publishing the source. Upstream reported one 250-step episode and
 `revolute_joint_moved_rate=1.0`. Success rate 0.0 remains the policy result; it
-is not rewritten merely because meaningful behavior occurred.
+is retained unchanged. This run is rejected as meaningful visual/task evidence:
+the source state was not applied, most execution steps held the final action,
+the task failed, and render grain could satisfy the old pixel thresholds.
 
 The run retained 18 durable objects / 72,726,403 bytes. All six declared task
 artifacts were downloaded again and hash-verified. The input- and run-bound
 MP4 was 72,519,371 bytes, H.264, 1280×720, 5.04 seconds, and 252 frames. Twenty
 independently decoded samples produced 19 changed frame pairs, maximum changed
 pixel ratio 0.5391667, and maximum mean absolute luma delta 12.5636111. These
-measurements exceed the checked-in 0.005 ratio, 1.0 luma-delta, and two-pair
-minimums; the paired static-video rejection test proves decodability alone is
-insufficient.
+measurements exceeded the former raw-pixel thresholds, which did not distinguish
+render noise from task-relevant motion. These byte and decode measurements
+remain historical facts; they do not qualify the visual result.
 
 `arena-state-b200-7dd3a2bf-r1` ran the same digest through the four-seed B200
 state regression. Seeds 42–45 each completed one 1,050-step episode and reported
@@ -284,6 +326,11 @@ shared clusters, operator storage, and reserved GPU nodes were retained.
 Arena emits MP4 and HTML/JSON evidence, not a native `.rrd`. The Agent UI must
 use its authenticated video renderer for this workload; an unrelated Rerun
 recording must not be substituted or relabeled.
+
+The replacement candidate's image/security gates, B200 state regression, RTX
+successful task video, independent artifact readback, and authenticated playback
+remain pending in the adjacent workflow readiness records until executed. No
+historical digest or run is reused to claim the changed implementation passed.
 
 For exact build, scan, qualification, and cleanup rules, use
 `skills/tools/isaac-arena/SKILL.md`.

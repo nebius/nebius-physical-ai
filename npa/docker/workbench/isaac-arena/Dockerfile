@@ -47,7 +47,7 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/lo
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
 COPY --chmod=0755 docker/workbench/isaac-arena/smoke_functional.sh /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh
-COPY docker/workbench/isaac-arena/patch_viewport_only.py /tmp/patch_viewport_only.py
+COPY docker/workbench/isaac-arena/patch_npa_evidence.py /tmp/patch_npa_evidence.py
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && dpkg-query -W openssh-server rsync sudo >/dev/null \
@@ -60,10 +60,20 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && printf '%s  %s\n' "${ISAAC_ARENA_ARCHIVE_SHA256}" /tmp/isaac-arena.tar.gz | sha256sum -c - \
     && tar -xzf /tmp/isaac-arena.tar.gz --strip-components=1 -C /opt/isaac-arena \
     && rm -f /tmp/isaac-arena.tar.gz \
-    && /opt/npa/sim/venv/bin/python /tmp/patch_viewport_only.py \
+    && /opt/npa/sim/venv/bin/python /tmp/patch_npa_evidence.py \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
       /opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py \
-    && rm -f /tmp/patch_viewport_only.py \
+      /opt/isaac-arena/isaaclab_arena/video/video_recording.py \
+      /opt/isaac-arena/isaaclab_arena/metrics/revolute_joint_moved_rate.py \
+    && rm -f /tmp/patch_npa_evidence.py \
+    && grep -q 'Applied replay initial state with Isaac Lab reset_to' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && grep -q 'simulator_ground_truth_rank' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && grep -q 'step_trigger=lambda step: step == 0' \
+      /opt/isaac-arena/isaaclab_arena/video/video_recording.py \
+    && grep -q 'def record_post_reset' \
+      /opt/isaac-arena/isaaclab_arena/metrics/revolute_joint_moved_rate.py \
     && grep -q 'NPA_ISAAC_ARENA_VIEWPORT_ONLY' \
       /opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py \
     && rm -rf \
