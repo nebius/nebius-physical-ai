@@ -510,11 +510,17 @@ images:
       replay data, RSL-RL checkpoints, generated evaluation artifacts,
       credentials, and populated caches remain runtime-only. NPA provides no
       Lightwheel asset credential or redistribution grant. Viewport runs first
-      validate native NVIDIA headless EGL/Vulkan; when a CUDA-only target omits
-      them, the worker downloads the exact loaded-driver version from Ubuntu's
+      validate native NVIDIA headless EGL/Vulkan, libnvoptix.so.1, and readable
+      regular nonempty OptiX weights. When dependencies are missing, the worker
+      downloads the exact loaded-driver version from Ubuntu's
       signed archive, validates its ICD metadata, and derives a canonical private
-      EGL ICD in run-private scratch without installing, retaining, or
-      redistributing the package. The inherited
+      EGL ICD in run-private scratch. The image creates an empty user-owned
+      weights directory. Missing nvoptix.bin is copied only into the verified
+      private container root overlay, with no symlink or submount destination,
+      no overwrite, and hash readback. Copied weights remain only for the worker
+      container lifetime; they are never installed on the node, baked, published
+      as artifacts, or redistributed. Readiness does not prove denoising success.
+      The inherited
       non-root SkyPilot bootstrap contract is
       retained. Built-image byte/layer scanning and real B200 plus RTX PRO 6000
       evaluation are required before release promotion.

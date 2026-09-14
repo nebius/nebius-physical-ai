@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from .simulator_phases import phase_scope, record_readiness
+
 
 _ACCUMULATION_RENDERS = 4
 _PLAY_SIMULATIONS = "/app/player/playSimulations"
@@ -171,14 +173,26 @@ def _render_frame(env: Any) -> np.ndarray:
         raise RuntimeError("Arena simulator stopped before its RGB annotator was ready")
     # The native backend pumps Kit once. Calling env.render() first would let
     # KitVisualizer restore playSimulations=True before that native update.
-    frame = np.asarray(env.video_recorder.render_rgb_array())
+    env._npa_capture_render_call += 1
+    with phase_scope(
+        env, "render_call", env._npa_video_capture_recorder._step,
+        render_call=env._npa_capture_render_call,
+    ):
+        frame = np.asarray(env.video_recorder.render_rgb_array())
     if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[-1] != 3:
         raise RuntimeError("Arena simulator renderer returned no RGB uint8 frame")
     return frame
 
 
 def _ready_frame(env: Any, context: Any, frame: np.ndarray) -> bool:
-    return _stage_ready(context) and _annotator_ready(env) and bool(np.any(frame))
+    stage_ready = _stage_ready(context)
+    annotator_ready = _annotator_ready(env) if stage_ready else None
+    nonblack_rgb = bool(np.any(frame)) if annotator_ready else None
+    record_readiness(
+        env, env._npa_capture_render_call, stage_ready=stage_ready,
+        annotator_ready=annotator_ready, nonblack_rgb=nonblack_rgb,
+    )
+    return stage_ready and bool(annotator_ready) and bool(nonblack_rgb)
 
 
 def _accumulate_frame(env: Any, context: Any) -> tuple[np.ndarray, int]:
@@ -217,6 +231,12 @@ def _freeze_evidence(before: dict, after: dict, renders: int) -> dict[str, Any]:
 
 
 def _capture_frame(env: Any) -> np.ndarray:
+    env._npa_capture_render_call = 0
+    with phase_scope(env, "capture", env._npa_video_capture_recorder._step):
+        return _capture_verified_frame(env)
+
+
+def _capture_verified_frame(env: Any) -> np.ndarray:
     settings, context = _kit_interfaces()
     env._npa_video_rendering = _rendering_evidence(settings)
     before = _physics_snapshot(env)

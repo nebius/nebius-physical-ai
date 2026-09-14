@@ -35,11 +35,17 @@ launch, or an incomplete fixed-step rollout do not establish evaluation.
   and fetched by `/isaac-sim/python.sh` after the shared `ACCEPT_EULA` preflight.
   The Lab wheel's BSD license does not replace those separate runtime terms.
 - NVIDIA viewport graphics userspace: prefer and validate the target's native
-  headless EGL/Vulkan. If a CUDA-only target omits it, fetch only the Ubuntu
+  headless EGL/Vulkan, `libnvoptix.so.1`, and readable regular nonempty
+  `/usr/share/nvidia/nvoptix.bin`. If a target omits these dependencies, fetch only the Ubuntu
   signed `libnvidia-gl-<branch>-server` package whose version exactly matches
   the loaded driver, validate its identity, SHA-256, and packaged ICD metadata,
   extract it into run-private scratch, and derive a canonical private EGL ICD.
-  Never install, retain, publish, or redistribute it.
+  The image contains only an empty weights directory. Copy missing weights only
+  into its verified user-owned private root overlay, refusing symlinks and
+  submounts; publish atomically without overwriting and verify the copied hash.
+  Retain copied weights only for the worker container lifetime. Never install
+  the package on the node, bake its bytes, publish them as artifacts, or
+  redistribute them. Library/file/settings readiness is not denoising success.
 - Replay HDF5 and RSL-RL checkpoints: operator runtime inputs; never bake or
   publish them. The result records source hashes, not storage locations.
 - Inherited open-source dependencies retain public examples and test fixtures,
@@ -163,6 +169,12 @@ of four frozen render updates without NGX. These are configured samples and
 observed update calls, not measured accumulated samples. Rendering must not add physics steps or
 video frames. An unfinished recorder buffer belongs only in the separate
 unscored diagnostic and cannot create upstream success or completed episodes.
+When emitted, `simulator-phases-rank*.jsonl` contains fixed phase/event labels,
+monotonic timestamps, rank, action/render counters, and readiness booleans for
+policy, Pink IK, environment, and capture operations. It never contains their
+arguments, input arrays, or exception text. Treat its last unfinished phase as
+an observation, not a timeout decision or task result; journal writes are best
+effort and preserve the original operation's result or exception.
 Preserve the raw MP4 and label any denoised derivative with
 its source hash and transform. Validate coherent motion over the same progress
 interval after temporal/spatial denoising; a noisy static scene must fail.
@@ -231,6 +243,9 @@ destroy shared clusters, buckets, or reserved capacity after a validation run.
 - Missing MP4 on RTX: inspect camera enablement, Vulkan/RT drivers, and the
   upstream viewport recorder. A missing native graphics userspace may use the
   exact-driver private extraction path; a version mismatch must fail closed.
+  Check both `libnvoptix.so.1` and the documented weights path. The runtime-only
+  container-overlay copy requires fresh image/GPU qualification; settings alone
+  cannot override actual denoiser loading errors or qualify a noisy video.
   Do not alter the shared node or downgrade the artifact requirement.
 - B200 render failure: the workload is misrouted. Keep B200 state-only and move
   rendering to RTX PRO 6000.

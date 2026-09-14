@@ -443,6 +443,18 @@ def _prepare_evaluation(request: IsaacArenaRequest, root: Path) -> tuple[Path, P
     return artifact_root, private_dir, base, argv
 
 
+def _require_optix_runtime(log_text: str) -> None:
+    for line in log_text.lower().splitlines():
+        if ("unable to load denoiser weights" in line
+                or "optix error: optix_error_" in line
+                or ("[error]" in line and "[rtx.optixdenoising.plugin]" in line)
+                or ("optixdenoisercreate(" in line and "failed" in line)):
+            raise IsaacArenaError(
+                "Arena viewport reported an OptiX runtime failure; "
+                "renderer settings alone do not prove denoising"
+            )
+
+
 def _execute_upstream(request, artifact_root, private_dir, base, runner, graphics_preparer, argv):
     sim_env = _subprocess_env(viewport_only=request.record_video)
     if request.record_video:
@@ -458,6 +470,8 @@ def _execute_upstream(request, artifact_root, private_dir, base, runner, graphic
     if completed.returncode != 0:
         tail = "\n".join(log_text.splitlines()[-40:])
         raise IsaacArenaError(f"upstream policy_runner failed ({completed.returncode}):\n{tail}")
+    if request.record_video:
+        _require_optix_runtime(log_text)
     run_dirs = sorted(path for path in (artifact_root / "upstream").iterdir() if path.is_dir())
     if len(run_dirs) != 1:
         raise IsaacArenaError("upstream evaluation did not create exactly one run directory")

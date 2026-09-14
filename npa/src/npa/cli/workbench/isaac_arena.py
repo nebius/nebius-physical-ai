@@ -32,7 +32,7 @@ _TERMS = {
         "release_channel": "alpha",
     },
     "isaac_sim_and_lab": {
-        "license": "NVIDIA proprietary software terms",
+        "license": "Isaac Lab wheel: BSD-3-Clause; Isaac Sim and proprietary runtime: NVIDIA terms",
         "baked": False,
         "runtime_fetch": True,
         "acceptance_environment": "ACCEPT_EULA",
@@ -58,7 +58,13 @@ _TERMS = {
         "redistribution": False,
         "scope": "viewport evaluation only",
         "source": "exact-driver-matched Ubuntu signed package",
-        "installation": False,
+        "installed_on_node": False,
+        "container_weights_placement": (
+            "Missing nvoptix.bin is copied only into the verified private root overlay; "
+            "the image contains an empty /usr/share/nvidia directory."
+        ),
+        "retention": "Copied weights remain only for the worker container lifetime.",
+        "readiness": "Native EGL/Vulkan, libnvoptix.so.1 and readable regular nonempty weights; no denoising-success claim.",
     },
     "operator_inputs": {"baked": False, "redistribution": False},
 }
@@ -117,8 +123,9 @@ def evaluate_cmd(
         "cuda:0",
         "--execution-device",
         help=(
-            "Arena physics/policy device. Use cuda:0 for GPU evaluation; cpu is a "
-            "diagnostic-only upstream path and may be impractically slow for complex GR1 tasks."
+            "Arena physics/policy device. Use cuda:0 for CUDA state evaluation; "
+            "the GR1 replay workflow uses cpu following upstream's tutorial. "
+            "Viewport recording still requires an RTX GPU."
         ),
     ),
     num_episodes: int = typer.Option(1, "--num-episodes", min=1),
@@ -139,7 +146,7 @@ def evaluate_cmd(
         environment: Registered Arena environment name.
         policy_type: ``zero_action``, ``replay``, or ``rsl_rl`` adapter.
         input_path: Local or S3 replay file/checkpoint input, when required.
-        execution_device: ``cuda:0`` or diagnostic-only ``cpu`` physics device.
+        execution_device: ``cuda:0`` or ``cpu`` physics/policy device, separate from viewport rendering.
         num_episodes: Number of scored episodes; replay requires one.
         num_envs: Number of simulation environments; replay requires one.
         seed: Upstream random seed.

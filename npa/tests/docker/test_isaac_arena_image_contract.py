@@ -70,6 +70,8 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
         'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]'
     )
     assert "USER ubuntu" in text
+    assert "install -d -m 0755 -o ubuntu -g ubuntu /workspace/isaac-arena /usr/share/nvidia" in text
+    assert "test ! -e /usr/share/nvidia/nvoptix.bin" in text
 
 
 def test_isaac_arena_viewport_patch_is_narrow_and_context_bound() -> None:
@@ -100,7 +102,8 @@ def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Pat
     module = _evidence_patch()
     policy = tmp_path / "policy_runner.py"
     policy.write_text(module.POLICY_RUNNER_RESET + module.POLICY_RUNNER_ENVIRONMENT
-                      + module.POLICY_RUNNER_CAMERA_CONTEXT + module.POLICY_RUNNER_ROLLOUT_END)
+                      + module.POLICY_RUNNER_CAMERA_CONTEXT + module.POLICY_RUNNER_ROLLOUT_END
+                      + module.POLICY_RUNNER_STEP)
     embodiment = tmp_path / "embodiment.py"
     embodiment.write_text(module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT)
     video = tmp_path / "video.py"
@@ -113,6 +116,8 @@ def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Pat
     assert ").unwrapped" in policy.read_text()
     assert module.POLICY_RUNNER_CAMERA_CONTEXT in policy.read_text()
     assert module.POLICY_RUNNER_ROLLOUT_END_PATCHED in policy.read_text()
+    assert module.POLICY_RUNNER_STEP_PATCHED in policy.read_text()
+    assert "configure_phase_journal(env, output_dir, local_rank)" in policy.read_text()
     assert "self.enable_cameras = enable_cameras and not viewport_only" in embodiment.read_text()
     assert "step_trigger=lambda step: step == 0" in video.read_text()
     assert "episode_trigger" not in video.read_text()
@@ -150,6 +155,59 @@ def test_replay_reset_applies_exact_state_once_before_policy_reset(tmp_path: Pat
     program.write_text("def apply_reset(env, policy):\n" + module.POLICY_RUNNER_RESET_PATCHED
                        + "    finally:\n        pass\n    return obs\n" + _replay_reset_assertions())
     completed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
+_NATIVE_STEP_ASSERTIONS = """\
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from npa.workbench.isaac_arena.simulator_phases import configure_phase_journal
+
+directory = Path(sys.argv[1])
+fail = sys.argv[2] == "True"
+action, observation, next_observation = object(), object(), object()
+error = RuntimeError("private native failure")
+events = []
+env = SimpleNamespace()
+
+def get_action(actual_env, actual_observation):
+    assert actual_env is env and actual_observation is observation
+    events.append("policy")
+    return action
+
+def environment_step(actual_action):
+    assert actual_action is action
+    events.append("environment")
+    if fail:
+        raise error
+    return next_observation, 0, False, False, {}
+
+env.step = environment_step
+configure_phase_journal(env, directory)
+try:
+    result = step(env, SimpleNamespace(get_action=get_action), observation, 4)
+except RuntimeError as caught:
+    assert fail and caught is error
+else:
+    assert not fail and result is next_observation
+assert events == ["policy", "environment"]
+rows = [json.loads(line) for line in (directory / "simulator-phases-rank0.jsonl").read_text().splitlines()]
+assert [row["action_step"] for row in rows] == [5] * 4
+assert [row["event"] for row in rows] == ["begin", "end", "begin", "failed" if fail else "end"]
+assert "private" not in json.dumps(rows)
+"""
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_patched_step_keeps_native_actions_order_and_exception(tmp_path: Path, fail: bool) -> None:
+    body = textwrap.indent(textwrap.dedent(_evidence_patch().POLICY_RUNNER_STEP_PATCHED), "    ")
+    program = tmp_path / "patched_step.py"
+    program.write_text("def step(env, policy, obs, num_steps_completed):\n"
+                       + body + "    return obs\n\n" + _NATIVE_STEP_ASSERTIONS)
+    completed = subprocess.run([sys.executable, str(program), str(tmp_path), str(fail)],
+                               capture_output=True, text=True, check=False)
     assert completed.returncode == 0, completed.stderr
 
 
@@ -205,10 +263,10 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
     assert "841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd" in notices
     assert "no Lightwheel registry object" in notices
     assert "NVIDIA viewport graphics userspace (runtime only)" in notices
-    assert "Not included in image layers" in notices
+    assert "Driver libraries and OptiX weights are not included in image layers" in notices
     redistribution = REDISTRIBUTION.read_text(encoding="utf-8")
     assert "exactly matches the loaded kernel driver" in redistribution
-    assert "never installs it on the node" in redistribution
+    assert "never installs these bytes on the node" in redistribution
 
 
 def test_isaac_arena_image_catalog_identity() -> None:

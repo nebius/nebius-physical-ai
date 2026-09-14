@@ -115,7 +115,8 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       | grep -q '"status": "dry_run"' \
     && test ! -e /tmp/npa-arena-build-probe \
     && chown -R ubuntu:ubuntu /opt/isaac-arena /opt/npa/docker/workbench/isaac-arena \
-    && install -d -m 0755 -o ubuntu -g ubuntu /workspace/isaac-arena
+    && install -d -m 0755 -o ubuntu -g ubuntu /workspace/isaac-arena /usr/share/nvidia \
+    && test ! -e /usr/share/nvidia/nvoptix.bin
 
 WORKDIR /workspace/isaac-arena
 USER ubuntu

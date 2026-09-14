@@ -355,15 +355,24 @@ _CAPABILITY_MANIFEST = {
         },
         {
             "name": "NVIDIA viewport graphics userspace",
-            "purpose": "Provide headless EGL/Vulkan only when a viewport run's target exposes CUDA but omits graphics userspace.",
+            "purpose": "Provide headless EGL/Vulkan and OptiX dependencies missing from a viewport run's target.",
             "license": "NVIDIA driver package terms",
             "baked": False,
             "delivery": "runtime_fetch_exact_driver_match",
             "source": "Ubuntu signed NVIDIA driver archive",
             "installed_on_node": False,
             "redistribution": False,
-            "scope": "viewport runs and run-private scratch only; native graphics is preferred",
-            "headless_icd": "NPA derives a canonical EGL ICD manifest from the validated package manifest; it never mutates the packaged bytes or target.",
+            "scope": "Viewport runs only; native graphics is preferred. Extracted libraries use run-private scratch; missing OptiX weights use the verified private container root overlay.",
+            "headless_icd": "NPA derives a canonical EGL ICD manifest from the validated package manifest; it never mutates packaged bytes or the node.",
+            "native_readiness": "NVIDIA EGL/Vulkan and libnvoptix.so.1 load; /usr/share/nvidia/nvoptix.bin is readable, regular and nonempty.",
+            "optix_weights": {
+                "path": "/usr/share/nvidia/nvoptix.bin",
+                "image_directory": "empty, owned by the non-root runtime user",
+                "fallback_placement": "After exact signed package identity validation, copy into the verified private root overlay with no symlink or submount destination; atomically publish without overwriting and verify the hash.",
+                "retention": "worker container lifetime only",
+                "evidence": "native or container-overlay placement, SHA-256 and byte size; no payload bytes published",
+                "denoising_success": "Library, file and setting readiness do not establish successful denoising; runtime renderer errors reject video qualification.",
+            },
         },
     ],
     "embodiment_constraints": {
@@ -410,7 +419,12 @@ _CAPABILITY_MANIFEST = {
         ],
         "handled_runtime_or_evidence_failure": {
             "result": "After evaluation setup succeeds, handled runtime/evidence errors write a failed result.json and hashes for whatever artifacts were produced, then attempt publication. A storage publication failure retains the private local copy.",
-            "partial_artifacts": "Logs, raw video, capture sidecar, and initial or terminal PNGs are retained only if created. An unfinished recorder buffer is separately marked unscored; it never becomes a completed episode or task-success result.",
+            "partial_artifacts": "Logs, scalar phase journals, raw video, capture sidecar, and initial or terminal PNGs are retained only if created. An unfinished recorder buffer is separately marked unscored; it never becomes a completed episode or task-success result.",
+        },
+        "phase_diagnostics": {
+            "artifact": "simulator-phases-rank*.jsonl, when emitted",
+            "fields": "fixed phase/event labels, monotonic timestamps, rank, action/render counters, and observed readiness booleans",
+            "scope": "Best-effort observations of policy, Pink IK, environment, and capture progress; no arguments, input arrays, exception contents, timeout decisions, or task-success claims.",
         },
         "early_failure": "Request validation or input/setup failures may occur before any result tree exists; an interrupted worker may leave only workflow logs. Completed-episode JSONL, scored HDF5, and HTML reports are not guaranteed on failure.",
         "successful_video_qualification": [
@@ -438,10 +452,12 @@ _CAPABILITY_MANIFEST = {
             "request_constraints": {"num_envs": 1, "num_episodes": 1},
             "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
             "graphics_userspace": (
-                "Native NVIDIA EGL/Vulkan is preferred. If CUDA is healthy but those libraries are absent, "
-                "NPA extracts (never installs) the exact loaded-driver version from Ubuntu's signed archive "
-                "into run-private scratch. It validates the package's ICD metadata, derives a private canonical "
-                "headless EGL ICD, validates Vulkan, and publishes only package/manifest identity and SHA-256."
+                "Native NVIDIA EGL/Vulkan, libnvoptix.so.1 and readable nonempty OptiX weights are preferred. "
+                "Missing dependencies require the exact loaded-driver package from Ubuntu's signed archive. "
+                "Libraries and a validated headless EGL ICD use private scratch; missing nvoptix.bin is "
+                "atomically copied into the verified private container root overlay for the worker lifetime. "
+                "Nothing is installed on the node, baked, or redistributed. Only identities, hashes and "
+                "placement evidence are retained; actual renderer errors reject video qualification."
             ),
             "acceptance": video_acceptance_thresholds(),
             "capture_binding": (

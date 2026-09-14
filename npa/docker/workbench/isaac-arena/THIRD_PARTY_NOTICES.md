@@ -79,11 +79,18 @@ the Lab wheel's BSD license does not replace them.
 
 ## NVIDIA viewport graphics userspace (runtime only)
 
-Not included in image layers. A viewport evaluation prefers the target's
-native headless EGL and Vulkan stack. If those libraries are absent while CUDA
-is healthy, NPA downloads the exact loaded-driver version of Ubuntu's signed
+Driver libraries and OptiX weights are not included in image layers. A viewport
+evaluation prefers native headless EGL/Vulkan, `libnvoptix.so.1`, and readable
+regular nonempty weights at `/usr/share/nvidia/nvoptix.bin`, the path documented
+in [NVIDIA's driver component reference](https://download.nvidia.com/XFree86/Linux-x86_64/580.173.02/README/installedcomponents.html).
+If dependencies are absent, NPA downloads the exact loaded-driver version of Ubuntu's signed
 `libnvidia-gl-<branch>-server` package, validates its package and ICD metadata,
-and extracts it into run-private scratch without installing it. NPA derives a
+and extracts it into run-private scratch without installing it on the node. NPA derives a
 canonical private EGL ICD because NVIDIA documents EGL as the headless Vulkan
-entrypoint. The package is not retained or redistributed, and remains governed
-by NVIDIA's driver terms.
+entrypoint. The image contains an empty user-owned weights directory; missing
+weights are copied only into the verified private root overlay, atomically
+without overwriting and with hash readback. Symlink and submount destinations
+are refused. Copied weights remain only for the worker container lifetime;
+they are never baked, published as artifacts, or redistributed. The package
+remains governed by NVIDIA's driver terms. Readiness checks do not establish
+successful denoising, which requires actual runtime validation.

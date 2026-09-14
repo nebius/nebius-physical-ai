@@ -41,14 +41,21 @@ The Isaac Lab wheel itself declares BSD-3-Clause; Isaac Sim and its proprietary
 runtime dependencies retain their separate NVIDIA terms. Runtime-fetch delivery
 does not imply that all fetched components have the same license.
 
-Viewport recording also validates that the target provides usable NVIDIA
-headless EGL and Vulkan libraries. If a CUDA-capable managed node omits that
-graphics userspace, NPA downloads only the `libnvidia-gl-<branch>-server`
+Viewport recording also validates usable NVIDIA headless EGL, Vulkan, and
+`libnvoptix.so.1`, plus readable regular nonempty OptiX weights at
+`/usr/share/nvidia/nvoptix.bin`. If a target omits these dependencies, NPA
+downloads only the `libnvidia-gl-<branch>-server`
 package whose version exactly matches the loaded kernel driver from Ubuntu's
 signed archive. It validates package identity, architecture, and ICD metadata,
 extracts the package into run-private scratch, and derives a canonical private
-EGL ICD for only that simulator process. NPA never installs it on the node,
-bakes it into an image, publishes it as a run artifact, or redistributes it.
+EGL ICD for only that simulator process. The image creates an empty weights
+directory owned by the non-root runtime user. Missing weights are copied only
+into that verified private container root overlay, with no symlink or submount
+destination, no overwrite, and hash-verified readback. Existing different bytes
+are rejected. Copied weights remain for the worker container lifetime only.
+NPA never installs these bytes on the node, bakes them into an image, publishes
+them as run artifacts, or redistributes them. Library, file, and settings
+readiness do not establish successful denoising or task qualification.
 The package remains governed by NVIDIA's driver terms accepted by the operator.
 
 Some upstream environments resolve USD content from the Lightwheel registry at

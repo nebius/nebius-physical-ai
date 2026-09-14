@@ -139,7 +139,7 @@ ground-truth HDF5, the credential-isolated simulator log, and `result.json` with
 aggregate metrics, GPU identity, byte sizes, and hashes. After evaluation setup
 succeeds, handled runtime or evidence failures write a failed `result.json`,
 retain the artifacts actually produced, and attempt publication. A storage
-publication failure retains the private local copy. Artifacts may be partial logs, raw video,
+publication failure retains the private local copy. Artifacts may be partial logs, scalar phase journals, raw video,
 a capture sidecar, or initial/terminal PNGs; completed-episode JSONL, scored HDF5,
 and an HTML report are not guaranteed. An unfinished recorder buffer is retained
 separately as unscored diagnostic data when finalization runs. Request validation
@@ -206,18 +206,39 @@ diagnostic retains the remaining metric buffer and simulator state. It does not
 create a completed episode, success flag, or scored HDF5 record. This keeps a
 failed replay diagnosable while preserving the upstream result.
 
+When emitted, `simulator-phases-rank*.jsonl` records fixed phase/event labels,
+monotonic timestamps, rank, action/render counters, and observed readiness
+booleans. It distinguishes policy calls, Pink IK, environment steps, capture,
+and individual render calls without retaining their arguments, input arrays,
+or exception text. An unfinished phase identifies the last observed operation;
+it does not establish a timeout, a failed task, or successful progress. Journal
+writing is best effort and does not replace the native result or exception.
+
 The viewport path also fails closed on the target graphics stack. NPA first
-probes native NVIDIA EGL and Vulkan. A CUDA-only managed image can expose
-the kernel/compute driver while omitting those libraries; in that case, the
+probes native NVIDIA EGL, Vulkan, and `libnvoptix.so.1`, and requires a readable,
+regular, nonempty `/usr/share/nvidia/nvoptix.bin`. NVIDIA documents that data
+file in its [driver component reference](https://download.nvidia.com/XFree86/Linux-x86_64/580.173.02/README/installedcomponents.html).
+A CUDA-capable target can omit these libraries or weights. In that case, the
 worker queries the one loaded driver version and downloads only the exactly
 matching `libnvidia-gl-<branch>-server` package from Ubuntu's signed archive.
 It validates package name, version, architecture, SHA-256, and the packaged ICD
 metadata, then derives a canonical run-private EGL ICD because NVIDIA documents
-EGL as the headless Vulkan entrypoint. It validates that path before launching
-Arena. It never installs the package on the node or includes its bytes in the
-public image or run artifacts. The result records safe package/manifest hashes
-and whether native or private-extracted graphics were used. State-only runs do
-none of this.
+EGL as the headless Vulkan entrypoint.
+
+The image contains an empty `/usr/share/nvidia` directory owned by its non-root
+runtime user. Missing weights are copied from the validated package only when
+that directory belongs to the same private root overlay as the container's `/`.
+Symlink, shared-writable, foreign-owned, and mounted destinations are refused.
+The copy is atomically published without overwriting an existing file and its
+hash is read back; an existing different payload is rejected. Libraries remain
+in private scratch, and copied weights remain only for the worker container
+lifetime. NPA never installs these bytes on the node, bakes them into the public
+image, publishes them as run artifacts, or redistributes them. The result records
+safe package/manifest/weights hashes, byte size, and native or container-overlay
+placement. File and settings readiness do not prove denoising: actual OptiX
+renderer errors reject video qualification, which still requires clean visible
+task progress. This correction requires a fresh immutable image and GPU
+qualification before promotion. State-only runs do none of this graphics setup.
 
 The Python SDK is the same implementation:
 

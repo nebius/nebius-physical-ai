@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
+from .optix_payload import _native_optix_weights, _prepare_optix_weights
 
 _NVIDIA_DRIVER_VERSION = re.compile(r"^[0-9]{3}\.[0-9]+\.[0-9]+$")
 _VULKAN_MANIFEST_VERSION = re.compile(r"^[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}$")
@@ -24,9 +25,10 @@ _SIGNED_APT_OPTIONS = [
 
 
 def _graphics_probe(env: dict[str, str], *, runner: _Runner = subprocess.run) -> bool:
-    """Return whether NVIDIA's headless EGL/Vulkan path is usable."""
+    """Return whether NVIDIA's headless EGL/Vulkan and OptiX libraries load."""
     libraries = runner(
-        [sys.executable, "-c", "import ctypes; ctypes.CDLL('libEGL_nvidia.so.0')"],
+        [sys.executable, "-c", "import ctypes; ctypes.CDLL('libEGL_nvidia.so.0'); "
+         "ctypes.CDLL('libnvoptix.so.1')"],
         env=env,
         text=True,
         stdout=subprocess.PIPE,
@@ -245,6 +247,8 @@ def _private_graphics_evidence(
     package_sha256: str,
     packaged_icd: Path,
     headless_icd: Path,
+    optix_weights: dict[str, Any],
+    optix_library_sha256: str,
 ) -> dict[str, Any]:
     return {
         "mode": "runtime_package_extract",
@@ -264,7 +268,18 @@ def _private_graphics_evidence(
         "baked": False,
         "published": False,
         "redistribution": False,
+        "optix_weights": optix_weights,
+        "optix_library_sha256": optix_library_sha256,
     }
+
+
+def _optix_library_sha256(library_dir: Path, driver_version: str) -> str:
+    library = library_dir / f"libnvoptix.so.{driver_version}"
+    entrypoint = library_dir / "libnvoptix.so.1"
+    if (not library.is_file() or library.is_symlink() or library.stat().st_size == 0
+            or entrypoint.resolve() != library.resolve()):
+        raise IsaacArenaError("matching NVIDIA package has no exact-driver OptiX library")
+    return _sha256(library)
 
 
 def _prepare_viewport_graphics(
@@ -274,13 +289,15 @@ def _prepare_viewport_graphics(
     runner: _Runner = subprocess.run,
 ) -> dict[str, Any]:
     """Validate native graphics or an exact driver package in private scratch."""
-    if _graphics_probe(env, runner=runner):
+    native_weights = _native_optix_weights() if _graphics_probe(env, runner=runner) else None
+    if native_weights is not None:
         return {
             "mode": "native",
             "validated": True,
             "runtime_fetch": False,
             "baked": False,
             "redistribution": False,
+            "optix_weights": native_weights,
         }
     driver_version = _loaded_driver_version(env, runner)
     package = f"libnvidia-gl-{driver_version.split('.', 1)[0]}-server"
@@ -290,6 +307,8 @@ def _prepare_viewport_graphics(
     package_sha256 = _sha256(deb)
     library_dir, packaged_icd = _extract_graphics_package(deb, extract_dir, env, runner)
     headless_icd = _configure_headless_graphics(root, library_dir, packaged_icd, env)
+    optix_library_sha256 = _optix_library_sha256(library_dir, driver_version)
+    optix_weights = _prepare_optix_weights(extract_dir)
     if not _graphics_probe(env, runner=runner):
         raise IsaacArenaError("driver-matched viewport graphics validation failed")
     return _private_graphics_evidence(
@@ -299,4 +318,6 @@ def _prepare_viewport_graphics(
         package_sha256,
         packaged_icd,
         headless_icd,
+        optix_weights,
+        optix_library_sha256,
     )

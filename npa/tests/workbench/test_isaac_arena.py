@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -409,7 +410,21 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
     assert len(normalized["executed_sha256"]) == 64
 
 
-def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path) -> None:
+def _isolated_optix_weights(tmp_path: Path, monkeypatch) -> Path:
+    from npa.workbench.isaac_arena import optix_payload
+
+    target = tmp_path / "image/usr/share/nvidia/nvoptix.bin"
+    target.parent.mkdir(parents=True, mode=0o755)
+    mounts = tmp_path / "mountinfo"
+    mounts.write_text("100 99 0:1 / / rw - overlay overlay rw\n")
+    monkeypatch.setattr(optix_payload, "_WEIGHTS_PATH", target)
+    monkeypatch.setattr(optix_payload, "_MOUNTINFO", mounts)
+    return target
+
+
+def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path, monkeypatch) -> None:
+    target = _isolated_optix_weights(tmp_path, monkeypatch)
+    target.write_bytes(b"native-weights")
     calls: list[list[str]] = []
 
     def fake_runner(
@@ -428,15 +443,23 @@ def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path) -> None:
         "runtime_fetch": False,
         "baked": False,
         "redistribution": False,
+        "optix_weights": {
+            "required_path": str(target), "placement": "native_runtime",
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "bytes": target.stat().st_size, "installed_in_container": False,
+            "installed_on_node": False, "baked": False, "published": False,
+        },
     }
     assert len(calls) == 2
     assert all("apt-get" not in call for call in calls)
+    assert "libnvoptix.so.1" in calls[0][2]
     assert "VK_ICD_FILENAMES" not in env
 
 
 def test_viewport_graphics_extracts_exact_driver_match_privately(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
+    target = _isolated_optix_weights(tmp_path, monkeypatch)
     driver_version = "580.173.02"
     candidate = f"{driver_version}-0ubuntu0.24.04.1"
     commands: list[list[str]] = []
@@ -482,6 +505,11 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
             library_dir.mkdir(parents=True)
             (library_dir / "libGLX_nvidia.so.0").write_bytes(b"glx")
             (library_dir / "libEGL_nvidia.so.0").write_bytes(b"egl")
+            (library_dir / f"libnvoptix.so.{driver_version}").write_bytes(b"optix")
+            (library_dir / "libnvoptix.so.1").symlink_to(f"libnvoptix.so.{driver_version}")
+            weights = extracted / "usr/share/nvidia/nvoptix.bin"
+            weights.parent.mkdir(parents=True)
+            weights.write_bytes(b"signed-weights")
             icd = extracted / "usr/share/vulkan/icd.d/nvidia_icd.json"
             icd.parent.mkdir(parents=True)
             icd.write_text(
@@ -513,6 +541,9 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
     assert result["redistribution"] is False
     assert result["headless_icd_override"] is True
     assert result["icd_entrypoint"] == "libEGL_nvidia.so.0"
+    assert result["optix_weights"]["placement"] == "container_overlay"
+    assert result["optix_library_sha256"] == hashlib.sha256(b"optix").hexdigest()
+    assert target.read_bytes() == b"signed-weights"
     assert len(result["package_manifest_sha256"]) == 64
     assert len(result["headless_icd_sha256"]) == 64
     assert env["LD_LIBRARY_PATH"].endswith(":/existing")
@@ -536,6 +567,21 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
     assert "APT::Get::AllowUnauthenticated=false" in download
     assert f"libnvidia-gl-580-server={candidate}" in download
     assert not any("install" in command for command in commands)
+
+
+def test_native_graphics_without_weights_cannot_skip_matching_package(tmp_path, monkeypatch):
+    _isolated_optix_weights(tmp_path, monkeypatch)
+    commands = []
+
+    def fake_runner(argv, **kwargs):
+        commands.append(argv)
+        output = {"vulkaninfo": "GPU0: NVIDIA", "nvidia-smi": "580.173.02",
+                  "apt-cache": "Candidate: 580.999.01-0ubuntu1"}.get(argv[0], "")
+        return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+    with pytest.raises(IsaacArenaError, match="exact loaded driver version"):
+        _prepare_viewport_graphics(tmp_path / "graphics", {}, runner=fake_runner)
+    assert any("update" in command for command in commands)
 
 
 @pytest.mark.parametrize(
@@ -939,7 +985,13 @@ def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:
     assert payload["lightwheel_registry_assets"]["redistribution"] is False
     assert payload["nvidia_viewport_graphics_userspace"] == {
         "baked": False,
-        "installation": False,
+        "installed_on_node": False,
+        "container_weights_placement": (
+            "Missing nvoptix.bin is copied only into the verified private root overlay; "
+            "the image contains an empty /usr/share/nvidia directory."
+        ),
+        "retention": "Copied weights remain only for the worker container lifetime.",
+        "readiness": "Native EGL/Vulkan, libnvoptix.so.1 and readable regular nonempty weights; no denoising-success claim.",
         "license": "NVIDIA driver package terms",
         "redistribution": False,
         "runtime_fetch": True,

@@ -9,6 +9,8 @@ metric, and renderer implementations in authority. The viewport is captured by
 an Isaac Lab post-step recorder before automatic termination reset; Gym consumes
 that exact frame instead of rendering the next episode's reset state. Initial
 and terminal PNGs retain the same real renderer output and action-step binding.
+Scalar phase journals identify policy, controller, environment, and capture
+progress without recording their arguments or changing solver decisions.
 
 The final patch still separates viewport rendering from embodiment observation
 cameras.  Each replacement is anchored to the exact 0.3.0 source context so a
@@ -70,6 +72,21 @@ POLICY_RUNNER_ENVIRONMENT_PATCHED = """\
         # Replay uses the simulator's reset_to API. Gym's OrderEnforcing wrapper
         # only recognizes reset(), so use the base env before adding RecordVideo.
         env = arena_builder.make_registered(env_cfg, env_kwargs, render_mode=video_cfg.render_mode).unwrapped
+        from npa.workbench.isaac_arena.simulator_phases import configure_phase_journal
+        configure_phase_journal(env, output_dir, local_rank)
+"""
+
+POLICY_RUNNER_STEP = """\
+                actions = policy.get_action(env, obs)
+                obs, _, terminated, truncated, _ = env.step(actions)
+"""
+
+POLICY_RUNNER_STEP_PATCHED = """\
+                from npa.workbench.isaac_arena.simulator_phases import phase_scope
+                with phase_scope(env, "policy_action", num_steps_completed + 1):
+                    actions = policy.get_action(env, obs)
+                with phase_scope(env, "env_step", num_steps_completed + 1):
+                    obs, _, terminated, truncated, _ = env.step(actions)
 """
 
 POLICY_RUNNER_CAMERA_CONTEXT = """\
@@ -196,6 +213,10 @@ def _patch_runner(policy_runner: Path) -> None:
         POLICY_RUNNER_ROLLOUT_END,
         POLICY_RUNNER_ROLLOUT_END_PATCHED,
         "live-diagnostic-finalization",
+    )
+    _replace_once(
+        policy_runner, POLICY_RUNNER_STEP, POLICY_RUNNER_STEP_PATCHED,
+        "scalar-phase-diagnostics",
     )
     policy_text = policy_runner.read_text(encoding="utf-8")
     if policy_text.count(POLICY_RUNNER_CAMERA_CONTEXT) != 1:

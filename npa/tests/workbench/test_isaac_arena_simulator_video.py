@@ -14,6 +14,10 @@ import pytest
 from PIL import Image
 
 from npa.workbench.isaac_arena import simulator_video
+from npa.workbench.isaac_arena.simulator_phases import (
+    configure_phase_journal,
+    phase_scope,
+)
 
 
 class _RecorderTerm:
@@ -223,6 +227,56 @@ def _assert_freeze_trace(evidence, expected_steps):
         assert check["physics_step_before"] == check["physics_step_after"]
         assert check["native_physics_step_before"] == check["native_physics_step_after"]
         assert check["render_calls"] == 5
+
+
+def test_phase_journal_distinguishes_capture_from_remaining_environment_step(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=2)
+    configure_phase_journal(env, tmp_path)
+    journal = tmp_path / "simulator-phases-rank0.jsonl"
+    env.reset()
+    with phase_scope(env, "env_step", 1):
+        env.step(1)
+        rows = [json.loads(line) for line in journal.read_text().splitlines()]
+        assert rows[-1]["phase"] == "capture" and rows[-1]["event"] == "end"
+        assert rows[-1]["action_step"] == 1
+        assert not any(row["phase"] == "env_step" and row["event"] == "end" for row in rows)
+    rows = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert rows[-1]["phase"] == "env_step" and rows[-1]["event"] == "end"
+    readiness = [row for row in rows if row["phase"] == "capture_readiness"]
+    assert readiness[0]["nonblack_rgb"] is False
+    assert readiness[-1]["nonblack_rgb"] is True
+    renders = [row for row in rows if row["phase"] == "render_call"]
+    assert len(renders) == 2 * env.renders
+    assert [row["event"] for row in renders] == ["begin", "end"] * env.renders
+    assert env.physics_steps == 4 and env.state == 1
+
+
+def test_render_failure_retains_begin_and_preserves_native_exception(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    configure_phase_journal(env, tmp_path)
+    error = RuntimeError("private renderer context")
+
+    def fail_render():
+        rows = [json.loads(line) for line in (tmp_path / "simulator-phases-rank0.jsonl").read_text().splitlines()]
+        assert rows[-1]["phase"] == "render_call" and rows[-1]["event"] == "begin"
+        raise error
+
+    env.video_recorder.render_rgb_array = fail_render
+    with pytest.raises(RuntimeError) as caught:
+        env.reset()
+    assert caught.value is error
+    text = (tmp_path / "simulator-phases-rank0.jsonl").read_text()
+    assert "private renderer" not in text
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert [(row["phase"], row["event"]) for row in rows[-2:]] == [
+        ("render_call", "failed"), ("capture", "failed")
+    ]
+    assert env.runtime.settings.get(simulator_video._PLAY_SIMULATIONS) is True
+    assert env.physics_steps == 0 and env.state == 0
 
 
 def test_video_records_terminal_frame_before_autoreset(
