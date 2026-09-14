@@ -19,7 +19,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "a798445485b9a308188d0964c7e4b8089e1a0db300ef13bb4308cec5ae3cee37",
+    "runtime-bootstrap.py": "efc41a9f9bfe78b2f9affb739c46db5b41f98adc11ccbe7536b1ac25c7c387f3",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
@@ -105,10 +105,25 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _canonical_verification_root(root: Path) -> tuple[Path, bool]:
+    """Resolve one stable root spelling and identify the live filesystem."""
+
+    try:
+        canonical = root.resolve(strict=True)
+        live_root = os.path.samefile(canonical, Path("/"))
+    except OSError as error:
+        raise ValueError(f"verification root is unavailable: {error}") from error
+    return canonical, live_root
+
+
 def _forbidden_roots_visible_to_verifier(root: Path) -> tuple[Path, ...]:
     """Keep root-private paths for offline roots and defer them on live `/`."""
 
-    if root != Path("/"):
+    try:
+        live_root = os.path.samefile(root, Path("/"))
+    except OSError:
+        live_root = False
+    if not live_root:
         return FORBIDDEN_ROOTS
     return tuple(
         path
@@ -118,6 +133,10 @@ def _forbidden_roots_visible_to_verifier(root: Path) -> tuple[Path, ...]:
 
 
 def verify(root: Path = Path("/")) -> dict[str, object]:
+    root, live_root = _canonical_verification_root(root)
+    if live_root and os.geteuid() == 0:
+        raise ValueError("image verifier must run as the non-root runtime user")
+
     def at(path: Path) -> Path:
         return root / path.relative_to("/")
 
@@ -166,8 +185,6 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         digest = _sha256(path)
         if digest in KNOWN_FORBIDDEN_CONTENT_SHA256:
             raise ValueError(f"forbidden upstream/runtime byte: {path}")
-    if root == Path("/") and os.geteuid() == 0:
-        raise ValueError("image verifier must run as the non-root runtime user")
     return {
         "schema": "npa.gymnasium-robotics.neutral-image-verification.v2",
         "status": "passed",
@@ -180,7 +197,7 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
             str(path)
             for path in PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
         ]
-        if root == Path("/")
+        if live_root
         else [],
     }
 
