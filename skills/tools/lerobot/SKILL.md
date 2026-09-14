@@ -14,14 +14,14 @@ Use it as the data standard and policy interface layer, not as a managed-service
 | Version | Role | Image tag | Notes |
 | --- | --- | --- | --- |
 | **0.5.1** | **Default** | `npa-lerobot:cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | Accepted public default; the plain `0.5.1` alias is historical |
-| **0.6.0** | Additional package support | Operator-built image required | No accepted public image pin/digest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq` |
+| **0.6.0** | Selectable alternative | `npa-lerobot:0.6.0-d6-extras-20260912` | Published immutable pin/digest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq` |
 
-Select the package with `--lerobot-version`. For serverless training on 0.6.0,
-supply a validated operator image through `train --image`; version selection
-alone does not publish an image. VM deployment installs the selected package
-and has no `--image` option. The anonymous 2026-09-05 audit returned
-`404 MANIFEST_UNKNOWN` for the official `npa-lerobot:0.6.0` tag. It is outside
-the current public release plan and must not be treated as an accepted release.
+Select the package with `--lerobot-version`. Serverless training on 0.6.0
+resolves the published image pin from the version manifest; `train --image`
+remains available for a validated operator override. VM deployment installs the
+selected package and has no `--image` option. The September 12 release supersedes
+the anonymous September 5 audit that found no public 0.6.0 image. Its bare
+`0.6.0` tag is a compatibility alias; use the manifest's immutable pin and digest.
 
 Canonical manifest: `npa/src/npa/deploy/lerobot_version_manifest.json`.
 
@@ -43,7 +43,7 @@ CLI:
 npa workbench lerobot deploy
 npa workbench lerobot deploy --runtime vm --lerobot-version 0.6.0
 npa workbench lerobot train
-npa workbench lerobot train --runtime serverless --lerobot-version 0.6.0 --image '<validated-operator-image>@sha256:<digest>' ...
+npa workbench lerobot train --runtime serverless --lerobot-version 0.6.0 ...
 npa workbench lerobot eval
 npa workbench lerobot serve
 npa workbench lerobot infer
@@ -76,4 +76,10 @@ Output is a policy checkpoint on S3.
 
 - 9/9 E2E serverless tests pass on Nebius (default 0.5.1 image).
 - Tier 1 validated on B300.
-- 0.6.0: build `npa-lerobot:0.6.0` and run the same golden env/functional smokes with `NPA_LEROBOT_VERSION=0.6.0`.
+- 0.6.0: the published digest passed `npa/scripts/validate_blackwell_image.sh`
+  on a B200, constructed a 272,708-parameter `DiffusionPolicy` on CUDA, and
+  passed all six environment checks on 2026-09-12. This proves the missing
+  Diffusion Policy dependency is fixed; it is not a full training or SmolVLA
+  benchmark. See the D3/D6 resolution in
+  [the version audit](../../../docs/workbench/lerobot-version-support-audit-20260813.md#060-image-follow-up--2026-09-12)
+  and merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462).
