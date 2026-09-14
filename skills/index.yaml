@@ -639,10 +639,14 @@ skills:
           - workflows/testing/mjlab-eval.yaml
   - name: nebius-infra
     category: tools
-    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, and credential assumptions."
+    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+      - type: file_exists
+        path: skills/tools/nebius-infra/references/backup-verification.md
+      - type: file_exists
+        path: skills/tools/nebius-infra/references/maintenance-pauses.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
