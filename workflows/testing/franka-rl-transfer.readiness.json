@@ -28,10 +28,10 @@
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Standard-runtime preparation completed and all five published files passed independent S3 checksum verification. All four USD assets parse with OpenUSD; GPU parts simulation remains unverified.",
+      "status": "verified",
+      "reason": "All five prepared files passed S3 checksum readback. The actual four-asset scene completed 1500 native PPO updates across 4096 environments without recorded PhysX errors.",
       "evidence": [
-        "npa/tests/workflows/test_franka_rl_assets.py"
+        "docs/workbench/evidence/franka-parts-validation.json"
       ]
     },
     "credentials": {
@@ -50,9 +50,9 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The corrected experiment completed preparation and its GPU worker is running; training results, paired capture, and the full hosted audit remain unverified. A real Token Factory request on a retained cube capture passed the revised structured-response contract.",
+      "reason": "Parts training completed, all 14 published training files passed checksum readback, and actual optimizer state was decoded. The driver lost scheduler access before evaluation; paired tests, new videos, and the complete 32-capture hosted audit remain unverified.",
       "evidence": [
-        "docs/workbench/guides/franka-rl-transfer.md"
+        "docs/workbench/evidence/franka-parts-validation.json"
       ]
     }
   }

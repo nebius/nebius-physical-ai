@@ -31,9 +31,21 @@
     "target": "spool",
     "units": "metres"
   },
+  "checkpoint_audit": {
+    "actor_tensor_count": 9,
+    "all_actor_tensors_finite": true,
+    "final_sha256": "261a02b29ab3986d61f82f9ff0898d0c187792e2b334016e7081f5d7d937fefd",
+    "independent_actor_parameter_delta_l2": 38.98804023269666,
+    "initial_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+    "matches_native_report": true,
+    "native_counter": 1499,
+    "optimizer_steps_per_parameter": 30000,
+    "safe_cpu_checkpoint_decode": true,
+    "torch": "2.13.0+cpu"
+  },
   "complete_parts_visual_audit_verified": false,
   "exact_job_resume_recovery_verified": true,
-  "gpu_parts_training_verified": false,
+  "gpu_parts_training_verified": true,
   "hosted_contract_probe": {
     "backend": "token_factory",
     "completion_tokens": 334,
@@ -47,7 +59,7 @@
     "total_tokens": 7202
   },
   "paired_parts_evaluation_verified": false,
-  "pending_reason": "The corrected parts experiment is running through the standard runtime; training, videos, paired evaluation, and the complete visual audit remain unverified.",
+  "pending_reason": "Parts training completed successfully. The workflow driver lost scheduler access before evaluation; paired tests, videos, and the complete hosted audit remain unverified.",
   "physical_robot_tested": false,
   "physics_capacity": {
     "gpu_total_aggregate_pairs_capacity": 2097152
@@ -63,6 +75,30 @@
   "prepared_s3_readback_verified": true,
   "schema": "npa.franka-rl.parts-validation.v1",
   "source_commit": "4562205959aae042937663a8e190cc067a2e1405",
+  "source_verification": {
+    "commit": "4562205959aae042937663a8e190cc067a2e1405",
+    "module_sha256": {
+      "src/npa/adapter/isaac_lab_lerobot.py": "50dfb32a06377e14397da57ca72016b285016c16ee0dfe720c5e6d2f6ee525c5",
+      "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+      "src/npa/workbench/vlm_eval/temporal.py": "b4fa2f4a29f7fb9ce58708f0a7b49ddd3ffd724858a3a9338e486e32d32ca9a7",
+      "src/npa/workflows/franka_rl.py": "97d6ad8e00c7a826a90ec94768fd94e1472e233ecd4dd17eacff3bb35a4ee0d8",
+      "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+      "src/npa/workflows/franka_rl_capture.py": "e473eef27e11ac5dd2218463976b4e3f591563507ab06a7bab2895e02405edbe",
+      "src/npa/workflows/franka_rl_capture_merge.py": "89d4d1f039c9dfb7454dee7447c3dd7510cf331043717040cc7eda523edd34ac",
+      "src/npa/workflows/franka_rl_environment.py": "9f8ed71007595e6d3e5fe4e6d39d8ee9f4d3c631125d35717582c05be39eb3fa",
+      "src/npa/workflows/franka_rl_eval.py": "4bf5fc030b200e138d0f9a4d5476c3fd093554644d68498bb0498c1699d78030",
+      "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+      "src/npa/workflows/franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+      "src/npa/workflows/franka_rl_report.py": "96a76229cb34bf821f4031dd7c4a02b1e68e8bade51232217bb268ed712f7a8a",
+      "src/npa/workflows/franka_rl_runtime.py": "f129d33ecca615e3059112e71b8d63355ee8351d4bdf76eee165ef1c38935f27",
+      "src/npa/workflows/franka_rl_vlm.py": "d6e7d7cce872e631122c9eaaec1c27e19d66b0afe56fed40bfe664494f6bdede",
+      "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+    },
+    "scope": "Published source bytes and training worker overlay checked against the exact checkout.",
+    "source_fingerprint": "ba15cc7ecb9421d8d7716e131fadb2b77f99aac118b89388983ba2376d07dd6e",
+    "staged_and_worker_modules_match_checkout": true
+  },
+  "tensorboard_event_sha256": "f5c1e669a3d00d6d4330fde0fa3e9f5d4fae451e0a1c258095f94695df79af45",
   "test_log_sha256": {
     "full_unit": "3f515c363d0ff9a83f36f25ac1dd213c1ccf4bc732f75a24593b010c33c6c4cf",
     "security": "dd84cc98b772959e982d03b146f7e8360d04b8338583d309781fb152faf57626"
@@ -77,6 +113,110 @@
     "security_passed": 736,
     "security_torch": "2.13.0+cpu"
   },
+  "training": {
+    "checkpoints": {
+      "checkpoints/model_0.pt": "c1efc51aaf3e2b40044af60f7dd7b3fbef75d4a63429936d39a8efa62d005f38",
+      "checkpoints/model_1000.pt": "593dbd38cb2a1f64a2396aabd996e1160145d6cc40858146bd73926eee9a31a7",
+      "checkpoints/model_1499.pt": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+      "checkpoints/model_1500.pt": "261a02b29ab3986d61f82f9ff0898d0c187792e2b334016e7081f5d7d937fefd",
+      "checkpoints/model_500.pt": "b9c4719e31f2e6986559f19e3ee072e0327c3b4b04da9607dd1b921295badb28",
+      "initial.pt": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6"
+    },
+    "duration_seconds": 1490.6119424810004,
+    "physics": {
+      "dynamic_friction": {
+        "max": 1.455479621887207,
+        "min": 0.55937260389328
+      },
+      "mass_kg": {
+        "max": 0.10398687422275543,
+        "min": 0.05601782351732254
+      },
+      "physics_capacity": {
+        "gpu_total_aggregate_pairs_capacity": 2097152
+      },
+      "restitution": {
+        "max": 0.0,
+        "min": 0.0
+      },
+      "startup_terms": [
+        "npa_object_mass",
+        "npa_object_material"
+      ],
+      "static_friction": {
+        "max": 1.4811253547668457,
+        "min": 0.5162026882171631
+      }
+    },
+    "policy_parameter_delta_l2": 38.9880256652832,
+    "runtime": {
+      "compute_capability": [
+        12,
+        0
+      ],
+      "cuda": "12.8",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "isaaclab": "3.0.0b2.post1",
+      "rsl_rl": "5.0.1",
+      "torch": "2.11.0+cu128"
+    },
+    "transitions": 147456000
+  },
+  "training_audit": {
+    "actual_physics": {
+      "dynamic_friction": {
+        "max": 1.455479621887207,
+        "min": 0.55937260389328
+      },
+      "mass_kg": {
+        "max": 0.10398687422275543,
+        "min": 0.05601782351732254
+      },
+      "physics_capacity": {
+        "gpu_total_aggregate_pairs_capacity": 2097152
+      },
+      "restitution": {
+        "max": 0.0,
+        "min": 0.0
+      },
+      "startup_terms": [
+        "npa_object_mass",
+        "npa_object_material"
+      ],
+      "static_friction": {
+        "max": 1.4811253547668457,
+        "min": 0.5162026882171631
+      }
+    },
+    "completed_updates": 1500,
+    "duration_seconds": 1490.6119424810004,
+    "evaluation_completed": false,
+    "no_recorded_physics_errors": true,
+    "parts_video_available": false,
+    "policy_parameter_delta_l2": 38.9880256652832,
+    "source_commit": "4562205959aae042937663a8e190cc067a2e1405",
+    "training_verified": true,
+    "transitions": 147456000,
+    "verified_files": 14
+  },
+  "training_duration_scope": "Native PPO learning and final checkpoint export; excludes worker installation and simulator startup.",
+  "training_file_map_scope": "The identifying TensorBoard filename remains private; its byte hash is recorded separately by artifact role.",
+  "training_files_sha256": {
+    "assets/bottle.usda": "7caf59359b3ecae0da92efd0a63f652641fe6595968c7531af9d7230d38f8adf",
+    "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
+    "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
+    "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d",
+    "checkpoints/model_0.pt": "c1efc51aaf3e2b40044af60f7dd7b3fbef75d4a63429936d39a8efa62d005f38",
+    "checkpoints/model_1000.pt": "593dbd38cb2a1f64a2396aabd996e1160145d6cc40858146bd73926eee9a31a7",
+    "checkpoints/model_1499.pt": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+    "checkpoints/model_1500.pt": "261a02b29ab3986d61f82f9ff0898d0c187792e2b334016e7081f5d7d937fefd",
+    "checkpoints/model_500.pt": "b9c4719e31f2e6986559f19e3ee072e0327c3b4b04da9607dd1b921295badb28",
+    "initial.pt": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+    "recipe.json": "5667e6eb5853a51bafc5979642eb3ef07240e9c64fde9b41bc5f05cf756d6d4f",
+    "runtime.log": "054600bf2ff980a79be9ebd9206b52e382e679fd8e8e360cc474ce082af233da",
+    "training.json": "8c3367e413fe2d47047c9d2774bf2075b14a6c58d456084ceb483b34de615ca1"
+  },
+  "training_plot_sha256": "4e44120c42b32a751fa824f37b65de3087f4b38c4e3b38714c9c209d7c7f14a9",
   "workflow": "workflows/testing/franka-rl-transfer.yaml",
   "workflow_sha256": "ac91e2b3344a447fa7540065ffddd90d52a36138f1a23ad4e3fe4ccd43cda1b2"
 }

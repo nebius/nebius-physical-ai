@@ -270,10 +270,24 @@ cube-baseline capture with the exact MiniMax-M3 model and validated its
 frame-cited structured response. That check validates the hosted request path;
 it does not validate the new parts scene or the 32-episode visual audit.
 
-The corrected experiment completed preparation and its GPU worker is running.
-Parts training results, paired GPU evaluation, new videos, and the complete
-hosted audit remain **unverified**. The readiness sidecar keeps that boundary explicit. Historical
-cube measurements below retain their original scope.
+The corrected parts run completed **1,500 PPO updates and 147,456,000 transitions**
+on one RTX PRO 6000. Learning and final checkpoint export took 24.8 minutes,
+excluding installation and simulator startup. All 14 published training files
+passed independent S3 readback and local checksum verification. The actual
+physics setting matches the sealed 2,097,152 aggregate-pair capacity; the full
+native log contains no PhysX errors or missed-interaction messages.
+
+A separate CPU decoder verified all nine actor tensors are finite and measured
+an actor parameter change of 38.9880 in L2 norm, matching the native report.
+The saved optimizer records 30,000 updates per parameter. These checks establish
+real learning and preserved checkpoints; they do not establish held-out success.
+
+![Native Franka spool training reward](../evidence/franka-parts-rtx-training.png)
+
+The workflow driver lost scheduler access before evaluation. Paired GPU tests,
+new parts videos, and the complete hosted audit remain **unverified**. The
+readiness sidecar keeps that boundary explicit. Historical cube measurements
+below retain their original scope.
 The [validation record](../evidence/franka-parts-validation.json) retains the
 asset and test-log hashes alongside these measured boundaries.
 
