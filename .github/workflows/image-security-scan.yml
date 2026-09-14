@@ -215,9 +215,6 @@ jobs:
             # FiftyOne applies these OS security updates before installing its
             # runtime. Scan that baseline while the upstream digest is stale.
             upgrade_os: true
-          - name: ubuntu-22-04-habitat-sim
-            image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
-            purge_linux_libc_dev: false
     steps:
       - name: Resolve scan target
         id: scan-target

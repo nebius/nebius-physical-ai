@@ -43,7 +43,6 @@ def test_byof_run_help() -> None:
     assert "--repo-url" in result.output
     assert "--workload" in result.output
     assert "--base-profile" in result.output
-    assert "--apt-snapshot" in result.output
     assert "--repo-auth" in result.output
     assert "--repo-token-env" in result.output
 
@@ -92,17 +91,14 @@ def test_build_byof_argv_and_sdk_plan() -> None:
     argv = build_byof_argv(
         repo_url="https://github.com/example/repo.git",
         repo_ref="main",
-        apt_snapshot="20260801T053000Z",
         workload="container-verify",
         skip_run=True,
     )
     assert "--skip-run" in argv
-    assert argv[argv.index("--apt-snapshot") + 1] == "20260801T053000Z"
     assert (
         byof_sdk.plan_argv(
             repo_url="https://github.com/example/repo.git",
             repo_ref="main",
-            apt_snapshot="20260801T053000Z",
             workload="container-verify",
             skip_run=True,
         )
