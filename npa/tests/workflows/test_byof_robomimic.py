@@ -1701,6 +1701,10 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert "path.read_bytes()" not in profile_text
     assert "MAX_OUTPUT_FILE_BYTES" in profile_text
     assert "MAX_OUTPUT_TOTAL_BYTES" in profile_text
+    assert "MAX_OUTPUT_ENTRY_COUNT" in profile_text
+    assert "MAX_OUTPUT_OBJECT_COUNT" in profile_text
+    assert 'for path in root.rglob("*"):' in profile_text
+    assert 'sorted(root.rglob("*"))' not in profile_text
     assert "RESERVED_JSON_MAX_BYTES" in profile_text
     assert "smoke_artifact_path.read_text" not in profile_text
     assert '(root / "npa_byof_summary.json").write_text' not in profile_text
@@ -1747,6 +1751,87 @@ def test_robomimic_profile_streams_outputs_in_bounded_chunks(tmp_path: Path) -> 
     assert s3.chunks
     assert max(s3.chunks) <= module.OUTPUT_READ_CHUNK_BYTES
     assert s3.digest.hexdigest() == hashlib.sha256(payload.read_bytes()).hexdigest()
+
+
+def test_robomimic_profile_refuses_directory_entry_fanout_before_upload(
+    tmp_path: Path,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    for index in range(module.MAX_OUTPUT_ENTRY_COUNT + 1):
+        (root / f"directory-{index:04d}").mkdir()
+
+    class NoUploadS3:
+        def put_object(self, **_kwargs: object) -> None:
+            pytest.fail("entry fanout must be rejected before upload")
+
+    with pytest.raises(RuntimeError, match="filesystem entry count limit"):
+        module.upload_outputs(NoUploadS3(), "bucket", "prefix/", root)
+
+
+def test_robomimic_profile_refuses_zero_byte_object_fanout_before_upload(
+    tmp_path: Path,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    for index in range(module.MAX_OUTPUT_OBJECT_COUNT + 1):
+        (root / f"empty-{index:04d}.json").touch()
+
+    class NoUploadS3:
+        def put_object(self, **_kwargs: object) -> None:
+            pytest.fail("object fanout must be rejected before upload")
+
+    with pytest.raises(RuntimeError, match="regular object count limit"):
+        module.upload_outputs(NoUploadS3(), "bucket", "prefix/", root)
+
+
+def test_robomimic_profile_consumes_recursive_entries_lazily(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("preserve", encoding="utf-8")
+    unsafe = root / "first-entry"
+    unsafe.symlink_to(outside)
+
+    def hostile_entries(_root: Path, _pattern: str):
+        yield unsafe
+        pytest.fail("recursive entries were materialized before validation")
+
+    monkeypatch.setattr(Path, "rglob", hostile_entries)
+
+    with pytest.raises(RuntimeError, match="output symlink is forbidden"):
+        module.checked_output_files(root)
+
+
+def test_robomimic_profile_uploads_legal_bounded_output_set(tmp_path: Path) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    nested = root / "metrics"
+    nested.mkdir(parents=True)
+    (root / "checkpoint.pth").write_bytes(b"checkpoint")
+    (nested / "validation.json").write_text('{"loss": 0.25}\n', encoding="utf-8")
+
+    class RecordingS3:
+        def __init__(self) -> None:
+            self.keys: list[str] = []
+
+        def put_object(self, **kwargs: object) -> None:
+            self.keys.append(str(kwargs["Key"]))
+            body = kwargs["Body"]
+            while body.read():
+                pass
+
+    s3 = RecordingS3()
+    assert module.upload_outputs(s3, "bucket", "prefix/", root) == 2
+    assert set(s3.keys) == {
+        "prefix/checkpoint.pth",
+        "prefix/metrics/validation.json",
+    }
 
 
 @pytest.mark.parametrize("limit_kind", ("per-file", "aggregate"))
