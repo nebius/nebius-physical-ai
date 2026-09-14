@@ -770,7 +770,7 @@ def test_live_non_root_verifier_defers_only_root_private_paths() -> None:
 
 @pytest.mark.parametrize(
     "root",
-    [Path("/"), Path("/tmp/.."), Path("/proc/self/root")],
+    [Path("/"), Path(tempfile.gettempdir()) / "..", Path("/proc/self/root")],
 )
 def test_uid_zero_verifier_refuses_every_live_root_spelling(
     root: Path, monkeypatch: pytest.MonkeyPatch
