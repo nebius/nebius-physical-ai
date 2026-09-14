@@ -7,11 +7,12 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 Every pull request runs lint and docs drift, unit and browser tests, security
 regressions, harness guardrails, secret scanning, and confidentiality scanning.
-`Security regression / security-regression` requires both the scanner comparison
-and hostile-input runtime tests on every PR, merge queue candidate, and main push.
+`Security regression / security-regression` requires the scanner comparison,
+reusable image-security workflow, and hostile-input runtime tests on every PR,
+merge queue candidate, and main push.
 Its workflow has no path filters. Verify actual required contexts in branch
-protection before claiming merge enforcement. `image-security-scan` also applies
-to Docker and image-security changes.
+protection before claiming merge enforcement. `image-security-scan` is called by
+that required check without path filters; it retains scheduled and manual scans.
 
 All of them are reproducible locally. Run them in cost order so the cheap ones
 catch the common mistakes before you spend minutes on the full suite.
@@ -88,6 +89,7 @@ is:
 
 ```bash
 npa/.venv/bin/python -m pytest \
+  npa/tests/guardrails/test_image_security_gate.py \
   npa/tests/clients/test_download_containment.py \
   npa/tests/clients/test_ssh_private_staging.py \
   npa/tests/cli/test_agent_source_archive.py \
@@ -113,8 +115,11 @@ npa/.venv/bin/python -m pytest \
 
 Run this gate before pushing, in addition to the full suite and applicable live
 workload validation. Workflow registration belongs in
-`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py`; preserve
-read-only permissions and the existing PR concurrency controls.
+`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py` for direct
+PR triggers. The reusable image workflow is covered by `test_image_security_gate`;
+preserve its distinct concurrency group, minimal caller permissions, and the
+existing PR concurrency controls. Image findings must not produce a passing
+`security-regression` result.
 
 **`make test` is not identical to CI.** It deselects live and GPU markers and
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.

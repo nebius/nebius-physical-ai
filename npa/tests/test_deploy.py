@@ -14,6 +14,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.ssh import SSHClient
 from npa.deploy import configurator, provisioner
 from npa.deploy.provisioner import ProvisionerError
+from npa.terraform_lock import terraform_platform
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -805,8 +806,9 @@ def test_run_sets_terraform_plugin_cache_dir(
     provisioner._run(["init"], cwd=module_dir, capture=True)
 
     env = run.call_args.kwargs["env"]
-    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache" / "linux_amd64")
-    assert (tmp_path / "tf-cache" / "linux_amd64").is_dir()
+    cache_dir = tmp_path / "tf-cache" / terraform_platform()
+    assert env["TF_PLUGIN_CACHE_DIR"] == str(cache_dir)
+    assert cache_dir.is_dir()
 
 
 def test_run_respects_preexisting_plugin_cache_env(
@@ -826,8 +828,8 @@ def test_run_respects_preexisting_plugin_cache_env(
 
     provisioner._run(["init"], cwd=module_dir, capture=True)
 
-    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == (
-        str(cache_root / "linux_amd64")
+    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == str(
+        cache_root / terraform_platform()
     )
 
 

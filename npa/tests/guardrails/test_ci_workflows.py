@@ -21,7 +21,6 @@ AUTOMATIC_PR_WORKFLOWS = (
     "confidentiality-scan.yml",
     "gitleaks.yml",
     "harness-guardrails.yml",
-    "image-security-scan.yml",
     "lint.yml",
     "security-regression.yml",
     "test.yml",

@@ -204,6 +204,9 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+The required [security check](../docs/security/merge-security-gate.md) calls the
+image security workflow once on every PR, merge queue candidate, and main push.
+It waits for successful image scans before running the runtime security tests.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails

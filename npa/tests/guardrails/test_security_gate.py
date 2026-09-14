@@ -549,12 +549,14 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
 
 
 @pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped", ""])
-def test_required_security_check_propagates_scanner_failure(monkeypatch, result):
-    """Fail the required runtime check unless its isolated scanner job passed.
+@pytest.mark.parametrize("scanner", ["SCANNER_RESULT", "IMAGE_RESULT"])
+def test_required_security_check_propagates_scanner_failure(monkeypatch, result, scanner):
+    """Fail the required runtime check unless both scanner jobs passed.
 
     Args:
         monkeypatch: Supplies a GitHub job-result observation to the shell step.
         result: Completed scanner status, including missing and skipped work.
+        scanner: Source or image scanner result being exercised.
     Returns:
         None.
     Raises:
@@ -563,12 +565,17 @@ def test_required_security_check_propagates_scanner_failure(monkeypatch, result)
     workflow_path = Path(__file__).resolve().parents[3] / ".github/workflows/security-regression.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
-    assert job["needs"] == "security-scanners"
+    assert job["needs"] == ["security-scanners", "image-security"]
     assert job["if"] == "${{ always() }}"
     assert "continue-on-error" not in job
     prerequisite = job["steps"][0]
-    assert prerequisite["env"] == {"SCANNER_RESULT": "${{ needs.security-scanners.result }}"}
+    assert prerequisite["env"] == {
+        "SCANNER_RESULT": "${{ needs.security-scanners.result }}",
+        "IMAGE_RESULT": "${{ needs.image-security.result }}",
+    }
     assert "if" not in prerequisite and "continue-on-error" not in prerequisite
-    monkeypatch.setenv("SCANNER_RESULT", result)
+    monkeypatch.setenv("SCANNER_RESULT", "success")
+    monkeypatch.setenv("IMAGE_RESULT", "success")
+    monkeypatch.setenv(scanner, result)
     completed = subprocess.run(["bash", "-e", "-c", prerequisite["run"]], check=False)
     assert (completed.returncode == 0) == (result == "success")

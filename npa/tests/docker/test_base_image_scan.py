@@ -194,9 +194,4 @@ def test_base_cve_gate_remains_blocking_and_scans_the_prepared_target():
         step["with"]["image-ref"] == "${{ steps.scan-target.outputs.image }}"
         for step in scans
     )
-    workflow = yaml.safe_load(WORKFLOW.read_text())
-    # PyYAML's safe YAML 1.1 loader reads the Actions `on` key as True.
-    assert (
-        "npa/tests/docker/test_base_image_scan.py"
-        in workflow[True]["pull_request"]["paths"]
-    )
+    # PR invocation coverage lives in test_image_security_gate.

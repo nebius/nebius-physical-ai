@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Trusted loader program; environment files themselves are data, never scripts.
 npa_load_env_file() {
     if [ ! -r "$1" ]; then

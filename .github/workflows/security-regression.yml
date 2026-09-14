@@ -14,6 +14,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  image-security:
+    uses: ./.github/workflows/image-security-scan.yml
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
   security-scanners:
     name: security-scanners
     runs-on: ubuntu-latest
@@ -66,17 +73,20 @@ jobs:
 
   security-regression:
     name: security-regression
-    needs: security-scanners
+    needs: [security-scanners, image-security]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
     steps:
-      - name: Require successful scanner comparison
+      - name: Require successful source and image scans
         env:
           SCANNER_RESULT: ${{ needs.security-scanners.result }}
-        run: test "$SCANNER_RESULT" = success
+          IMAGE_RESULT: ${{ needs.image-security.result }}
+        run: |
+          test "$SCANNER_RESULT" = success
+          test "$IMAGE_RESULT" = success
 
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -99,6 +109,7 @@ jobs:
       - name: Exercise hostile inputs and supported security boundaries
         run: |
           npa/.venv/bin/python -m pytest \
+            npa/tests/guardrails/test_image_security_gate.py \
             npa/tests/clients/test_download_containment.py \
             npa/tests/clients/test_ssh_private_staging.py \
             npa/tests/cli/test_agent_source_archive.py \

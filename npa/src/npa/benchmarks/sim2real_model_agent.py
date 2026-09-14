@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -319,6 +320,14 @@ def _run_tool(
     if name == "run_command":
         command = ["bash", "-lc", str(arguments["command"])]
         if isolation:
+            unshare = shutil.which("unshare")
+            if unshare is None:
+                return {
+                    "exit_code": 126,
+                    "stdout": "",
+                    "stderr": "isolated command execution requires Linux unshare",
+                    "duration_seconds": time.monotonic() - started,
+                }
             namespace_script = r"""
 set -eu
 mount --make-rprivate /
@@ -331,9 +340,9 @@ cd /tmp/npa-trial-workspace
 mount -t tmpfs tmpfs "$3"
 mount -t tmpfs tmpfs "$4"
 exec bash -c "$5"
-"""
+            """
             command = [
-                "unshare",
+                unshare,
                 "--user",
                 "--map-root-user",
                 "--mount",

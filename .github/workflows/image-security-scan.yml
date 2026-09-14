@@ -1,23 +1,9 @@
 name: Image Security Scan
 
 on:
-  pull_request:
-    paths:
-      - "npa/docker/workbench/**"
-      - "npa/scripts/scan_image_omniverse_payload.py"
-      - "npa/scripts/scan_image_bytes.py"
-      - "npa/scripts/image_byte_scan/**"
-      - "npa/tests/docker/test_image_byte*.py"
-      - "npa/tests/docker/test_base_image_scan.py"
-      - ".gitleaks.toml"
-      - ".github/workflows/publish-public-images.yml"
-      - "**/Dockerfile*"
-      - ".trivyignore"
-      - "trivy.yaml"
-      - ".github/workflows/image-security-scan.yml"
-  push:
-    branches:
-      - main
+  # The required security-regression check calls this on every PR, merge queue
+  # candidate and main push. Keep one execution per event, without path filters.
+  workflow_call:
   schedule:
     # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
@@ -39,7 +25,7 @@ permissions:
 concurrency:
   # Keep workflows independent, but let a newer commit supersede older work for
   # the same PR. Scheduled and manual scans use run_id so they run to completion.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: image-security-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -189,8 +175,11 @@ jobs:
           output: trivy-config.sarif
 
       - name: Upload config SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
@@ -289,8 +278,11 @@ jobs:
           output: trivy-${{ matrix.name }}.sarif
 
       - name: Upload image SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-image-${{ matrix.name }}
