@@ -107,6 +107,28 @@ def _robotwin_runtime_context() -> tuple[dict[str, object], str]:
     return payload, authorization.context_sha256
 
 
+def _robotwin_private_runtime_values(runtime: dict[str, object]) -> tuple[str, ...]:
+    """Return private context coordinates that public submit output must omit."""
+
+    image = str(runtime["bootstrap_image"])
+    values = [
+        str(runtime[key])
+        for key in (
+            "project",
+            "nebius_profile",
+            "kubeconfig",
+            "kubernetes_context",
+            "skypilot_config_path",
+            "bootstrap_image",
+            "bucket",
+            "output_root",
+            "run_id",
+        )
+    ]
+    values.extend((image.rsplit("@", 1)[0], image.partition("/")[0]))
+    return tuple(dict.fromkeys(values))
+
+
 @pytest.fixture(scope="module")
 def live_byof_built_image(e2e_project: str | None) -> str:
     preset_image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip()
@@ -670,20 +692,7 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
         env=env,
     )
     combined = proc.stdout + "\n" + proc.stderr
-    private_values = tuple(
-        str(runtime[key])
-        for key in (
-            "project",
-            "nebius_profile",
-            "kubeconfig",
-            "kubernetes_context",
-            "skypilot_config_path",
-            "registry",
-            "bucket",
-            "output_root",
-            "run_id",
-        )
-    )
+    private_values = _robotwin_private_runtime_values(runtime)
     try:
         assert_no_credential_leakage(
             combined,
