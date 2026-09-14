@@ -147,6 +147,24 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  libero:
+    dockerfile: libero/Dockerfile
+    tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot may start or restart only the preinstalled SSH daemon. The
+      runtime user is non-root, package acquisition is bypassed only after the
+      complete package contract verifies, and no general passwordless sudo is
+      granted.
+    redistribution: public
+    notes: >-
+      Zero-payload neutral bootstrap. LIBERO, robomimic, MuJoCo, PyTorch,
+      CUDA/cuDNN/NCCL/NVIDIA packages, demonstrations, BERT, task/render
+      assets, populated caches, checkpoints, credentials, and outputs are not
+      baked. Runtime materialization requires a manager-issued decision bound
+      to the exact manifest and uses a non-root atomic cache. The image remains
+      unbuilt, quarantined, and unvalidated until complete-byte, anonymous-pull,
+      and exact-digest B200 evidence is accepted.
   openpi:
     dockerfile: openpi/Dockerfile
     tier: job

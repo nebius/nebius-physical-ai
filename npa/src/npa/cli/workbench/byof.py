@@ -89,10 +89,13 @@ def build_byof_argv(
     base_image: str = "",
     workload: str = "container-verify",
     build_command: str = "",
+    source_prune_path: str = "",
     smoke_command: str = "",
     solution_name: str = "",
     capability_name: str = "",
     smoke_artifact_name: str = "",
+    libero_acceptance_candidate_image: str = "",
+    libero_runtime_use_decision_file: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -144,6 +147,8 @@ def build_byof_argv(
         argv.extend(["--base-image", base_image])
     if build_command:
         argv.extend(["--build-command", build_command])
+    if source_prune_path:
+        argv.extend(["--source-prune-path", source_prune_path])
     if smoke_command:
         argv.extend(["--smoke-command", smoke_command])
     if solution_name:
@@ -152,6 +157,14 @@ def build_byof_argv(
         argv.extend(["--capability-name", capability_name])
     if smoke_artifact_name:
         argv.extend(["--smoke-artifact-name", smoke_artifact_name])
+    if libero_acceptance_candidate_image:
+        argv.extend(
+            ["--libero-acceptance-candidate-image", libero_acceptance_candidate_image]
+        )
+    if libero_runtime_use_decision_file:
+        argv.extend(
+            ["--libero-runtime-use-decision-file", libero_runtime_use_decision_file]
+        )
     if project:
         argv.extend(["--project", project])
     if registry:
@@ -217,6 +230,14 @@ def run_cmd(
         "--build-command",
         help="Optional shell command run at image build time from /opt/byof.",
     ),
+    source_prune_path: str = typer.Option(
+        "",
+        "--source-prune-path",
+        help=(
+            "Optional safe repo-relative path removed with Git objects in the source "
+            "clone layer."
+        ),
+    ),
     smoke_command: str = typer.Option(
         "",
         "--smoke-command",
@@ -232,6 +253,16 @@ def run_cmd(
         "",
         "--smoke-artifact-name",
         help="Expected JSON artifact filename for solution-smoke.",
+    ),
+    libero_acceptance_candidate_image: str = typer.Option(
+        "",
+        "--libero-acceptance-candidate-image",
+        help="Explicit immutable npa-libero image for a separately authorized acceptance run.",
+    ),
+    libero_runtime_use_decision_file: str = typer.Option(
+        "",
+        "--libero-runtime-use-decision-file",
+        help="Owner-private manager-issued LIBERO runtime-use decision JSON.",
     ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
@@ -293,10 +324,13 @@ def run_cmd(
         base_image=base_image,
         workload=workload.value,
         build_command=build_command,
+        source_prune_path=source_prune_path,
         smoke_command=smoke_command,
         solution_name=solution_name,
         capability_name=capability_name,
         smoke_artifact_name=smoke_artifact_name,
+        libero_acceptance_candidate_image=libero_acceptance_candidate_image,
+        libero_runtime_use_decision_file=libero_runtime_use_decision_file,
         project=project,
         registry=registry,
         image=image,

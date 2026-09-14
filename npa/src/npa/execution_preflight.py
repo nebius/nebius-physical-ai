@@ -7,9 +7,14 @@ or provider exception text. The target itself stays in owner-only runtime state.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
+import re
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlparse
 
@@ -28,6 +33,43 @@ class ExecutionPreflightError(RuntimeError):
         self.check = check
         self.status = status
         super().__init__(f"execution preflight {check}: {reason}")
+
+
+LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
+LIBERO_OFFICIAL_IMAGE_REPOSITORY = (
+    "ghcr.io/nebius/nebius-physical-ai/npa-libero"
+)
+LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
+SKYPILOT_ENGINE_SERVICE_ACCOUNT = "skypilot-service-account"
+LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
+    "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
+    "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+    "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+)
+
+
+def is_libero_official_image_reference(value: object) -> bool:
+    """Return whether an image belongs to the exact official LIBERO repository.
+
+    Args:
+        value: Candidate image reference, optionally prefixed with ``docker:``.
+    Returns:
+        Whether the normalized reference is the official repository or one of
+        its tag/digest references.
+    Raises:
+        None.
+    """
+
+    image = str(value or "").removeprefix("docker:")
+    return (
+        image == LIBERO_OFFICIAL_IMAGE_REPOSITORY
+        or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}@")
+        or image.startswith(f"{LIBERO_OFFICIAL_IMAGE_REPOSITORY}:")
+    )
 
 
 @dataclass(frozen=True)
@@ -171,6 +213,7 @@ def verify_execution_target(
             bucket=bucket, prefix=prefix, endpoint_url=target.credentials.endpoint_url,
             access_key_id=target.credentials.access_key_id,
             secret_access_key=target.credentials.secret_access_key,
+            session_token=target.credentials.session_token,
             region=target.region, profile=StorageCapabilityProfile.STANDARD,
         )
         if not probe.ok:
@@ -283,9 +326,7 @@ def verify_worker_environment(target: ExecutionTarget, documents: Sequence[Mappi
     expected = {
         "AWS_ACCESS_KEY_ID": target.credentials.access_key_id,
         "AWS_SECRET_ACCESS_KEY": target.credentials.secret_access_key,
-        # Static Nebius S3 keys are the checked principal. A pod-level token
-        # reference must not change signing after those checks passed.
-        "AWS_SESSION_TOKEN": "",
+        "AWS_SESSION_TOKEN": target.credentials.session_token,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, target.credentials.endpoint_url),
     }
 
@@ -395,13 +436,389 @@ def skypilot_output_destinations(documents: Sequence[Mapping[str, Any]]) -> dict
     return destinations
 
 
+def verify_solution_payload_service_accounts(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    global_config: Mapping[str, Any] | None,
+) -> bool:
+    """Keep LIBERO's payload identity separate from SkyPilot's controller.
+
+    SkyPilot's engine account needs to create and manage task resources.  The
+    LIBERO payload only calls ``get`` for its own Pod imageID attestation and
+    must never inherit that engine identity.  Both identities are explicit so
+    a missing task override cannot silently fall back to SkyPilot's default.
+
+    Args:
+        documents: Rendered SkyPilot workflow documents to inspect.
+        global_config: The exact SkyPilot controller configuration.
+    Returns:
+        Whether the documents contain the canonical LIBERO task, after every
+        applicable payload/controller identity passes.
+    Raises:
+        ExecutionPreflightError: A LIBERO identity is absent, shared, or invalid.
+    """
+
+    def pod_spec(value: object, *, check: str) -> Mapping[str, Any]:
+        if value in (None, {}):
+            return {}
+        if not isinstance(value, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod configuration must be a mapping", status="unknown"
+            )
+        pod_config = value.get("pod_config") or {}
+        if not isinstance(pod_config, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod configuration must be a mapping", status="unknown"
+            )
+        spec = pod_config.get("spec") or {}
+        if not isinstance(spec, Mapping):
+            raise ExecutionPreflightError(
+                check, "Kubernetes pod spec must be a mapping", status="unknown"
+            )
+        return spec
+
+    global_kubernetes = (global_config or {}).get("kubernetes") or {}
+    global_spec = pod_spec(global_kubernetes, check="controller_service_account")
+    libero_found = False
+
+    for document in skypilot_task_documents(documents):
+        envs = document.get("envs") or {}
+        resources = document.get("resources") or {}
+        profile_signal = document.get("name") == LIBERO_PROFILE_NAME
+        solution_signal = (
+            isinstance(envs, Mapping) and envs.get("BYOF_SOLUTION_NAME") == "libero"
+        )
+        resource_image = (
+            str(resources.get("image_id") or "").removeprefix("docker:")
+            if isinstance(resources, Mapping)
+            else ""
+        )
+        environment_image = (
+            str(envs.get("BYOF_IMAGE") or "").removeprefix("docker:")
+            if isinstance(envs, Mapping)
+            else ""
+        )
+        official_image_signal = any(
+            is_libero_official_image_reference(image)
+            for image in (resource_image, environment_image)
+        )
+        if not profile_signal and not solution_signal and not official_image_signal:
+            continue
+        candidate_pattern = (
+            rf"{re.escape(LIBERO_OFFICIAL_IMAGE_REPOSITORY)}"
+            r"@sha256:[0-9a-f]{64}"
+        )
+        if (
+            not profile_signal
+            or not solution_signal
+            or resource_image != environment_image
+            or re.fullmatch(candidate_pattern, resource_image) is None
+        ):
+            raise ExecutionPreflightError(
+                "payload_service_account",
+                "LIBERO requires matching canonical profile, solution, and immutable official image signals",
+            )
+        libero_found = True
+
+        resource_kubernetes = (
+            resources.get("kubernetes") if isinstance(resources, Mapping) else {}
+        ) or {}
+        task_config = document.get("config") or {}
+        config_kubernetes = (
+            task_config.get("kubernetes") if isinstance(task_config, Mapping) else {}
+        ) or {}
+        resource_spec = pod_spec(
+            resource_kubernetes, check="payload_service_account"
+        )
+        config_spec = pod_spec(config_kubernetes, check="payload_service_account")
+        declared = {
+            str(spec.get("serviceAccountName") or "")
+            for spec in (resource_spec, config_spec)
+            if spec.get("serviceAccountName")
+        }
+        if len(declared) != 1 or declared != {LIBERO_PAYLOAD_SERVICE_ACCOUNT}:
+            raise ExecutionPreflightError(
+                "payload_service_account",
+                "LIBERO requires its deterministic solution-scoped payload account; "
+                "default and SkyPilot engine accounts are refused",
+            )
+        if global_spec.get("serviceAccountName") != SKYPILOT_ENGINE_SERVICE_ACCOUNT:
+            raise ExecutionPreflightError(
+                "controller_service_account",
+                "LIBERO requires the manager SkyPilot config to select the engine account explicitly",
+            )
+    return libero_found
+
+
+def _verify_libero_submission_authorization(
+    documents: Sequence[Mapping[str, Any]],
+    process_env: Mapping[str, str],
+    *,
+    authorization_global_config: Mapping[str, Any],
+    submission_backend: str,
+    infra: str,
+    run_id: str,
+    executable_profile_sha256: str,
+) -> dict[str, Any]:
+    """Bind secret forwarding to one signed decision and exact profile bytes."""
+
+    try:
+        _validate_libero_submission_identity(
+            documents,
+            run_id,
+            executable_profile_sha256,
+            submission_backend=submission_backend,
+            infra=infra,
+        )
+        decision, decision_sha256, acceptance = _libero_submission_decision(
+            process_env, run_id
+        )
+    except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO requires a valid signed acceptance and runtime decision",
+        ) from exc
+    if (
+        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", "")
+        != decision_sha256
+        or decision.get("executable_profile_sha256")
+        != executable_profile_sha256
+        or (acceptance.get("infrastructure") or {}).get(
+            "skypilot_config_sha256"
+        )
+        != hashlib.sha256(
+            json.dumps(
+                authorization_global_config,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    ):
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO runtime decision does not authorize the executable submission",
+        )
+    candidate_images = {
+        str((document.get("resources") or {}).get("image_id") or "").removeprefix(
+            "docker:"
+        )
+        for document in skypilot_task_documents(documents)
+    } | {
+        str((document.get("envs") or {}).get("BYOF_IMAGE") or "").removeprefix(
+            "docker:"
+        )
+        for document in skypilot_task_documents(documents)
+    }
+    if candidate_images != {acceptance.get("candidate_image")}:
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO executable submission differs from the accepted candidate image",
+        )
+    return acceptance
+
+
+def _validate_libero_submission_identity(
+    documents: Sequence[Mapping[str, Any]],
+    run_id: str,
+    executable_profile_sha256: str,
+    *,
+    submission_backend: str,
+    infra: str,
+) -> None:
+    """Require the decision target to match the submitted run and profile."""
+
+    if (
+        submission_backend != "kubernetes"
+        or not infra.startswith(("k8s/", "kubernetes/"))
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None
+        or re.fullmatch(r"[0-9a-f]{64}", executable_profile_sha256) is None
+    ):
+        raise RuntimeError("LIBERO run or executable-profile identity is invalid")
+    task_run_ids = {
+        str((document.get("envs") or {}).get("NPA_BYOF_RUN_ID") or "")
+        for document in skypilot_task_documents(documents)
+    }
+    if task_run_ids != {run_id}:
+        raise RuntimeError("LIBERO executable profile selects a different run")
+
+
+def _libero_submission_decision(
+    process_env: Mapping[str, str], run_id: str
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Validate the signed repository acceptance and paired runtime decision."""
+
+    encoded_acceptance = process_env.get("NPA_LIBERO_MANAGER_ACCEPTANCE_B64", "")
+    supplied_manifest = json.loads(
+        base64.b64decode(encoded_acceptance, validate=True)
+    )
+    decision_bytes = base64.b64decode(
+        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_B64", ""),
+        validate=True,
+    )
+    from npa.deploy.images import (
+        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV,
+        libero_image_manifest,
+        validate_libero_accepted_image_manifest,
+        validate_libero_runtime_decision,
+    )
+
+    repository_manifest = libero_image_manifest()
+    if supplied_manifest != repository_manifest:
+        raise RuntimeError(
+            "LIBERO supplied acceptance differs from repository acceptance"
+        )
+    acceptance = validate_libero_accepted_image_manifest(
+        repository_manifest,
+        manager_public_key_file=process_env.get(
+            LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
+        ),
+    )
+    decision, decision_sha256 = validate_libero_runtime_decision(
+        decision_bytes, acceptance=acceptance, run_id=run_id
+    )
+    return decision, decision_sha256, acceptance
+
+
+def _verify_libero_output_storage_authorization(
+    documents: Sequence[Mapping[str, Any]],
+    process_env: Mapping[str, str],
+    *,
+    acceptance: Mapping[str, Any],
+    run_id: str,
+) -> None:
+    """Verify the exact temporary upload authority before target resolution."""
+
+    task_documents = skypilot_task_documents(documents)
+    prefixes = {
+        str((document.get("envs") or {}).get("S3_OUTPUT_PREFIX") or "").strip()
+        for document in task_documents
+    }
+    endpoints = {
+        str((document.get("envs") or {}).get("AWS_ENDPOINT_URL") or "")
+        .strip()
+        .rstrip("/")
+        for document in task_documents
+    }
+    if len(prefixes) != 1 or not next(iter(prefixes), ""):
+        raise ValueError("LIBERO requires one exact output storage prefix")
+    if len(endpoints) != 1 or not next(iter(endpoints), ""):
+        raise ValueError("LIBERO requires one exact output storage endpoint")
+    output_prefix = prefixes.pop().rstrip("/") + "/"
+    endpoint = endpoints.pop()
+    parsed_endpoint = urlparse(endpoint)
+    if (
+        parsed_endpoint.scheme != "https"
+        or not parsed_endpoint.hostname
+        or parsed_endpoint.username is not None
+        or parsed_endpoint.password is not None
+        or parsed_endpoint.path not in {"", "/"}
+        or parsed_endpoint.params
+        or parsed_endpoint.query
+        or parsed_endpoint.fragment
+    ):
+        raise ValueError("LIBERO output storage endpoint must be origin-only HTTPS")
+    configured_endpoints = {
+        str(process_env.get(name) or "").strip().rstrip("/")
+        for name in STORAGE_ENDPOINT_ENV_NAMES
+        if process_env.get(name)
+    }
+    if configured_endpoints != {endpoint}:
+        raise ValueError("LIBERO output endpoint differs from the executing environment")
+
+    infrastructure = acceptance.get("infrastructure") or {}
+    encoded = str(
+        process_env.get("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64") or ""
+    ).strip()
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("LIBERO output storage authorization is invalid") from exc
+    if hashlib.sha256(payload).hexdigest() != infrastructure.get(
+        "output_storage_authorization_sha256"
+    ):
+        raise ValueError("LIBERO output storage authorization is not manager-bound")
+    try:
+        authorization = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("LIBERO output storage authorization is invalid") from exc
+    expected_keys = {
+        "schema",
+        "issuer",
+        "run_id",
+        "output_prefix",
+        "endpoint_url",
+        "access_key_id_sha256",
+        "secret_access_key_sha256",
+        "session_token_sha256",
+        "policy_sha256",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
+    if not isinstance(authorization, Mapping) or set(authorization) != expected_keys:
+        raise ValueError("LIBERO output storage authorization schema is not closed")
+    access_key = str(process_env.get("AWS_ACCESS_KEY_ID") or "")
+    secret_key = str(process_env.get("AWS_SECRET_ACCESS_KEY") or "")
+    session_token = str(process_env.get("AWS_SESSION_TOKEN") or "")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(authorization["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(authorization["expires_at"]).replace("Z", "+00:00")
+        )
+        acceptance_expires_at = datetime.fromisoformat(
+            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
+    now = datetime.now(timezone.utc)
+    valid = (
+        authorization.get("schema")
+        == "npa.libero.output-storage-authorization.v2"
+        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("run_id") == run_id
+        and authorization.get("output_prefix") == output_prefix
+        and authorization.get("endpoint_url") == endpoint
+        and hashlib.sha256(output_prefix.encode()).hexdigest()
+        == infrastructure.get("output_storage_prefix_sha256")
+        and authorization.get("policy_sha256")
+        == infrastructure.get("output_storage_policy_sha256")
+        and all((access_key, secret_key, session_token))
+        and authorization.get("access_key_id_sha256")
+        == hashlib.sha256(access_key.encode()).hexdigest()
+        and authorization.get("secret_access_key_sha256")
+        == hashlib.sha256(secret_key.encode()).hexdigest()
+        and authorization.get("session_token_sha256")
+        == hashlib.sha256(session_token.encode()).hexdigest()
+        and re.fullmatch(
+            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
+        )
+        is not None
+        and issued_at.tzinfo is not None
+        and expires_at.tzinfo is not None
+        and acceptance_expires_at.tzinfo is not None
+        and issued_at <= now + timedelta(minutes=5)
+        and issued_at < expires_at
+        and expires_at > now
+        and expires_at - issued_at <= timedelta(hours=24)
+        and expires_at <= acceptance_expires_at
+    )
+    if not valid:
+        raise ValueError("LIBERO output storage authorization is invalid or expired")
+
+
 def preflight_skypilot_submission(
     documents: Sequence[dict[str, Any]], *, project: str = "", infra: str = "",
     extra_env: Mapping[str, str] | None = None,
     target: ExecutionTarget | None = None,
     global_config: Mapping[str, Any] | None = None,
+    authorization_global_config: Mapping[str, Any] | None = None,
+    submission_backend: str = "",
     sky_bin: str = "",
     cwd: str | None = None,
+    run_id: str = "",
+    executable_profile_sha256: str = "",
 ) -> tuple[ExecutionTarget, dict[str, Any], dict[str, str]]:
     """Shared raw/rendered SkyPilot CLI+SDK gate before controller or job create.
 
@@ -425,10 +842,46 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError("worker_environment", "implicit SkyPilot project overrides require an explicit --config-path and removal of the implicit override", status="unknown")
     documents = skypilot_task_documents(documents)
     workflow_env = skypilot_workflow_environment(documents)
+    libero_submission = verify_solution_payload_service_accounts(
+        documents, global_config=global_config
+    )
+    if libero_submission:
+        acceptance = _verify_libero_submission_authorization(
+            documents,
+            process_env,
+            authorization_global_config=authorization_global_config or {},
+            submission_backend=submission_backend,
+            infra=infra,
+            run_id=run_id,
+            executable_profile_sha256=executable_profile_sha256,
+        )
+        try:
+            _verify_libero_output_storage_authorization(
+                documents,
+                process_env,
+                acceptance=acceptance,
+                run_id=run_id,
+            )
+        except ValueError as exc:
+            raise ExecutionPreflightError(
+                "credentials",
+                "LIBERO requires exact manager-bound temporary output authority",
+            ) from exc
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
         raise ExecutionPreflightError("gpu", "alternative resource targets are ambiguous; select one effective resource mapping")
-    selected = target.credentials if target is not None else resolve_submit_credentials(
-        project=project, environ=process_env, workflow_env=workflow_env,
+    selected = (
+        resolve_submit_credentials(
+            project=project,
+            environ=process_env,
+            workflow_env=workflow_env,
+            require_process_environment_triplet=True,
+        )
+        if libero_submission
+        else target.credentials
+        if target is not None
+        else resolve_submit_credentials(
+            project=project, environ=process_env, workflow_env=workflow_env,
+        )
     )
     task_resources = [(document, document.get("resources") or {}) for document in documents]
     controller = ((global_config or {}).get("jobs") or {}).get("controller") or {}
@@ -482,11 +935,11 @@ def preflight_skypilot_submission(
         envs = document.setdefault("envs", {})
         bucket = process_env.get("NPA_S3_BUCKET")
         prefix = process_env.get("NPA_S3_PREFIX")
-        if bucket:
+        if bucket and not libero_submission:
             envs["NPA_S3_BUCKET"] = bucket
             if "S3_BUCKET" in envs:
                 envs["S3_BUCKET"] = bucket
-        if prefix:
+        if prefix and not libero_submission:
             envs["NPA_S3_PREFIX"] = prefix
             if "SONIC_OUTPUT_PREFIX" in envs and str(envs["SONIC_OUTPUT_PREFIX"]).strip("/") != prefix.strip("/"):
                 envs["SONIC_OUTPUT_PREFIX"] = prefix
@@ -526,6 +979,10 @@ def preflight_skypilot_submission(
         # A preverified workflow target includes ledger/source destinations as
         # well as task outputs. Fresh task-specific outputs must also be checked.
         target = replace_execution_outputs(target, destinations)
+        if libero_submission:
+            from dataclasses import replace
+
+            target = replace(target, credentials=selected)
     if native_documents and infra.startswith("nebius/"):
         placement = infra.split("/")
         if len(placement) > 3 or placement[1] != target.region:
@@ -539,15 +996,76 @@ def preflight_skypilot_submission(
     injected = {
         "AWS_ACCESS_KEY_ID": selected.access_key_id,
         "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
+        "AWS_SESSION_TOKEN": selected.session_token,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
     }
     for document in documents:
         env = document.setdefault("envs", {})
         for name, value in injected.items():
-            if value:
+            if value and (
+                not libero_submission
+                or (
+                    name
+                    not in {
+                        "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY",
+                        "AWS_SESSION_TOKEN",
+                    }
+                    and name in env
+                )
+            ):
                 env[name] = value
+        if libero_submission:
+            # Storage keys and the session token must reach a LIBERO task only
+            # through SkyPilot's redacted ``--secret`` channel.  Removing a
+            # legacy top-level declaration before persisting prepared YAML also
+            # prevents the payload's exact-resourceName pods/get permission
+            # from reading literal credential values back from its own Pod
+            # specification.
+            for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES:
+                env.pop(name, None)
+
+    if libero_submission:
+        def reject_inline_storage_secret(value: Any) -> None:
+            if isinstance(value, Mapping):
+                envs = value.get("envs")
+                if isinstance(envs, Mapping) and any(
+                    name in envs for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                ):
+                    raise ExecutionPreflightError(
+                        "worker_environment",
+                        "LIBERO authorization and storage material must use the redacted task secret channel",
+                    )
+                pod_env = value.get("env")
+                if isinstance(pod_env, list) and any(
+                    isinstance(entry, Mapping)
+                    and entry.get("name")
+                    in LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                    for entry in pod_env
+                ):
+                    raise ExecutionPreflightError(
+                        "worker_environment",
+                        "LIBERO pod configuration may not inline authorization or storage material",
+                    )
+                for child in value.values():
+                    reject_inline_storage_secret(child)
+            elif isinstance(value, list):
+                for child in value:
+                    reject_inline_storage_secret(child)
+
+        reject_inline_storage_secret([*documents, dict(global_config or {})])
+    # Validate the final in-memory worker documents for every solution at the
+    # same stage.  For LIBERO this is deliberately after credential stripping,
+    # so the checked document is exactly the one persisted for SkyPilot while
+    # its secrets travel only through the separate redacted channel.
     verify_worker_environment(target, [*documents, dict(global_config or {})])
-    if process_env.get("AWS_SESSION_TOKEN") or workflow_env.get("AWS_SESSION_TOKEN"):
+    session_token = process_env.get("AWS_SESSION_TOKEN", "")
+    if workflow_env.get("AWS_SESSION_TOKEN"):
+        raise ExecutionPreflightError(
+            "credentials",
+            "session tokens must use the redacted runtime secret channel",
+        )
+    if not libero_submission and session_token:
         raise ExecutionPreflightError("credentials", "session-token overrides are unsupported by the executing principal contract")
     verify_nebius_mount_principal([*documents, dict(global_config or {})], target=target, sky_bin=sky_bin,
                                   environment={**process_env, **injected}, cwd=cwd)
@@ -568,8 +1086,26 @@ def preflight_skypilot_submission(
             )
         global_kube = (global_config or {}).get("kubernetes") or {}
         allowed = global_kube.get("allowed_nodes") or ()
+        if isinstance(allowed, Mapping):
+            unsupported = {
+                key
+                for key in ("label_selector", "ips")
+                if allowed.get(key)
+            }
+            if unsupported:
+                raise ExecutionPreflightError(
+                    "gpu",
+                    "allowed_nodes label and IP filters cannot be verified against "
+                    "the GPU inventory; use exact node names",
+                    status="unknown",
+                )
+            allowed = allowed.get("names") or ()
         if not isinstance(allowed, (tuple, list)):
             raise ExecutionPreflightError("gpu", "global allowed_nodes shape is unknown", status="unknown")
+        if any(not isinstance(name, str) or not name.strip() for name in allowed):
+            raise ExecutionPreflightError(
+                "gpu", "global allowed_nodes names must be non-empty strings", status="unknown"
+            )
         for document in kubernetes_documents:
             resources = document.get("resources") or {}
             if not isinstance(resources, Mapping):
@@ -594,6 +1130,9 @@ def preflight_skypilot_submission(
                 allowed_nodes=allowed, pod_spec=pod_spec)
 
     report = verify_execution_target(target, gpu_check=gpu_check)
+    report["checks"]["libero_authorization"] = (
+        "pass" if libero_submission else "not-required"
+    )
     return target, report, {name: value for name, value in injected.items() if value}
 
 

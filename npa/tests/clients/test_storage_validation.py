@@ -96,6 +96,42 @@ def test_probe_requires_each_storage_prerequisite_without_using_a_client() -> No
     assert "bucket, endpoint, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY" in result.summary
 
 
+def test_probe_constructs_first_client_with_the_complete_session_triplet(
+    monkeypatch,
+) -> None:
+    client = FakeS3()
+    observed: list[dict] = []
+
+    def storage_client(**kwargs):
+        observed.append(kwargs)
+        return client
+
+    monkeypatch.setattr(
+        "npa.clients.storage_validation._storage_client", storage_client
+    )
+    result = probe_storage_write(
+        bucket="bucket",
+        endpoint_url="https://storage.example",
+        access_key_id="manager-access",
+        secret_access_key="manager-secret",
+        session_token="manager-session",
+        key_factory=lambda: "exact-principal",
+    )
+
+    assert result.ok
+    assert observed == [
+        {
+            "endpoint": "https://storage.example",
+            "access": "manager-access",
+            "secret": "manager-secret",
+            "session_token": "manager-session",
+            "region": "",
+            "addressing_style": "path",
+        }
+    ]
+    assert client.calls[0][0] == "put"
+
+
 def test_standard_profile_round_trips_and_reports_optional_cleanup() -> None:
     client = FakeS3()
     result = _probe(client, prefix="checks", key_factory=lambda: "unique")

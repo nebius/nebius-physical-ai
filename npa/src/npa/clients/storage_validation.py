@@ -564,6 +564,7 @@ def probe_storage_write(
     endpoint_url: str,
     access_key_id: str,
     secret_access_key: str,
+    session_token: str = "",
     region: str = "",
     prefix: str = "",
     client: Any | None = None,
@@ -586,7 +587,14 @@ def probe_storage_write(
         return _missing_result(missing, profile=profile)
     if client is None:
         try:
-            client = _storage_client(endpoint=endpoint, access=access, secret=secret, session_token="", region=str(region or "").strip(), addressing_style="path")
+            client = _storage_client(
+                endpoint=endpoint,
+                access=access,
+                secret=secret,
+                session_token=str(session_token or ""),
+                region=str(region or "").strip(),
+                addressing_style="path",
+            )
         except Exception as exc:  # noqa: BLE001
             return _failure_result(classify_storage_failure(exc, phase=StoragePhase.CLIENT_SETUP), profile=profile)
 

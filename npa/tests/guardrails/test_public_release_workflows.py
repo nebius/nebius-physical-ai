@@ -127,6 +127,20 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_publication_uses_the_locked_cryptography_dependency() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    project = (ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert project.count('"cryptography==50.0.0"') == 1
+    assert text.count(
+        'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
+    ) == 2
+    assert text.count(
+        "npa/.venv/bin/python -c 'import cryptography; "
+        'assert cryptography.__version__ == "50.0.0"\''
+    ) == 2
+
+
 def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
@@ -134,7 +148,9 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     auth = names.index("Authenticate immutable public base pulls")
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
-    assert steps[auth]["uses"] == "docker/login-action@v3"
+    assert steps[auth]["uses"] == (
+        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
+    )
     assert auth < build < push
 
 
@@ -209,6 +225,39 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert prepush < push
     assert "Private destination contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    attestations = {
+        step["name"]: step
+        for step in steps
+        if step.get("name")
+        in {
+            "Attest exact pushed digest provenance",
+            "Attest exact pushed digest SBOM",
+            "Require both digest-bound attestation results",
+        }
+    }
+    assert set(attestations) == {
+        "Attest exact pushed digest provenance",
+        "Attest exact pushed digest SBOM",
+        "Require both digest-bound attestation results",
+    }
+    for step in attestations.values():
+        assert step["if"] == "matrix.tool != 'ncore'"
+    assert attestations["Attest exact pushed digest provenance"]["with"][
+        "push-to-registry"
+    ] == "${{ matrix.tool != 'libero' }}"
+    assert attestations["Attest exact pushed digest SBOM"]["with"][
+        "push-to-registry"
+    ] == "${{ matrix.tool != 'libero' }}"
+    result_gate = attestations["Require both digest-bound attestation results"]["run"]
+    result_lines = result_gate.splitlines()
+    assert result_lines[:2] == [
+        'test -s "$PROVENANCE_BUNDLE"',
+        'test -s "$SBOM_BUNDLE"',
+    ]
+    assert not any("&&" in line for line in result_lines[:2])
+    assert 'if [ "$TOOL" != libero ]; then' in result_gate
+    assert 'test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"' in result_gate
     verify = text[text.index("Verify pushed bytes") :]
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
@@ -251,6 +300,15 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
     assert "Requested development tag is already absent" in text
+    failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
+    script = next(
+        step["run"]
+        for step in failed_cleanup["steps"]
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    assert 'gh api -i "$package_api"' in script
+    assert "grep -q '^HTTP/.* 404 '" in script
+    assert "Failed-build package absence is unverified" in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

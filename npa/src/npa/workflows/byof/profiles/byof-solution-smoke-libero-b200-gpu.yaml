@@ -1,0 +1,104 @@
+# Headless, state-based LIBERO one-task BC-RNN qualification. The candidate
+# image is neutral: every LIBERO/runtime/data/model byte is fetched only after
+# the manager-issued decision is verified and remains in the non-root cache.
+name: byof-solution-smoke-libero-b200-gpu
+execution: serial
+---
+name: byof-solution-smoke-libero-b200-gpu
+resources:
+  cloud: kubernetes
+  accelerators: B200:1
+  cpus: 16+
+  memory: 96+
+  disk_size: 100
+  image_id: "docker:<explicit-npa-libero-candidate>@sha256:<digest>"
+  kubernetes:
+    pod_config:
+      spec:
+        serviceAccountName: npa-byof-libero-payload
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: "/opt/npa/libero/smoke.sh"
+  BYOF_SOLUTION_NAME: "libero"
+  BYOF_CAPABILITY_NAME: "libero_spatial_bc_rnn_train_reload_heldout"
+  BYOF_SMOKE_ARTIFACT_NAME: "libero-smoke.json"
+  BYOF_IMAGE: ""
+  LIBERO_RUNTIME_ROOT: "/workspace/.cache/npa/libero/current"
+  NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256: ""
+  NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256: ""
+  NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256: ""
+  NPA_LIBERO_EXPECTED_NAMESPACE_SHA256: ""
+  NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256: ""
+  NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256: ""
+  NPA_LIBERO_EXPECTED_ROLE_UID_SHA256: ""
+  NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256: ""
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
+  /usr/local/sbin/npa-skypilot-bootstrap-guard verify
+  test "$(id -u)" = 1000
+  test "$(id -un)" = ubuntu
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}"
+  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  test -n "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}"
+  test -n "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64}"
+  decision="$(mktemp /tmp/npa-libero-runtime-use-decision.XXXXXXXX)"
+  acceptance="$(mktemp /tmp/npa-libero-manager-acceptance.XXXXXXXX)"
+  cleanup_decision() {
+    rm -f "${decision}" "${acceptance}"
+  }
+  trap cleanup_decision EXIT INT TERM
+  printf '%s' "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}" | base64 -d > "${decision}"
+  chmod 0600 "${decision}"
+  printf '%s' "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}" | base64 -d > "${acceptance}"
+  chmod 0600 "${acceptance}"
+  test "$(sha256sum "${decision}" | cut -d ' ' -f 1)" = \
+    "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  install -d -m 1770 "${output_dir}"
+  chgrp npa-libero-exec "${output_dir}"
+  receipt_dir="/workspace/.cache/npa/libero/run-receipts"
+  install -d -m 0750 "${receipt_dir}"
+  chgrp npa-libero-exec "${receipt_dir}"
+  bootstrap_receipt="${receipt_dir}/${NPA_BYOF_RUN_ID}.json"
+  test ! -e "${bootstrap_receipt}"
+  if ! /opt/npa/libero/runtime-bootstrap.py ensure \
+    --manifest /opt/npa/libero/runtime-manifest.json \
+    --requirements /opt/npa/libero/runtime-requirements.txt \
+    --cache-root /workspace/.cache/npa/libero \
+    --decision "${decision}" \
+    --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
+    --acceptance "${acceptance}" \
+    --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
+    rm -f "${bootstrap_receipt}.partial"
+    exit 1
+  fi
+  chmod 0640 "${bootstrap_receipt}.partial"
+  chgrp npa-libero-exec "${bootstrap_receipt}.partial"
+  mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
+  cleanup_decision
+  trap - EXIT INT TERM
+  unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
+  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
+  test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
+  test -d "${BYOF_REPO_ROOT}/libero/lifelong"
+  test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
+  test ! -e "${BYOF_REPO_ROOT}/.git"
+run: |
+  set -euo pipefail
+  unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
+  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
+  /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
+  /usr/bin/nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
+  # The image-owned supervisor retains a shared descriptor-stable cache lock
+  # across the unprivileged smoke, immutable uploads, and checksum readback.
+  /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-upload

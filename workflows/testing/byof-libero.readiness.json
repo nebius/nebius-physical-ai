@@ -1,0 +1,77 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "solution": "libero",
+  "status": "quarantined_unbuilt_unvalidated",
+  "workflow_sha256": "4e1e978a76889795b91cad4174f8445bb23685ada31605e67ec981aa128af764",
+  "resource_profile_sha256": "2d93302c86c54786ecded5254a09ed8ba6932f40edffac306a8408daef379e34",
+  "input_sha256": {
+    "workflow": "4e1e978a76889795b91cad4174f8445bb23685ada31605e67ec981aa128af764",
+    "resource_profile": "2d93302c86c54786ecded5254a09ed8ba6932f40edffac306a8408daef379e34",
+    "runtime_manifest": "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007",
+    "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+    "runtime_bootstrap": "f24b490bb1406fc6740d2017a157d9365c3332e5fd533a98f7914168f5d6ace9",
+    "smoke": "58835ce7c89db0c2eb2e1d72018d6770a4ab4ad3cb9141b67d6741698e0f3494",
+    "image_manifest": "51bf90d23bfb36d4cc0e6a2d214f9096297b3c5e102a5c0e1842f2845c8ee63c"
+  },
+  "public_image_digest": "",
+  "anonymous_pull_verified": false,
+  "live_validated": false,
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The quarantined saved workflow passed schema validation and produced a single managed workbench.byof.repo plan without executing it.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id libero-phase-a-plan --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Static contract tests bind the managed scheduler ID, Pod-observed payload service account, immutable upstream task and BERT conditioning inputs, runtime-only payload boundary, independent build provenance inputs, real BC-RNN training/reload/held-out artifact contract, and headless B200 requirement. This does not establish live execution.",
+      "evidence": [
+        "npa/tests/workflows/test_byof_libero.py",
+        "npa/tests/workflows/test_byof_container_verify.py",
+        "npa/tests/docker/test_libero_runtime_bootstrap.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is a placeholder and Phase A did not create or probe storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The image contains only immutable metadata. Runtime materialization is disabled because all 135 artifact sizes and 65 license classifications remain pending; Phase A intentionally fetched none of the source, runtime, data, task, or model bytes.",
+      "evidence": [
+        "npa/docker/workbench/libero/runtime-manifest.json",
+        "npa/docker/workbench/libero/REDISTRIBUTION.md"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Live use requires a manager-issued mode-private decision whose digest and complete candidate/infrastructure lineage are fixed by a current checked-in acceptance record. That record is not accepted, provider targets are absent, and no repository value stands in for authorization or credentials.",
+      "evidence": [
+        "npa/docker/workbench/libero/runtime-bootstrap.py",
+        "docs/workbench/byof-libero.md"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The neutral image is unbuilt, has no accepted OCI digest or anonymous-pull proof, and remains in publication quarantine. A future trusted build must pass the dedicated complete-byte, SBOM, provenance, security, and license gates.",
+      "evidence": [
+        "npa/src/npa/deploy/libero_image_manifest.json",
+        "npa/scripts/scan_image_libero_payload.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "Phase A performed no workload submission or GPU use. A future live gate must own the accepted managed submission, independently read back every allowlisted artifact, verify complete UID-bound cleanup, and prove the exact Pod-observed digest on one B200 with sm_100.",
+      "evidence": [
+        "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+        "docs/workbench/byof-libero.md"
+      ]
+    }
+  }
+}

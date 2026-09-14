@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -162,6 +163,153 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
         "memory": 8,
         "autostop": False,
     }
+
+
+def test_submit_workflow_preflight_receives_exact_source_profile_identity(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_bytes = b"name: exact-source-profile\nresources: {cloud: kubernetes}\n"
+    yaml_path.write_bytes(yaml_bytes)
+    sky_bin = _fake_sky(tmp_path)
+    observed: dict[str, object] = {}
+
+    def preflight(documents, **kwargs):
+        observed["documents"] = documents
+        observed.update(kwargs)
+        return None, {}, {}
+
+    def fake_run(command, **_kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "libero-exact-profile-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+    )
+
+    assert observed["run_id"] == "libero-exact-profile-0001"
+    assert observed["authorization_global_config"] == {}
+    assert observed["submission_backend"] == "kubernetes"
+    assert observed["executable_profile_sha256"] == hashlib.sha256(
+        yaml_bytes
+    ).hexdigest()
+
+
+def test_libero_submit_refuses_any_post_authorization_profile_change(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "byof-solution-smoke-libero-b200-gpu",
+                    "envs": {"BYOF_SOLUTION_NAME": "libero"},
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def mutate_after_authorization(documents, **_kwargs):
+        documents[0]["run"] = "unreviewed-command"
+        return None, {"checks": {"libero_authorization": "pass"}}, {}
+
+    monkeypatch.setattr(
+        workflow_module, "_execution_preflight", mutate_after_authorization
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "controller or job command ran after profile drift"
+        ),
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError, match="changed after authorization"
+    ):
+        submit_workflow(
+            yaml_path,
+            "libero-exact-profile-0001",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/unit-context",
+        )
+
+
+def test_submit_uses_shared_libero_classification_for_secret_channel(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+
+    yaml_path = tmp_path / "renamed-candidate.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {"cloud": "kubernetes"},
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_authorization": "pass"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {name: f"unit-{index}" for index, name in enumerate(
+        LIBERO_SKYPILOT_SECRET_ENV_NAMES
+    )}
+
+    submit_workflow(
+        yaml_path,
+        "libero-exact-profile-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1]
+        for index, value in enumerate(launch)
+        if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    prepared = tmp_path / "sky-state" / "submissions" / "libero-exact-profile-0001" / "workflow.yaml"
+    assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:

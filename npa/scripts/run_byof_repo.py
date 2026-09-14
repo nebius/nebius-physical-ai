@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,9 +22,16 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
+    libero_accepted_image_manifest,
+    libero_publication_lineage_values,
+    validate_libero_runtime_decision,
     wan_accepted_image_manifest,
 )
-from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
+from npa.workflows.byof.live import (
+    resolve_byof_kubernetes_target,
+    resolve_byof_profile_path,
+)
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
@@ -40,6 +50,40 @@ ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
+LIBERO_SOLUTION_NAME = "libero"
+LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
+LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
+LIBERO_REPOSITORY_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_BASE_IMAGE = "tool://libero"
+LIBERO_SOURCE_PRUNE_PATH = ""
+LIBERO_BUILD_COMMAND_SHA256 = hashlib.sha256(b"").hexdigest()
+LIBERO_SMOKE_COMMAND_SHA256 = (
+    "a38bfcb66f40fd7d192b2793873aca4ba959a0136f422d3cfe46c9e5c3e9dc43"
+)
+LIBERO_CAPABILITY = "libero_spatial_bc_rnn_train_reload_heldout"
+LIBERO_SMOKE_ARTIFACT = "libero-smoke.json"
+LIBERO_TASK = (
+    "libero_spatial/"
+    "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate"
+)
+
+# SkyPilot 0.12.2 checks these package capabilities synchronously while starting a
+# Kubernetes worker.  Ubuntu's ``fuse3`` package provides the logical ``fuse``
+# capability and both fusermount command names; installing the conflicting
+# ``fuse`` and ``fuse3`` packages together is not valid on Ubuntu 22.04.
+SKYPILOT_BOOTSTRAP_PACKAGE_CAPABILITIES = (
+    "rsync",
+    "curl",
+    "wget",
+    "netcat",
+    "gcc",
+    "patch",
+    "pciutils",
+    "fuse",
+    "fuse3",
+    "openssh-server",
+)
+BYOF_IMAGE_SECURITY_REFRESH_PACKAGES = frozenset({"linux-libc-dev"})
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -89,6 +133,114 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _libero_acceptance_candidate(value: str, acceptance: dict[str, Any]) -> str:
+    candidate = str(value or "").strip().removeprefix("docker:")
+    if candidate != acceptance.get("candidate_image"):
+        raise ValueError(
+            "LIBERO candidate must exactly match checked-in accepted image lineage"
+        )
+    return candidate
+
+
+def _libero_runtime_decision(
+    args: argparse.Namespace, acceptance: dict[str, Any]
+) -> tuple[Path, bytes, str]:
+    path = Path(str(args.libero_runtime_use_decision_file or "")).expanduser()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise ValueError("LIBERO runtime-use decision file is unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError("LIBERO runtime-use decision must be an owner-private regular file")
+    decision_bytes = path.read_bytes()
+    try:
+        _, observed = validate_libero_runtime_decision(
+            decision_bytes,
+            acceptance=acceptance,
+            run_id=args.run_id,
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    return path.resolve(), decision_bytes, observed
+
+
+def _validate_libero_identity(args: argparse.Namespace) -> None:
+    """Reject ambiguous LIBERO identity before registry or build operations."""
+
+    solution = args.solution_name.strip().lower()
+    profile = Path(args.yaml).name.removesuffix(".yaml")
+    repository = args.repo_url.strip().removesuffix(".git").rstrip("/")
+    is_libero = (
+        solution == LIBERO_SOLUTION_NAME
+        or profile == LIBERO_PROFILE_NAME
+        or repository == LIBERO_REPOSITORY
+    )
+    if not is_libero:
+        return
+    if args.solution_name != LIBERO_SOLUTION_NAME:
+        raise ValueError("LIBERO requires the exact --solution-name libero identity")
+    cluster_name_patterns_for_run(args.run_id)
+    if args.workload != "solution-smoke":
+        raise ValueError("LIBERO requires the solution-smoke workload")
+    if profile != LIBERO_PROFILE_NAME:
+        raise ValueError("LIBERO requires its exact B200 solution-smoke profile")
+    selected_profile = resolve_byof_profile_path(args.yaml).resolve()
+    packaged_profile = resolve_byof_profile_path(LIBERO_PROFILE_NAME).resolve()
+    if selected_profile != packaged_profile:
+        raise ValueError("LIBERO requires the packaged B200 solution-smoke profile")
+    exact_values = {
+        "repository": (args.repo_url, f"{LIBERO_REPOSITORY}.git"),
+        "source revision": (args.repo_ref, LIBERO_REPOSITORY_REF),
+        "repository authentication": (args.repo_auth, "none"),
+        "base profile": (args.base_profile, "prebuilt"),
+        "base image": (args.base_image, LIBERO_BASE_IMAGE),
+        "source prune path": (args.source_prune_path, LIBERO_SOURCE_PRUNE_PATH),
+        "capability": (args.capability_name, LIBERO_CAPABILITY),
+        "smoke artifact": (args.smoke_artifact_name, LIBERO_SMOKE_ARTIFACT),
+        "task": (args.task, LIBERO_TASK),
+        "iteration count": (args.iterations, 1),
+        "environment count": (args.num_envs, 1),
+        "demonstration count": (args.num_demos, 1),
+    }
+    for label, (observed, expected) in exact_values.items():
+        if observed != expected:
+            raise ValueError(f"LIBERO requires its exact {label} contract")
+    command_hashes = {
+        "build command": (
+            hashlib.sha256(args.build_command.encode()).hexdigest(),
+            LIBERO_BUILD_COMMAND_SHA256,
+        ),
+        "smoke command": (
+            hashlib.sha256(args.smoke_command.encode()).hexdigest(),
+            LIBERO_SMOKE_COMMAND_SHA256,
+        ),
+    }
+    for label, (observed, expected) in command_hashes.items():
+        if observed != expected:
+            raise ValueError(f"LIBERO requires its exact {label} contract")
+    if args.skip_run:
+        raise ValueError(
+            "LIBERO cannot use --skip-run because live qualification is mandatory"
+        )
+    try:
+        acceptance = libero_accepted_image_manifest()
+        libero_publication_lineage_values(
+            acceptance,
+            SCRIPT_DIR.parents[1],
+            development_sha=acceptance["development_sha"],
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    args._libero_acceptance = acceptance
+    _libero_acceptance_candidate(args.libero_acceptance_candidate_image, acceptance)
+    _libero_runtime_decision(args, acceptance)
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -220,6 +372,26 @@ def _repository_without_tag(image_ref: str) -> str:
     return ref[:colon] if colon > slash else ref
 
 
+def _source_prune_path(value: str) -> str:
+    """Validate one repo-relative path removed in the source checkout layer."""
+
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    parts = path.split("/")
+    if (
+        path.startswith("/")
+        or re.fullmatch(r"[A-Za-z0-9._/-]+", path) is None
+        or ".." in path
+        or any(part in {"", ".", "..", ".git"} for part in parts)
+        or path == "npa_source_metadata.json"
+    ):
+        raise argparse.ArgumentTypeError(
+            "--source-prune-path must be a safe relative repository path"
+        )
+    return path
+
+
 def _resolve_pushed_image_digest(
     image_ref: str, *, env: dict[str, str] | None = None
 ) -> str:
@@ -248,7 +420,7 @@ def _bare_s3_bucket(value: str) -> str:
     return text.split("/", 1)[0].strip()
 
 
-def _live_runner_env(project: str) -> dict[str, str]:
+def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
     env: dict[str, str] = {}
     target = resolve_byof_kubernetes_target(project or None)
     if target.kubeconfig:
@@ -258,16 +430,52 @@ def _live_runner_env(project: str) -> dict[str, str]:
         env["NPA_BYOF_K8S_CONTEXT"] = target.context
     if target.namespace:
         env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
-    try:
-        env.update(
-            storage_env_for_project(
-                project or None,
-                allow_host_creds=True,
-                endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
-            )
+    if libero:
+        exact_names = (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
         )
-    except Exception as exc:
-        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+        exact_values = {name: str(os.environ.get(name) or "") for name in exact_names}
+        if not all(exact_values.values()):
+            raise ValueError(
+                "LIBERO requires one complete manager-authorized storage credential triplet"
+            )
+        endpoint_names = (
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_STORAGE_ENDPOINT",
+            "S3_ENDPOINT_URL",
+        )
+        endpoints = {
+            str(os.environ.get(name) or "").strip().rstrip("/")
+            for name in endpoint_names
+            if os.environ.get(name)
+        }
+        if len(endpoints) != 1:
+            raise ValueError(
+                "LIBERO requires one exact manager-authorized storage endpoint"
+            )
+        env.update(exact_values)
+        env.update(
+            {
+                name: str(os.environ[name])
+                for name in endpoint_names
+                if os.environ.get(name)
+            }
+        )
+    else:
+        try:
+            env.update(
+                storage_env_for_project(
+                    project or None,
+                    allow_host_creds=True,
+                    endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+                )
+            )
+        except Exception as exc:
+            print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
     # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
     for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
@@ -275,7 +483,7 @@ def _live_runner_env(project: str) -> dict[str, str]:
         if bare:
             env["NPA_S3_BUCKET"] = bare
             break
-    if "NPA_S3_BUCKET" not in env:
+    if "NPA_S3_BUCKET" not in env and not libero:
         try:
             from npa.clients.config import _load_yaml, _resolve_project_section
 
@@ -309,23 +517,201 @@ def _registry_path(image_ref: str) -> str:
     return without_digest[:last_slash]
 
 
+def _skypilot_bootstrap_guard_script() -> str:
+    """Return the image-resident SkyPilot package and deadline guard."""
+
+    return """#!/bin/sh
+set -u
+
+real_apt_get=/usr/bin/apt-get
+real_timeout=/usr/bin/timeout
+guard_state=/tmp/npa-skypilot-bootstrap-apt.state
+guard_failure=/tmp/npa-skypilot-bootstrap-contract.failed
+sky_failure=/tmp/apt-ssh-setup.failed
+
+package_installed() {
+    package_status="$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" || return 1
+    [ "$package_status" = "install ok installed" ]
+}
+
+contract_failure() {
+    detail=$1
+    status=${2:-86}
+    sentinel="NPA_SKYPILOT_BOOTSTRAP_FAILED status=${status} detail=${detail}"
+    printf '%s\n' "$sentinel" >&2
+    printf '%s\n' "$sentinel" > "$guard_failure"
+    printf '%s\n' "$sentinel" > "$sky_failure"
+    return "$status"
+}
+
+verify_contract() {
+    missing=""
+    for package in rsync curl wget gcc patch pciutils fuse3 openssh-server coreutils; do
+        package_installed "$package" || missing="$missing $package"
+    done
+
+    netcat_installed=false
+    for package in netcat-openbsd netcat-traditional netcat; do
+        if package_installed "$package"; then
+            netcat_installed=true
+            break
+        fi
+    done
+    [ "$netcat_installed" = true ] || missing="$missing netcat"
+
+    fuse_provides="$(dpkg-query -W -f='${Provides}' fuse3 2>/dev/null)" || fuse_provides=""
+    case " $fuse_provides " in
+        *" fuse "*|*" fuse ("*) ;;
+        *) missing="$missing fuse" ;;
+    esac
+
+    for command_name in sh sudo sshd rsync service curl wget nc gcc patch lspci \
+        fusermount fusermount3 timeout; do
+        command -v "$command_name" >/dev/null 2>&1 \
+            || missing="$missing command:$command_name"
+    done
+
+    if [ -n "$missing" ]; then
+        contract_failure "missing:${missing# }" 86
+        return $?
+    fi
+    printf '%s\n' \
+        'NPA_SKYPILOT_BOOTSTRAP_VERIFIED status=0 apt_required=false'
+}
+
+bootstrap_apt_get() {
+    if [ -z "${SKYPILOT_POD_NODE_TYPE:-}" ] \
+        || [ -e /tmp/apt_ssh_setup_complete ]; then
+        exec "$real_apt_get" "$@"
+    fi
+    verify_contract >/dev/null || exit $?
+    state=""
+    [ ! -f "$guard_state" ] || state="$(cat "$guard_state")"
+    operation=${1:-}
+
+    if [ "$operation" = update ] && [ -z "$state" ]; then
+        printf '%s\n' verified-update > "$guard_state"
+        printf '%s\n' \
+            'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=update'
+        exit 0
+    fi
+
+    if [ "$operation" = install ] && [ "$state" = verified-update ]; then
+        shift
+        requested=""
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                -o|--option)
+                    shift
+                    [ "$#" -gt 0 ] \
+                        || { contract_failure malformed-apt-options 87; exit $?; }
+                    ;;
+                -*) ;;
+                *) requested="$requested $1" ;;
+            esac
+            shift
+        done
+        if [ "$requested" != " fuse" ]; then
+            contract_failure "unexpected-install:${requested# }" 87
+            exit $?
+        fi
+        # Ubuntu's installed fuse3 package genuinely provides fuse and both
+        # command names.  SkyPilot's dpkg-list predicate does not understand
+        # Provides, so acknowledge only that exact redundant install request.
+        printf '%s\n' complete > "$guard_state"
+        printf '%s\n' \
+            'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=install package=fuse provider=fuse3'
+        exit 0
+    fi
+
+    exec "$real_apt_get" "$@"
+}
+
+bootstrap_timeout() {
+    if [ -z "${SKYPILOT_POD_NODE_TYPE:-}" ] \
+        || [ -e /tmp/apt_ssh_setup_complete ]; then
+        exec "$real_timeout" "$@"
+    fi
+    "$real_timeout" --signal=TERM --kill-after=5s "$@"
+    status=$?
+    case "$status" in
+        124|137)
+            contract_failure deadline-exceeded "$status" >/dev/null
+            ;;
+    esac
+    exit "$status"
+}
+
+case "$(basename "$0")" in
+    apt-get) bootstrap_apt_get "$@" ;;
+    timeout) bootstrap_timeout "$@" ;;
+    npa-skypilot-bootstrap-guard)
+        [ "${1:-}" = verify ] || { printf '%s\n' 'usage: npa-skypilot-bootstrap-guard verify' >&2; exit 64; }
+        verify_contract
+        ;;
+    *) printf '%s\n' 'NPA SkyPilot bootstrap guard invoked under an unknown name' >&2; exit 64 ;;
+esac
+"""
+
+
+def _validate_byof_image_security_refresh(dockerfile: str) -> None:
+    """Require security-refresh packages in the generated APT install layer."""
+
+    install_marker = "apt-get install -y --no-install-recommends"
+    try:
+        install_layer = dockerfile.split(install_marker, 1)[1].split(
+            "&& rm -rf /var/lib/apt/lists/*", 1
+        )[0]
+    except IndexError as exc:
+        raise RuntimeError("generated BYOF APT install transaction is malformed") from exc
+    installed = set(re.findall(r"[a-z0-9][a-z0-9+.-]*", install_layer))
+    missing = sorted(BYOF_IMAGE_SECURITY_REFRESH_PACKAGES - installed)
+    if missing:
+        raise RuntimeError(
+            "generated BYOF APT install transaction is missing required "
+            f"security refresh packages: {', '.join(missing)}"
+        )
+
+
+def _immutable_image_digest(image: str) -> str:
+    """Return the immutable digest from an exact image reference, if present."""
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", image.strip())
+    return match.group(1) if match else ""
+
+
 def _dockerfile_text() -> str:
-    return (
+    bootstrap_guard = _skypilot_bootstrap_guard_script()
+    dockerfile = (
         "# syntax=docker/dockerfile:1.7\n"
         "ARG BYOF_BASE_IMAGE\n"
         "FROM ${BYOF_BASE_IMAGE}\n"
+        "ARG BYOF_BASE_IMAGE\n"
+        'ARG BYOF_BASE_IMAGE_DIGEST=""\n'
         'ARG OSS_REPO_URL=""\n'
         'ARG OSS_REPO_REF=""\n'
         "ARG BYOF_SOURCE_VISIBILITY=public\n"
         "ARG BYOF_SOURCE_CACHE_KEY=public\n"
         "ARG BYOF_SOURCE_LABEL_REPO\n"
         "ARG BYOF_SOURCE_LABEL_REF\n"
+        'ARG BYOF_SOURCE_PRUNE_PATH=""\n'
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git ca-certificates python3 python3-pip sudo rsync \\\n"
+        "      git ca-certificates python3 python3-pip sudo coreutils rsync \\\n"
+        "      curl wget gcc patch pciutils fuse3 linux-libc-dev \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
+        "RUN <<'NPA_SKYPILOT_GUARD_INSTALL'\n"
+        "set -eu\n"
+        "cat > /usr/local/sbin/npa-skypilot-bootstrap-guard <<'NPA_SKYPILOT_GUARD'\n"
+        f"{bootstrap_guard}"
+        "NPA_SKYPILOT_GUARD\n"
+        "chmod 0755 /usr/local/sbin/npa-skypilot-bootstrap-guard\n"
+        "ln -sf npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get\n"
+        "ln -sf /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout\n"
+        "NPA_SKYPILOT_GUARD_INSTALL\n"
+        "RUN /usr/local/sbin/npa-skypilot-bootstrap-guard verify\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
         "RUN install -d -m 0755 /run/sshd \\\n"
         "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
@@ -340,11 +726,14 @@ def _dockerfile_text() -> str:
         "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
         "    --mount=type=secret,id=npa_byof_repo_url \\\n"
         "    --mount=type=secret,id=npa_byof_repo_ref \\\n"
+        "    --mount=type=secret,id=npa_byof_source_prune_path \\\n"
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
         "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
         "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        '    source_prune_path="${BYOF_SOURCE_PRUNE_PATH}"; \\\n'
+        "    if [ -s /run/secrets/npa_byof_source_prune_path ]; then source_prune_path=\"$(cat /run/secrets/npa_byof_source_prune_path)\"; fi; \\\n"
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
         "    git_with_auth() { git \"$@\"; }; \\\n"
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
@@ -361,13 +750,32 @@ def _dockerfile_text() -> str:
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
         f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
+        f'    observed_commit="$(git -C {BYOF_REPO_MOUNT} rev-parse HEAD)"; \\\n'
+        '    git_objects_removed=false; \\\n'
+        '    source_pruned=false; \\\n'
+        '    if [ -n "${source_prune_path}" ]; then \\\n'
+        '      case "${source_prune_path}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
+        '      old_ifs="$IFS"; IFS="/"; set -f; set -- $source_prune_path; set +f; IFS="$old_ifs"; \\\n'
+        f'      prune_target="{BYOF_REPO_MOUNT}"; \\\n'
+        '      for component do prune_target="$prune_target/$component"; test ! -L "$prune_target" || { echo "symlinked source prune path" >&2; exit 2; }; done; \\\n'
+        '      test -e "$prune_target"; \\\n'
+        f'      rm -rf -- "$prune_target" {BYOF_REPO_MOUNT}/.git; \\\n'
+        '      test ! -e "$prune_target"; \\\n'
+        f'      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n'
+        '      git_objects_removed=true; \\\n'
+        '      source_pruned=true; \\\n'
+        "    fi; \\\n"
         f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        "      commit_sha=\"$(printf '%s' \"$observed_commit\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        "      prune_sha=\"$(printf '%s' \"$source_prune_path\" | sha256sum | cut -d' ' -f1)\"; \\\n"
+        '      if [ -n "$source_prune_path" ]; then prune_label="<private-source-prune-path>"; else prune_label=""; fi; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
+        f"      test ! -e {BYOF_REPO_MOUNT}/.git; git_objects_removed=true; \\\n"
+        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\",\"commit\":\"<private-commit>\",\"commit_sha256\":\"%s\",\"source_prune_path\":\"%s\",\"source_prune_path_sha256\":\"%s\",\"source_pruned\":%s,\"git_objects_removed\":%s}}\\n' \"$repo_sha\" \"$ref_sha\" \"$commit_sha\" \"$prune_label\" \"$prune_sha\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"source_pruned\": %s,\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"$source_prune_path\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -375,18 +783,24 @@ def _dockerfile_text() -> str:
         'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
         "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
         '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
-        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'
-        f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
+        '  && if [ -n "${BYOF_BASE_IMAGE_DIGEST}" ] && [ "${BYOF_BASE_IMAGE#*@}" = "${BYOF_BASE_IMAGE_DIGEST}" ]; then base_image_digest_pinned=true; else base_image_digest_pinned=false; fi \\\n'
+        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s","base_image_reference":"%s","base_image_digest":"%s","base_image_digest_pinned":%s}}\\n\' \\\n'
+        f'    "$build_command_executed" "$build_command_sha256" "$BYOF_BASE_IMAGE" "$BYOF_BASE_IMAGE_DIGEST" "$base_image_digest_pinned" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f"RUN chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${BYOF_SOURCE_LABEL_REPO}" npa.byof.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'org.opencontainers.image.base.name="${BYOF_BASE_IMAGE}" '
+        'org.opencontainers.image.base.digest="${BYOF_BASE_IMAGE_DIGEST}" '
         'npa.packaging.tier="interactive" '
-        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" '
+        'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"
         "ENV HOME=/home/ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
         'ENTRYPOINT ["/bin/sh", "-c", "if [ \\"$#\\" -gt 0 ]; then exec \\"$@\\"; fi; exec /bin/bash", "npa-byof-entrypoint"]\n'
         'CMD ["/bin/bash"]\n'
     )
+    _validate_byof_image_security_refresh(dockerfile)
+    return dockerfile
 
 
 def _parse_last_json(text: str) -> dict[str, Any] | None:
@@ -517,6 +931,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Optional shell command run during image build from /opt/byof.",
     )
     parser.add_argument(
+        "--source-prune-path",
+        type=_source_prune_path,
+        default="",
+        help=(
+            "Optional safe repo-relative path removed with .git in the source clone "
+            "layer, before later image layers can retain its bytes."
+        ),
+    )
+    parser.add_argument(
         "--smoke-command",
         default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
         help="Optional documented shell command run during solution-smoke from /opt/byof.",
@@ -539,6 +962,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "skip-build acceptance run; never read from ambient environment."
         ),
     )
+    parser.add_argument(
+        "--libero-acceptance-candidate-image",
+        default="",
+        help=(
+            "Explicit digest-pinned npa-libero image for a separately authorized "
+            "acceptance run; never read from ambient environment."
+        ),
+    )
+    parser.add_argument("--libero-runtime-use-decision-file", default="")
     parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
@@ -577,6 +1009,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    try:
+        _validate_libero_identity(args)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "solution_name": args.solution_name,
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
     private_source = args.repo_auth == "github"
     try:
         validate_repository_url(args.repo_url, private=private_source)
@@ -612,6 +1059,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
     explicit_base = _normalize_optional(args.base_image)
+    if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+        explicit_base = _libero_acceptance_candidate(
+            args.libero_acceptance_candidate_image,
+            args._libero_acceptance,
+        )
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
@@ -647,6 +1099,11 @@ def main(argv: list[str] | None = None) -> int:
         "run_id": args.run_id,
         "workload": args.workload,
         "build_command": args.build_command,
+        "source_prune_path": (
+            "<private-source-prune-path>"
+            if private_source and args.source_prune_path
+            else args.source_prune_path
+        ),
         "smoke_command": args.smoke_command,
         "solution_name": args.solution_name,
         "capability_name": args.capability_name,
@@ -666,12 +1123,16 @@ def main(argv: list[str] | None = None) -> int:
                     private_repository_secrets(
                         args.repo_url,
                         args.repo_ref,
+                        source_prune_path=args.source_prune_path,
                         token_env=args.repo_token_env,
                     )
                 )
                 summary["source_identity"] = {
                     "repository_sha256": source_secrets.repository_sha256,
                     "ref_sha256": source_secrets.ref_sha256,
+                    "source_prune_path_sha256": (
+                        source_secrets.source_prune_path_sha256
+                    ),
                 }
             redactions = (
                 source_secrets.redaction_values if source_secrets is not None else ()
@@ -749,6 +1210,10 @@ def _run_byof(
                 f"registered solution {postprocess_key!r} cannot use --skip-run "
                 "because verified postprocessing is mandatory"
             )
+        if args.source_prune_path and skip_build:
+            raise ValueError(
+                "--source-prune-path requires building the source image in this invocation"
+            )
         if not skip_build:
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
@@ -771,6 +1236,8 @@ def _run_byof(
                                 "--build-arg",
                                 f"BYOF_BASE_IMAGE={base_image}",
                                 "--build-arg",
+                                f"BYOF_BASE_IMAGE_DIGEST={_immutable_image_digest(base_image)}",
+                                "--build-arg",
                                 f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
                                 "--build-arg",
                                 (
@@ -778,6 +1245,7 @@ def _run_byof(
                                     + (
                                         source_secrets.repository_sha256
                                         + source_secrets.ref_sha256
+                                        + source_secrets.source_prune_path_sha256
                                         if source_secrets
                                         else "public"
                                     )
@@ -807,6 +1275,16 @@ def _run_byof(
                                 f"id=npa_byof_repo_url,src={source_secrets.repo_url}",
                                 "--secret",
                                 f"id=npa_byof_repo_ref,src={source_secrets.repo_ref}",
+                                "--secret",
+                                (
+                                    "id=npa_byof_source_prune_path,src="
+                                    f"{source_secrets.source_prune_path}"
+                                ),
+                            ]
+                        if source_secrets is None:
+                            build_cmd[8:8] = [
+                                "--build-arg",
+                                f"BYOF_SOURCE_PRUNE_PATH={args.source_prune_path}",
                             ]
                         run_kwargs: dict[str, Any] = {
                             "env": docker_env or None,
@@ -901,6 +1379,8 @@ def _run_byof(
                     cmd.extend(["--capability-name", args.capability_name])
                 if args.smoke_artifact_name:
                     cmd.extend(["--smoke-artifact-name", args.smoke_artifact_name])
+                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+                    cmd.append("--no-direct-launch")
             else:
                 cmd = [
                     sys.executable,
@@ -928,7 +1408,27 @@ def _run_byof(
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
+            live_env = (
+                _live_runner_env(args.project, libero=True)
+                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME
+                else _live_runner_env(args.project)
+            )
+            if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+                _, decision_bytes, decision_sha256 = _libero_runtime_decision(
+                    args, args._libero_acceptance
+                )
+                live_env.update(
+                    {
+                        "NPA_LIBERO_RUNTIME_USE_DECISION_B64": base64.b64encode(
+                            decision_bytes
+                        ).decode("ascii"),
+                        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+                        "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": (
+                            args._libero_acceptance["canonical_build_metadata_sha256"]
+                        ),
+                    }
+                )
+            run_proc = _run(cmd, capture=True, env=live_env)
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)

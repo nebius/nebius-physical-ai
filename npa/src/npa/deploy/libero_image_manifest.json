@@ -1,0 +1,104 @@
+{
+  "schema": "npa.workbench.image-manifest.v1",
+  "tool": "libero",
+  "image_name": "npa-libero",
+  "version": "public-neutral-bootstrap-unbuilt",
+  "status": "quarantined_unbuilt_unvalidated",
+  "redistribution": "public",
+  "payload": "neutral_bootstrap_only",
+  "source_revision": "",
+  "oci_digest": "",
+  "gpu_validation": null,
+  "anonymous_pull_verified": false,
+  "base_linux_amd64_manifest": "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496",
+  "base_rootfs_material": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+  "base_provenance": {
+    "repository": "index.docker.io/library/python",
+    "blob_sha256": "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b",
+    "predicate_type": "https://slsa.dev/provenance/v0.2",
+    "builder_id": "https://github.com/docker-library",
+    "source_revision": "688a0b86bb44289df16a363e9f41d90514c1a5f9"
+  },
+  "base_sbom": {
+    "format": "https://spdx.dev/Document",
+    "blob_sha256": "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
+  },
+  "runtime_payloads_baked": false,
+  "runtime_use_decision_required": true,
+  "runtime_manifest_sha256": "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007",
+  "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+  "governing_terms_count": 7,
+  "runtime_artifact_review": {
+    "status": "incomplete",
+    "pending_size_artifacts": 135,
+    "pending_license_artifacts": 65,
+    "report_sha256": ""
+  },
+  "acceptance": {
+    "schema": "npa.libero.qualification-acceptance.v3",
+    "status": "not_accepted",
+    "acceptance_id": "",
+    "accepted_at": "",
+    "expires_at": "",
+    "candidate_image": "",
+    "oci_digest": "",
+    "platform_manifest_digest": "",
+    "config_digest": "",
+    "canonical_build_metadata_sha256": "",
+    "attestation_manifest_digest": "",
+    "attestation_config_digest": "",
+    "attestation_layers": [
+      {
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "digest": "",
+        "size_bytes": 0
+      },
+      {
+        "predicate_type": "https://spdx.dev/Document",
+        "digest": "",
+        "size_bytes": 0
+      }
+    ],
+    "package_version_digests": [],
+    "complete_image_inventory_sha256": "",
+    "base_provenance_sha256": "",
+    "publication_bundle_sha256": "",
+    "development_sha": "",
+    "upstream_source_revision": "",
+    "build_input_bundle_sha256": "",
+    "publication_enforcement_bundle_sha256": "",
+    "package_writer_repository": "",
+    "runtime_manifest_sha256": "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007",
+    "runtime_use_decision_sha256": "",
+    "infrastructure_bundle_sha256": "",
+    "manager_signature": {
+      "algorithm": "ed25519",
+      "public_key_sha256": "",
+      "signature_b64": ""
+    },
+    "infrastructure": {
+      "run_id": "",
+      "allowed_node_sha256": "",
+      "cluster_identity_sha256": "",
+      "namespace_sha256": "",
+      "namespace_uid_sha256": "",
+      "namespace_inventory_sha256": "",
+      "external_rbac_inventory_sha256": "",
+      "rbac_spec_sha256": "",
+      "role_binding_uid_sha256": "",
+      "role_uid_sha256": "",
+      "service_account_uid_sha256": "",
+      "controller_rbac_spec_sha256": "",
+      "controller_role_binding_uid_sha256": "",
+      "controller_role_uid_sha256": "",
+      "controller_service_account_uid_sha256": "",
+      "payload_kubeconfig_sha256": "",
+      "execution_kubeconfig_sha256": "",
+      "skypilot_config_sha256": "",
+      "output_storage_authorization_sha256": "",
+      "output_storage_prefix_sha256": "",
+      "output_storage_policy_sha256": ""
+    }
+  },
+  "catalog_release": false
+}

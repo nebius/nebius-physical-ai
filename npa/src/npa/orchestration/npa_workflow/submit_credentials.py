@@ -30,6 +30,7 @@ class SubmitCredentialContext:
     bucket: str = ""
     access_key_id: str = field(default="", repr=False)
     secret_access_key: str = field(default="", repr=False)
+    session_token: str = field(default="", repr=False)
     secret_values: Mapping[str, str] = field(default_factory=dict, repr=False)
     missing: tuple[str, ...] = ()
     provenance: Mapping[str, str] = field(default_factory=dict)
@@ -42,6 +43,7 @@ def resolve_submit_credentials(
     requested: Sequence[str] = (),
     environ: Mapping[str, str] | None = None,
     workflow_env: Mapping[str, str] | None = None,
+    require_process_environment_triplet: bool = False,
 ) -> SubmitCredentialContext:
     """Resolve endpoint and explicitly requested secret envs.
 
@@ -53,6 +55,57 @@ def resolve_submit_credentials(
     """
 
     process_env = environ if environ is not None else os.environ
+    if require_process_environment_triplet:
+        credential_names = (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        )
+        values = tuple(str(process_env.get(name) or "") for name in credential_names)
+        if not all(values):
+            raise ValueError(
+                "Manager-authorized storage credentials require one complete "
+                "process-environment access/secret/session triplet"
+            )
+        environment_endpoint = storage_endpoint_from_environment(process_env)
+        if not environment_endpoint:
+            raise ValueError(
+                "Manager-authorized storage credentials require a process-environment endpoint"
+            )
+        if explicit_endpoint and storage_endpoint_url(explicit_endpoint) != storage_endpoint_url(
+            environment_endpoint
+        ):
+            raise ValueError(
+                "Explicit storage endpoint differs from manager-authorized environment"
+            )
+        requested_values = {
+            name: str(process_env.get(name) or "")
+            for name in requested
+            if str(process_env.get(name) or "")
+        }
+        missing = tuple(
+            name for name in requested if not str(process_env.get(name) or "")
+        )
+        bucket = str(
+            process_env.get("NPA_S3_BUCKET")
+            or process_env.get("NPA_CHECKPOINT_BUCKET")
+            or process_env.get("NEBIUS_S3_BUCKET")
+            or ""
+        ).strip()
+        return SubmitCredentialContext(
+            endpoint_url=storage_endpoint_url(environment_endpoint),
+            bucket=bucket,
+            access_key_id=values[0],
+            secret_access_key=values[1],
+            session_token=values[2],
+            secret_values=requested_values,
+            missing=missing,
+            provenance={
+                "credentials": "manager-authorized.environment",
+                "endpoint": "manager-authorized.environment",
+                "bucket": "environment" if bucket else "missing",
+            },
+        )
     env = dict(workflow_env or {})
     env.update({key: value for key, value in process_env.items() if value})
     project_storage = resolve_project_storage(project or None)
