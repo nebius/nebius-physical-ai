@@ -109,6 +109,18 @@ Inspect the chosen route and effective manifest, preserve the operator's
 configuration, and check access to any newly selected gated guardrail payloads.
 Do not infer one route's posture from another route's defaults.
 
+For containerized `generate`, the `1.2.2-cu130-r7` release resolves
+[#270](https://github.com/nebius/nebius-physical-ai/issues/270). The compatibility
+field `guardrails` records the request; inspect `guardrail_state` for discovered
+and evaluated prompt-input and generated-media safety models. Publication
+requires `status: passed` and `effective: true`. Missing models, failed
+evaluations, or an absent/invalid native receipt fail closed. An explicit
+`--no-guardrails` request records `status: explicit_opt_out`, `requested: false`,
+and `effective: false`; do not disable guardrails to recover a failed guarded run.
+Repair access or runtime health and rerun. See the
+[generation guide](../../../docs/workbench/cosmos3-generate.md) for the upstream
+empty-model preset, restored media filter, and RTX PRO 6000 regression evidence.
+
 ## Running The Workflow
 
 Before launch, confirm credentials and access:
@@ -153,6 +165,7 @@ GPU:
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_access.py \
   npa/tests/workbench/test_cosmos3_generate.py \
+  npa/tests/workbench/test_cosmos3_guarded_inference.py \
   npa/tests/cli/test_cosmos3_cli.py \
   npa/tests/docker/test_cosmos3_image_contract.py
 ```
