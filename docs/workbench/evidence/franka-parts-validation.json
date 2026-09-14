@@ -49,25 +49,28 @@
   "paired_parts_evaluation_verified": false,
   "pending_reason": "The corrected parts experiment is running through the standard runtime; training, videos, paired evaluation, and the complete visual audit remain unverified.",
   "physical_robot_tested": false,
+  "physics_capacity": {
+    "gpu_total_aggregate_pairs_capacity": 2097152
+  },
   "prepare_runtime_completed": true,
   "prepared_files_sha256": {
     "assets/bottle.usda": "7caf59359b3ecae0da92efd0a63f652641fe6595968c7531af9d7230d38f8adf",
     "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
     "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
     "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d",
-    "recipe.json": "ae6085e72930d8792457c1b7e392910a85ec1ebf73e4bb8515a41c7dc7166af7"
+    "recipe.json": "5667e6eb5853a51bafc5979642eb3ef07240e9c64fde9b41bc5f05cf756d6d4f"
   },
   "prepared_s3_readback_verified": true,
   "schema": "npa.franka-rl.parts-validation.v1",
-  "source_commit": "9e7f54d82d6d9dfcafe8076786dba7b5fb2c5486",
+  "source_commit": "4562205959aae042937663a8e190cc067a2e1405",
   "test_log_sha256": {
-    "full_unit": "b393f35df3afd5543592c9c6b0ac2b870fd7409c7b819b6cb842ffea787144dd",
-    "security": "60f120ed1789eb70315a274d82b18b3f63440fd52dd57f91cd173a1cbdda2e72"
+    "full_unit": "3f515c363d0ff9a83f36f25ac1dd213c1ccf4bc732f75a24593b010c33c6c4cf",
+    "security": "dd84cc98b772959e982d03b146f7e8360d04b8338583d309781fb152faf57626"
   },
   "tests": {
     "cli_smoke_passed": 114,
-    "focused_passed": 82,
-    "full_unit_passed": 21426,
+    "focused_passed": 85,
+    "full_unit_passed": 21429,
     "full_unit_skipped": 116,
     "full_unit_xpassed": 1,
     "guardrails_passed": 3507,

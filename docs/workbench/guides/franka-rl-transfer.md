@@ -255,10 +255,10 @@ workflow identity; retain the artifact storage for reproduction.
 
 ## Parts and hosted judge validation
 
-The parts and visual-evaluation implementation at commit `9e7f54d8` passed
-82 focused tests, including OpenUSD parsing and support geometry of all four assets, paired capture
+The parts and visual-evaluation implementation at commit `45622059` passed
+85 focused tests, including OpenUSD parsing and support geometry of all four assets, paired capture
 coverage, delayed applied actions, and rejection of unsupported visual claims.
-The Linux unit suite passed **21,426 tests**, with 116 skipped and one existing
+The Linux unit suite passed **21,429 tests**, with 116 skipped and one existing
 unexpected pass. The required security regressions passed **736 tests** with
 CPU `torch==2.13.0`; lint, 3,507 guardrails, 114 CLI smoke tests, and five-stage
 workflow validation also passed.
