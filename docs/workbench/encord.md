@@ -77,6 +77,11 @@ Project pulls do not initialize or export labels by default. The explicit
 `--label-export initialize` option may create a label row or change remote
 label status in Encord. Its manifest records that mutation posture.
 
+Downloaded media records use the exact streamed byte count for `source_size`.
+The Encord catalog may report a rounded file size; item metadata retains that
+value separately as `provider_reported_size`. Destination size and SHA-256
+verification still use the actual media bytes.
+
 ## Verify a roundtrip
 
 ```bash
