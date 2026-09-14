@@ -42,6 +42,7 @@ ISAAC3_OSS_DEPS = COMMON / "isaac3-oss-deps.txt"
 
 EX_CONFIG = 78
 EX_UNAVAILABLE = 69
+EX_SOFTWARE = 70
 
 pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None, reason="bash is required to exercise the bootstrap"
@@ -158,6 +159,51 @@ extra=""
 PYTHONPATH="$purelib${{extra:+:$extra}}${{PYTHONPATH:+:$PYTHONPATH}}" exec "$real" "$@"
 """,
         )
+        self._write(
+            self.bin / "flock",
+            """#!/usr/bin/env python3
+import fcntl
+import sys
+import time
+
+arguments = sys.argv[1:]
+if arguments[0] == "-u":
+    fcntl.flock(int(arguments[1]), fcntl.LOCK_UN)
+    raise SystemExit(0)
+
+timeout = float(arguments[1])
+file_descriptor = int(arguments[2])
+deadline = time.monotonic() + timeout
+while True:
+    try:
+        fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        raise SystemExit(0)
+    except BlockingIOError:
+        if time.monotonic() >= deadline:
+            raise SystemExit(1)
+        time.sleep(0.01)
+""",
+        )
+        self._write(
+            self.bin / "du",
+            """#!/usr/bin/env bash
+if [ "$1" = "-sb" ]; then
+  printf '0\\t%s\\n' "$2"
+  exit 0
+fi
+exec /usr/bin/du "$@"
+""",
+        )
+        self._write(
+            self.bin / "mv",
+            """#!/usr/bin/env bash
+if [ "$1" = "-T" ]; then
+  shift
+  rm -f "$2"
+fi
+exec /bin/mv "$@"
+""",
+        )
         # A fake git that fabricates the Isaac Lab source layout at the pinned commit.
         self._write(
             self.bin / "git",
@@ -256,6 +302,30 @@ def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> No
     result = Harness(tmp_path).run("ensure", ACCEPT_EULA="")
     assert "nvidia.com" in result.stderr
     assert "Omniverse" in result.stderr and "Isaac Sim" in result.stderr
+
+
+def test_bootstrap_refuses_a_cold_cache_without_flock(tmp_path: Path) -> None:
+    """A missing lock primitive must not enter the long contention-retry loop."""
+
+    harness = Harness(tmp_path)
+    (harness.bin / "flock").unlink()
+
+    bash_env = harness.root / "no-flock.bash"
+    bash_env.write_text(
+        """command() {
+  if [ \"${1-}\" = -v ] && [ \"${2-}\" = flock ]; then
+    return 1
+  fi
+  builtin command \"$@\"
+}
+""",
+        encoding="utf-8",
+    )
+    result = harness.run("ensure", BASH_ENV=str(bash_env))
+
+    assert result.returncode == EX_SOFTWARE
+    assert "flock is required" in result.stderr
+    assert not harness.downloaded_anything()
 
 
 @pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])

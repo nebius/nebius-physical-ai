@@ -1,22 +1,9 @@
 name: Image Security Scan
 
 on:
-  pull_request:
-    paths:
-      - "npa/docker/workbench/**"
-      - "npa/scripts/scan_image_omniverse_payload.py"
-      - "npa/scripts/scan_image_bytes.py"
-      - "npa/scripts/image_byte_scan/**"
-      - "npa/tests/docker/test_image_byte*.py"
-      - ".gitleaks.toml"
-      - ".github/workflows/publish-public-images.yml"
-      - "**/Dockerfile*"
-      - ".trivyignore"
-      - "trivy.yaml"
-      - ".github/workflows/image-security-scan.yml"
-  push:
-    branches:
-      - main
+  # The required security-regression check calls this on every PR, merge queue
+  # candidate and main push. Keep one execution per event, without path filters.
+  workflow_call:
   schedule:
     # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
@@ -38,7 +25,7 @@ permissions:
 concurrency:
   # Keep workflows independent, but let a newer commit supersede older work for
   # the same PR. Scheduled and manual scans use run_id so they run to completion.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: image-security-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -188,8 +175,11 @@ jobs:
           output: trivy-config.sarif
 
       - name: Upload config SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
@@ -222,26 +212,45 @@ jobs:
           - name: python-3-11-slim-trixie
             image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
             purge_linux_libc_dev: false
+            # FiftyOne applies these OS security updates before installing its
+            # runtime. Scan that baseline while the upstream digest is stale.
+            upgrade_os: true
     steps:
       - name: Resolve scan target
         id: scan-target
         shell: bash
+        env:
+          BASE_IMAGE: ${{ matrix.image }}
+          SCAN_NAME: ${{ matrix.name }}
+          PURGE_LINUX_LIBC_DEV: ${{ matrix.purge_linux_libc_dev }}
+          UPGRADE_OS: ${{ matrix.upgrade_os || false }}
         run: |
-          if [ "${{ matrix.purge_linux_libc_dev }}" = "true" ]; then
-            patched_image="npa-base-scan:${{ matrix.name }}"
-            docker build \
-              --build-arg BASE_IMAGE="${{ matrix.image }}" \
+          set -euo pipefail
+          if [ "$PURGE_LINUX_LIBC_DEV" = "true" ] || [ "$UPGRADE_OS" = "true" ]; then
+            patched_image="npa-base-scan:${SCAN_NAME}"
+            docker build --pull --no-cache \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg PURGE_LINUX_LIBC_DEV="$PURGE_LINUX_LIBC_DEV" \
+              --build-arg UPGRADE_OS="$UPGRADE_OS" \
               -t "${patched_image}" \
               -f - . <<'DOCKERFILE'
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
           USER root
-          RUN dpkg --purge --force-depends linux-libc-dev \
+          ARG PURGE_LINUX_LIBC_DEV=false
+          ARG UPGRADE_OS=false
+          RUN if [ "$UPGRADE_OS" = "true" ]; then \
+                apt-get update \
+                && apt-get upgrade -y --no-install-recommends; \
+              fi \
+              && if [ "$PURGE_LINUX_LIBC_DEV" = "true" ]; then \
+                dpkg --purge --force-depends linux-libc-dev; \
+              fi \
               && rm -rf /var/lib/apt/lists/*
           DOCKERFILE
             echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
           else
-            echo "image=${{ matrix.image }}" >> "${GITHUB_OUTPUT}"
+            echo "image=${BASE_IMAGE}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Trivy image scan
@@ -269,8 +278,11 @@ jobs:
           output: trivy-${{ matrix.name }}.sarif
 
       - name: Upload image SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-image-${{ matrix.name }}

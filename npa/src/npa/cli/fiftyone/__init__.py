@@ -1284,12 +1284,14 @@ finally:
 
 def _ensure_storage_env_permissions_script() -> str:
     return """\
+npa_fiftyone_env_user="$(id -un)"
+npa_fiftyone_env_group="$(id -gn "$npa_fiftyone_env_user")"
 if [ -f /etc/npa-fiftyone/env ]; then
-  sudo chown "$USER:$USER" /etc/npa-fiftyone/env 2>/dev/null || true
+  sudo chown "$npa_fiftyone_env_user:$npa_fiftyone_env_group" /etc/npa-fiftyone/env 2>/dev/null || true
   sudo chmod 600 /etc/npa-fiftyone/env 2>/dev/null || true
 fi
 if [ -f /opt/lerobot/.env ]; then
-  sudo chown "$USER:$USER" /opt/lerobot/.env 2>/dev/null || true
+  sudo chown "$npa_fiftyone_env_user:$npa_fiftyone_env_group" /opt/lerobot/.env 2>/dev/null || true
   sudo chmod 600 /opt/lerobot/.env 2>/dev/null || true
 fi
 """
@@ -1349,6 +1351,7 @@ def _service_setup_script(
     dataset_update = dataset_update.replace("/etc/npa-fiftyone/env", '"$fiftyone_env_stage/env"')
     return f"""\
 service_user="$(id -un)"
+service_group="$(id -gn "$service_user")"
 was_active="false"
 current_port=""
 current_address=""
@@ -1403,7 +1406,7 @@ if [ -n "$aws_endpoint_url" ]; then printf '%s\\n' "AWS_ENDPOINT_URL=$aws_endpoi
 if [ -n "$nebius_s3_endpoint" ]; then printf '%s\\n' "NEBIUS_S3_ENDPOINT=$nebius_s3_endpoint" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
 if [ -n "$nebius_s3_bucket" ]; then printf '%s\\n' "NEBIUS_S3_BUCKET=$nebius_s3_bucket" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
 if [ -n "$nebius_region" ]; then printf '%s\\n' "NEBIUS_REGION=$nebius_region" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
-sudo chown "$service_user:$service_user" "$fiftyone_env_stage/env"
+sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"
 sudo chmod 600 "$fiftyone_env_stage/env"
 sudo mv -T -- "$fiftyone_env_stage/env" /etc/npa-fiftyone/env
 )
@@ -1463,7 +1466,9 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 sudo apt-get install -y build-essential curl ffmpeg git python3 python3-dev python3-pip python3-venv
 sudo mkdir -p {FIFTYONE_HOME} {FIFTYONE_HOME}/datasets {FIFTYONE_HOME}/db {FIFTYONE_HOME}/zoo/datasets {FIFTYONE_HOME}/zoo/models
-sudo chown -R "$USER:$USER" {FIFTYONE_HOME}
+npa_fiftyone_owner="$(id -un)"
+npa_fiftyone_group="$(id -gn "$npa_fiftyone_owner")"
+sudo chown -R "$npa_fiftyone_owner:$npa_fiftyone_group" {FIFTYONE_HOME}
 fiftyone_env_rebuilt=false
 if [ ! -x {FIFTYONE_VENV}/bin/python ] || ! {FIFTYONE_VENV}/bin/python - <<'PY' >/dev/null 2>&1
 from importlib import metadata

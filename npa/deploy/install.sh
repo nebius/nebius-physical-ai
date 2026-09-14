@@ -8,7 +8,7 @@ VENV="$DEPLOY_ROOT/venv"
 NPA_SRC="${1:-.}"  # path to the npa/ package directory
 
 echo "=== Installing npa package into LeRobot venv ==="
-"$VENV/bin/pip" install --quiet "$NPA_SRC[server]"
+"$VENV/bin/pip" install --quiet "${NPA_SRC}[server]"
 
 echo "=== Setting up systemd service ==="
 sudo mkdir -p /etc/npa-lerobot-server
