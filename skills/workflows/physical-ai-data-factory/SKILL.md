@@ -260,6 +260,12 @@ submit-time snapshot check for enough distinct, Ready, schedulable, product-comp
 nodes after active pod GPU, CPU, memory, init-container, and pod-overhead requests
 are subtracted. An active unbound GPU pod makes shared placement indeterminate and
 fails this check; task-profile node selectors and required node affinity are applied.
+The direct NVIDIA VDA spec keeps `config.augment_cpus=16` for multi-GPU fan-out.
+For a one-GPU run on an existing node, `--var augment_cpus=12` is a supported
+placement-only override when read-only capacity preflight shows that shared
+controller/system reservations leave fewer than 16 CPUs free. Do not lower it for
+multi-GPU fan-out without separately proving host-side model-loading headroom; the
+override changes neither model settings nor evaluator thresholds.
 
 SkyPilot runs the *same* augment command in every pod of the gang, so the stage
 shards: node `k` of `N` renders variants `k, k+N, …` (striding keeps the nodes within

@@ -112,6 +112,12 @@ config:
   # (`--var augment_nodes=4`) rather than editing this file; deployIfAbsent then
   # provisions a cluster with that many GPU nodes.
   augment_nodes: "1"
+  # Host CPU requested by each GPU augment pod. Keep 16 for multi-GPU fan-out;
+  # a single-GPU run on an existing node may lower this (for example to 12)
+  # when read-only capacity preflight proves that controller/system reservations
+  # leave less than 16 CPUs free. This changes placement only, not model or gate
+  # semantics.
+  augment_cpus: "16"
   # Control modality the augmentation is conditioned on: edge, vis, depth, or seg.
   # Cosmos Transfer 2.5 derives edge/vis/seg from the staged input clip. Depth
   # requires an operator-owned precomputed weight-free control; NPA never downloads
@@ -306,7 +312,7 @@ resources:
     # Host-side model loading/checkpoint materialization scales with the
     # multi-GPU variant fan-out. Keep enough CPU/RAM headroom for a 4-GPU
     # override instead of OOM-killing four concurrent Cosmos workers.
-    cpus: 16
+    cpus: "{{config.augment_cpus}}"
     memory: 128Gi
     kubernetes:
       pod_config:

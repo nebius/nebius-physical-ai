@@ -356,11 +356,33 @@ def test_quality_gate_reads_the_evaluator_report() -> None:
 
 
 def test_gpu_resource_has_headroom_for_multi_variant_fanout() -> None:
-    gpu = _spec()["resources"]["gpu"]
-    assert int(gpu["cpus"]) >= 16, "4-way Cosmos fan-out needs CPU headroom"
+    document = _spec()
+    gpu = document["resources"]["gpu"]
+    assert int(document["config"]["augment_cpus"]) >= 16, (
+        "the default 4-way Cosmos fan-out needs CPU headroom"
+    )
+    assert gpu["cpus"] == "{{config.augment_cpus}}"
     assert _memory_gi(gpu["memory"]) >= 128, (
         "4-way Cosmos fan-out OOMs with the old 16Gi profile"
     )
+
+
+def test_single_gpu_augment_cpu_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    raw["config"]["augment_cpus"] = "12"
+    path = tmp_path / "single-gpu-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "gpu", spec.resources["gpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved["cpus"] == "12"
+    assert resolved["accelerators"] == "RTXPRO6000:1"
 
 
 def test_optional_sam2_config_is_validated_before_provisioning(

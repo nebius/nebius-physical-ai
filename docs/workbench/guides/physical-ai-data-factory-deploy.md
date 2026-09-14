@@ -831,6 +831,14 @@ contract.
   `NPA_WORKFLOW_GPU_ACCELERATOR` env var (it fully replaces the accelerator
   string, count included):
 
+The direct NVIDIA VDA workflow defaults `config.augment_cpus` to `16` so
+multi-GPU model loading has host headroom. On an existing single-GPU node where
+the read-only capacity preflight reports fewer than 16 free CPUs because shared
+controller/system pods are resident, `--var augment_cpus=12` is a supported
+placement-only override. Keep the default for multi-GPU fan-out unless that
+node's host-side loading headroom has been verified separately; this override
+does not change inference parameters or quality thresholds.
+
 ```bash
 # Fan 4 scenario variants across 4 GPUs on one node.
 NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
