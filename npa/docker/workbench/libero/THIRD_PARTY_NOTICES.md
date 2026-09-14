@@ -26,7 +26,8 @@ subject to its own upstream terms and the manager-issued use decision. The
 manifest's hash-bound official MIT, CC BY 4.0, Apache 2.0, PyTorch, CUDA,
 NVIDIA software, and cuDNN terms sources are runtime refusal inputs only; none
 of their fetched bytes is retained in this image or treated as acceptance.
-Runtime use remains disabled while any artifact lacks a reviewed positive size
-or license classification. The image manifest records the current incomplete
-review (65 pending license classifications); a future complete report must be
-hash-bound in the checked-in acceptance record before materialization can occur.
+All 135 runtime artifacts now have a reviewed positive size and license
+classification, and the image manifest binds the owner review report. Runtime
+use remains disabled until a separate manager-issued use decision and signed
+candidate acceptance bind the exact runtime manifest; metadata review is not
+consent or authorization to download.

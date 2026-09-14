@@ -131,8 +131,9 @@ The runtime materializer reads `runtime-manifest.json`, which pins the source
 tree, MIT license, sparse task files, CC BY 4.0 demonstration, Apache-2.0 BERT
 files, seven official governing-terms documents, and 135 runtime artifacts by
 URL, reviewed size, license expression, and SHA-256. The checked-in inventory is
-currently incomplete (all sizes and 65 license classifications remain pending),
-so both repository acceptance and runtime materialization fail closed.
+complete at 3,277,640,175 total artifact bytes, but runtime materialization
+still fails closed without a separate manager-issued exact-manifest-bound use
+decision and signed candidate acceptance.
 `runtime-requirements.txt` is itself
 hash-bound and must match the ordered artifact manifest exactly; both bootstrap
 and remaining installs use `pip --require-hashes --no-deps --no-index`. It

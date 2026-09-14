@@ -25,14 +25,14 @@
   },
   "runtime_payloads_baked": false,
   "runtime_use_decision_required": true,
-  "runtime_manifest_sha256": "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007",
+  "runtime_manifest_sha256": "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
-    "status": "incomplete",
-    "pending_size_artifacts": 135,
-    "pending_license_artifacts": 65,
-    "report_sha256": ""
+    "status": "complete",
+    "pending_size_artifacts": 0,
+    "pending_license_artifacts": 0,
+    "report_sha256": "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
   },
   "acceptance": {
     "schema": "npa.libero.qualification-acceptance.v3",
@@ -68,7 +68,7 @@
     "build_input_bundle_sha256": "",
     "publication_enforcement_bundle_sha256": "",
     "package_writer_repository": "",
-    "runtime_manifest_sha256": "af36cc22aaaca698713171ec5a27436d519c97208801a4a1f4b9870bf1184007",
+    "runtime_manifest_sha256": "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2",
     "runtime_use_decision_sha256": "",
     "infrastructure_bundle_sha256": "",
     "manager_signature": {

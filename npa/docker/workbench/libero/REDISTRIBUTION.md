@@ -49,8 +49,10 @@ refuses. The image-shipped runtime requirements lock must exactly match all 135
 artifact identities, and installation uses `--require-hashes --no-deps` from a
 read-only wheelhouse. Materialization additionally requires a positive reviewed
 size and license expression for all 135 artifacts plus a bounded total download;
-the current manifest is incomplete and therefore cannot run. These controls
-prove identity and refusal, not consent.
+the manifest closes those metadata checks at 3,277,640,175 total bytes. Runtime
+materialization still refuses without a manager-issued, manifest-bound use
+decision and signed candidate acceptance. These controls prove identity and
+refusal, not consent.
 
 The candidate remains unbuilt, unvalidated, and quarantined. A private stage
 must first emit a canonical complete-image inventory and OCI config digest for

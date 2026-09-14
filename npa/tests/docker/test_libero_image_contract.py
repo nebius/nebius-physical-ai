@@ -267,16 +267,20 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
             "filename",
             "url",
             "sha256",
+            "size_bytes",
             "license_expression",
             "metadata_source",
         }
         for item in manifest["runtime_artifacts"]
     )
-    assert sum("size_bytes" not in item for item in manifest["runtime_artifacts"]) == 135
-    assert sum(
-        not str(item.get("license_expression") or "").strip()
+    assert all(item["size_bytes"] > 0 for item in manifest["runtime_artifacts"])
+    assert all(
+        str(item["license_expression"]).strip()
         for item in manifest["runtime_artifacts"]
-    ) == 65
+    )
+    assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
+        3_277_640_175
+    )
     lines = [
         line
         for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()

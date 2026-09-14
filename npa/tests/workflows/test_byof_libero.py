@@ -166,7 +166,9 @@ def test_runtime_manifest_closes_source_data_task_model_and_runtime_identity() -
     assert len({item["filename"] for item in artifacts}) == 135
     assert all(len(item["sha256"]) == 64 for item in artifacts)
     assert all(item["url"].startswith("https://") for item in artifacts)
-    assert all("license_expression" in item for item in artifacts)
+    assert all(item["license_expression"].strip() for item in artifacts)
+    assert all(item["size_bytes"] > 0 for item in artifacts)
+    assert sum(item["size_bytes"] for item in artifacts) == 3_277_640_175
 
 
 def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> None:
@@ -295,10 +297,12 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["anonymous_pull_verified"] is False
     assert manifest["runtime_payloads_baked"] is False
     assert manifest["runtime_artifact_review"] == {
-        "status": "incomplete",
-        "pending_size_artifacts": 135,
-        "pending_license_artifacts": 65,
-        "report_sha256": "",
+        "status": "complete",
+        "pending_size_artifacts": 0,
+        "pending_license_artifacts": 0,
+        "report_sha256": (
+            "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
+        ),
     }
     assert manifest["acceptance"]["status"] == "not_accepted"
     assert manifest["acceptance"]["candidate_image"] == ""
