@@ -188,9 +188,33 @@ EXPECTED_BASE = {
 }
 # These externally reviewed anchors close every candidate-added byte. The
 # config binds history/runtime metadata and the ordered diff IDs; the diff IDs
-# bind every raw layer. They stay unset until an authorized build transaction.
-EXPECTED_IMAGE_CONFIG_SHA256: str | None = None
-EXPECTED_ORDERED_LAYER_DIFF_IDS: tuple[str, ...] | None = None
+# bind every raw layer. They come from the independently inspected neutral
+# Linux/amd64 reference build and do not identify its private registry location.
+EXPECTED_IMAGE_CONFIG_SHA256 = (
+    "500cf71fa1d9e0a75d4964145ad5cabeb8f4dab213daa47e3eb4062daa26d8ee"
+)
+EXPECTED_ORDERED_LAYER_DIFF_IDS = (
+    "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a",
+    "sha256:c9cf8fb2bd23a9b4cd1ef490c213633de55e6a887ee5547d089383e491154e12",
+    "sha256:93c52d9272eb0cde34be14ec5541dd7cebeed9c4a13a54d4f3682708dd8a2f1d",
+    "sha256:0045f3459f22650614cba0e2646d6b0370f4ca34395ad21435034ac5f00b9448",
+    "sha256:8587c6811751a3100449f130899bfa9bdf1b4214cb2ec12f19efbee1942cddc1",
+    "sha256:7f055f5205d17043ec1313658cba330c2f238bde0ed0b34019c220746a2a6337",
+    "sha256:79635158e127d0a04f16447015b91173f8d087974e74f038662f239e024a5797",
+    "sha256:ed03f50a7b2aaf2ef2af649de5b3ae7b5b02cb7322252c8f83c05cd080a2024b",
+    "sha256:19e0aa2e363317597d1dd9c36298f4206fa4dd7c959f1cfe9051d8312bed4992",
+    "sha256:09c25ddba64560ba3f771966162de427cfef63be3076a81ad0a19274cb108ad9",
+    "sha256:3e5e0723100daa82e8ad5f1b3ae6d6219f14bb1834a7a0ff00515c2529917d67",
+    "sha256:9383b67b9516ff63b6101eb63b61d43af658be9e94140439906bcd6b1dc670b1",
+    "sha256:b4b8a74abd8032119aafb59213e9d623fa165277c068ca414bc36cafbacfe641",
+    "sha256:788c735ea050854edec8c6cb7fd2b047d63a1f66ec4f7d5ef2e530a1eba72ced",
+    "sha256:0e12e5ec3ae67e7b7acfc3af3ca2d8d22cbaa30ed919aa01a31c7a3aabb447c2",
+    "sha256:c5a7933d5fede3c5fa064ce851fa19398905c5f48db1bd82beb7c08e33d01055",
+    "sha256:e7b1f9832244e62d3eadbeef9e0efdc40d176175757bc1445027c05b30e7a38b",
+    "sha256:da653977f5c0d22035c98b7f98b6331f6125480eed0f6df50624af05ce1d8729",
+    "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+)
 # Neutral files are trusted only after their exact bytes are independently
 # reviewed and pinned here. Repository implementation leaves the built-image
 # trust roots unset, so a local status edit cannot turn the scanner green.
@@ -260,6 +284,17 @@ def _safe(name: str) -> str:
     if not path.parts:
         raise ValueError(f"unsafe archive path: {name}")
     return str(path)
+
+
+def _docker_save_config_digest(config_name: str) -> str:
+    """Return the digest encoded by one supported Docker-save config path."""
+
+    legacy = re.fullmatch(r"([0-9a-f]{64})\.json", config_name)
+    oci = re.fullmatch(r"blobs/sha256/([0-9a-f]{64})", config_name)
+    match = legacy or oci
+    if match is None:
+        raise ValueError("Docker save config filename is not a supported digest path")
+    return match.group(1)
 
 
 def _raw_member(
@@ -1734,7 +1769,7 @@ def scan(path: Path) -> dict[str, Any]:
             archive, config_name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
         )
         config_digest = hashlib.sha256(config_raw).hexdigest()
-        if config_name != f"{config_digest}.json":
+        if _docker_save_config_digest(config_name) != config_digest:
             raise ValueError(
                 "Docker save config filename does not bind its exact bytes"
             )

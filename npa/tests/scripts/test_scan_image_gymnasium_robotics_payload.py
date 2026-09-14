@@ -191,8 +191,10 @@ def _docker_save(
     layer_directory_linknames: dict[str, str] | None = None,
     outer_directories: dict[str, bytes] | None = None,
     outer_directory_linknames: dict[str, str] | None = None,
+    outer_extra_files: dict[str, bytes] | None = None,
     layer_suffix: bytes = b"",
     config_name: str | None = None,
+    oci_config_path: bool = False,
     configured_diff_ids: list[str] | None = None,
     structural_gname: str = "",
 ) -> tuple[str, list[str]]:
@@ -221,7 +223,12 @@ def _docker_save(
         },
         separators=(",", ":"),
     ).encode()
-    actual_name = config_name or hashlib.sha256(config).hexdigest() + ".json"
+    config_digest = hashlib.sha256(config).hexdigest()
+    actual_name = config_name or (
+        f"blobs/sha256/{config_digest}"
+        if oci_config_path
+        else f"{config_digest}.json"
+    )
     manifest = json.dumps(
         [
             {
@@ -238,13 +245,38 @@ def _docker_save(
             actual_name: config,
             "base/layer.tar": base,
             "app/layer.tar": app,
+            **(outer_extra_files or {}),
         },
         directories=outer_directories,
         directory_linknames=outer_directory_linknames,
         gname=structural_gname,
     )
     path.write_bytes(outer)
-    return hashlib.sha256(config).hexdigest(), diff_ids
+    return config_digest, diff_ids
+
+
+def _duplicate_outer_member(path: Path, name: str) -> None:
+    """Append a second physical member while preserving every original byte body."""
+
+    source = path.read_bytes()
+    rendered = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as archive:
+        members = archive.getmembers()
+        bodies = {
+            id(member): archive.extractfile(member).read()
+            for member in members
+            if member.isfile()
+        }
+        duplicate = archive.getmember(name)
+        duplicate_body = bodies[id(duplicate)]
+        with tarfile.open(fileobj=rendered, mode="w") as output:
+            for member in members:
+                output.addfile(
+                    member,
+                    io.BytesIO(bodies[id(member)]) if member.isfile() else None,
+                )
+            output.addfile(duplicate, io.BytesIO(duplicate_body))
+    path.write_bytes(rendered.getvalue())
 
 
 def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
@@ -588,7 +620,7 @@ def test_nonzero_tar_member_padding_refuses_without_echo() -> None:
     assert marker.decode() not in str(captured.value)
 
 
-def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() -> None:
+def test_source_and_built_graph_trust_roots_are_pinned() -> None:
     assert all(
         isinstance(value, str) and len(value) == 64
         for value in SCAN.EXPECTED_NEUTRAL_FILE_SHA256.values()
@@ -596,8 +628,17 @@ def test_source_reviewed_trust_roots_are_pinned_but_built_graph_is_withheld() ->
     assert SCAN.EXPECTED_BASE["uncompressed_layer_digest"] == (
         "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a"
     )
-    assert SCAN.EXPECTED_IMAGE_CONFIG_SHA256 is None
-    assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS is None
+    assert SCAN.EXPECTED_IMAGE_CONFIG_SHA256 == (
+        "500cf71fa1d9e0a75d4964145ad5cabeb8f4dab213daa47e3eb4062daa26d8ee"
+    )
+    assert len(SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS) == 20
+    assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS[0] == (
+        SCAN.EXPECTED_BASE["uncompressed_layer_digest"]
+    )
+    assert all(
+        re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+        for value in SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS
+    )
     assert all(
         isinstance(value, str) and len(value) == 64
         for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
@@ -643,6 +684,94 @@ def test_reviewed_image_graph_closes_every_candidate_added_byte(
     _docker_save(candidate, changed)
     with pytest.raises(ValueError, match="reviewed neutral image config bytes changed"):
         SCAN.scan(candidate)
+
+
+@pytest.mark.parametrize("oci_config_path", [False, True], ids=["legacy", "oci"])
+def test_docker_save_accepts_only_hash_bound_config_path_forms(
+    tmp_path: Path,
+    structural_scan: None,
+    oci_config_path: bool,
+) -> None:
+    image = tmp_path / f"config-{oci_config_path}.tar"
+    config_digest, _diff_ids = _docker_save(
+        image, _required(), oci_config_path=oci_config_path
+    )
+
+    result = SCAN.scan(image)
+
+    assert result["status"] == "passed"
+    assert result["config_sha256"] == config_digest
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "unbound.json",
+        "0" * 64,
+        "blobs/sha256/not-a-digest",
+        "blobs/sha512/" + "0" * 64,
+        "A" * 64 + ".json",
+    ],
+)
+def test_docker_save_refuses_unsupported_config_member_names(
+    tmp_path: Path,
+    structural_scan: None,
+    config_name: str,
+) -> None:
+    image = tmp_path / "bad-config-name.tar"
+    _docker_save(image, _required(), config_name=config_name)
+
+    with pytest.raises(ValueError, match="not a supported digest path"):
+        SCAN.scan(image)
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    ["0" * 64 + ".json", "blobs/sha256/" + "0" * 64],
+    ids=["legacy", "oci"],
+)
+def test_docker_save_refuses_config_path_digest_mismatch(
+    tmp_path: Path,
+    structural_scan: None,
+    config_name: str,
+) -> None:
+    image = tmp_path / "bad-config-digest.tar"
+    _docker_save(image, _required(), config_name=config_name)
+
+    with pytest.raises(ValueError, match="does not bind its exact bytes"):
+        SCAN.scan(image)
+
+
+def test_docker_save_refuses_duplicate_physical_config_member(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "duplicate-config.tar"
+    config_digest, _diff_ids = _docker_save(image, _required())
+    _duplicate_outer_member(image, f"{config_digest}.json")
+
+    with pytest.raises(ValueError, match="duplicate normalized member paths"):
+        SCAN.scan(image)
+
+
+@pytest.mark.parametrize(
+    "unreferenced_name",
+    ["f" * 64 + ".json", "blobs/sha256/" + "f" * 64],
+    ids=["config", "blob"],
+)
+def test_docker_save_refuses_unreferenced_config_or_blob_member(
+    tmp_path: Path,
+    structural_scan: None,
+    unreferenced_name: str,
+) -> None:
+    image = tmp_path / "unreferenced-config.tar"
+    _docker_save(
+        image,
+        _required(),
+        outer_extra_files={unreferenced_name: b"unreferenced"},
+    )
+
+    with pytest.raises(ValueError, match="unexpected Docker-save members"):
+        SCAN.scan(image)
 
 
 @pytest.mark.parametrize(
