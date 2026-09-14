@@ -12,6 +12,12 @@ For the configuration keys and timing contract, see the setup guide's
 [generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
 For rejected runs, see its
 [quality-rejection diagnostics](../../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run).
+For an older installation, see
+[upgrading an existing installation](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation):
+new submissions stage the current NPA source automatically unless explicitly
+overridden, unchanged datasets need no bucket resync, and executing submits
+must omit `--assume-decision promote_checkpoint`. Check the Git SHA and import
+path because the package version remains `0.1.0`.
 
 `workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
