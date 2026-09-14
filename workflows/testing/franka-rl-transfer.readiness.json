@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Preparation succeeded. The operator host lost SSH connectivity before training submission; GPU parts training, paired capture, and the full hosted audit remain unverified. A real Token Factory request on a retained cube capture passed the structured-response contract.",
+      "reason": "The corrected experiment completed preparation and its GPU worker is running; training results, paired capture, and the full hosted audit remain unverified. A real Token Factory request on a retained cube capture passed the revised structured-response contract.",
       "evidence": [
         "docs/workbench/guides/franka-rl-transfer.md"
       ]

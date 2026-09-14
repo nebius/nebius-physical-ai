@@ -1,12 +1,29 @@
 {
   "assets": {
     "description": "orange spool with two wide flanges and a narrow waist",
+    "distractor_positions_m": {
+      "bottle": [
+        0.7549999999999999,
+        0.38,
+        0.05
+      ],
+      "hex_nut": [
+        0.69,
+        0.38,
+        0.03
+      ]
+    },
     "files": {
       "assets/bottle.usda": "7caf59359b3ecae0da92efd0a63f652641fe6595968c7531af9d7230d38f8adf",
       "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
       "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
       "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d"
     },
+    "fixture_position_m": [
+      0.72,
+      0.34,
+      0.0
+    ],
     "license": "Apache-2.0",
     "nominal_mass_kg": 0.08,
     "schema": "npa.franka-rl.assets.v1",
@@ -15,20 +32,22 @@
     "units": "metres"
   },
   "complete_parts_visual_audit_verified": false,
+  "exact_job_resume_recovery_verified": true,
   "gpu_parts_training_verified": false,
   "hosted_contract_probe": {
     "backend": "token_factory",
-    "completion_tokens": 280,
+    "completion_tokens": 334,
     "frames": 15,
     "model": "MiniMaxAI/MiniMax-M3",
     "parts_scene_validation": false,
-    "prompt_tokens": 6840,
+    "prompt_tokens": 6868,
+    "rubric_version": "manipulation-visible-events-v2",
     "source": "retained historical cube-baseline simulator capture",
     "structured_response_and_frame_references_valid": true,
-    "total_tokens": 7120
+    "total_tokens": 7202
   },
   "paired_parts_evaluation_verified": false,
-  "pending_reason": "The operator host lost SSH connectivity after preparation submission; the complete five-stage run remains unverified.",
+  "pending_reason": "The corrected parts experiment is running through the standard runtime; training, videos, paired evaluation, and the complete visual audit remain unverified.",
   "physical_robot_tested": false,
   "prepare_runtime_completed": true,
   "prepared_files_sha256": {
@@ -36,19 +55,19 @@
     "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
     "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
     "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d",
-    "recipe.json": "514d77ecea4a0b8929e8c02ed5b34a90f809b4a50e7c825dc9550e6a4f84a872"
+    "recipe.json": "ae6085e72930d8792457c1b7e392910a85ec1ebf73e4bb8515a41c7dc7166af7"
   },
   "prepared_s3_readback_verified": true,
   "schema": "npa.franka-rl.parts-validation.v1",
-  "source_commit": "67539aaaed431533d5a84e70a4294bf00b82b697",
+  "source_commit": "9e7f54d82d6d9dfcafe8076786dba7b5fb2c5486",
   "test_log_sha256": {
-    "full_unit": "b88d1a3160c22b848c8aba1c7da57270cedf14049e89f843ddb340ea4c5049a3",
-    "security": "420f9a0a75305f67061f3ad57add0f20477a35b79cc3ef5a596a7b22a74bd629"
+    "full_unit": "b393f35df3afd5543592c9c6b0ac2b870fd7409c7b819b6cb842ffea787144dd",
+    "security": "60f120ed1789eb70315a274d82b18b3f63440fd52dd57f91cd173a1cbdda2e72"
   },
   "tests": {
     "cli_smoke_passed": 114,
-    "focused_passed": 73,
-    "full_unit_passed": 21409,
+    "focused_passed": 82,
+    "full_unit_passed": 21426,
     "full_unit_skipped": 116,
     "full_unit_xpassed": 1,
     "guardrails_passed": 3507,
