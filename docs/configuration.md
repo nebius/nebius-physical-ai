@@ -50,6 +50,26 @@ storage or a custom size. To reuse your own bucket, create one first; see
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
+### Human login on a headless machine
+
+If the Nebius CLI runs on a remote operator or development machine, open its
+authorization link in the browser where you are signed in to Nebius. With SSH
+access, follow the [VM authentication skill](../skills/atomic/vm-nebius-auth/SKILL.md)
+to forward the CLI's callback port.
+
+When forwarding is unavailable, the
+[headless OAuth skill](../skills/atomic/nebius-headless-oauth/SKILL.md) provides a
+manual copy/paste flow. It requires a private terminal on the CLI machine, such
+as a browser terminal: its helper accepts the original authorization link and
+final browser callback URL through hidden prompts, checks the callback's port
+and state, and delivers it locally. The returned URL contains a one-time login
+code; keep it out of chat, shell arguments, and saved logs. This is an operator
+skill with a repository helper, not a callback input in the NPA agent chat UI.
+
+After the CLI exits successfully, verify the selected profile with
+`npa workbench health preflight --checks nebius --json`. Keep deployed agent VMs
+on their attached service account; human login belongs on the operator machine.
+
 ### Creating a project from the CLI (tenant administrator)
 
 Creating a project is a privileged action outside NPA. A tenant administrator
