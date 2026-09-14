@@ -120,6 +120,8 @@ run: |
 
   MAX_OUTPUT_FILE_BYTES = 1024 * 1024 * 1024
   MAX_OUTPUT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+  MAX_OUTPUT_ENTRY_COUNT = 1024
+  MAX_OUTPUT_OBJECT_COUNT = 256
   OUTPUT_READ_CHUNK_BYTES = 1024 * 1024
   RESERVED_JSON_MAX_BYTES = 4 * 1024 * 1024
 
@@ -271,7 +273,12 @@ run: |
 
       checked = []
       total_bytes = 0
-      for path in sorted(root.rglob("*")):
+      entry_count = 0
+      object_count = 0
+      for path in root.rglob("*"):
+          entry_count += 1
+          if entry_count > MAX_OUTPUT_ENTRY_COUNT:
+              raise RuntimeError("outputs exceed the filesystem entry count limit")
           details = path.lstat()
           if stat.S_ISLNK(details.st_mode):
               raise RuntimeError(f"output symlink is forbidden: {path}")
@@ -279,6 +286,9 @@ run: |
               continue
           if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
               raise RuntimeError(f"output must be one regular unlinked file: {path}")
+          object_count += 1
+          if object_count > MAX_OUTPUT_OBJECT_COUNT:
+              raise RuntimeError("outputs exceed the regular object count limit")
           try:
               path.resolve().relative_to(root)
           except ValueError as exc:
