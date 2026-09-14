@@ -438,6 +438,18 @@ Video entries optionally set `playback: "hold"` to preserve their final frame
 when a scene outlasts the source clip. The default, `"loop"`, repeats the clip.
 Playback choice participates in scene caching and the rendered asset manifest;
 changing it rebuilds the affected scenes. Neither mode changes the source file.
+For a selected excerpt, add `"trim": [4.5, 12.0]` to the video entry. These are
+in/out points in seconds on the original source timeline. The renderer verifies
+that both points fit the source, seeks to the excerpt, and holds its final frame
+if the scene is longer. Trimmed clips use hold playback; an explicit `"loop"`
+is rejected. Keep the original file and its original SHA-256. Several asset
+roles can select different excerpts from that same file, so adjusting a cut
+requires only a manifest edit. Trim points are retained in render provenance
+and invalidate only scenes that use the changed role.
+Use the one-asset `application` scene layout for recorded software demos. Its
+compact header leaves a taller media panel for cameras, controls and telemetry;
+keep the subtitle to one short line. The ordinary `screen` layout reserves more
+space for explanatory headings and diagrams.
 Paths may be absolute or relative to `assets.json`. Images can reference the
 same original file with `crop: [x, y, width, height]` in source pixels. Crops
 must fit inside the decoded image. Compute each digest with

@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -95,6 +97,42 @@ def test_crop_outside_source_is_rejected(film, tmp_path, monkeypatch):
     })
     with pytest.raises(ValueError, match="Crop exceeds source bounds"):
         film._validate({"scenes": [{"duration": 120, "assets": ["source"]}]}, assets)
+
+
+@pytest.mark.parametrize("trim", [[-1, 2], [2, 2], [0, 4], [True, 2], [0, float("nan")], None])
+def test_invalid_excerpt_is_rejected_before_render(film, trim):
+    with pytest.raises(ValueError, match="trim|Trim"):
+        film._validate_trim({"kind": "video", "trim": trim}, {"format": {"duration": "3"}}, "demo")
+
+
+def test_excerpt_cannot_silently_loop_the_entire_recording(film):
+    with pytest.raises(ValueError, match="requires hold"):
+        film._validate_trim({"kind": "video", "trim": [1, 2], "playback": "loop"},
+                            {"format": {"duration": "3"}}, "demo")
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg unavailable")
+def test_excerpt_decodes_only_selected_frames_and_holds_last_frame(film, tmp_path):
+    source = tmp_path / "recording.mkv"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=64x64:r=30:d=1",
+        "-f", "lavfi", "-i", "color=lime:s=64x64:r=30:d=1",
+        "-f", "lavfi", "-i", "color=blue:s=64x64:r=30:d=1",
+        "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[out]",
+        "-map", "[out]", "-c:v", "ffv1", str(source),
+    ], check=True)
+    asset = {"kind": "video", "path": str(source), "trim": [1, 2]}
+    film._validate_trim(asset, film._probe(source), "demo")
+    filters = film._media_filter(0, asset, (0, 0, 64, 64), 2, {"width": 64})
+    frames = subprocess.check_output([
+        "ffmpeg", "-v", "error", *film._input(asset), "-filter_complex", filters[0],
+        "-map", "[media0]", "-t", "2", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+    ])
+    assert len(frames) == 60 * 64 * 64 * 3
+    for frame in range(60):
+        offset = (frame * 64 * 64 + 32 * 64 + 32) * 3
+        red, green, blue = frames[offset:offset + 3]
+        assert green > 240 and red < 10 and blue < 10
 
 
 def test_captions_follow_scene_boundaries_and_do_not_run_past_them(film, tmp_path, monkeypatch):

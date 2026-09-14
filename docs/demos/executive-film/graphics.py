@@ -56,6 +56,8 @@ def _rectangles(scene):
         return [(160, 348, 1600, 632)]
     if layout == "screen":
         return [(72, 294, 1776, 680)]
+    if layout == "application":
+        return [(72, 132, 1776, 844)]
     if layout == "split":
         return [(72, 455, 1136, 520), (1232, 455, 616, 520)]
     if layout == "comparison":
@@ -107,6 +109,14 @@ def _base(scene, index, total):
 
 
 def _headlines(draw, scene):
+    if scene["layout"] == "application":
+        title = " ".join(scene["title"])
+        size = 40
+        while draw.textlength(title, font=_font(size, 700)) > 1100:
+            size -= 1
+        _text(draw, (330, 34), title, size, _WHITE, 700)
+        _text(draw, (72, 984), scene["subtitle"], 20, _MUTED)
+        return
     if scene["layout"] == "immersive":
         _immersive_headlines(draw, scene)
         return

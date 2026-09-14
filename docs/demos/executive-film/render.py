@@ -125,19 +125,39 @@ def _validate(storyboard, assets, scene_id=None):
         if crop and (len(crop) != 4 or any(type(v) is not int or v < 0 for v in crop)
                      or crop[2] == 0 or crop[3] == 0):
             raise ValueError(f"Invalid pixel crop for {role}")
-        streams = _probe(path)["streams"]
+        probe = _probe(path)
+        streams = probe["streams"]
         visual = next((s for s in streams if s["codec_type"] == "video"), None)
         if visual is None:
             raise ValueError(f"No decodable visual stream for {role}")
         if crop and (crop[0] + crop[2] > visual["width"] or crop[1] + crop[3] > visual["height"]):
             raise ValueError(f"Crop exceeds source bounds for {role}")
+        _validate_trim(asset, probe, role)
         asset["path"] = str(path)
     return required
+
+
+def _validate_trim(asset, probe, role):
+    if "trim" not in asset:
+        return
+    trim = asset["trim"]
+    if (asset["kind"] != "video" or not isinstance(trim, list) or len(trim) != 2
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in trim)
+            or not 0 <= trim[0] < trim[1]):
+        raise ValueError(f"Invalid trim for {role}: use [start_seconds, end_seconds] on a video")
+    if asset.get("playback", "hold") != "hold":
+        raise ValueError(f"Trimmed video {role} requires hold playback")
+    duration = float(probe.get("format", {}).get("duration", "nan"))
+    if not math.isfinite(duration) or trim[1] > duration:
+        raise ValueError(f"Trim exceeds known source duration for {role}")
 
 
 def _input(asset):
     if asset["kind"] == "image":
         return ["-loop", "1", "-framerate", "30", "-i", asset["path"]]
+    if "trim" in asset:
+        start, end = asset["trim"]
+        return ["-ss", str(start), "-t", str(end - start), "-i", asset["path"]]
     if asset.get("playback") == "hold":
         return ["-i", asset["path"]]
     return ["-stream_loop", "-1", "-i", asset["path"]]
@@ -156,7 +176,7 @@ def _media_filter(index, asset, rectangle, duration, profile):
     if asset["kind"] == "image":
         filters.append(f"zoompan=z='1+0.018*on/{30 * duration}':"
                        f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps=30")
-    elif asset.get("playback") == "hold":
+    elif asset.get("playback") == "hold" or "trim" in asset:
         filters.append(f"tpad=stop_mode=clone:stop_duration={duration}")
     filters += [f"trim=duration={duration}", "format=yuv420p"]
     layer = f"[{index}:v]{','.join(filters)}[media{index}]"
