@@ -1,6 +1,8 @@
 """Verify Arena packaging, exact-source patches, and replay reset semantics."""
 
 import importlib.util
+import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -117,30 +119,37 @@ def test_evidence_patch_preserves_render_and_applies_every_context(tmp_path: Pat
     with pytest.raises(RuntimeError, match="context changed"):
         module.patch_sources(policy, embodiment, video, metric)
 
+def _replay_reset_assertions() -> str:
+    return textwrap.dedent("""\
+        from types import SimpleNamespace
+        events = []
+        state = {"articulation": {"microwave": {"joint_position": [0.2]}}}
+        def reset_to(value, env_ids, *, is_relative):
+            assert value is state and env_ids is None and is_relative is True
+            events.append("recorded_state")
+            return {"observation": "from_recorded_state"}, {}
+        env = SimpleNamespace(unwrapped=SimpleNamespace(reset_to=reset_to))
+        policy = SimpleNamespace(get_initial_state=lambda: state,
+                                 reset=lambda: events.append("policy_reset"))
+        assert apply_reset(env, policy) == {"observation": "from_recorded_state"}
+        assert events == ["recorded_state", "policy_reset"]
+        policy.get_initial_state = lambda: None
+        try:
+            apply_reset(env, policy)
+        except RuntimeError as error:
+            assert "did not provide an initial state" in str(error)
+        else:
+            raise AssertionError("missing replay state was accepted")
+    """)
 
-def test_replay_reset_applies_exact_state_once_before_policy_reset() -> None:
-    from types import SimpleNamespace
 
+def test_replay_reset_applies_exact_state_once_before_policy_reset(tmp_path: Path) -> None:
     module = _evidence_patch()
-    events = []
-    state = {"articulation": {"microwave": {"joint_position": [0.2]}}}
-
-    def reset_to(value, env_ids, *, is_relative):
-        assert value is state and env_ids is None and is_relative is True
-        events.append("recorded_state")
-        return {"observation": "from_recorded_state"}, {}
-
-    env = SimpleNamespace(unwrapped=SimpleNamespace(reset_to=reset_to))
-    policy = SimpleNamespace(get_initial_state=lambda: state,
-                             reset=lambda: events.append("policy_reset"))
-    program = textwrap.dedent(module.POLICY_RUNNER_RESET_PATCHED) + "finally:\n    pass\n"
-    namespace = {"env": env, "policy": policy}
-    exec(compile(program, "patched_replay_reset", "exec"), namespace)
-    assert namespace["obs"] == {"observation": "from_recorded_state"}
-    assert events == ["recorded_state", "policy_reset"]
-    policy.get_initial_state = lambda: None
-    with pytest.raises(RuntimeError, match="did not provide an initial state"):
-        exec(compile(program, "patched_replay_reset", "exec"), namespace)
+    program = tmp_path / "patched_replay_reset.py"
+    program.write_text("def apply_reset(env, policy):\n" + module.POLICY_RUNNER_RESET_PATCHED
+                       + "    finally:\n        pass\n    return obs\n" + _replay_reset_assertions())
+    completed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:

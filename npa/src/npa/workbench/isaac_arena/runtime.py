@@ -199,6 +199,9 @@ def _runner_options(request: IsaacArenaRequest, output_dir: Path) -> list[str]:
 
 
 def _policy_input_argv(request: IsaacArenaRequest, local_input: Path | None) -> list[str]:
+    if request.dry_run and request.policy_type in {"replay", "rsl_rl"}:
+        flag = "--replay_file_path" if request.policy_type == "replay" else "--checkpoint_path"
+        return [flag, "<operator-input>"]
     if request.policy_type == "replay":
         if local_input is None or not local_input.is_file():
             raise IsaacArenaError("replay input_path must resolve to one HDF5 file")

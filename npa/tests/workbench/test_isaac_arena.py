@@ -196,6 +196,20 @@ def test_policy_specific_inputs_are_fail_closed(tmp_path: Path) -> None:
         raise AssertionError("RSL-RL evaluation accepted an incomplete checkpoint")
 
 
+@pytest.mark.parametrize("policy,flag", [("replay", "--replay_file_path"), ("rsl_rl", "--checkpoint_path")])
+def test_policy_dry_run_requires_no_input_download_or_local_file(tmp_path, policy, flag):
+    request = IsaacArenaRequest(
+        output_path=str(tmp_path / "out"), policy_type=policy,
+        input_path=str(tmp_path / "absent-input"), dry_run=True,
+    )
+    with patch("npa.workbench.isaac_arena.runtime._local_input", side_effect=AssertionError("must not load")):
+        result = evaluate(request)
+    assert result["status"] == "dry_run"
+    assert result["argv"][result["argv"].index(flag) + 1] == "<operator-input>"
+    assert result["argv"].index(flag) < result["argv"].index("cube_goal_pose")
+    assert not (tmp_path / "out").exists()
+
+
 def _fake_upstream(
     argv: list[str], **_kwargs: object
 ) -> subprocess.CompletedProcess[str]:
