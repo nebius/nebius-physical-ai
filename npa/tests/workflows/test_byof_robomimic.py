@@ -523,6 +523,11 @@ def test_robomimic_observer_cleanup_runs_after_gate_failure(
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
 
+def _exception_diagnostics(error: BaseException) -> tuple[str, ...]:
+    values = getattr(error, "__notes__", error.args)
+    return tuple(str(value) for value in values)
+
+
 def test_robomimic_observer_cleanup_checks_every_resource_after_delete_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -541,7 +546,7 @@ def test_robomimic_observer_cleanup_checks_every_resource_after_delete_failure(
         ):
             raise RuntimeError("simulated gate failure")
 
-    assert any("cleanup failed" in note for note in raised.value.__notes__)
+    assert any("cleanup failed" in note for note in _exception_diagnostics(raised.value))
     assert sum("delete" in command for command in calls) == 3
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
@@ -590,7 +595,10 @@ def test_robomimic_observer_cleanup_never_deletes_foreign_owner(
             pytest.fail("the context must not yield after create failure")
 
     assert not any("delete" in command for command in calls)
-    assert any("owned by another invocation" in note for note in raised.value.__notes__)
+    assert any(
+        "owned by another invocation" in note
+        for note in _exception_diagnostics(raised.value)
+    )
 
 
 def test_robomimic_observer_cleanup_continues_after_kubectl_launch_error(
@@ -611,7 +619,9 @@ def test_robomimic_observer_cleanup_continues_after_kubectl_launch_error(
         ):
             raise RuntimeError("simulated gate failure")
 
-    assert any("FileNotFoundError" in note for note in raised.value.__notes__)
+    assert any(
+        "FileNotFoundError" in note for note in _exception_diagnostics(raised.value)
+    )
     assert sum("delete" in command for command in calls) == 3
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
@@ -651,7 +661,9 @@ def test_robomimic_observer_cleanup_contains_every_lookup_oserror(
         ):
             raise RuntimeError("simulated gate failure")
 
-    assert any(expected_note in note for note in raised.value.__notes__)
+    assert any(
+        expected_note in note for note in _exception_diagnostics(raised.value)
+    )
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
 
