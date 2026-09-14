@@ -3,7 +3,7 @@
 from film_cache import _fingerprint
 
 _TEXT_FIELDS = ("prompt", "audience", "goal", "tone", "call_to_action")
-_LAYOUTS = {"hero": 1, "cinematic": 1, "immersive": 1, "application": 1, "feature": 1, "reason": 1,
+_LAYOUTS = {"film": 1, "hero": 1, "cinematic": 1, "immersive": 1, "application": 1, "feature": 1, "reason": 1,
             "evidence": 1, "cameras": 1, "screen": 1, "close": 3,
             "triptych": 3, "split": 2, "comparison": 2, "review": 2, "pipeline": 4}
 
@@ -56,6 +56,9 @@ def _authoring_packet(storyboard, assets, overrides):
                 "duration": "Positive whole seconds per scene; optional top-level duration must equal their sum.",
                 "layouts_and_asset_counts": _LAYOUTS,
                 "presentation": "Optional storyboard footer; scene footer overrides it. Close scenes use scene.cta.",
+                "film_layout": "Full-frame footage with restrained titles and no progress bar or source labels. "
+                               "Use title_position bottom-left or center, brand true for the official logo, "
+                               "and title_delay_seconds/title_duration_seconds for title timing. Provenance stays in assets.",
                 "details": "Optional quote, quote_heading, source_notes, review_steps and pipeline_labels are scene text.",
             },
             "available_assets": {role: {"kind": asset["kind"], "sha256": asset["sha256"],

@@ -35,6 +35,18 @@ def test_storyboard_has_exact_runtime_and_a_panel_for_every_label(film):
             assert y + height <= story["height"]
 
 
+@pytest.mark.parametrize("timing", [
+    {"title_delay_seconds": "1"}, {"title_duration_seconds": float("nan")},
+    {"title_delay_seconds": -1}, {"title_duration_seconds": 0.1},
+    {"title_delay_seconds": 8, "title_duration_seconds": 3},
+])
+def test_film_title_timing_is_rejected_before_rendering(film, timing):
+    scene = {"id": "opening", "layout": "film", "duration": 10,
+             "assets": ["scene"], "labels": [""], "title": ["Before the first move."], **timing}
+    with pytest.raises(ValueError, match="Film title"):
+        film._validate_layout(scene)
+
+
 @pytest.mark.parametrize("size", [0, 17, 1024 * 1024 + 17])
 def test_asset_hash_supports_python_310_and_chunk_boundaries(film, tmp_path, monkeypatch, size):
     monkeypatch.delattr(hashlib, "file_digest", raising=False)
@@ -224,9 +236,10 @@ def _patch_encoding(film, monkeypatch, calls):
         payload = {"scene": {k: v for k, v in scene.items() if k != "narration"}, "assets": assets, "profile": profile}
         (directory / f"{scene['id']}.mp4").write_text(json.dumps(payload))
 
-    def audio(scenes, voice_dir, directory, cache_root):
+    def audio(scenes, voice_dir, directory, cache_root, music_path=None):
         calls["audio"] += 1
-        (directory / "mix.m4a").write_bytes(b"".join((voice_dir / f"{s['id']}.mp3").read_bytes() for s in scenes))
+        payload = b"".join((voice_dir / f"{s['id']}.mp3").read_bytes() for s in scenes)
+        (directory / "mix.m4a").write_bytes(payload + (music_path.read_bytes() if music_path else b""))
 
     def assemble(args, storyboard, assets, parts, audio, selected, offset, staging):
         calls["assembly"] += 1
@@ -259,6 +272,18 @@ def test_title_edit_rebuilds_one_scene_and_revert_reuses_prior_variant(editing_s
     assert report["scenes_rendered"] == 0 and report["assembly_reused"]
     assert sorted(calls["visual"]) == ["first", "first", "second"]
     assert calls["audio"] == 1
+
+
+def test_music_edit_rebuilds_audio_and_retains_visuals(editing_session, tmp_path):
+    film, args, story, assets, calls = editing_session
+    args.music_path = tmp_path / "score.wav"
+    args.music_path.write_bytes(b"original score")
+    _edit_run(editing_session)
+    args.music_path.write_bytes(b"revised score")
+    report = _edit_run(editing_session)
+    assert report["scenes_rendered"] == 0 and report["scenes_reused"] == 2
+    assert not report["audio_reused"] and not report["assembly_reused"]
+    assert calls["audio"] == 2
 
 
 def test_narration_and_caption_edits_do_not_reencode_visuals(editing_session):

@@ -98,9 +98,13 @@ def _narration(scenes, voice_dir, output_dir, cache_root=None):
     return target
 
 
-def _mix(scenes, voice_dir, output_dir, cache_root=None):
+def _mix(scenes, voice_dir, output_dir, cache_root=None, music_path=None):
     music = output_dir / "original-score.wav"
-    _score(music, sum(s["duration"] for s in scenes))
+    duration = sum(s["duration"] for s in scenes)
+    if music_path:
+        _prepare_music(music_path, music, duration)
+    else:
+        _score(music, duration)
     narration = _narration(scenes, Path(voice_dir), output_dir, cache_root)
     result = output_dir / "mix.m4a"
     subprocess.run([
@@ -109,3 +113,14 @@ def _mix(scenes, voice_dir, output_dir, cache_root=None):
         "-ar", str(_RATE), "-c:a", "aac", "-b:a", "256k", str(result),
     ], check=True)
     return result
+
+
+def _prepare_music(source, target, duration):
+    digest = _hash(source)
+    if _duration(source) + 0.05 < duration:
+        raise ValueError("Supplied music must cover the film duration; extend the score before rendering")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source),
+                    "-t", str(duration), "-af", "loudnorm=I=-29:TP=-6:LRA=12",
+                    "-ar", str(_RATE), "-ac", "2", str(target)], check=True)
+    if _hash(source) != digest:
+        raise ValueError("Music changed during mixing; rerun after finishing the edit")

@@ -85,9 +85,28 @@ def _validate_layout(scene):
         raise ValueError(f"Scene {scene['id']} needs {count} asset roles and labels for {scene['layout']}")
     if scene["layout"] == "immersive" and len(scene["title"]) > 2:
         raise ValueError("Immersive scenes support at most two headline lines")
+    if scene["layout"] == "film":
+        _validate_film_titles(scene)
     for field, maximum in (("source_notes", 2), ("review_steps", 3), ("pipeline_labels", 3)):
         if len(scene.get(field, [])) > maximum:
             raise ValueError(f"Scene {scene['id']} supports at most {maximum} {field}")
+
+
+def _validate_film_titles(scene):
+    if len(scene["title"]) > 2:
+        raise ValueError("Film scenes support at most two headline lines")
+    if scene.get("title_position", "bottom-left") not in {"bottom-left", "center"}:
+        raise ValueError("Film title_position must be bottom-left or center")
+    if type(scene.get("brand", False)) is not bool:
+        raise ValueError("Film brand must be a boolean")
+    delay = scene.get("title_delay_seconds", 0.5)
+    if type(delay) not in (int, float) or not math.isfinite(delay):
+        raise ValueError("Film title timing must use finite seconds")
+    duration = scene.get("title_duration_seconds", scene["duration"] - delay)
+    if any(type(value) not in (int, float) or not math.isfinite(value) for value in (delay, duration)):
+        raise ValueError("Film title timing must use finite seconds")
+    if delay < 0 or duration < 0.5 or delay + duration > scene["duration"]:
+        raise ValueError("Film titles must fit inside the scene with at least 0.5 seconds of display")
 
 
 def _validate_duration(storyboard):
@@ -194,12 +213,26 @@ def _filter_graph(scene, assets, profile=None):
     count = len(scene["assets"])
     graph.append(f"[{count + 1}:v]scale={width}:{height},format=rgba[graphic]")
     graph.append(f"[base{count}][graphic]overlay=0:0:shortest=1[framed]")
+    if scene["layout"] == "film":
+        return _film_filter_graph(graph, scene, count, width, height)
     graph.append(f"[{count + 2}:v]scale={width}:{height},format=rgba,fade=t=in:st=0.15:d=0.5:alpha=1[titles]")
     graph.append(f"[framed][titles]overlay=x='-{55 * width / 1920}*exp(-6*t)':y=0:shortest=1[composed]")
     bar_height = round(4 * width / 1920)
     graph.append(f"color=c=0xdcff46:s={width}x{bar_height}:r=30[bar]")
     graph.append(f"[composed][bar]overlay=x='-{width}+{width}*min(t/{duration},1)':y={height - bar_height}:shortest=1,"
                  f"fade=t=in:d=0.18,fade=t=out:st={duration - 0.18}:d=0.18,format=yuv420p[out]")
+    return ";\n".join(graph)
+
+
+def _film_filter_graph(graph, scene, count, width, height):
+    delay = scene.get("title_delay_seconds", 0.5)
+    duration = scene.get("title_duration_seconds", scene["duration"] - delay)
+    fade = min(0.6, duration / 2)
+    graph.append(f"[{count + 2}:v]scale={width}:{height},format=rgba,"
+                 f"fade=t=in:st={delay}:d={fade}:alpha=1,"
+                 f"fade=t=out:st={delay + duration - fade}:d={fade}:alpha=1[titles]")
+    graph.append("[framed][titles]overlay=0:0:shortest=1,"
+                 f"fade=t=in:d=0.3,fade=t=out:st={scene['duration'] - 0.3}:d=0.3,format=yuv420p[out]")
     return ";\n".join(graph)
 
 
@@ -325,6 +358,7 @@ def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", type=Path, required=True, help="Private JSON mapping asset roles to local paths, kinds and SHA-256 digests.")
     parser.add_argument("--voice-dir", type=Path, required=True)
+    parser.add_argument("--music-path", type=Path, help="Optional local score covering the complete film; defaults to the synthesized bed.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--storyboard", type=Path, default=_ROOT / "storyboard.json")
     parser.add_argument("--profile", choices=_PROFILES, default="final")
@@ -424,9 +458,11 @@ def _render_film(args, storyboard, assets, environment):
     started = time.perf_counter()
     selected, offset = _selection(storyboard, args.scene)
     root = args.output_dir / ".cache"
+    music = getattr(args, "music_path", None)
+    music_options = {"music_path": music} if music else {}
     audio, audio_reused = _build_cached(root, "audio",
-        _audio_inputs(storyboard["scenes"], args.voice_dir, environment),
-        lambda staging: _mix(storyboard["scenes"], args.voice_dir, staging, root))
+        _audio_inputs(storyboard["scenes"], args.voice_dir, environment, music),
+        lambda staging: _mix(storyboard["scenes"], args.voice_dir, staging, root, **music_options))
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         pending = [pool.submit(_scene_job, args, scene, index, len(storyboard["scenes"]),
                                assets, environment) for index, scene in selected]

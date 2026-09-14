@@ -44,7 +44,7 @@ def _paragraph(draw, position, text, size, width, color=_MUTED, weight=500):
 
 def _rectangles(scene):
     layout = scene["layout"]
-    if layout in {"hero", "cinematic", "immersive"}:
+    if layout in {"film", "hero", "cinematic", "immersive"}:
         return [(0, 0, 1920, 1080)]
     if layout in {"close", "triptych"}:
         return [(72 + i * 600, 492, 576, 438) for i in range(3)]
@@ -85,6 +85,8 @@ def _branding(image, index, total, footer):
 
 
 def _base(scene, index, total):
+    if scene["layout"] == "film":
+        return _film_base(scene)
     image = Image.new("RGBA", (_WIDTH, _HEIGHT), _INK)
     draw = ImageDraw.Draw(image)
     for x in range(72, _WIDTH, 150):
@@ -109,6 +111,9 @@ def _base(scene, index, total):
 
 
 def _headlines(draw, scene):
+    if scene["layout"] == "film":
+        _film_headlines(draw, scene)
+        return
     if scene["layout"] == "application":
         title = " ".join(scene["title"])
         size = 40
@@ -151,6 +156,8 @@ def _immersive_headlines(draw, scene):
 
 
 def _labels(draw, scene):
+    if scene["layout"] == "film":
+        return
     for rectangle, label in zip(_rectangles(scene), scene["labels"], strict=True):
         x, y, width, height = rectangle
         if scene["layout"] == "immersive":
@@ -162,6 +169,33 @@ def _labels(draw, scene):
         draw.rectangle((x, y + height - 43, x + width - 1, y + height - 1),
                        fill=(8, 13, 18, 232))
         _text(draw, (x + 18, y + height - 30), label, 16, _WHITE, 700)
+
+
+def _film_base(scene):
+    image = Image.new("RGBA", (_WIDTH, _HEIGHT))
+    draw = ImageDraw.Draw(image)
+    if scene["title"] or scene["subtitle"]:
+        for y in range(540, _HEIGHT):
+            opacity = round(180 * ((y - 540) / 540) ** 1.8)
+            draw.line((0, y, _WIDTH, y), fill=(4, 8, 12, opacity))
+    if scene.get("brand", False):
+        image.alpha_composite(_logo(), (96, 64))
+    return image
+
+
+def _film_headlines(draw, scene):
+    size = 76
+    while any(draw.textlength(line, font=_font(size, 600)) > 1728 for line in scene["title"]):
+        size -= 1
+    centered = scene.get("title_position", "bottom-left") == "center"
+    spacing = round(size * 1.2)
+    title_y = 470 if centered else 914 - spacing * len(scene["title"])
+    for index, line in enumerate(scene["title"]):
+        x = (1920 - draw.textlength(line, font=_font(size, 600))) / 2 if centered else 96
+        _text(draw, (x, title_y + index * spacing), line, size, _WHITE, 600)
+    subtitle = scene["subtitle"]
+    x = (1920 - draw.textlength(subtitle, font=_font(26, 500))) / 2 if centered else 100
+    _text(draw, (x, title_y + len(scene["title"]) * spacing + 14), subtitle, 26, _WHITE)
 
 
 def _details(draw, scene):

@@ -33,10 +33,11 @@ def _scene_inputs(scene, index, total, assets, profile, environment):
     }
 
 
-def _audio_inputs(scenes, voice_dir, environment):
+def _audio_inputs(scenes, voice_dir, environment, music_path=None):
     return {"scenes": [{"duration": scene["duration"],
                         "audio": _hash(voice_dir / f"{scene['id']}.mp3")}
                        for scene in scenes],
+            "music_sha256": _hash(music_path) if music_path else None,
             "code": _hash(_ROOT / "soundtrack.py"), "environment": environment}
 
 

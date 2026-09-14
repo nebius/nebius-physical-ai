@@ -13,10 +13,10 @@ _ROOT = Path(__file__).parent
 
 def _project(path):
     project = json.loads(path.read_text())
-    allowed = {"storyboard", "assets", "voice_dir", "output_dir", "voice"}
+    allowed = {"storyboard", "assets", "voice_dir", "output_dir", "voice", "music_path"}
     if not isinstance(project, dict) or set(project) - allowed:
         raise ValueError("Film projects support only local editing paths and voice; keep cloud configuration external")
-    for field in ["storyboard", "assets", "voice_dir", "output_dir"]:
+    for field in ["storyboard", "assets", "voice_dir", "output_dir", *(["music_path"] if "music_path" in project else [])]:
         value = Path(project[field]).expanduser()
         project[field] = value.resolve() if value.is_absolute() else (path.parent / value).resolve()
     return project
@@ -29,6 +29,8 @@ def _render_command(args, project):
                "--workers", str(args.workers)]
     if args.scene:
         command += ["--scene", args.scene]
+    if project.get("music_path"):
+        command += ["--music-path", str(project["music_path"])]
     if args.plan:
         command.append("--plan")
     return command

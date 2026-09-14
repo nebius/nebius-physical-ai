@@ -47,6 +47,32 @@ regenerating speech. Use `brief` to change the audience, request or duration,
 then author the corresponding storyboard. Both executive and inference films
 share this workflow; two minutes is an example, not a renderer limit.
 
+## Film presentation
+
+Use `layout: "film"` for a full-frame shot with up to two restrained headline
+lines. This layout omits source labels, slide framing, scene counters and the
+progress bar. Keep tool attribution and run evidence in `assets.json`; use the
+other layouts when that evidence belongs on screen.
+
+Film scenes accept `title_position: "bottom-left"` (default) or `"center"`, and
+`brand: true` to show the bundled official Nebius logo (default false). An empty
+`title` array and empty `subtitle` leave the footage clear. Supply one asset and
+one label entry; the label remains in the storyboard but is not drawn.
+
+`title_delay_seconds` defaults to 0.5. `title_duration_seconds` defaults to the
+rest of the scene. Both accept finite seconds; titles must fit within the scene
+and display for at least 0.5 seconds, including their fades. For example, a
+10-second scene with a 1-second delay and a 4-second title duration gives the
+footage five clear seconds after the title fades. These settings are independent
+of narration, film duration and the production tool that generated the footage.
+
+Set optional `music_path` in `film-project.json` to a local instrumental score,
+resolved relative to the project file. The score must cover the complete film;
+Studio normalizes it underneath narration and includes its content hash in the
+audio cache. Replacing the music rebuilds the mix while retaining cached visual
+scenes. Omit this field to use the original synthesized default bed. Supply music
+you are authorized to use, and record its origin with the project evidence.
+
 ## Find footage in object storage
 
 `npa studio search` discovers assets before a film project exists. It uses the
