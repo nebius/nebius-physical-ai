@@ -29,7 +29,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The new USD bundle parses with OpenUSD; actual parts simulation validation is pending. Earlier cube evidence remains historical.",
+      "reason": "Standard-runtime preparation completed and all five published files passed independent S3 checksum verification. All four USD assets parse with OpenUSD; GPU parts simulation remains unverified.",
       "evidence": [
         "npa/tests/workflows/test_franka_rl_assets.py"
       ]
@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "New five-stage parts and VLM execution is pending; historical four-stage cube metrics do not validate these changes.",
+      "reason": "Preparation succeeded. The operator host lost SSH connectivity before training submission; GPU parts training, paired capture, and the full hosted audit remain unverified. A real Token Factory request on a retained cube capture passed the structured-response contract.",
       "evidence": [
         "docs/workbench/guides/franka-rl-transfer.md"
       ]

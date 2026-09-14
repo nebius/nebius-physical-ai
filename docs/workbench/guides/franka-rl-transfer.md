@@ -237,6 +237,30 @@ LeRobot MP4s before treating an artifact reference as visual evidence. When the
 run is complete, cancel its jobs before removing its dedicated cluster and
 workflow identity; retain the artifact storage for reproduction.
 
+## Parts and hosted judge validation
+
+The parts and visual-evaluation implementation at commit `67539aaa` passed
+73 focused tests, including OpenUSD parsing of all four assets, paired capture
+coverage, delayed applied actions, and rejection of unsupported visual claims.
+The Linux unit suite passed **21,409 tests**, with 116 skipped and one existing
+unexpected pass. The required security regressions passed **736 tests** with
+CPU `torch==2.13.0`; lint, 3,507 guardrails, 114 CLI smoke tests, and five-stage
+workflow validation also passed.
+
+The standard runtime completed `prepare`, and an independent S3 readback
+verified all five published files: the recipe and four USD assets. A real
+Token Factory contract check judged 15 timestamped frames from a retained
+cube-baseline capture with the exact MiniMax-M3 model and validated its
+frame-cited structured response. That check validates the hosted request path;
+it does not validate the new parts scene or the 32-episode visual audit.
+
+The operator host lost SSH connectivity after submission. Parts training,
+paired GPU evaluation, new videos, and the complete hosted audit remain
+**unverified**. The readiness sidecar keeps that boundary explicit. Historical
+cube measurements below retain their original scope.
+The [validation record](../evidence/franka-parts-validation.json) retains the
+asset and test-log hashes alongside these measured boundaries.
+
 ## Historical cube baseline on RTX PRO 6000
 
 The measurements below belong to the original four-stage cube experiment at
