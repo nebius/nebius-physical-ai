@@ -26,9 +26,11 @@ skill's adaptation, not an upstream CLI command or an NPA agent chat feature.
   [vm-nebius-auth](../vm-nebius-auth/SKILL.md). It returns the authorization link
   and exact tunnel command without transferring the callback code manually.
 - For unattended VM or CI authentication, use a
-  [project-scoped service account](references/service-accounts.md). After its
-  initial setup, an attached VM identity or an authorized-key profile works
+  [project-scoped service account](../nebius-service-account-auth/SKILL.md).
+  After initial setup, an attached VM identity or an authorized-key profile works
   without browser interaction. Choose its role for the intended operations.
+  For interactive work that needs the operator's own identity, human OAuth
+  avoids creating a separate account and maintaining an authorized key.
 - Use this manual method for an authorized human login when forwarding is
   unavailable and the operator can enter hidden input in a terminal on the CLI
   machine, for example an existing private browser terminal. Chat alone does not

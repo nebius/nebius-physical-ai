@@ -11,6 +11,10 @@ terminal on the CLI machine, use
 delivery. Its returned URL contains a one-time code and must not pass through
 chat. The tunnel flow below remains the path when SSH forwarding is available.
 
+For unattended VM or CI work, use
+[nebius-service-account-auth](../nebius-service-account-auth/SKILL.md) to
+configure or verify a dedicated service identity and project-scoped grants.
+
 ## Diagnose before starting login
 
 For a read-only readiness request, use

@@ -50,6 +50,25 @@ storage or a custom size. To reuse your own bucket, create one first; see
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
+### Authentication on a headless machine
+
+Choose the identity to match the work. Human OAuth is convenient for
+interactive development with the operator's existing permissions. A service
+account gives unattended workloads their own permissions and credentials.
+
+| Work | Route | Setup and ongoing interaction |
+| --- | --- | --- |
+| Unattended VM or CI workload | [Service-account skill](../skills/atomic/nebius-service-account-auth/SKILL.md) | Project administrator sets up the identity and grants once; attached VM identity or an authorized-key profile authenticates without a browser |
+| Interactive human login with SSH forwarding | [VM authentication skill](../skills/atomic/vm-nebius-auth/SKILL.md) | Open the authorization link; the SSH tunnel delivers the browser callback |
+| Interactive human login without forwarding | [Headless OAuth skill](../skills/atomic/nebius-headless-oauth/SKILL.md) | Open the authorization link, then paste the final callback into hidden prompts on the CLI machine |
+
+For a new Nebius VM, an attached service account avoids distributing a private
+authorized key. On an existing VM without one, use a dedicated authorized-key
+profile and maintain its key lifecycle. Human OAuth does not require creating a
+service account, but later CLI reauthentication can require browser interaction.
+Copying the operator's entire `~/.nebius` credential cache is not needed for
+either route.
+
 ### Human login on a headless machine
 
 If the Nebius CLI runs on a remote operator or development machine, open its
