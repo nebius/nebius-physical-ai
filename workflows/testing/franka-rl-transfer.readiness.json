@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "0f32ce3eb5f4a7459dad55ecc5dcc8ec11efc2dd1a407617ec8ce5737cd01d23",
+  "workflow_sha256": "ac91e2b3344a447fa7540065ffddd90d52a36138f1a23ad4e3fe4ccd43cda1b2",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec pass with four ordinary runtime stages.",
+      "reason": "validate-spec and plan-spec pass with five ordinary runtime stages.",
       "evidence": [
         "npa workbench workflow validate-spec",
         "npa workbench workflow plan-spec --waves"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Real Isaac Franka PPO, validation-only selection, paired held-out evaluation, and native LeRobot/Rerun conversion are wired.",
+      "reason": "Native Franka PPO uses sealed USD parts, paired physics tests, per-episode hosted visual judgments, and LeRobot/Rerun exports.",
       "evidence": [
         "npa/tests/workflows/test_franka_rl.py",
         "docs/workbench/guides/franka-rl-transfer.md"
@@ -28,15 +28,15 @@
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The worker fetched the pinned Isaac runtime and instantiated 4,096 real Franka environments with object mass/material events.",
+      "status": "unverified",
+      "reason": "The new USD bundle parses with OpenUSD; actual parts simulation validation is pending. Earlier cube evidence remains historical.",
       "evidence": [
-        "Private native Isaac worker log"
+        "npa/tests/workflows/test_franka_rl_assets.py"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "Operator Nebius identity and project storage credentials passed preflight; no gated model dependency.",
+      "reason": "Nebius identity, project storage, and Token Factory authentication passed; the requested vision model is available to the account.",
       "evidence": [
         "Private operator preflight"
       ]
@@ -49,11 +49,9 @@
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "All four standard-runtime stages completed on reserved RTX PRO 6000: 1,500 PPO updates, 1,024 paired test trials, four fully decoded RTX MP4s, and a decoded Franka Rerun recording. Simulation qualification remains false.",
+      "status": "unverified",
+      "reason": "New five-stage parts and VLM execution is pending; historical four-stage cube metrics do not validate these changes.",
       "evidence": [
-        "docs/workbench/evidence/franka-rl-rtx.json",
-        "docs/workbench/evidence/franka-rl-rtx-trials.csv",
         "docs/workbench/guides/franka-rl-transfer.md"
       ]
     }

@@ -81,7 +81,9 @@ def _execute_stage(args, recipe: dict, config) -> None:
     elif args.stage == "capture":
         from npa.workflows.franka_rl_capture import capture_policy
 
-        capture_policy(args.input_path / "selected.pt", args.output_path, recipe)
+        filename = "initial.pt" if args.capture_arm == "initial" else "selected.pt"
+        capture_policy(args.input_path / filename, args.output_path, recipe,
+                       arm=args.capture_arm, condition=args.condition)
     else:
         from npa.workflows.franka_rl_eval import evaluate_checkpoints, validate_checkpoints
 
@@ -109,17 +111,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("stage", choices=("train", "validate", "test", "capture"))
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument("--capture-arm", choices=("initial", "trained"), default="trained")
+    parser.add_argument("--condition", default="nominal")
     add_launcher_args(parser)
     args = parser.parse_args(argv)
     recipe = json.loads((args.input_path / "recipe.json").read_text())
     seed_key = {"train": "seed", "validate": "validation_seed", "test": "test_seed", "capture": "capture_seed"}
     configure_seed(recipe[seed_key[args.stage]])
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
-    config = environment_config(recipe, training=args.stage == "train", capture=args.stage == "capture")
+    config = environment_config(recipe, training=args.stage == "train", capture=args.stage == "capture",
+                                condition=args.condition, asset_root=args.input_path)
     config.seed = recipe[seed_key[args.stage]]
     args.enable_cameras = args.stage == "capture"
     args.output_path.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.input_path / "recipe.json", args.output_path / "recipe.json")
+    if "assets" in recipe:
+        shutil.copytree(args.input_path / "assets", args.output_path / "assets", dirs_exist_ok=True)
     with launch_simulation(config, args):
         _execute_stage(args, recipe, config)
     return 0

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -22,10 +23,14 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--num-envs", type=int, default=4096)
     prepare.add_argument("--eval-episodes", type=int, default=128)
     prepare.add_argument("--minimum-success", type=float, default=0.7)
-    for stage in ("train", "evaluate", "report"):
+    prepare.add_argument("--asset", choices=("spool", "hex_nut", "bottle"), default="spool")
+    prepare.add_argument("--vlm-model", default="MiniMaxAI/MiniMax-M3")
+    for stage in ("train", "evaluate", "visual-evaluate", "report"):
         command = commands.add_parser(stage)
         command.add_argument("--input-path", required=True)
         command.add_argument("--output-path", required=True)
+        if stage == "report":
+            command.add_argument("--vlm-path", required=True)
     prepare.add_argument("--output-path", required=True)
     return parser
 
@@ -58,11 +63,25 @@ def _recipe(args: argparse.Namespace) -> dict:
     }
 
 
-def _native_step(stage: str, prepared: Path, output: Path) -> None:
+def _prepare(args, output: Path) -> None:
+    from npa.workbench.vlm_eval.temporal import RUBRIC, RUBRIC_VERSION
+    from npa.workflows.franka_rl_assets import write_assets
+    import hashlib
+
+    recipe = _recipe(args)
+    recipe["assets"] = write_assets(output, args.asset)
+    recipe["visual_eval"] = {"model": args.vlm_model, "frame_count": 16,
+        "rubric_version": RUBRIC_VERSION, "rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(),
+        "minimum_lift_agreement": 0.8, "role": "independent_capture_audit",
+        "arms": ["initial", "trained"], "conditions": list(recipe["conditions"])}
+    write_json(output / "recipe.json", recipe)
+
+
+def _native_step(stage: str, prepared: Path, output: Path, *extra: str) -> None:
     interpreter = os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh")
     argv = [interpreter, "-m", "npa.workflows.franka_rl_runtime", stage,
             "--input-path", str(prepared), "--output-path", str(output),
-            "--visualizer", "none"]
+            "--visualizer", "none", *extra]
     output.mkdir(parents=True, exist_ok=True)
     log_path = output / ("runtime.log" if stage == "train" else f"{stage}.log")
     receipts = {"train": ("training.json", "schema", "npa.franka-rl.training.v1"),
@@ -89,7 +108,32 @@ def _run_native(stage: str, prepared: Path, output: Path) -> None:
     # Each reset stream owns a fresh simulator and Replicator graph.
     _native_step("validate", prepared, output)
     _native_step("test", prepared, output)
-    _native_step("capture", output, output / "trajectories")
+    recipe = json.loads((prepared / "recipe.json").read_text())
+    if "visual_eval" not in recipe:
+        _native_step("capture", output, output / "trajectories")
+        return
+    from npa.workflows.franka_rl_capture_merge import merge_captures
+
+    shutil.copy2(prepared / "initial.pt", output / "initial.pt")
+    for arm in recipe["visual_eval"]["arms"]:
+        for condition in recipe["visual_eval"]["conditions"]:
+            _native_step("capture", output, output / "captures" / f"{arm}-{condition}",
+                         "--capture-arm", arm, "--condition", condition)
+    merge_captures(output, recipe)
+
+
+def _run_stage(args, prepared: Path, output: Path, workspace: Path) -> None:
+    if args.stage == "report":
+        from npa.workflows.franka_rl_report import report_results
+
+        visual = materialize(args.vlm_path, workspace / "visual")
+        report_results(prepared, output, visual=visual)
+    elif args.stage == "visual-evaluate":
+        from npa.workflows.franka_rl_vlm import evaluate_captures
+
+        evaluate_captures(prepared, output)
+    else:
+        _run_native(args.stage, prepared, output)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,15 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         workspace = Path(temporary)
         output = workspace / "output"
         if args.stage == "prepare":
-            write_json(output / "recipe.json", _recipe(args))
+            _prepare(args, output)
         else:
             prepared = materialize(args.input_path, workspace / "input")
-            if args.stage == "report":
-                from npa.workflows.franka_rl_report import report_results
-
-                report_results(prepared, output)
-            else:
-                _run_native(args.stage, prepared, output)
+            _run_stage(args, prepared, output, workspace)
         publish(output, args.output_path)
         print(json.dumps({"stage": args.stage, "status": "complete"}))
     return 0

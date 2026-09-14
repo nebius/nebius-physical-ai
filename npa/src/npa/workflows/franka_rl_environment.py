@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
-def environment_config(recipe: dict, *, training: bool, condition: str = "nominal", capture: bool = False):
+
+def environment_config(recipe: dict, *, training: bool, condition: str = "nominal",
+                       capture: bool = False, asset_root: Path | None = None):
     """Build the pinned Franka lift task with explicit physical perturbations.
 
     Args:
@@ -11,6 +14,7 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
         training: Apply the training distribution and vector environment count.
         condition: Held-out physics condition when evaluating.
         capture: Add a genuine RTX camera to a single environment.
+        asset_root: Materialized directory containing the sealed USD asset bundle.
     Returns:
         Isaac Lab environment configuration.
     Raises:
@@ -28,6 +32,12 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
     config.sim.device = "cuda:0"
     config.commands.object_pose.resampling_time_range = (5.0, 5.0)
     remap_moved_franka_usd(config)
+    if "assets" in recipe:
+        from npa.workflows.franka_rl_assets import configure_assets
+
+        if asset_root is None:
+            raise ValueError("Franka asset bundle must be materialized before simulation")
+        configure_assets(config, recipe["assets"], asset_root)
     _physics_events(config, recipe, training, condition)
     if not training:
         config.observations.policy.enable_corruption = False

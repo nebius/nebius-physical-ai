@@ -147,6 +147,7 @@ def test_isaac_zero_exit_without_completion_record_is_a_failure(tmp_path, monkey
 @pytest.mark.parametrize("capture_exit", [0, 1])
 def test_evaluation_uses_fresh_processes_and_requires_capture_before_publication(tmp_path, monkeypatch, capture_exit):
     calls, published = [], []
+    (tmp_path / "recipe.json").write_text("{}")
 
     def simulate(argv, **kwargs):
         stage = argv[3]
@@ -262,13 +263,14 @@ def test_isaac_proxy_camera_returns_owned_rgb_pixels():
     assert np.all(frame == 128)
 
 
-def test_capture_can_reset_tensors_retained_from_preceding_inference_episode(tmp_path, monkeypatch, recipe):
+@pytest.mark.parametrize("condition", ["nominal", "delay"])
+def test_capture_can_reset_tensors_retained_from_preceding_inference_episode(tmp_path, monkeypatch, recipe, condition):
     torch = pytest.importorskip("torch")
     from npa.workflows import franka_rl_capture, franka_rl_eval
 
     robot = SimpleNamespace(data=SimpleNamespace(joint_pos=SimpleNamespace(torch=torch.zeros((1, 9)))))
-    wrapped = SimpleNamespace(unwrapped=SimpleNamespace(scene={"robot": robot}), clip_actions=None,
-                              metric=torch.zeros(1), steps=0)
+    wrapped = SimpleNamespace(unwrapped=SimpleNamespace(scene={"robot": robot}, seed=lambda seed: None),
+                              clip_actions=None, num_actions=8, device="cpu", metric=torch.zeros(1), steps=0)
 
     def reset():
         wrapped.metric[0] = 0.0
@@ -289,11 +291,15 @@ def test_capture_can_reset_tensors_retained_from_preceding_inference_episode(tmp
     monkeypatch.setattr(franka_rl_capture, "_orient_camera", lambda env: None)
     monkeypatch.setattr(franka_rl_capture, "_frame", frame)
     monkeypatch.setattr(franka_rl_eval, "_observe", lambda env: (np.array([0.2]), np.array([0.0]), np.array([0.0])))
+    monkeypatch.setattr(franka_rl_eval, "_initial_state_hashes", lambda env: ["a" * 64])
     recipe = dict(recipe, episode_steps=2)
     for index in range(2):
-        result = franka_rl_capture._capture_episode(wrapped, lambda obs: torch.zeros((1, 8)),
-                                                    tmp_path / str(index), recipe)
+        result = franka_rl_capture._capture_episode(wrapped, lambda obs: torch.ones((1, 8)),
+                                                    tmp_path / str(index), recipe, condition=condition)
         assert result["length"] == 2
+        applied = np.load(tmp_path / str(index) / "actions.npy")
+        np.testing.assert_array_equal(applied[0], 0 if condition == "delay" else 1)
+        np.testing.assert_array_equal(applied[1], 1)
     assert wrapped.metric.is_inference() and wrapped.steps == 4
     with pytest.raises(RuntimeError, match="outside InferenceMode"):
         wrapped.metric.zero_()
@@ -305,7 +311,9 @@ def test_prepare_seals_disjoint_streams_without_isaac(tmp_path, recipe):
     sealed = json.loads((output / "recipe.json").read_text())
     assert len({sealed[key] for key in ("seed", "validation_seed", "test_seed", "capture_seed")}) == 4
     assert sealed["task"] == "Isaac-Lift-Cube-Franka-v0"
-    assert set(json.loads((output / "checksums.json").read_text())) == {"recipe.json"}
+    assert set(json.loads((output / "checksums.json").read_text())) == {"recipe.json", *sealed["assets"]["files"]}
+    assert sealed["assets"]["target"] == "spool"
+    assert sealed["visual_eval"]["model"] == "MiniMaxAI/MiniMax-M3"
 
 
 def test_workflow_uses_real_stages_and_render_capable_gpu():
@@ -315,7 +323,7 @@ def test_workflow_uses_real_stages_and_render_capable_gpu():
     workflow = yaml.safe_load(path.read_text())
     assert workflow["resources"]["isaac"]["accelerators"] == "RTXPRO6000:1"
     assert "@sha256:" in workflow["resources"]["isaac"]["image"]
-    for stage in ("prepare", "train", "evaluate", "report"):
+    for stage in ("prepare", "train", "evaluate", "visual-evaluate", "report"):
         assert workflow["states"][stage]["run"]["argv"][:4] == ["python3", "-m", "npa.workflows.franka_rl", stage]
 
 
@@ -333,7 +341,7 @@ def test_every_franka_worker_uses_staged_source_instead_of_stale_image_modules(m
     rendered = render_skypilot_yaml(spec, build_plan(spec, run_id="test-franka"), run_id="test-franka",
                                    options=SkypilotRenderOptions(materialize_registry_secrets=False))
     tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and "envs" in doc]
-    assert len(tasks) == 4
+    assert len(tasks) == 5
     assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)
     assert all(task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/staged-source/npa/" for task in tasks)
 
@@ -362,3 +370,32 @@ def test_franka_recording_decodes_camera_and_all_named_joints_without_synthetic_
     entities = {str(chunk.entity_path) for chunk in chunks}
     assert "/episodes/000000/video" in entities
     assert not any("transform" in entity or "skeleton" in entity for entity in entities)
+
+
+@pytest.mark.parametrize("fail_last", [False, True])
+def test_visual_capture_grid_uses_separate_native_processes_and_requires_every_case(tmp_path, monkeypatch, recipe, fail_last):
+    from npa.workflows import franka_rl_capture_merge
+
+    recipe["visual_eval"] = {"arms": ["initial", "trained"], "conditions": list(recipe["conditions"])}
+    (tmp_path / "recipe.json").write_text(json.dumps(recipe))
+    (tmp_path / "initial.pt").write_bytes(b"initial checkpoint fixture")
+    calls, merged = [], []
+
+    def native(stage, prepared, output, *extra):
+        output.mkdir(parents=True, exist_ok=True)
+        calls.append((stage, extra))
+        if fail_last and extra == ("--capture-arm", "trained", "--condition", "delay"):
+            raise RuntimeError("final capture failed")
+
+    monkeypatch.setattr(franka_rl, "_native_step", native)
+    monkeypatch.setattr(franka_rl_capture_merge, "merge_captures", lambda *args: merged.append(True))
+    if fail_last:
+        with pytest.raises(RuntimeError, match="final capture failed"):
+            franka_rl._run_native("evaluate", tmp_path, tmp_path / "output")
+    else:
+        franka_rl._run_native("evaluate", tmp_path, tmp_path / "output")
+    assert [stage for stage, _ in calls] == ["validate", "test"] + ["capture"] * 8
+    assert {extra for stage, extra in calls if stage == "capture"} == {
+        ("--capture-arm", arm, "--condition", condition)
+        for arm in ("initial", "trained") for condition in recipe["conditions"]}
+    assert merged == ([] if fail_last else [True])

@@ -58,7 +58,8 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
     from isaaclab.utils.seed import configure_seed
 
     configure_seed(seed)
-    config = environment_config(recipe, training=False, condition=condition)
+    root = checkpoint.parent.parent if checkpoint.parent.name == "checkpoints" else checkpoint.parent
+    config = environment_config(recipe, training=False, condition=condition, asset_root=root)
     config.seed = seed
     env = gym.make(recipe["task"], cfg=config)
     try:
