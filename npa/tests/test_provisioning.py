@@ -213,6 +213,40 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_dry_run_uses_exact_project_quota_view_after_tenant_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project-scoped agent can plan against its verified project allowance."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+
+    calls: list[str] = []
+
+    def tenant_denied(parent_id: str, _region: str, _names):
+        calls.append(parent_id)
+        raise nebius.NebiusError("PermissionDenied")
+
+    monkeypatch.setattr(provisioning_preflight, "read_provider_quotas", tenant_denied)
+    monkeypatch.setattr(
+        nebius,
+        "list_quota_allowances",
+        lambda parent_id: calls.append(parent_id) or {"items": []},
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    assert result.status == "ready"
+    assert calls == ["tenant-1", "project-1"]
+    scope = next(item for item in result.preflight["checks"] if item["name"] == "quota_evidence_scope")
+    assert scope["status"] == "ready"
+
+
 def test_provision_if_absent_dry_run_preserves_strict_reserved_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

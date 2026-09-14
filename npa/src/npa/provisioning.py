@@ -882,12 +882,62 @@ def _build_provision_plan(
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
     )
+    quota_reader = None
+    quota_names = tuple(topology.quota_requirements())
+
+    def fixed_quota_reader(observations):
+        def read_quota_snapshot(_tenant, _region, _names):
+            return observations
+
+        return read_quota_snapshot
+
+    try:
+        from npa.provisioning_preflight import read_provider_quotas
+
+        tenant_observations = read_provider_quotas(
+            str(getattr(environment, "tenant_id", "") or ""),
+            str(getattr(environment, "region", "") or ""),
+            quota_names,
+        )
+    except Exception as tenant_exc:  # noqa: BLE001 - a project fallback is narrowly typed
+        from npa.clients.nebius import is_permission_denied
+
+        project_id = str(getattr(environment, "project_id", "") or "")
+        if project_id and is_permission_denied(str(tenant_exc)):
+            try:
+                from npa.provisioning_preflight import (
+                    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                    PreflightCheck,
+                    read_project_quota_observations,
+                )
+
+                project_observations = read_project_quota_observations(
+                    project_id,
+                    str(getattr(environment, "region", "") or ""),
+                    quota_names,
+                )
+            except Exception:
+                # Keep the ordinary planner's fail-closed unknown evidence when
+                # the exact-project view is unavailable or malformed too.
+                pass
+            else:
+                quota_reader = fixed_quota_reader(project_observations)
+                checks.append(
+                    PreflightCheck(
+                        name="quota_evidence_scope",
+                        status="ready",
+                        reason=PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                    )
+                )
+    else:
+        quota_reader = fixed_quota_reader(tenant_observations)
     return build_whole_path_plan(
         project_alias=alias,
         project_id=str(getattr(environment, "project_id", "") or ""),
         tenant_id=str(getattr(environment, "tenant_id", "") or ""),
         region=str(getattr(environment, "region", "") or ""),
         topology=topology,
+        quota_reader=quota_reader,
         checks=checks,
         mutation=not dry_run,
     )
