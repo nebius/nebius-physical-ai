@@ -162,6 +162,7 @@ from npa.cli.agent_service_install import install_agent_services
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     adopt_legacy_remote_identity,
+    assert_record_ownership,
     assert_remote_owner_if_present,
     build_deployment_manifest,
     read_remote_owner_if_present,
@@ -400,11 +401,14 @@ def _adopt_legacy_bootstrap_identity(
     agent_name: str,
     backend_port: int,
 ) -> dict[str, str]:
-    """Adopt only a matching remote owner for an explicitly requested refresh."""
-    if isinstance(record.get("deployment"), dict) and record["deployment"]:
-        raise DeploymentIdentityError(
-            "agent record already has an immutable deployment owner; refusing legacy adoption"
-        )
+    """Adopt only a matching remote owner for an explicitly requested refresh.
+
+    The first explicit adoption persists the remote's immutable namespace in the
+    local record.  A later refresh from a newer source commit must be able to
+    reuse that exact owner; rejecting it would permanently strand the agent on
+    its first adopted source revision.  A persisted record is therefore an
+    additional proof requirement, not an automatic rejection.
+    """
     ssh = SSHClient(
         config=resolve_ssh_config(
             ssh_host=host,
@@ -419,6 +423,14 @@ def _adopt_legacy_bootstrap_identity(
         raise DeploymentIdentityError(
             "remote agent has no owner manifest to adopt; bootstrap without adoption"
         )
+    persisted = record.get("deployment")
+    if isinstance(persisted, dict) and persisted:
+        try:
+            assert_record_ownership({"deployment": remote}, persisted)
+        except (DeploymentIdentityError, KeyError) as exc:
+            raise DeploymentIdentityError(
+                "persisted agent owner does not match the remote owner; refusing adoption"
+            ) from exc
     expected = build_deployment_manifest(
         project_alias=project_alias,
         name=agent_name,

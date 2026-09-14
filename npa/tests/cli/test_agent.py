@@ -3743,6 +3743,49 @@ def test_bootstrap_pins_nebius_cli_for_the_root_backend() -> None:
     assert 'sudo install -m 0755 "$NEBIUS_USER_BIN" /usr/local/bin/nebius' in source
 
 
+def test_bootstrap_reuses_verified_previously_adopted_remote_owner(monkeypatch) -> None:
+    """A safe initial adoption must not make all later refreshes impossible."""
+    from types import SimpleNamespace
+
+    from npa.cli import agent as agent_module
+
+    persisted = {
+        "deployment_id": "npa-agent-adopted",
+        "deployment_name": "agent",
+        "project_alias": "demo",
+        "runtime_namespace": "demo/agent",
+        "repository": "owner/repository",
+        "branch": "release/stable",
+        "commit": "old-commit",
+        "source_tree": "old-tree",
+        "short_commit": "old-commit",
+        "workspace_label": "NPA Workbench",
+        "bootstrap_timestamp": "2026-01-01T00:00:00Z",
+    }
+    expected = {**persisted, "commit": "new-commit", "source_tree": "new-tree", "short_commit": "new-commit"}
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={})
+    )
+    monkeypatch.setattr(agent_module, "read_remote_owner_if_present", lambda *_args, **_kwargs: dict(persisted))
+    monkeypatch.setattr(agent_module, "build_deployment_manifest", lambda **_kwargs: expected)
+
+    adopted = agent_module._adopt_legacy_bootstrap_identity(
+        record={"deployment": persisted},
+        host="203.0.113.50",
+        ssh_user="ubuntu",
+        ssh_key_path="/tmp/key",
+        project_alias="demo",
+        agent_name="agent",
+        backend_port=8787,
+    )
+
+    assert adopted["deployment_id"] == persisted["deployment_id"]
+    assert adopted["branch"] == persisted["branch"]
+    assert adopted["commit"] == "new-commit"
+
+
 def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
     from npa.cli import agent as agent_module
 
