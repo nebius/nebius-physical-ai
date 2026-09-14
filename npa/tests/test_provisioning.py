@@ -317,6 +317,52 @@ def test_reserved_capacity_recovery_uses_the_effective_topology(
     assert applied["preemptible"] is False
 
 
+def test_empty_failed_operation_can_start_a_new_topology_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GPU preflight failure must not block a later CPU-only retry forever."""
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    calls: list[dict] = []
+
+    def up_cmd(**kwargs):
+        calls.append(kwargs)
+        if kwargs["gpu_nodes"] == 1:
+            raise RuntimeError("synthetic pre-resource failure")
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up_cmd)
+    kubeconfig = tmp_path / "missing-kubeconfig"
+    with pytest.raises(RuntimeError, match="synthetic pre-resource failure"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="retry-shape",
+            kubeconfig=kubeconfig,
+            skip_s3=True,
+            cpu_nodes=0,
+            gpu_nodes=1,
+        )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="retry-shape",
+        kubeconfig=kubeconfig,
+        skip_s3=True,
+        cpu_nodes=1,
+        gpu_nodes=0,
+    )
+
+    assert result.operation_id.endswith("-r1")
+    assert [call["gpu_nodes"] for call in calls] == [1, 0]
+    from npa.provisioning_journal import ProvisioningOperation
+
+    first = ProvisioningOperation(result.operation_id.removesuffix("-r1")).read()
+    second = ProvisioningOperation(result.operation_id).read()
+    assert first["phase"] == "rolled-back"
+    assert first["rollback"]["completed"] is True
+    assert second["preflight_plan"]["topology"]["gpu_nodes"] == 0
+    assert second["preflight_plan"]["topology"]["cpu_nodes"] == 1
+
+
 def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

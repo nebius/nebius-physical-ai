@@ -22,6 +22,7 @@ from npa.cluster.gpu_health import (
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
+    OperationIdentityError,
     ProvisioningOperation,
     current_operation,
     emit_recovery_summary,
@@ -213,7 +214,7 @@ def _transactional_provision(function):
             if not skip_k8s
             else []
         )
-        operation = ProvisioningOperation.prepare(
+        operation_kwargs = dict(
             command="npa provision-if-absent",
             project_alias=alias,
             project_id=str(getattr(environment, "project_id", "") or ""),
@@ -232,7 +233,34 @@ def _transactional_provision(function):
             resume_argv=resume_argv,
             destroy_argv=destroy_argv,
         )
-        operation.record_preflight_plan(plan.to_dict())
+        operation = ProvisioningOperation.prepare(**operation_kwargs)
+        try:
+            operation.record_preflight_plan(plan.to_dict())
+        except OperationIdentityError:
+            # A retry with a different topology must never overwrite an
+            # incomplete operation's immutable plan. When no cloud resource,
+            # local Terraform state, or config mutation was recorded, however,
+            # the old operation is safely empty: terminalize that evidence and
+            # start a new deterministic generation for the new requested shape.
+            prior = operation.read()
+            if any(
+                prior.get(key)
+                for key in ("resources", "local_state_copies", "config_mutations")
+            ):
+                raise
+            operation.record_rollback(
+                attempted=False,
+                completed=True,
+                removed=[],
+                preserved=[],
+                error="superseded empty operation after requested topology changed",
+            )
+            operation.transition(
+                "rolled-back",
+                error="superseded empty operation after requested topology changed",
+            )
+            operation = ProvisioningOperation.prepare(**operation_kwargs)
+            operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
             sys.stderr.write(
                 f"Provisioning operation {operation.operation_id}: preflight complete; beginning mutation\n"
