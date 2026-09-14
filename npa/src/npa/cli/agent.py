@@ -1080,7 +1080,11 @@ server {{
     )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates coturn
+# SkyPilot's Kubernetes port-forward networking requires ``socat`` in addition
+# to netcat.  The agent owns the scheduler client, so install it with the base
+# agent dependencies rather than assuming a custom VM image happens to provide
+# it.
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates coturn socat
 if ! grep -q 'export PATH="$HOME/.nebius/bin:$PATH"' "$HOME/.profile" 2>/dev/null; then
   echo 'export PATH="$HOME/.nebius/bin:$PATH"' >> "$HOME/.profile"
 fi

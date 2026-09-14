@@ -2309,16 +2309,20 @@ def submit_cmd(
                     alias,
                 ],
             )
-            with operation_context(operation):
-                operation.transition("mutating")
-                try:
-                    submitted = submit()
-                except BaseException as exc:
-                    _record_workflow_submit_failure(operation, exc)
-                    raise
-                operation.transition("state-durable")
-                operation.commit()
-                return submitted
+            try:
+                with operation_context(operation):
+                    operation.transition("mutating")
+                    try:
+                        submitted = submit()
+                    except BaseException as exc:
+                        _record_workflow_submit_failure(operation, exc)
+                        raise
+                    operation.transition("state-durable")
+                    operation.commit()
+                    return submitted
+            except BaseException as exc:
+                _record_unentered_workflow_submit_failure(operation, exc)
+                raise
 
         if prepared_npa is not None:
             from npa.orchestration.npa_workflow.submission_state import (
@@ -3553,6 +3557,42 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
         )
         return
     operation.transition("recovery-required", error=str(exc))
+
+
+def _record_unentered_workflow_submit_failure(
+    operation, exc: BaseException
+) -> None:  # noqa: ANN001
+    """Finalize a submit journal that never entered its mutation window.
+
+    ``operation_context`` can reject a new submit because another project
+    operation holds the lifecycle lease.  That happens before ``submit`` can
+    invoke SkyPilot, but the prepared operation journal already exists.  Leaving
+    that empty record nonterminal would turn one safe rejection into a chain of
+    future lease conflicts.
+    """
+
+    payload = operation.read()
+    if (
+        str(payload.get("phase") or "") != "prepared"
+        or bool(payload.get("resources") or [])
+    ):
+        return
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[],
+        outcomes=[],
+    )
+    operation.transition(
+        "rolled-back",
+        error=str(exc),
+        details={
+            "error_type": type(exc).__name__,
+            "launch_attempted": False,
+            "context_acquired": False,
+        },
+    )
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
