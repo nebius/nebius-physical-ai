@@ -2,8 +2,13 @@
 
 Every pull request, merge queue candidate (`merge_group`), and push to `main`
 runs **Security regression / security-regression**. This required job checks that
-the isolated **security-scanners** job passed before running the hostile-input
-and CPU checkpoint tests introduced on main. Failed, skipped, or cancelled scanner
+the isolated **security-scanners** job and reusable **image-security** workflow
+passed before running the hostile-input and CPU checkpoint tests introduced on
+main. Image scans cover every PR and merge candidate without path filters and
+block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
+findings. Their [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
+are checked separately from the differential application-dependency scan.
+Failed, skipped, or cancelled scanner
 work cannot produce a passing required check. A new finding fails the scanner job
 with its file, rule or advisory, and remediation detail. Scanner, dependency
 resolution, malformed report, incomplete inventory, and source parsing failures
