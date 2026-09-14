@@ -159,7 +159,7 @@ def test_python_scan_matches_fiftyones_pinned_and_upgraded_base():
     entry = next(
         entry
         for entry in _scan_job()["strategy"]["matrix"]["include"]
-        if entry["name"] == "python-3-11-slim-trixie"
+        if entry["name"] == "python-3-11-slim-bookworm"
     )
     assert entry["image"] == base and "@sha256:" in base
     assert entry["upgrade_os"] is True
