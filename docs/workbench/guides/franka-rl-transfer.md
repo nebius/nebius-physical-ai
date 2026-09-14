@@ -68,7 +68,10 @@ npa/.venv/bin/npa workbench workflow submit workflows/testing/franka-rl-transfer
 ```
 
 The standard runtime owns all four stages. Stages exchange checksum-verified
-S3 directories; the native Isaac process runs inside its assigned GPU task.
+S3 directories; native Isaac processes run inside their assigned GPU task.
+Evaluation starts separate simulator processes for validation, held-out tests,
+and camera capture, giving each reset stream its own Replicator lifecycle.
+The stage publishes only after all three completion records are verified.
 Keep each experiment's prefix and isolated API configuration unchanged while
 it owns jobs. Use a fresh run identity after changing the experimental recipe.
 An explicit `--resume-run "$NPA_RUN_ID"` reuses successful stages after checking

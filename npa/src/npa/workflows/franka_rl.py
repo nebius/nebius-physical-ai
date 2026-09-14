@@ -58,22 +58,38 @@ def _recipe(args: argparse.Namespace) -> dict:
     }
 
 
-def _run_native(stage: str, prepared: Path, output: Path) -> None:
+def _native_step(stage: str, prepared: Path, output: Path) -> None:
     interpreter = os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh")
     argv = [interpreter, "-m", "npa.workflows.franka_rl_runtime", stage,
             "--input-path", str(prepared), "--output-path", str(output),
             "--visualizer", "none"]
-    output.mkdir(parents=True)
-    with (output / "runtime.log").open("w") as log:
+    output.mkdir(parents=True, exist_ok=True)
+    log_path = output / ("runtime.log" if stage == "train" else f"{stage}.log")
+    receipts = {"train": ("training.json", "schema", "npa.franka-rl.training.v1"),
+                "validate": ("validation.json", "schema", "npa.franka-rl.validation.v1"),
+                "test": ("evaluation.json", "schema", "npa.franka-rl.evaluation.v1"),
+                "capture": ("meta.json", "format", "npa_isaac_lab_rollout_v2")}
+    filename, key, expected = receipts[stage]
+    with log_path.open("w") as log:
         result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, check=False)
-    receipt = output / ("training.json" if stage == "train" else "evaluation.json")
+    receipt = output / filename
     if result.returncode or not receipt.is_file():
-        print((output / "runtime.log").read_text()[-12_000:], flush=True)
+        print(log_path.read_text()[-12_000:], flush=True)
         raise RuntimeError(f"Franka {stage} failed with exit {result.returncode}; required {receipt.name}")
     metadata = json.loads(receipt.read_text())
-    expected = "training" if stage == "train" else "evaluation"
-    if metadata.get("schema") != f"npa.franka-rl.{expected}.v1":
+    if metadata.get(key) != expected:
         raise ValueError(f"Franka {stage} produced an invalid completion record")
+    print(f"Native Franka {stage} completed", flush=True)
+
+
+def _run_native(stage: str, prepared: Path, output: Path) -> None:
+    if stage == "train":
+        _native_step("train", prepared, output)
+        return
+    # Each reset stream owns a fresh simulator and Replicator graph.
+    _native_step("validate", prepared, output)
+    _native_step("test", prepared, output)
+    _native_step("capture", output, output / "trajectories")
 
 
 def main(argv: list[str] | None = None) -> int:

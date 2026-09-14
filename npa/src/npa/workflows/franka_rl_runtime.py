@@ -75,6 +75,20 @@ def _train(args, recipe: dict, config) -> None:
         env.close()
 
 
+def _execute_stage(args, recipe: dict, config) -> None:
+    if args.stage == "train":
+        _train(args, recipe, config)
+    elif args.stage == "capture":
+        from npa.workflows.franka_rl_capture import capture_policy
+
+        capture_policy(args.input_path / "selected.pt", args.output_path, recipe)
+    else:
+        from npa.workflows.franka_rl_eval import evaluate_checkpoints, validate_checkpoints
+
+        operation = validate_checkpoints if args.stage == "validate" else evaluate_checkpoints
+        operation(args.input_path, args.output_path, recipe, _runtime_versions())
+
+
 def main(argv: list[str] | None = None) -> int:
     """Launch the pinned Isaac runtime and perform real simulation work.
 
@@ -92,25 +106,22 @@ def main(argv: list[str] | None = None) -> int:
     from npa.workflows.franka_rl_environment import environment_config
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("train", "evaluate"))
+    parser.add_argument("stage", choices=("train", "validate", "test", "capture"))
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
     add_launcher_args(parser)
     args = parser.parse_args(argv)
     recipe = json.loads((args.input_path / "recipe.json").read_text())
-    configure_seed(recipe["seed"])
+    seed_key = {"train": "seed", "validate": "validation_seed", "test": "test_seed", "capture": "capture_seed"}
+    configure_seed(recipe[seed_key[args.stage]])
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
-    config = environment_config(recipe, training=args.stage == "train", capture=args.stage == "evaluate")
-    args.enable_cameras = args.stage == "evaluate"
+    config = environment_config(recipe, training=args.stage == "train", capture=args.stage == "capture")
+    config.seed = recipe[seed_key[args.stage]]
+    args.enable_cameras = args.stage == "capture"
     args.output_path.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.input_path / "recipe.json", args.output_path / "recipe.json")
     with launch_simulation(config, args):
-        if args.stage == "train":
-            _train(args, recipe, config)
-        else:
-            from npa.workflows.franka_rl_eval import evaluate_checkpoints
-
-            evaluate_checkpoints(args.input_path, args.output_path, recipe, _runtime_versions())
+        _execute_stage(args, recipe, config)
     return 0
 
 

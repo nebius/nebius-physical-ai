@@ -136,11 +136,40 @@ def test_native_failure_preserves_log_and_never_reports_completion(tmp_path, mon
     assert not (tmp_path / "output/training.json").exists()
 
 
-@pytest.mark.parametrize("stage,receipt", [("train", "training.json"), ("evaluate", "evaluation.json")])
+@pytest.mark.parametrize("stage,receipt", [("train", "training.json"), ("validate", "validation.json"),
+                                          ("test", "evaluation.json"), ("capture", "meta.json")])
 def test_isaac_zero_exit_without_completion_record_is_a_failure(tmp_path, monkeypatch, stage, receipt):
     monkeypatch.setattr(franka_rl.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(returncode=0))
     with pytest.raises(RuntimeError, match=f"required {receipt}"):
-        franka_rl._run_native(stage, tmp_path / "input", tmp_path / "output")
+        franka_rl._native_step(stage, tmp_path / "input", tmp_path / "output")
+
+
+@pytest.mark.parametrize("capture_exit", [0, 1])
+def test_evaluation_uses_fresh_processes_and_requires_capture_before_publication(tmp_path, monkeypatch, capture_exit):
+    calls, published = [], []
+
+    def simulate(argv, **kwargs):
+        stage = argv[3]
+        calls.append(stage)
+        output = Path(argv[argv.index("--output-path") + 1])
+        receipts = {"validate": ("validation.json", {"schema": "npa.franka-rl.validation.v1"}),
+                    "test": ("evaluation.json", {"schema": "npa.franka-rl.evaluation.v1"}),
+                    "capture": ("meta.json", {"format": "npa_isaac_lab_rollout_v2"})}
+        filename, record = receipts[stage]
+        (output / filename).write_text(json.dumps(record))
+        return SimpleNamespace(returncode=capture_exit if stage == "capture" else 0)
+
+    monkeypatch.setattr(franka_rl.subprocess, "run", simulate)
+    monkeypatch.setattr(franka_rl, "materialize", lambda *args: tmp_path)
+    monkeypatch.setattr(franka_rl, "publish", lambda *args: published.append(True))
+    argv = ["evaluate", "--input-path", str(tmp_path), "--output-path", str(tmp_path / "published")]
+    if capture_exit:
+        with pytest.raises(RuntimeError, match="capture failed"):
+            franka_rl.main(argv)
+    else:
+        assert franka_rl.main(argv) == 0
+    assert calls == ["validate", "test", "capture"]
+    assert published == ([] if capture_exit else [True])
 
 
 def test_initial_native_checkpoint_is_decodable_without_a_training_logger(tmp_path):
@@ -154,6 +183,25 @@ def test_initial_native_checkpoint_is_decodable_without_a_training_logger(tmp_pa
     payload = torch.load(path, weights_only=True, map_location="cpu")
     assert payload["iter"] == 0 and payload["infos"] is None
     assert torch.equal(payload["actor_state_dict"]["weight"], torch.ones(2))
+
+
+def test_test_process_rejects_changed_selected_weights_before_opening_test_stream(tmp_path, monkeypatch, recipe):
+    from npa.workflows import franka_rl_eval
+    from npa.workflows.lerobot_transfer_data import file_sha256, write_json
+
+    training, output = tmp_path / "training", tmp_path / "output"
+    checkpoint = training / "checkpoints/model_500.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"frozen validation weights")
+    selection = {"iteration": 500, "selected_checkpoint_sha256": file_sha256(checkpoint), "test_data_used": False}
+    write_json(output / "selection.json", selection)
+    write_json(output / "validation.json", {"recipe": recipe, "selection": selection})
+    (output / "selected.pt").write_bytes(b"changed weights")
+    calls = []
+    monkeypatch.setattr(franka_rl_eval, "_test", lambda *args: calls.append(True))
+    with pytest.raises(ValueError, match="checkpoint bytes changed"):
+        franka_rl_eval.evaluate_checkpoints(training, output, recipe, {})
+    assert not calls
 
 
 def test_isaac_physics_evidence_decodes_actual_warp_arrays():

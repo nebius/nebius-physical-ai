@@ -116,8 +116,8 @@ def _test(training: Path, selected: Path, output: Path, recipe: dict) -> list[di
     return all_rows
 
 
-def evaluate_checkpoints(training: Path, output: Path, recipe: dict, runtime: dict) -> None:
-    """Select on validation before opening gold resets, then export separate capture episodes.
+def validate_checkpoints(training: Path, output: Path, recipe: dict, runtime: dict) -> None:
+    """Freeze a checkpoint selection using only the validation reset stream.
 
     Args:
         training: Verified stage containing native PPO checkpoints.
@@ -128,11 +128,9 @@ def evaluate_checkpoints(training: Path, output: Path, recipe: dict, runtime: di
         None.
     Raises:
         ValueError: Training evidence or checkpoint selection is invalid.
-        RuntimeError: A real policy, simulator, or camera fails.
+        RuntimeError: A real policy or simulator fails.
         OSError: Artifacts cannot be written.
     """
-    from npa.workflows.franka_rl_capture import capture_policy
-
     manifest = json.loads((training / "training.json").read_text())
     if manifest["recipe"] != recipe:
         raise ValueError("Training and evaluation recipes differ")
@@ -145,12 +143,41 @@ def evaluate_checkpoints(training: Path, output: Path, recipe: dict, runtime: di
         "selection_rule": "validation success, then closest distance, then earlier iteration",
         "test_data_used": False,
     })
-    trials = _test(training, selected, output, recipe)
     shutil.copy2(selected, output / "selected.pt")
-    capture_policy(selected, output / "trajectories", recipe)
+    write_json(output / "validation.json", {
+        "schema": "npa.franka-rl.validation.v1", "recipe": recipe, "runtime": runtime,
+        "validation": validation, "training": manifest,
+        "selection": json.loads((output / "selection.json").read_text()),
+    })
+
+
+def evaluate_checkpoints(training: Path, output: Path, recipe: dict, runtime: dict) -> None:
+    """Evaluate a frozen validation selection on untouched paired physics shifts.
+
+    Args:
+        training: Verified stage containing native PPO checkpoints.
+        output: Directory containing the completed validation and selection.
+        recipe: Sealed experiment protocol.
+        runtime: Measured runtime and accelerator versions.
+    Returns:
+        None.
+    Raises:
+        ValueError: Selection evidence or checkpoint bytes changed.
+        RuntimeError: A real policy or simulator fails.
+        OSError: Artifacts cannot be read or written.
+    """
+    validated = json.loads((output / "validation.json").read_text())
+    selection = json.loads((output / "selection.json").read_text())
+    selected = training / "checkpoints" / f"model_{selection['iteration']}.pt"
+    if validated["recipe"] != recipe or validated["selection"] != selection or selection["test_data_used"]:
+        raise ValueError("Franka validation selection changed before test")
+    expected = selection["selected_checkpoint_sha256"]
+    if file_sha256(selected) != expected or file_sha256(output / "selected.pt") != expected:
+        raise ValueError("Selected Franka checkpoint bytes changed before test")
+    trials = _test(training, selected, output, recipe)
     write_json(output / "evaluation.json", {
         "schema": "npa.franka-rl.evaluation.v1", "recipe": recipe, "runtime": runtime,
-        "validation": validation, "trials": trials, "training": manifest,
-        "selection": json.loads((output / "selection.json").read_text()),
+        "validation": validated["validation"], "trials": trials, "training": validated["training"],
+        "selection": selection,
         "physical_robot_tested": False,
     })
