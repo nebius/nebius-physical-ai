@@ -1636,6 +1636,12 @@ the pinned starter bytes, successful stages without replay or adoption,
 both default variants and quality thresholds, complete native transfer and
 evaluation evidence, accepted annotation and real curation, and both Rerun
 recordings. It reads existing outputs without submitting or resuming work.
+Automatic partial-launch transport recovery may leave failed historical attempts;
+the audit verifies their exact cancelled parent/successor chains, immutable
+reservation hashes, output-absence evidence, fresh preflight proof, and recovery
+accounting before accepting the successful logical stages. It rejects manual
+payload retries, replay, adoption, and records resumed by another driver. Keep
+all failed-attempt evidence alongside the successful outputs.
 
 ### Check every stage and full pipeline completion
 

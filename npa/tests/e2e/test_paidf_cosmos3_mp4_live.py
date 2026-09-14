@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from .paidf_runtime_audit import assert_completed_fresh_runtime
 from .test_npa_workflow_submit_live_e2e import _assert_paidf_live_artifacts
 
 
@@ -43,9 +44,7 @@ def test_completed_fresh_local_mp4_pipeline() -> None:
 
     runtime = read("npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
-    assert all(wave["status"] == "succeeded" for wave in runtime["waves"])
-    assert all(wave["replayed"] is False for wave in runtime["waves"])
-    assert all(wave["adopted"] is False for wave in runtime["waves"])
+    assert_completed_fresh_runtime(client, parsed.netloc, prefix, runtime)
     provenance = read("input/provenance.json")
     assert provenance["source_kind"] == "video_uri"
     assert provenance["run_id"] == run_id

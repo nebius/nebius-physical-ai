@@ -359,6 +359,27 @@ Machine-readable evidence distinguishes:
 - `unknown`: missing, conflicting, or ambiguous backend identity/evidence.
   Relaunch and fuzzy cancellation are blocked to prevent duplicates.
 
+A credential-exec RPC stream closure during controller file synchronization can
+leave a reserved Pending row before the task payload arrives. The default SDK
+retains the typed transport cause and refuses to adopt that row as running work.
+The runtime may replace it only after checking every declared output is absent,
+cancelling the exact ID, rereading its actual terminal outcome, and refreshing
+the shared image/access/GPU preflight against unchanged task bytes. It checks
+output absence again after cancellation and preflight. A success racing with
+cancellation is reused only when all declared outputs validate. Unknown rows,
+auth/configuration failures, output uncertainty, and unverified cancellation
+block replacement.
+
+The supervisor records a content-addressed parent-to-successor reservation under
+the existing infrastructure recovery policy. A restarted driver consumes the
+same identity and count; it cannot invent another reservation or fall back to
+attempt 1. An observable successor is adopted exactly. An absent successor can
+be submitted only when durable intent proves the provider POST was not begun;
+unknown POST outcomes remain blocked. Explicit driver recovery is recorded as
+`recovery_resumed`, separately from payload replay. Recovery preparation retains
+the failed attempt's original local files and writes its refreshed preflight
+files into a separate owned directory.
+
 `npa workbench workflow status <run-id> --json` includes the latest supervisor
 classification, recovery action, exact attempt identity, output/checkpoint
 validation, preflight evidence, and remediation. Evidence is credential-redacted.

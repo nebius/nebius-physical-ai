@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from .paidf_runtime_audit import assert_completed_fresh_runtime
 from .test_npa_workflow_submit_live_e2e import _assert_paidf_live_artifacts
 from .test_paidf_cosmos3_mp4_live import _assert_recording_identity
 
@@ -30,10 +31,7 @@ def test_completed_fresh_default_starter_pipeline() -> None:
     client = s3_client_for_project(project, allow_host_creds=True)
     runtime = _read(client, selected.netloc, prefix + "npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
-    assert runtime["waves"]
-    for wave in runtime["waves"]:
-        assert wave["status"] == "succeeded"
-        assert wave["replayed"] is False and wave["adopted"] is False
+    assert_completed_fresh_runtime(client, selected.netloc, prefix, runtime)
     _assert_starter_input(client, selected.netloc, run_id)
     _assert_default_batch(client, selected.netloc, prefix)
     _assert_fresh_objects(client, selected.netloc, run_id)

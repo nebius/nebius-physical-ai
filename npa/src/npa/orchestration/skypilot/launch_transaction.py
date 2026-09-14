@@ -286,7 +286,7 @@ class LaunchTransactionError(RuntimeError):
 
 
 _TERMINAL_PATTERNS: tuple[tuple[FailureCategory, tuple[str, ...]], ...] = (
-    (FailureCategory.IDENTITY, ("identity mismatch", "wrong context", "belongs to")),
+    (FailureCategory.IDENTITY, ("identity mismatch", "wrong context", "belongs to", "credential configuration changed after verification", "verified configuration changed on disk")),
     (FailureCategory.CONTEXT, ("context does not exist", "context not found", "not found in kubeconfig", "invalid context", "invalid kube-context", "no current-context")),
     (FailureCategory.RBAC, ("forbidden", "permission denied", "cannot list", "cannot get resource")),
     (FailureCategory.AUTH, ("unauthorized", "authentication required", "authentication failed", "credentials expired", "invalid bearer token", "exec plugin")),
@@ -299,7 +299,7 @@ _TERMINAL_PATTERNS: tuple[tuple[FailureCategory, tuple[str, ...]], ...] = (
 _TRANSIENT_PATTERNS: tuple[tuple[FailureCategory, tuple[str, ...]], ...] = (
     (FailureCategory.KUBERNETES_RATE_LIMIT, ("too many requests", "status code 429", "http 429")),
     (FailureCategory.KUBERNETES_SERVER, ("status code 500", "status code 502", "status code 503", "status code 504", "internal server error", "service unavailable", "bad gateway", "gateway timeout")),
-    (FailureCategory.KUBERNETES_TRANSPORT, ("connection refused", "connection reset", "connection aborted", "unexpected eof", "eof", "tls handshake timeout", "temporary failure in name resolution", "no route to host", "network is unreachable", "i/o timeout", "dial tcp", "server closed idle connection")),
+    (FailureCategory.KUBERNETES_TRANSPORT, ("rpc error: code = internal desc = server closed the stream without sending trailers", "connection refused", "connection reset", "connection aborted", "unexpected eof", "eof", "tls handshake timeout", "temporary failure in name resolution", "no route to host", "network is unreachable", "i/o timeout", "dial tcp", "server closed idle connection")),
 )
 
 
@@ -679,6 +679,9 @@ def run_launch_transaction(
             checkpoint()
 
             transaction.launch_sequence += 1
+            # A resumed reserved attempt must distinguish pre-POST intent from
+            # a request whose provider result may still be unknown.
+            checkpoint()
             try:
                 launch_result = launch()
             except (KeyboardInterrupt, InterruptedError) as exc:

@@ -233,6 +233,18 @@ verification policy; a merely requested cancellation blocks relaunch.
 Completed-wave reuse validates declared S3 outputs;
 mid-stage resume additionally requires a real compatible tool checkpoint loader.
 
+For a typed pre-payload transport failure, an unobservable reserved queue row
+remains a failed attempt. Automatic replacement requires exact cancellation and
+a fresh terminal reread, unchanged workflow/source/image/rendered-task identity,
+all declared outputs absent before cancellation and again afterward, and the
+real shared SDK gate refreshed before reservation. Preserve the original failed
+files and the content-addressed parent/successor reservation; consume its identity
+and recovery count once across crashes. Never infer permission to relaunch from
+an arbitrary CANCELLED status, an empty queue, stale preflight evidence, or a
+custom submitter's exception. A success racing cancellation requires validated
+outputs; a reserved successor found observable must be adopted regardless of the
+driver record's failed/running label.
+
 The shared supervisor is also active in Genesis' existing production Serverless
 Jobs command. This does not route individual `npa.workflow/v0.0.1` stages to
 Serverless; runtime workflow waves remain SkyPilot/Kubernetes.

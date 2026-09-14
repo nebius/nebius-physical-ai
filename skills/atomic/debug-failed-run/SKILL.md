@@ -45,6 +45,16 @@ ID until the finite `--max-infrastructure-recoveries` policy is exhausted;
 duplicates. `INFRASTRUCTURE_RECOVERY_EXHAUSTED` is terminal durable evidence, not
 permission to increase payload retries implicitly.
 
+A credential-exec RPC stream closure during controller file sync may leave a
+Pending reservation without a submitted payload. The runtime records this as a
+partial launch, verifies exact cancellation and actual terminal state, checks
+all declared outputs remain absent, and refreshes the shared SDK preflight
+before using the existing infrastructure recovery allowance. Inspect both the
+failed parent and its exact reserved successor; do not count the failed row as
+running work or launch another copy. Missing/ambiguous rows, denied access,
+changed identities, output uncertainty, and unverified cancellation still block
+recovery. Fresh preflight denials retain their sanitized actionable reason.
+
 Add `--watch --interval 10` to follow a run to a terminal state. Use `--cached`
 only when the live controller is unreachable: its output is explicitly marked
 CACHED and is **not automation-trustworthy** — never gate a decision on it.
