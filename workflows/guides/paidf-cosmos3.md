@@ -404,6 +404,77 @@ direct answers for captioning and evaluator questions.
 Keep the repository checkout available when you submit and use the canonical
 spec at `workflows/main/paidf-cosmos3.yaml`.
 
+#### Upgrading an existing installation
+
+For an installation from `ce11c4972fa048cca1b17024030a0070c2776a60` or another
+older revision, update both the NPA installation and the canonical workflow
+YAML. Finish or recover an active run in its original environment before
+changing the checkout or saved source configuration; see [R4](#r4-monitor-and-recover).
+
+From the repository root, with any local edits preserved, update to `main`.
+For a `uv` installation:
+
+```bash
+git switch main
+git pull --ff-only origin main
+uv venv --python 3.12 --allow-existing npa/.venv
+uv pip install --python npa/.venv/bin/python --upgrade -e ./npa
+git rev-parse HEAD
+uv run --project npa --no-sync npa --version
+npa/.venv/bin/python -c 'import npa; print(npa.__file__)'
+uv run --project npa --no-sync npa workbench workflow submit --help
+```
+
+The package still reports `npa 0.1.0`; the Git SHA and import path identify the
+checkout actually being used. The import must point into this checkout's
+`npa/src/npa`. Keep `--project npa` on `uv run` commands issued from the
+repository root, where there is no Python project file. Here it selects the
+local package; submit's separate `--project "$PROJECT_ALIAS"` selects the cloud
+project configuration. Use `--no-sync` after the explicit editable install above:
+automatic project resolution currently encounters conflicting PyAV requirements
+in the optional GR00T dependency set, even for a PAIDF command. The explicit
+install resolves NPA's required dependencies without selecting that extra.
+For the `.venv` installation from S1, use its
+[editable reinstall command](#if-submit-is-missing) after updating Git instead.
+
+**Do I need to sync the bucket again?** No bulk bucket sync or re-upload of an
+unchanged input dataset is needed. On a new submit, NPA stages missing or
+outdated saved source under a content-addressed prefix in the configured S3
+bucket and reuses matching verified source. The workflow's `source_overlay`
+also applies that NPA code inside pinned workbench images. Existing datasets
+and previous run outputs remain available; uploading a new local dataset is
+separate from updating NPA. Using the AWS CLI for this S3-compatible storage
+does not change which configured storage endpoint owns the bucket.
+
+An exported `NPA_SRC_S3_URI` (or `NPA_E2E_NPA_SRC_S3_URI`) is an explicit source
+selection and is retained even if it points at older code. For a new run that
+should use this checkout, remove an old export from the submitting shell:
+
+```bash
+unset NPA_SRC_S3_URI NPA_E2E_NPA_SRC_S3_URI
+```
+
+Leave automatic staging enabled. Adding `--stage-src` to submit explicitly
+forces restaging of the local package; `--no-stage-src` disables the automatic
+path. Neither a manual source upload nor a whole-bucket sync is a normal
+upgrade step.
+
+**Do I still need `--assume-decision promote_checkpoint`?** Omit it from the
+executing submit command. Current PAIDF Cosmos3 rejects assumed decisions for
+execution, including when `--runtime` is present. Keep `--runtime` for clarity;
+the canonical YAML also selects it automatically. The evaluator's actual
+decision controls retries, acceptance, and rejection. Use the assumption only
+for an accepted-path preview with `plan-spec`, `preflight-images`, or
+`submit --plan-only`, as in R2.
+
+After upgrading, repeat R1 and R2 to select an available caption model and
+reserve a fresh run ID with its own SkyPilot directory, then execute R3. With
+`uv`, activate `npa/.venv` instead of `.venv` and prefix those `npa` commands
+with `uv run --project npa --no-sync`. Do not reuse an old run ID or use
+`--resume-run` to switch an existing run to new code or a changed YAML. Resume
+is for recovery of the original recorded run with its original inputs,
+configuration, and execution identity.
+
 ## R — Run the workflow
 
 ### R1. Select the project, GPU, and caption model

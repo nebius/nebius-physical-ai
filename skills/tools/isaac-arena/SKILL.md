@@ -120,7 +120,8 @@ NPA materializes the input before starting the simulator. The upstream replay
 loader eagerly moves every episode field to the execution device, even though the policy uses
 only `actions` and `initial_state`; NPA therefore creates a private minimal
 execution HDF5 and never publishes either input. Its result binds the source and
-executed hashes. Replay supports one episode in one environment. Apply its
+prepared execution-input hashes. These identify input bytes and do not prove
+that actions ran. Replay supports one episode in one environment. Apply its
 recorded initial state with Isaac Lab `reset_to(is_relative=True)` and execute
 every source action once. Do not pad, repeat, truncate, or hold actions to
 manufacture a completed episode. A source recording that cannot complete the
@@ -149,7 +150,7 @@ Successful evaluation requires:
 - a required MP4, capture sidecar, and actual initial/terminal PNGs when
   `--record-video` is selected; and
 - `result.json` with the source revision, request, measured GPU identity,
-  success rate, byte sizes, source/executed input binding, and SHA-256 hashes.
+  success rate, byte sizes, source/prepared execution-input binding, and SHA-256 hashes.
 
 Ordinary evaluation may correctly report zero success for any adapter. Preserve
 failed task results and distinguish completed evaluation from successful task

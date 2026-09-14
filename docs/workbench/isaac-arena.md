@@ -148,7 +148,8 @@ or input/setup failures can occur before a result tree exists, and interrupted
 workers may leave only workflow logs.
 The original operator input and the normalized execution HDF5 are never output
 artifacts. The result redacts their location and binds both the source SHA-256
-and exact executed-input SHA-256, along with source and executed step counts.
+and prepared execution-input SHA-256, along with source and prepared step counts.
+Observed action counts and task outcomes come from the simulator evidence.
 A completed evaluation may truthfully report a success rate of zero. Nonzero
 actions and movement metrics never substitute for the upstream task result.
 
