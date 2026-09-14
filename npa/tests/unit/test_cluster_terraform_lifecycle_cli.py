@@ -3062,6 +3062,40 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
     assert network_calls[0]["network_state_path"].name == ".npa-fleet-network.json"
     assert events == ["preflight", "ensure-subnet", "apply"]
 
+    # provision-if-absent has already supplied an immutable, mutation-ready
+    # whole-path plan. Re-querying tenant-wide quotas here would make a
+    # project-scoped service account fail after that authoritative gate passed.
+    from npa.provisioning_preflight import (
+        WholePathPreflightPlan,
+        resolve_topology,
+        resolved_plan_context,
+    )
+
+    inherited = WholePathPreflightPlan(
+        project_alias="project-alias",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="region-test",
+        topology=resolve_topology(
+            cluster_name="fresh",
+            cpu_nodes=1,
+            cpu_platform="cpu-d3",
+            cpu_preset="8vcpu-32gb",
+            gpu_nodes=0,
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+        ),
+        decision="ready",
+    )
+    with resolved_plan_context(inherited):
+        inherited_result = runner.invoke(
+            app,
+            ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+        )
+
+    assert inherited_result.exit_code == 0, inherited_result.output
+    assert preflight_requests[-1].provider_preflight is False
+
     skipped = runner.invoke(
         app,
         [

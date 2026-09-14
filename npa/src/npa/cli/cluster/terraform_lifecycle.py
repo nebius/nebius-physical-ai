@@ -671,7 +671,8 @@ def up_cmd(
             # legacy Terraform state keeps its established reconciliation
             # checks below instead of being reclassified as fleet state.
             provider_preflight=(
-                mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                inherited_plan is None
+                and (mig_enabled or (not legacy_state_exists and shared_recipe_available))
             ),
             scope=MK8sExecutionScope(
                 fleet_name=one_target.name,
