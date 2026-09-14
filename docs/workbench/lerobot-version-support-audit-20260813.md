@@ -22,8 +22,11 @@ found — see [Executed validation](#executed-validation).
 
 ## 0.6.0 image follow-up — 2026-09-12
 
-D3 and D6 are now closed for the selectable 0.6.0 image. The current Dockerfile
-was rebuilt with the `diffusion` and `smolvla` extras through the trusted public
+D3 and D6 are now closed for the selectable 0.6.0 image by merged
+[PR #462](https://github.com/nebius/nebius-physical-ai/pull/462), which resolves
+the rebuild follow-up [#284](https://github.com/nebius/nebius-physical-ai/issues/284).
+The image was rebuilt from the current Dockerfile with the `diffusion` and
+`smolvla` extras through the trusted public
 publisher. The exact bytes passed source/history, payload, vulnerability,
 secret, license, SBOM, provenance, pushed-byte, visibility, and anonymous-pull
 gates. The resolver now selects the additive immutable
@@ -174,14 +177,15 @@ and is already inconsistent with the VM installer, which pins neither
 (`install_lerobot.sh` installs unpinned `torch torchvision` from the cu124
 index).
 
-**D3 — 0.6.0 had no hardware-validated image (resolved 2026-09-12).** The 0.5.1 manifest entry carries
-an `image_tag` and an `image_digest`; the 0.6.0 entry carries neither, so
-`resolve_lerobot_image_tag("0.6.0")` falls through to the bare `0.6.0` semver
+**D3 — 0.6.0 had no hardware-validated image (resolved 2026-09-12).** At the
+August audit, the 0.5.1 manifest entry carried an `image_tag` and an
+`image_digest`; the 0.6.0 entry carried neither, so
+`resolve_lerobot_image_tag("0.6.0")` fell through to the bare `0.6.0` semver
 tag built from the CUDA 12 Dockerfile. Selecting `--lerobot-version 0.6.0`
-therefore silently opts out of the Blackwell-validated image family that the
-default uses. That bare tag does exist in the registry and runs — it is what D6
-was reproduced on — it simply has no recorded digest and no hardware gate, which
-is why a defect of D6's size could sit in it unnoticed.
+therefore silently opted out of the default's hardware validation. That image
+ran on an H100 but had no recorded digest or hardware gate, which let
+D6 go unnoticed. The [September 12 follow-up](#060-image-follow-up--2026-09-12)
+records the replacement immutable pin, digest, and B200 validation.
 
 **D4 — The stated reason for pinning the default at 0.5.1 is stale.**
 `skills/tools/lerobot/SKILL.md` and `skills/workflows/byof-onboard/SKILL.md`
