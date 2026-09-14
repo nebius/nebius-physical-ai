@@ -330,6 +330,63 @@ def _agent_extra_ingress_ports(
     return sorted({port for port in extra if port != agent_port})
 
 
+def _ensure_bootstrap_ingress(
+    *,
+    instance_id: str,
+    ssh_cidr_block: str,
+    application_cidr_block: str,
+    allow_world_open_ssh: bool,
+    allow_world_open_application: bool,
+    agent_port: int,
+    rerun_port: int,
+    public_https: bool,
+) -> None:
+    """Repair explicitly requested access before an existing VM is bootstrapped.
+
+    A bootstrap normally does not touch infrastructure. An operator whose egress
+    address changed, however, cannot reach the existing VM over SSH to perform the
+    refresh. Keep that recovery intentional: no rule is changed unless its source
+    CIDR was passed on this invocation, and ``/0`` still requires its separate
+    acknowledgement flag.
+    """
+    ssh_cidr_block = str(ssh_cidr_block or "").strip()
+    application_cidr_block = str(application_cidr_block or "").strip()
+    if not (ssh_cidr_block or application_cidr_block):
+        return
+    if not instance_id:
+        raise NetworkIngressError(
+            "agent record is missing instance_id for explicit bootstrap ingress repair"
+        )
+    if ssh_cidr_block:
+        ensure_ingress(
+            vm_id=instance_id,
+            ports=(22,),
+            source=ssh_cidr_block,
+            allow_world_open=allow_world_open_ssh,
+            tool="agent-bootstrap",
+        )
+    if application_cidr_block:
+        ports = tuple(
+            sorted(
+                {
+                    agent_port,
+                    *_agent_extra_ingress_ports(
+                        agent_port=agent_port,
+                        rerun_port=rerun_port,
+                        public_https=public_https,
+                    ),
+                }
+            )
+        )
+        ensure_ingress(
+            vm_id=instance_id,
+            ports=ports,
+            source=application_cidr_block,
+            allow_world_open=allow_world_open_application,
+            tool="agent-bootstrap",
+        )
+
+
 def _cleanup_agent_ingress(instance_id: str) -> None:
     if not str(instance_id or "").strip():
         return
@@ -9613,6 +9670,17 @@ def _transactional_agent_command(command: str):
                     "--ssh-public-key-path",
                     bound.arguments.get("ssh_public_key_path"),
                 ),
+                ("ssh_key", "--ssh-key", bound.arguments.get("ssh_key")),
+                (
+                    "ssh_cidr_block",
+                    "--ssh-cidr-block",
+                    bound.arguments.get("ssh_cidr_block"),
+                ),
+                (
+                    "application_cidr_block",
+                    "--application-cidr-block",
+                    bound.arguments.get("application_cidr_block"),
+                ),
                 ("agent_port", "--agent-port", bound.arguments.get("agent_port")),
                 ("backend_port", "--backend-port", bound.arguments.get("backend_port")),
                 ("rerun_port", "--rerun-port", bound.arguments.get("rerun_port")),
@@ -9663,6 +9731,10 @@ def _transactional_agent_command(command: str):
                 resume_argv.extend(["--tf-var", str(tf_value)])
             if bool(bound.arguments.get("no_public_https")):
                 resume_argv.append("--no-public-https")
+            if bool(bound.arguments.get("allow_world_open_ssh")):
+                resume_argv.append("--allow-world-open-ssh")
+            if bool(bound.arguments.get("allow_world_open_application")):
+                resume_argv.append("--allow-world-open-application")
             if bool(bound.arguments.get("agent_only")):
                 resume_argv.append("--agent-only")
             if "wait_ssh" in bound.arguments:
@@ -10738,6 +10810,26 @@ def bootstrap_cmd(
         "--ssh-key",
         help="SSH private key path (defaults to agent record or NPA_SSH_KEY).",
     ),
+    ssh_cidr_block: str = typer.Option(
+        "",
+        "--ssh-cidr-block",
+        help="Optional source CIDR to reconcile for SSH before remote bootstrap.",
+    ),
+    application_cidr_block: str = typer.Option(
+        "",
+        "--application-cidr-block",
+        help="Optional source CIDR to reconcile for agent UI ports before remote bootstrap.",
+    ),
+    allow_world_open_ssh: bool = typer.Option(
+        False,
+        "--allow-world-open-ssh",
+        help="Acknowledge an SSH source CIDR of /0.",
+    ),
+    allow_world_open_application: bool = typer.Option(
+        False,
+        "--allow-world-open-application",
+        help="Acknowledge an agent UI source CIDR of /0.",
+    ),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -10959,6 +11051,23 @@ def bootstrap_cmd(
         "remote_bootstrap_pending",
         "reconciliation_indeterminate",
     }
+    try:
+        _ensure_bootstrap_ingress(
+            instance_id=str(record.get("instance_id") or "").strip(),
+            ssh_cidr_block=ssh_cidr_block,
+            application_cidr_block=application_cidr_block,
+            allow_world_open_ssh=allow_world_open_ssh,
+            allow_world_open_application=allow_world_open_application,
+            agent_port=agent_port,
+            rerun_port=rerun_port,
+            public_https=public_https,
+        )
+    except NetworkIngressError as exc:
+        _fail(
+            "Could not reconcile the explicit bootstrap ingress. Verify the "
+            "agent record and supplied CIDRs, then retry. "
+            f"({type(exc).__name__})"
+        )
     convergence = converge_remote_agent_setup(
         operation=operation,
         resuming=resuming,

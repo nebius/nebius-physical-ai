@@ -79,6 +79,21 @@ created a VM without a reachable public address, use `fresh-setup` with the
 same pool option after reviewing the replacement/teardown scope; bootstrap
 cannot allocate that missing address.
 
+If the operator's egress address changes after deployment, bootstrap can repair
+only the explicitly named SSH and application CIDRs before it opens its remote
+session. This does not change the deployment's Terraform defaults or select a
+pool:
+
+```bash
+npa agent bootstrap --project <alias> --name <agent-name> \
+  --ssh-cidr-block <operator-address>/32 \
+  --application-cidr-block <operator-address>/32
+```
+
+The optional `--allow-world-open-ssh` and
+`--allow-world-open-application` flags are required independently when either
+source is intentionally `/0`.
+
 For one custom OpenAI-compatible provider, keep its settings outside the
 checkout in a mode-`0600` JSON file. The API key stays in a separate mode-`0600`
 file and is never passed on the command line:

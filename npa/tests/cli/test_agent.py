@@ -1411,6 +1411,71 @@ def test_public_ingress_excludes_internal_backend_port() -> None:
     assert 8787 not in ports
 
 
+def test_bootstrap_explicit_ingress_recovery_uses_only_supplied_cidrs(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.cli.agent.ensure_ingress", lambda **kwargs: calls.append(kwargs)
+    )
+
+    agent_module._ensure_bootstrap_ingress(
+        instance_id="instance-synthetic",
+        ssh_cidr_block="203.0.113.50/32",
+        application_cidr_block="198.51.100.60/32",
+        allow_world_open_ssh=False,
+        allow_world_open_application=False,
+        agent_port=8088,
+        rerun_port=9090,
+        public_https=True,
+    )
+
+    assert calls == [
+        {
+            "vm_id": "instance-synthetic",
+            "ports": (22,),
+            "source": "203.0.113.50/32",
+            "allow_world_open": False,
+            "tool": "agent-bootstrap",
+        },
+        {
+            "vm_id": "instance-synthetic",
+            "ports": (443, 8088, 9090),
+            "source": "198.51.100.60/32",
+            "allow_world_open": False,
+            "tool": "agent-bootstrap",
+        },
+    ]
+
+
+def test_bootstrap_explicit_ingress_recovery_is_noop_without_cidrs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent.ensure_ingress",
+        lambda **_kwargs: pytest.fail("bootstrap changed ingress without an explicit CIDR"),
+    )
+
+    agent_module._ensure_bootstrap_ingress(
+        instance_id="",
+        ssh_cidr_block="",
+        application_cidr_block="",
+        allow_world_open_ssh=False,
+        allow_world_open_application=False,
+        agent_port=8088,
+        rerun_port=9090,
+        public_https=True,
+    )
+
+
+def test_bootstrap_exposes_explicit_ingress_recovery_options() -> None:
+    result = runner.invoke(app, ["bootstrap", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--ssh-cidr-block" in result.output
+    assert "--application-cidr-block" in result.output
+    assert "--allow-world-open-ssh" in result.output
+    assert "--allow-world-open-application" in result.output
+
+
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
     None
 ):
@@ -4772,6 +4837,7 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     assert captured["agent_port"] == DEFAULT_AGENT_PORT
     assert captured["backend_port"] == DEFAULT_BACKEND_PORT
     assert captured["rerun_port"] == DEFAULT_RERUN_PORT
+    assert captured["ipv4_public_pool_id"] == "vpcpool-synthetic"
     assert captured["tf_var"] == [
         "ssh_cidr_block=203.0.113.50/32",
         "application_cidr_block=203.0.113.50/32",
@@ -6356,6 +6422,10 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
             "test-agent",
             "--artifact-source-file",
             str(source_file),
+            "--ssh-cidr-block",
+            "203.0.113.50/32",
+            "--application-cidr-block",
+            "198.51.100.60/32",
         ],
     )
 
@@ -6364,6 +6434,10 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
     resume_argv = json.loads(journal.read_text())["recovery_commands"]["resume_argv"]
     option = resume_argv.index("--artifact-source-file")
     assert resume_argv[option + 1] == str(source_file)
+    ssh_option = resume_argv.index("--ssh-cidr-block")
+    assert resume_argv[ssh_option + 1] == "203.0.113.50/32"
+    application_option = resume_argv.index("--application-cidr-block")
+    assert resume_argv[application_option + 1] == "198.51.100.60/32"
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
