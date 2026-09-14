@@ -118,12 +118,17 @@ or verification starts another login, interrupt and reap the process belonging
 to this attempt. The helper does not own or stop the CLI process. Stop the
 helper too if it is still waiting. Do not use a broad process-name kill.
 
-Discard the URLs and clear the clipboard. A retry uses a fresh process, link,
-port, state, and code. Do not retry a delivered callback or interpret a browser
+Discard the URLs and clear the clipboard and any saved callback in browser
+history. Hidden input prevents terminal echo; it does not disable session
+recording or clear browser/clipboard history for the operator. A retry uses a
+fresh process, link, port, state, and code. Do not retry a delivered callback or interpret a browser
 error page as proof of authentication. Leave the CLI's own authentication
 timeout unchanged unless the operator requests a different value.
 
 For development validation, run
 `npa/.venv/bin/python -m pytest npa/tests/unit/test_headless_oauth_relay.py -q`.
-These local tests verify callback handling; they do not prove a live Nebius SSO
-login. That requires an operator to complete the browser step.
+These tests run the real helper in a private pseudo-terminal against a local
+HTTP listener, including success, rejected callbacks, server errors, and
+cancellation. They check echo, output, local files, and child-process cleanup.
+They do not prove a live Nebius SSO login; that requires an operator to complete
+the browser step.

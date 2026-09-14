@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
+import pty
+import select
+import signal
+import subprocess
+import sys
+import termios
 import threading
 import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -63,6 +70,9 @@ def _listener():
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
+            if settings.get("malformed"):
+                self.wfile.write(b"synthetic-invalid-status\r\n\r\n")
+                return
             self.send_response(settings["status"])
             self.send_header("Location", "/must-not-follow")
             self.end_headers()
@@ -290,3 +300,164 @@ def test_refuses_input_that_could_expose_the_callback(
         monkeypatch.setattr(_RELAY.getpass, "getpass", _echo_fallback)
     assert _RELAY._main() == 1
     _private_input.assert_not_called()
+
+
+@pytest.fixture
+def _terminal(tmp_path):
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, str(_SCRIPT)],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        cwd=tmp_path,
+        env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+        start_new_session=True,
+    )
+    terminal = {
+        "process": process,
+        "master": master,
+        "slave": slave,
+        "output": bytearray(),
+    }
+    try:
+        yield terminal
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+        os.close(slave)
+
+
+def _expect_hidden_prompt(terminal, prompt):
+    while prompt not in terminal["output"]:
+        readable, _, _ = select.select([terminal["master"]], [], [], 10)
+        assert readable, "The helper did not display the expected private prompt"
+        terminal["output"].extend(os.read(terminal["master"], 65536))
+    assert not termios.tcgetattr(terminal["slave"])[3] & termios.ECHO
+
+
+def _enter_authorization(terminal, value):
+    _expect_hidden_prompt(terminal, b"Original CLI authorization URL (hidden): ")
+    os.write(terminal["master"], value.encode() + b"\n")
+
+
+def _finish_terminal(terminal, tmp_path, expected_status):
+    assert terminal["process"].wait(timeout=10) == expected_status
+    while select.select([terminal["master"]], [], [], 0)[0]:
+        terminal["output"].extend(os.read(terminal["master"], 65536))
+    output = terminal["output"]
+    assert b"synthetic" not in output
+    assert b"http" not in output
+    assert b"Traceback" not in output
+    assert terminal["process"].args == [sys.executable, str(_SCRIPT)]
+    assert list(tmp_path.iterdir()) == []
+    assert termios.tcgetattr(terminal["slave"])[3] & termios.ECHO
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "success",
+        "wrong-state",
+        "duplicate-code",
+        "redirect",
+        "server-error",
+        "malformed",
+    ],
+)
+def test_private_terminal_callback_flow(scenario, _terminal, _listener, tmp_path):
+    """Exercise actual hidden input, callback delivery, output, and cleanup.
+
+    Args:
+        scenario: Success or a callback failure case.
+        _terminal: Real child process with its own terminal.
+        _listener: Isolated HTTP listener and request capture.
+        tmp_path: Empty working directory to check for persisted input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Input leaked, delivery differed, or cleanup failed.
+    """
+    port, requests, settings = _listener
+    settings["status"] = {"redirect": 302, "server-error": 500}.get(scenario, 200)
+    settings["malformed"] = scenario == "malformed"
+    authorization = _authorization(f"http://127.0.0.1:{port}")
+    callback = _callback(port)
+    if scenario == "wrong-state":
+        callback = _callback(port, state="synthetic-other-attempt")
+    elif scenario == "duplicate-code":
+        callback += "&code=synthetic-second-code"
+    _enter_authorization(_terminal, authorization)
+    _expect_hidden_prompt(_terminal, b"Final browser callback URL (hidden): ")
+    os.write(_terminal["master"], callback.encode() + b"\n")
+    _finish_terminal(_terminal, tmp_path, 0 if scenario == "success" else 1)
+    assert len(requests) == (0 if scenario in {"wrong-state", "duplicate-code"} else 1)
+    assert (b"Callback delivered." in _terminal["output"]) == (scenario == "success")
+
+
+@pytest.mark.parametrize("cancel", ["eof", "interrupt"])
+def test_private_terminal_cancellation(cancel, _terminal, _listener, tmp_path):
+    """Cancel an actual prompt without leaking input or leaving a child alive.
+
+    Args:
+        cancel: EOF or process interrupt.
+        _terminal: Real child process with its own terminal.
+        _listener: Isolated HTTP listener and request capture.
+        tmp_path: Empty working directory to check for persisted input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Cancellation sent a callback or exposed input.
+    """
+    port, requests, _ = _listener
+    _enter_authorization(_terminal, _authorization(f"http://127.0.0.1:{port}"))
+    _expect_hidden_prompt(_terminal, b"Final browser callback URL (hidden): ")
+    if cancel == "eof":
+        os.write(_terminal["master"], b"\x04")
+    else:
+        _terminal["process"].send_signal(signal.SIGINT)
+    _finish_terminal(_terminal, tmp_path, 1)
+    assert not requests
+    assert b"Cancelled." in _terminal["output"]
+
+
+def test_private_terminal_rejects_original_link_before_callback(_terminal, tmp_path):
+    """Refuse an invalid original link without asking for a callback code.
+
+    Args:
+        _terminal: Real child process with its own terminal.
+        tmp_path: Empty working directory to check for persisted input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Invalid original input advanced to the callback prompt.
+    """
+    _enter_authorization(_terminal, _authorization(state=""))
+    _finish_terminal(_terminal, tmp_path, 1)
+    assert b"Final browser callback" not in _terminal["output"]
+
+
+def test_real_process_refuses_piped_callback(tmp_path):
+    """Reject a piped callback without reproducing it in either output stream.
+
+    Args:
+        tmp_path: Empty working directory to check for persisted input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Non-terminal input was accepted or exposed.
+    """
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT)],
+        input=_callback().encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert b"synthetic" not in result.stdout + result.stderr
+    assert b"http" not in result.stdout + result.stderr
+    assert list(tmp_path.iterdir()) == []
