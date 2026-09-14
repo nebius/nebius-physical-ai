@@ -275,7 +275,9 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     (run / "reports" / "final.json").write_text(json.dumps({"artifact_count": 20, "multiply_mode": "multi-variant"}))
 
     docs = _load_stage_docs(run)
-    assert json.dumps(curator, indent=2, sort_keys=True) in docs["pipeline/4_cosmos_curator"]
+    displayed_curator = json.loads(docs["pipeline/4_cosmos_curator"].split("```json\n", 1)[1].split("```", 1)[0])
+    assert {key: displayed_curator[key] for key in curator} == curator
+    assert displayed_curator["source_report"]["artifact"] == "curation/cosmos_curator.json"
     assert "Cosmos Transfer 2.5" not in docs["pipeline/2_augment"]
     assert set(docs) == {
         "pipeline/0_log",

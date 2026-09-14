@@ -1556,6 +1556,12 @@ decisions, and pipeline evidence. A rejected run may contain a useful recording
 without accepted data or a final curation report. Check the variant MP4s and
 the evaluator's individual dispositions as well as its aggregate score.
 
+New recordings contain selected producer facts, source-report SHA-256 hashes,
+and artifact references relative to the run root, such as `input/source.mp4`.
+Private storage locations and runtime identities are omitted. The original
+JSON reports remain private and unchanged; use their recorded hashes to trace
+details outside the review panels. Existing recordings are not rewritten.
+
 Each Rerun caption panel previews the first 12 entries. For the complete
 annotations, inspect `labeled_original/captions.json` and
 `labeled_augmented/captions.json` under the run prefix. The eight-second

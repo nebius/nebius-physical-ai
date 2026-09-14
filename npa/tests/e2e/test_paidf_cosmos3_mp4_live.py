@@ -103,3 +103,14 @@ def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
             recording = load_recording(path)
             assert recording.recording_id() == run_id
             assert recording.application_id() == "neural-reconstruction"
+            text_columns = 0
+            for chunk in recording.chunks():
+                batch = chunk.to_record_batch()
+                for field, column in zip(batch.schema.names, batch.columns):
+                    if "text" not in field.lower():
+                        continue
+                    text_columns += 1
+                    text = json.dumps(column.to_pylist(), ensure_ascii=False)
+                    assert bucket not in text, "Recording text contains the private bucket"
+                    assert "s3://" not in text.lower(), "Recording text must use run-relative references"
+            assert text_columns > 0, "Recording has no reviewable provenance text"

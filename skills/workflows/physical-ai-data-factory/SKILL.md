@@ -568,6 +568,12 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   log — under the `pipeline/*` entities. Rejected runs take `visualize-rejected`
   before `reject-quality`, so the evidence survives while promotion remains
   fail-closed.
+  PAIDF recordings contain selected producer facts, raw source-report SHA-256
+  hashes, and run-relative artifact references. Captions, models, candidate
+  decisions, quality measurements, and timelines remain reviewable; private
+  storage locations and runtime identities are omitted. Original reports stay
+  private and unchanged, and existing recordings are not rewritten. Apply
+  `skills/workflows/emit-reviewable-rrd/SKILL.md` when validating decoded content.
 - **Viewing in the NPA agent:** every stage lands under one S3 run prefix
   (`input/ configs/ labeled_original/ cosmos_augmented/ grade/ labeled_augmented/
   curation/ reports/`). The `visualize` stage writes `reports/sim2real.rrd`,
