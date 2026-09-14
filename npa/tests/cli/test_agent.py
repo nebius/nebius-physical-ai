@@ -3733,6 +3733,16 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
     assert all(path.startswith("./.npa-agent-bootstrap-") for path in paths)
 
 
+def test_bootstrap_pins_nebius_cli_for_the_root_backend() -> None:
+    """Agent quota planning must use the tested CLI, not a stale VM install."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'supported_tool_version("nebius-cli", __file__)' in source
+    assert 'NEBIUS_CLI_VERSION="$NEBIUS_REQUIRED_VERSION" bash' in source
+    assert 'sudo install -m 0755 "$NEBIUS_USER_BIN" /usr/local/bin/nebius' in source
+
+
 def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
     from npa.cli import agent as agent_module
 

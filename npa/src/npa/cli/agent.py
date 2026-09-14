@@ -111,6 +111,7 @@ from npa.clients.network import (
     resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.smoke._versions import supported_tool_version
 from npa.cli.agent_public import (
     AgentConfig,
     build_agent_urls,
@@ -1049,6 +1050,7 @@ server {{
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     expected_agent_service_account_id = shlex.quote(service_account_id.strip())
     expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
+    nebius_cli_version = shlex.quote(supported_tool_version("nebius-cli", __file__))
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
     rerun_recording_arg = "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
     lichtblick_image = str(
@@ -1064,17 +1066,28 @@ server {{
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates coturn
-if ! command -v nebius >/dev/null 2>&1; then
-  curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-fi
 if ! grep -q 'export PATH="$HOME/.nebius/bin:$PATH"' "$HOME/.profile" 2>/dev/null; then
   echo 'export PATH="$HOME/.nebius/bin:$PATH"' >> "$HOME/.profile"
 fi
+NEBIUS_REQUIRED_VERSION={nebius_cli_version}
 NEBIUS_BIN="$(command -v nebius || true)"
-if [ -z "$NEBIUS_BIN" ] && [ -x "$HOME/.nebius/bin/nebius" ]; then
-  NEBIUS_BIN="$HOME/.nebius/bin/nebius"
+NEBIUS_USER_BIN="$HOME/.nebius/bin/nebius"
+nebius_matches_required_version() {{
+  candidate="$1"
+  [ -n "$candidate" ] && [ -x "$candidate" ] && \
+    "$candidate" version 2>/dev/null | grep -Eq "(^|[^0-9])${{NEBIUS_REQUIRED_VERSION//./\\.}}([^0-9]|$)"
+}}
+if ! nebius_matches_required_version "$NEBIUS_BIN"; then
+  curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION="$NEBIUS_REQUIRED_VERSION" bash
 fi
-if [ -z "$NEBIUS_BIN" ] || [ ! -x "$NEBIUS_BIN" ]; then
+if nebius_matches_required_version "$NEBIUS_USER_BIN"; then
+  # The backend is a root systemd service, so publish the tested CLI on its PATH
+  # instead of relying on the SSH user's private install.
+  sudo install -m 0755 "$NEBIUS_USER_BIN" /usr/local/bin/nebius
+  NEBIUS_BIN="/usr/local/bin/nebius"
+elif nebius_matches_required_version "$NEBIUS_BIN"; then
+  :
+else
   echo "nebius CLI binary not found after install" >&2
   exit 1
 fi
@@ -3957,7 +3970,12 @@ def _provision_agent_infra(
             preemptible=preemptible,
         )
         payload = result.to_dict()
-        payload["ok"] = True
+        # A dry run may be structurally executable yet have an ``unknown`` or
+        # ``blocked`` whole-path capacity decision.  Those results are useful
+        # evidence, but must never be upgraded to a successful confirmation
+        # preflight: the real mutation will (correctly) reject the same plan.
+        status = str(payload.get("status") or ("ready" if dry_run else "ok")).strip().lower()
+        payload["ok"] = status in {"ok", "ready"}
         payload["dry_run"] = dry_run
         return payload
     except (TypeError, ValueError) as exc:
@@ -4284,7 +4302,7 @@ def _safe_infra_chat_status(response: object) -> str:
     if bool(result.get("ok")):
         return "ready"
     status = str(result.get("status") or payload.get("status") or "").strip().lower()
-    return status if status in {{"blocked", "invalid", "unavailable", "error"}} else "unavailable"
+    return status if status in {{"blocked", "invalid", "unavailable", "unknown", "partial", "error"}} else "unavailable"
 
 
 def _maybe_toolground_chat_reply(

@@ -596,6 +596,32 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
     assert captured["preemptible"] is True
 
 
+def test_rendered_mk8s_provision_does_not_promote_unknown_preflight_to_ready(
+    monkeypatch, tmp_path
+) -> None:
+    """A chat confirmation must not bypass a fail-closed capacity plan."""
+    import sys
+
+    from npa import provisioning
+
+    module_name = "npa_rendered_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    class Result:
+        def to_dict(self):
+            return {"status": "unknown", "preflight": {"decision": "unknown"}}
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(provisioning, "provision_if_absent", lambda **_kwargs: Result())
+    try:
+        result = module._provision_agent_infra("project-alias", "target", dry_run=True)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert result["ok"] is False
+    assert result["status"] == "unknown"
+
+
 def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
     monkeypatch, tmp_path
 ) -> None:
@@ -668,6 +694,37 @@ def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
         assert calls == [True, False]
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_chat_mk8s_unknown_preflight_never_issues_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Unknown quota evidence is a no-mutation stop, not a confirmable action."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-unknown-state.json"
+    module._STATE_STORE = None
+    monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
+    monkeypatch.setattr(
+        module,
+        "_provision_agent_infra",
+        lambda *_args, **_kwargs: {"ok": False, "status": "unknown"},
+    )
+    try:
+        response = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "provision an mk8s cluster"}],
+            model="unused",
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert response["grounded"] is True
+    assert response["needs_confirmation"] is False
+    assert "confirm_token" not in response
+    assert response["infra_deployment"]["phase"] == "preflight"
+    assert response["infra_deployment"]["status"] == "unknown"
 
 
 def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
