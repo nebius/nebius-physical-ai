@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import tempfile
 import traceback
@@ -46,7 +47,9 @@ def policy_workspace(output_path: str, phase: str) -> Iterator[Path]:
                 publish_bundle(diagnostics, uri_join(output_path, "failure"),
                                {"status": "failed", "phase": phase, "error_type": type(exc).__name__}, "failure.json")
             except Exception as publication_error:
-                exc.add_note(f"Diagnostic publication also failed: {type(publication_error).__name__}")
+                logging.getLogger(__name__).warning(
+                    "Diagnostic publication also failed (%s)", type(publication_error).__name__
+                )
             raise
 
 
@@ -61,7 +64,10 @@ def file_digest(path: Path) -> str:
         OSError: File cannot be read.
     """
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
 
 
 def publish_bundle(root: Path, output_path: str, report: dict[str, Any], name: str) -> dict[str, Any]:
