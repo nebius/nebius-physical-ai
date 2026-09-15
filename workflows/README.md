@@ -158,6 +158,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | Spec | Notes |
 | --- | --- |
 | [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
+| [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |
 | [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |
 | [`byof-mujoco-playground.yaml`](testing/byof-mujoco-playground.yaml) | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |

@@ -14,6 +14,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
     ],
+    "habitat-sim": [
+        "pinned MIT Habitat-Sim source and complete redistributable dependency closure",
+        "official CC BY 4.0 Skokloster archive fetched only at runtime with exact hashes",
+        "real greedy-follower traversal produces distinct RGB and finite-depth frames",
+        "Bullet world time advances with nonzero agent displacement",
+        "NVIDIA EGL renders on exactly one RTX PRO 6000 Blackwell, never B200",
+        "pod digest, exit zero, artifact hashes, and storage readback all agree",
+    ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",

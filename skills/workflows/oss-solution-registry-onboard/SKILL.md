@@ -194,6 +194,58 @@ Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
 
+### Habitat-Sim (`habitat-sim-smoke.yaml`)
+
+Pinned: `facebookresearch/habitat-sim`
+`57ee4941dc4765240f0f91f70b2c97a919bf9038` (MIT). Upstream explicitly warns
+that beyond v0.3.4, Meta internal teams do not officially maintain releases or
+provide active development.
+
+The dedicated `npa/docker/workbench/habitat-sim/` recipe pins linux/amd64 Ubuntu
+22.04 by digest and a signed immutable package snapshot. It materializes only
+the source projection required by the headless RGB-D, pathfinding, Bullet, and
+EGL build. The unused `rlr-audio-propagation` gitlink is CC BY-NC 4.0 and is
+excluded with audio; GUI and docs gitlinks are excluded too. Install the exact
+hash-locked build and runtime wheel closures with dependency resolution and
+build isolation disabled. Keep the candidate unbuilt and publication-
+quarantined until actual OCI bytes pass the complete byte, layer, license,
+SBOM, provenance, vulnerability, payload-absence, and non-root checks.
+
+Pending hard-gate capabilities (all must pass in one live pod):
+
+- `skokloster_castle_rgb_depth_bullet_traversal`: actual upstream greedy-follower
+  agent actions, saved RGB/depth observations, and nonzero displacement
+- `headless_nvidia_egl_rgb_depth_render`: live NVIDIA GL strings and NVIDIA EGL
+  libraries loaded by the renderer process
+- `bullet_physics_world_step`: Bullet-enabled backend with advancing world time
+- `greedy_geodesic_agent_traversal`: a real pathfinder/navmesh traversal rather
+  than direct state teleportation
+
+Fetch only the official Meta `habitat-test-scenes.zip` archive referenced by the
+pinned Habitat-Sim `examples/settings.py`. Treat its URL as mutable: require the
+94,590,970-byte archive SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+then extract only `skokloster-castle.glb` and `skokloster-castle.navmesh` after
+their exact member names, sizes, CRC32 values, and SHA-256 hashes pass. Delete
+the archive before simulator creation and never bake or extract another member.
+The pinned source README and original asset record identify The King's Hall
+under CC BY 4.0. Preserve creator/scan attribution, license and original-asset
+links, and the Habitat-ready modification provenance in the proof.
+
+Use `workflows/testing/habitat-sim-smoke.yaml` on exactly one RTX PRO 6000
+Blackwell (`sm_120`). The owner-only runtime evidence must prove
+that cluster's Capacity Block is bound `STRICT`; the resource profile alone is
+not that proof. The live gate requires an owner-only, run-bound manager receipt,
+verifies a hashed provider reservation readback, rejects the public registry
+default, and compares Kubernetes `containerStatuses[].imageID` with the pushed
+digest before exact-run teardown. It also downloads and re-hashes every declared
+RGB/depth and inventory object. This renderer must never use B200. A future
+trusted public workflow must rebuild the exact reviewed full Git SHA; that new
+digest requires complete repeated byte scans and genuine RTX qualification, and
+must not transport privately built OCI bytes.
+Defer proprietary/gated datasets, semantic annotations, and distributed
+Habitat-Lab training.
+
 ### ManiSkill (`byof-maniskill.yaml`)
 
 Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`

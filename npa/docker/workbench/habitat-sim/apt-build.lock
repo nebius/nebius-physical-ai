@@ -1,0 +1,49 @@
+schema_version: npa.habitat-sim.apt-lock.v1
+ubuntu_base: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+snapshot: "20260903T121500Z"
+components: [main, universe]
+signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+ca_bootstrap:
+  package: ca-certificates
+  version: 20260601~22.04.1
+  bytes: 140666
+  sha256: 6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
+  source: ca-certificates
+  certificate_count: 121
+  config_bytes: 4809
+  config_sha256: fe407f6205ff90c56d4f073ffaa2a8abde7835558919c19367a7cd4fd6312dad
+  bundle_bytes: 182140
+  bundle_sha256: 9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
+  x509_parser:
+    command: /usr/bin/openssl
+    packages:
+      - {binary: openssl, version: 3.0.2-0ubuntu1.29, bytes: 1184520, sha256: bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817, source: openssl}
+      - {binary: libssl3, version: 3.0.2-0ubuntu1.29, bytes: 1906444, sha256: c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146, source: openssl}
+compatibility:
+  installed_perl_base: 5.34.0-3ubuntu1.8
+  candidate_perl_base: 5.34.0-3ubuntu1.8
+  candidate_perl: 5.34.0-3ubuntu1.8
+  candidate_python3: 3.10.6-1~22.04.1
+  candidate_libpython3_dev: 3.10.6-1~22.04.1
+  candidate_python3_dev: 3.10.6-1~22.04.1
+  candidate_python3_venv: 3.10.6-1~22.04.1
+packages:
+  - {binary: build-essential, version: 12.9ubuntu3, source: build-essential, sha256: 1e464c41488d154b9f5ca19d2e9ac8b18913ae16e3dca713c3ba0223fae2cccc}
+  - {binary: ca-certificates, version: 20260601~22.04.1, source: ca-certificates, sha256: 6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245}
+  - {binary: libegl1, version: 1.4.0-1, source: libglvnd, sha256: 4a35c0e925e15a076e7ce11d7c76f8ecb16615fc347c2c09afa4c205a7ca8ec4}
+  - {binary: libegl1-mesa-dev, version: 23.2.1-1ubuntu3.1~22.04.4, source: mesa, sha256: 6ca439ea75566d27545d7487a976dc5e09e3d43d5eac3854797e55fba9d94846}
+  - {binary: libgl1, version: 1.4.0-1, source: libglvnd, sha256: 4fb2bbff94bb1a59bbdb40041e7a8ab58db2a003a151f4055357af03f0b78666}
+  - {binary: libgl1-mesa-dev, version: 23.2.1-1ubuntu3.1~22.04.4, source: mesa, sha256: c0e7dcd0cb8e44f180e37ef4d4ee6ee795d888b372d8f2481689b76a25150e90}
+  - {binary: libglm-dev, version: 0.9.9.8+ds-2, source: glm, sha256: e01d71215c18bde79da26c9b37ded4a6bb346bcfea7ff459bf39a6b53f7bb88e}
+  - {binary: libglvnd-dev, version: 1.4.0-1, source: libglvnd, sha256: af38c9f0f7f65735d89094cb5bc32afa58012e4bd48bae995653c465dc110165}
+  - {binary: libjpeg-dev, version: 8c-2ubuntu10, source: libjpeg8-empty, sha256: dbd821a31a4c5a7231962f24dfe4d30a6455663cb03ba43c7f1e4338cb7fd0a3}
+  - {binary: libpython3-dev, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: 7692175a21453d3cf15b66ed5a9a661b160113a99cb24eeb6a3b9acd43afa642}
+  - {binary: libomp-dev, version: "1:14.0-55~exp2", source: llvm-defaults, sha256: 445f75e6fd75fe5606e7a2855b8bf13ddb4301ae4ed6d364d30b5e403f86e634}
+  - {binary: pkg-config, version: 0.29.2-1ubuntu3, source: pkg-config, sha256: 69da4190d948d0bf7444ead040791b7924bd1a08a10ec13cd7f0bb9baab09c53}
+  - {binary: python3, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: 43dbcc12d790ed9360be4a1dc690ac0a7464a5e7c3170785886df84811a3f5a5}
+  - {binary: python3-dev, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: f7d6f5a0eb31d36f7fcba156b16da91035128c0edd1e643f07e7bbbecf5c6c7f}
+  - {binary: python3-venv, version: 3.10.6-1~22.04.1, source: python3-defaults, sha256: ee8d678c61b0721aff196ab1320e41cf4f5ebe3fcd22363b82e22c733b105866}
+transitive_contract: >-
+  The signed immutable snapshot resolves the complete dependency graph. The build
+  records dpkg-query binary/source versions; the final verifier must bind every
+  retained package and /usr/share/doc copyright file before publication.

@@ -130,6 +130,11 @@ jobs:
                   raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
           for tool in build_tools:
+              if tool == "habitat-sim":
+                  raise SystemExit(
+                      "habitat-sim: Phase A quarantine refuses a public build; "
+                      "record accepted private-stage evidence before enabling a trusted rebuild"
+                  )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":

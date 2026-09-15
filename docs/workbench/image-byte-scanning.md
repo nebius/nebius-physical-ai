@@ -1,4 +1,4 @@
-# Complete-byte checks for cuRobo images
+# Complete-byte checks for source-built images
 
 [Workbench docs](README.md)
 
@@ -6,6 +6,14 @@ The trusted cuRobo publication workflow adds an archive byte scan before pushing
 an image and after pulling its exact digest. It retains the existing Trivy,
 license, runtime, provenance, SBOM, and payload checks. Other workbench images
 keep their existing publication path.
+
+The unbuilt Habitat-Sim candidate adds a product verifier for a closed attested
+OCI graph. It checks every ordered ancestor layer and the flattened final paths,
+including whiteouts; exact final user, labels, and entrypoint; required source and
+license manifests; and forbidden scene/archive/member hashes, cache/output paths,
+credentials, CUDA/NVIDIA payload, and bundled FFmpeg. The resulting Habitat
+verification schema is accepted by the same complete-byte scanner, but neither a
+synthetic fixture nor a verifier receipt authorizes publication.
 
 The additional check addresses exclusions in file-oriented scanners. For example,
 the pinned [Trivy secret analyzer](https://github.com/aquasecurity/trivy/blob/v0.70.0/pkg/fanal/analyzer/secret/secret.go)

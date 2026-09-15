@@ -168,8 +168,8 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     sources, dests = _copy_directives(text)
     command = spec.golden_eval.command
 
-    if command.startswith("python -m npa."):
-        module = command.split("python -m ", 1)[1].split()[0]
+    if command.startswith(("python -m npa.", "python3 -m npa.")):
+        module = command.split(" -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"
         provides = any(
             src == "src/npa" or src.startswith("src/npa/smoke") or src == module_file

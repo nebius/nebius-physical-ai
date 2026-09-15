@@ -36,6 +36,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 #: against a Typer signature. Pinned so the set can shrink but not silently grow.
 NON_CLI_ARGV = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.dataset.report_rejection",
         "workbench.dataset.write_quality_decision",
         "workbench.lancedb.backfill_cpu_bundle",
@@ -85,6 +86,7 @@ NON_CLI_ARGV = frozenset(
 #: remains genuinely exempt is inline `python -c` source.
 AUDITED_ELSEWHERE = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.lancedb.backfill_cpu_bundle",
         "workbench.lancedb.create_failure_views",
         "workbench.sim2real_envgen.split",
@@ -159,6 +161,15 @@ def test_no_tool_ref_argv_passes_a_flag_its_cli_rejects() -> None:
         "these specs would crash in the pod after a successful render:\n"
         + "\n".join(f"  {ref}: {flags}" for ref, flags in sorted(drift.items()))
     )
+
+
+def test_habitat_snapshot_contract_does_not_leak_into_generic_byof_toolrefs() -> None:
+    """The dedicated Habitat image owns its snapshot; generic BYOF does not."""
+
+    for tool_ref in ("workbench.byof.repo", "workbench.isaac_lab.byof_repo"):
+        entry = TOOL_CATALOG[tool_ref]
+        assert "--apt-snapshot" not in entry.argv_template
+        assert "apt_snapshot" not in entry.config_defaults
 
 
 #: Top-level CLI groups a toolRef may invoke. `workbench` is the tool layer;
