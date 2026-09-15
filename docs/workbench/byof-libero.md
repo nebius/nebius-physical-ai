@@ -2,7 +2,7 @@
 
 LIBERO is a quarantined public-image candidate, not a supported release. Its
 planned image is a neutral, non-root bootstrap that contains no LIBERO or GPU
-runtime. A future manager-approved run may materialize one exact runtime into an
+runtime. A future customer-authorized run may materialize one exact runtime into an
 operator-owned cache, then exercise one official `libero_spatial` task through
 eight upstream BC-RNN optimizer steps, strict checkpoint reload, and a genuine
 trajectory-disjoint held-out evaluation on one B200. The path is headless and
@@ -11,30 +11,30 @@ never invokes rendering.
 The planned managed workflow is
 [`workflows/testing/byof-libero.yaml`](../../workflows/testing/byof-libero.yaml).
 Its `tool://libero` default deliberately cannot run: execution requires an
-explicit accepted `npa-libero@sha256:…` candidate, a manager-issued runtime-use
-decision, and independent build-lineage evidence. There is no published LIBERO
+explicit qualified `npa-libero@sha256:…` candidate, a short-lived customer/run
+authorization, and independent build-lineage evidence. There is no published LIBERO
 tag or digest and the public image table remains unchanged.
 
-An accepted record is not repository-self-attested. Its canonical JSON bytes
-must carry an Ed25519 signature from the manager-held private key, verified
-against an owner-private regular file selected by
-`NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE`; symlinks, non-owner files, and
-group/world permissions fail closed. The publication workflow materializes that
-file from its protected secret immediately before host-side validation. The same
-public key is baked into the accepted candidate as a root-owned verification
-trust root; the image independently verifies the signature before runtime fetch.
-The private signing key is never stored in this repository, workflow inputs,
-task YAML, image, or runtime cache.
+Image qualification and customer acceptance are separate. The checked-in
+qualification binds independently reviewed immutable image and publication
+lineage. A customer authorization is issued only by the authenticated NPA
+customer/control-plane surface after that customer reviews and acknowledges all
+seven exact terms for one run. Its canonical JSON carries an Ed25519 signature
+verified against the owner-private public trust-root file selected by
+`NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE`; symlinks, non-owner files,
+and group/world permissions fail closed. The public key may be baked into a
+qualified neutral image. Signing material, customer identity, credentials,
+acceptance records, terms payloads, and runtime payloads never are.
 
 ## Six independent boundaries
 
 | Boundary | Phase A contract |
 | --- | --- |
 | Source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT. Source is absent from the image. An authorized runtime sparse-fetch retains only training/config/task-definition paths, verifies the source tree and license hash, and removes `.git`. `libero/libero/assets` is excluded. |
-| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, the public Ed25519 manager-verification key, and NPA-owned files. The corresponding private signing key never enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
+| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, the public Ed25519 customer-control-plane verification key, and NPA-owned files. The corresponding private signing key never enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
-| Runtime cache | `/workspace/.cache/npa/libero/<runtime-manifest-sha256>` is manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, mismatched, overbroad, expired, or locally invented acceptance decisions refuse before cache or network effects. Runtime fetch changes delivery, not permission. |
+| Runtime cache | `/workspace/.cache/npa/libero/<customer-run-manifest-scope-sha256>` is customer/run/manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, denied, expired, invalid, wrong-customer/run, wrong-image, or wrong-manifest authorization refuses before cache or network effects. Runtime fetch changes delivery, not permission. |
 | Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, seals the output directory owner-only, and materializes the protected bootstrap/cache receipts itself. Exactly nine named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and all nine snapshots are complete before network output begins. Each snapshot is hashed, conditionally uploaded with an S3 SHA-256 checksum, then GET/read back byte-for-byte. A tenth receipt records all nine identities and is itself uploaded and read back. Credentials, source, models, packages, input data, and caches are never output artifacts. |
 
 The task mentions Google Scanned Objects and a HOPE distractor, but their meshes
@@ -64,16 +64,16 @@ and a kill-after escalation and emits an unambiguous failure sentinel.
 Before any public byte is disclosed, a separately authorized private stage must
 first emit a canonical complete-image inventory. It binds every byte in each
 ordered uncompressed layer tar, the resulting flattened-rootfs path records,
-and the observed OCI config digest. The manager reviews and accepts those exact
+and the observed OCI config digest. Independent review qualifies those exact
 identities outside the repository. The trusted public workflow obtains every
-accepted identity exclusively from the strict checked-in acceptance record; no
-free-form dispatch value can create or widen acceptance. Its pre-push scanner
+qualified identity exclusively from the strict checked-in qualification record; no
+free-form dispatch value can create or widen qualification. Its pre-push scanner
 then requires complete image, config, exact Buildx metadata, and published-base
 provenance equality. Finite
 path and content signatures remain defense in depth, not the proof that
 arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Before LIBERO's first package-wide visibility change, the private destination
-must contain exactly the accepted untagged candidate digest and no other image
+must contain exactly the qualified untagged candidate digest and no other image
 or embedded attestation graph. Other first publications still require a nonexistent
 or zero-version destination, then re-enumerate and tag-filter the complete
 post-push version graph immediately before the visibility mutation. The target
@@ -101,7 +101,7 @@ The trusted build must then:
    flattened rootfs with `scan_image_libero_payload.py` plus the general
    restricted-payload scanner; require the canonical complete-image inventory
    and config to equal the private-stage identities in the strict checked-in
-   acceptance manifest; free-form dispatch values are not an authorization
+   qualification manifest; free-form dispatch values are not an authorization
    channel;
 4. prove non-root/config/bootstrap identity and independently bind the candidate
    index, platform manifest, config, Buildx metadata, base manifest, rootfs
@@ -109,9 +109,9 @@ The trusted build must then:
    bundles. The publication bundle recursively binds the complete Python source
    trees used for provider identity, preflight, managed submission, scheduler
    identity, storage readback, signal teardown, and cleanup, plus the exact live
-   evidence collector; the checked-in acceptance manifest is the only permitted
-   path delta after the accepted development SHA, so enforcement/runtime drift
-   requires a new candidate and renewed manager acceptance;
+   evidence collector; the checked-in qualification manifest is the only permitted
+   path delta after the qualified development SHA, so enforcement/runtime drift
+   requires a new candidate and renewed qualification;
 5. pass package-license, corresponding-source, Trivy fixed-critical,
    repository Gitleaks, credential, private-infrastructure, cache, data, model,
    output, and confidentiality gates; and
@@ -131,63 +131,66 @@ The runtime materializer reads `runtime-manifest.json`, which pins the source
 tree, MIT license, sparse task files, CC BY 4.0 demonstration, Apache-2.0 BERT
 files, seven official governing-terms documents, and 135 runtime artifacts by
 URL, reviewed size, license expression, and SHA-256. The checked-in inventory is
-complete at 3,277,640,175 total artifact bytes, but runtime materialization
-still fails closed without a separate manager-issued exact-manifest-bound use
-decision and signed candidate acceptance.
-`runtime-requirements.txt` is itself
-hash-bound and must match the ordered artifact manifest exactly; both bootstrap
-and remaining installs use `pip --require-hashes --no-deps --no-index`. It
-requires an owner-private regular JSON decision whose SHA-256 is fixed by the
-checked-in acceptance record, not supplied by the caller. The closed record
-binds the official GHCR candidate, OCI/platform/config identities,
-complete-image inventory, Buildx/base/publication receipts, exact source/runtime
-manifest, reviewed infrastructure, run/namespace, exact fully rendered
-executable-profile SHA-256, issuer, five boundaries,
-nonce, and a maximum 24-hour decision window. It rejects any `ACCEPT_*` proxy.
-The host sends the complete signed acceptance only through the redacted secret
-channel. Before reading governing terms or creating the cache root, the neutral
-image verifies that complete canonical manifest with `/usr/bin/ssh-keygen`
-against the root-owned, read-only public key baked into the accepted image, then
-derives the permitted decision digest and lineage fields from the signed record.
-A caller-provided key, locally invented `issuer`, or matching environment hashes
-cannot substitute for that trust root.
-Only after that decision passes does it resolve and hash all
-official terms into ephemeral storage; any changed or unavailable terms source
-refuses before cache mutation. Network availability, registry access, a
-credential, or a successful download is never treated as permission.
+complete at 3,277,640,175 total artifact bytes, but materialization fails closed
+until the customer personally acknowledges the exact named terms at their
+official URLs in the authenticated NPA customer/control-plane surface.
+`runtime-requirements.txt` is itself hash-bound and must match the ordered
+artifact manifest exactly; both bootstrap and remaining installs use
+`pip --require-hashes --no-deps --no-index`.
+
+Before authorization, preflight returns a structured
+`needs_customer_acceptance` result containing the exact term names, URLs and
+content-hash versions, runtime-manifest digest, acknowledgement instructions,
+and an explicit refusal path. It also states that HF/NGC credentials establish
+upstream access only. The control plane may then issue one signed, maximum
+24-hour authorization bound to the hashed customer identity, run ID,
+runtime-manifest digest, exact term IDs/versions, immutable qualified image when
+available, and issue/expiry data. Missing, denied, expired, wrong-customer/run,
+wrong-manifest/image, malformed, or improperly signed records refuse before the
+first download, install, cache write, or workload operation. No local flag,
+`ACCEPT_*` variable, token, access probe, or successful download substitutes for
+the authorization, and NPA never automates a vendor acceptance action.
+
+The authorization travels only through the scheduler's redacted secret channel
+and is materialized owner-private for bootstrap verification. The neutral image
+verifies it with `/usr/bin/ssh-keygen` against the root-owned, read-only public
+control-plane trust root. A caller-provided key, locally invented issuer, or
+matching environment hashes cannot substitute for that root. Only after this
+check does bootstrap resolve and hash the official terms into ephemeral storage;
+changed or unavailable terms refuse before cache mutation.
 
 The workflow uses `base_profile: prebuilt`, an empty build command, and the
 dedicated B200 profile. `run_byof_repo.py` rejects an empty or mutable candidate,
-an absent/mismatched decision, an absent independent build-metadata hash, any
+an absent/mismatched customer authorization, an absent independent build-metadata hash, any
 identity drift, and `--skip-run` before registry or workload preparation. It
 always passes `--no-direct-launch` for LIBERO. `run_byof_container_verify.py`
 submits through the managed scheduler, requires its nonempty scheduler job ID,
 and polls that ID—not the human run name. Absence remains a failure.
 
-The signed manager acceptance, decision, complete short-lived storage credential
+The signed customer authorization, complete short-lived storage credential
 triplet, and output-storage authorization bytes travel only through the
 scheduler's redacted secret channel, never ordinary rendered workflow state or
-persisted prepared YAML.
+persisted prepared YAML. Customer identity remains represented only by its
+control-plane hash in redacted runtime audit receipts.
 The common SDK submission preflight independently verifies the repository's
-manager-signed acceptance, the paired decision digest, exact run ID, and the
-digest of the profile bytes it is about to submit before it selects or forwards
-any LIBERO secret. The signed infrastructure record also binds the source
-SkyPilot configuration, and LIBERO accepts only the Kubernetes managed-jobs
+image qualification, signed customer/run authorization, exact run ID, immutable
+candidate image, and the digest of the profile bytes it is about to submit
+before it selects or forwards any LIBERO secret. LIBERO accepts only the Kubernetes managed-jobs
 backend with an explicit context. The shared classifier treats the official
 `npa-libero` repository in either `resources.image_id` or `BYOF_IMAGE` as a
 LIBERO signal, so renaming a raw SDK task cannot bypass this gate. Every signal
-requires the canonical task name, solution marker, and the same exact accepted
+requires the canonical task name, solution marker, and the same exact qualified
 repository-at-digest image in both fields. The classifier result, rather than a
 second name-based guess, controls secret forwarding and the final serialized
 profile check. The SDK snapshots the profile once for parsing and hashing, then
 requires the final serialized task bytes to retain that digest before any
 controller or job operation.
-The storage authorization is hash-bound by the checked-in infrastructure bundle,
+The separate control-plane storage authorization is hash-bound by the prepared execution bundle,
 binds the exact run prefix and origin-only HTTPS storage endpoint plus the policy
 receipt, and requires short-lived session credentials. The same shared SDK gate
 validates the complete credential triplet, authorization digest, hashes, policy,
 prefix, endpoint, expiry, and nonce before target resolution or controller
-effects; both absent is a refusal, not an optional state. Storage secrets are
+effects; absence is a refusal, not an optional state. Storage secrets are
 removed from the fetched-code subprocess; only
 the image-owned standard-library uploader receives them. Per-file and aggregate
 size budgets apply before reads, PUT is conditional, and GET must return the
@@ -206,7 +209,7 @@ exact Roles, and their two exact RoleBindings. The payload Role begins as core
 `pods/get` for a no-match `resourceNames` sentinel. After managed submission
 returns its exact numeric job ID, the host requires exactly one new Pod, binds
 its SkyPilot job label, head identity, service account, and sole container image
-to the accepted candidate, then uses a JSON Patch that tests the Role UID and
+to the qualified candidate, then uses a JSON Patch that tests the Role UID and
 complete sentinel rule before replacing it with that one Pod's exact
 `resourceNames` entry. The workload cannot read any Pod before this binding and
 can read only itself afterward. The controller Role has no wildcard: it
@@ -221,8 +224,8 @@ at every scheduler-status observation, together with the controller identity.
 At a failed terminal status the exact Pod may already be absent, but a successful
 qualification must still expose it for the manager-side live-evidence read;
 any replacement or foreign Pod is a hard failure. Every
-namespace/object UID, inventory, and payload permission is bound to the checked-in
-acceptance record. The isolated namespace inventory includes ConfigMaps as well
+namespace/object UID, inventory, and payload permission is bound to the prepared
+execution-integrity record. The isolated namespace inventory includes ConfigMaps as well
 as Secrets, Pods, Services, accounts, Roles, and RoleBindings. The canonical
 external RBAC inventory binds every allowed broad discovery/self-review grant,
 including binding and referenced-role UIDs and rules, so later RBAC drift changes
@@ -253,7 +256,7 @@ non-resource discovery and self-access-review rules are allowed for those broad
 public groups, whether a ClusterRoleBinding or namespaced RoleBinding supplies
 the grant.
 
-The accepted publication-enforcement bundle includes a closed manifest of known
+The qualified publication-enforcement bundle includes a closed manifest of known
 LIBERO and shared policy tests. A future shared test that protects this contract
 must put the exact line `# npa: publication-enforcement=libero` in its source;
 the bundle discovers that explicit marker and does not infer policy ownership
@@ -292,8 +295,8 @@ remain deferred.
 
 ## Current status
 
-Phase A is packaging and refusal design only: repository acceptance is
-`not_accepted`, runtime license/size review is incomplete, image unbuilt,
+Phase A is packaging and refusal design only: image qualification is
+`not_qualified`, runtime license/size inventory review is complete, image unbuilt,
 anonymous pull unproven, B200 qualification unrun, and catalog release absent.
 No workflow in this change is submitted. Agent-run collection remains disabled unless both
 operator-provided collection variables are present and pass the immutable

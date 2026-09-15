@@ -91,11 +91,12 @@ or output byte. It remains unbuilt, absent from the release manifest and public
 image table, and quarantined until byte, provenance, anonymous-pull, and live
 acceptance. Historical private r15 bytes are old-head evidence only.
 The trusted public workflow also refuses before a LIBERO build unless the
-manager supplies the separately accepted private-stage complete-image
+separate image-qualification record supplies the private-stage complete-image
 inventory hash and OCI config digest. Its scanner binds every byte in each
 ordered uncompressed layer tar plus every canonical flattened-rootfs record,
 and requires the candidate to match both identities; finite payload signatures
-are only defense in depth.
+are only defense in depth. Image qualification does not acknowledge runtime
+terms for a customer.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
@@ -107,9 +108,10 @@ are only defense in depth.
 An authorized runtime sparse-fetch retains the hash-bound BDDL and initial
 states but never fetches the unused render-asset tree. The official
 demonstration is fetched into a manifest-addressed cache outside the artifact
-directory and is never baked or uploaded. A missing or mismatched manager-issued
-use decision refuses before cache or network mutation; runtime fetch is delivery,
-not permission. Acceptance
+directory and is never baked or uploaded. A missing, denied, expired, or
+mismatched customer/run authorization refuses before cache or network mutation;
+credentials establish upstream access only, and runtime fetch is delivery, not
+permission. Acceptance
 requires the Pod-observed immutable image digest in `libero-smoke.json`; imports,
 BDDL parsing, dataset inventory, or zero-step training do not pass. Rendered
 closed-loop sweeps, all 130 tasks, lifelong-algorithm comparison, and physical

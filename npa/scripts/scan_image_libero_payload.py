@@ -35,7 +35,7 @@ BASE_PROVENANCE_SHA256 = (
 )
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
 RUNTIME_MANIFEST_SHA256 = (
-    "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2"
+    "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
 )
 RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -187,7 +187,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "f19cbf81c5347b836451b4d12cdbb9bed1884861a1c044e9b1c38570b0f2fb05"
+        "a76a9312a3d8d46f87d9d9c830cb7ee6dc47ea319a899b8a199d2992d48543fd"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
@@ -333,7 +333,7 @@ def _metadata_findings(
 
 
 def canonical_build_metadata_bytes(metadata: dict[str, Any]) -> bytes:
-    """Return the reproducible Buildx identity used by manager acceptance.
+    """Return the reproducible Buildx identity used by image qualification.
 
     Buildx emits runner/session fields whose raw JSON is intentionally unstable.
     The security-relevant identity is the scanned config plus the complete,
@@ -866,7 +866,7 @@ def _private_stage_identity_findings(
             walker.Finding(
                 "accepted_private_stage_identity",
                 "<complete-image-inventory>",
-                "ordered layers and rootfs do not match manager-accepted private-stage bytes",
+                "ordered layers and rootfs do not match qualified private-stage bytes",
             )
         )
     if (
@@ -877,7 +877,7 @@ def _private_stage_identity_findings(
             walker.Finding(
                 "accepted_private_stage_identity",
                 "<oci-config>",
-                "OCI config does not match manager-accepted private-stage bytes",
+                "OCI config does not match qualified private-stage bytes",
             )
         )
     return findings
@@ -916,7 +916,7 @@ def _accepted_lineage_findings(
         observed = hashlib.sha256(payload).hexdigest()
         if re.fullmatch(r"[0-9a-f]{64}", expected or "") is None or observed != expected:
             findings.append(
-                walker.Finding(kind, label, "bytes differ from checked-in acceptance")
+                walker.Finding(kind, label, "bytes differ from checked-in qualification")
             )
     return findings
 

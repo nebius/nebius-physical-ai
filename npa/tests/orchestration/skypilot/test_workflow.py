@@ -227,7 +227,7 @@ def test_submit_workflow_preflight_receives_exact_source_profile_identity(
     ).hexdigest()
 
 
-def test_libero_submit_refuses_any_post_authorization_profile_change(
+def test_libero_submit_refuses_any_post_preflight_profile_change(
     monkeypatch, tmp_path
 ) -> None:
     yaml_path = tmp_path / "libero.yaml"
@@ -245,12 +245,12 @@ def test_libero_submit_refuses_any_post_authorization_profile_change(
         encoding="utf-8",
     )
 
-    def mutate_after_authorization(documents, **_kwargs):
+    def mutate_after_preflight(documents, **_kwargs):
         documents[0]["run"] = "unreviewed-command"
         return None, {"checks": {"libero_authorization": "pass"}}, {}
 
     monkeypatch.setattr(
-        workflow_module, "_execution_preflight", mutate_after_authorization
+        workflow_module, "_execution_preflight", mutate_after_preflight
     )
     monkeypatch.setattr(
         subprocess,
@@ -260,9 +260,7 @@ def test_libero_submit_refuses_any_post_authorization_profile_change(
         ),
     )
 
-    with pytest.raises(
-        SkyPilotSubmitError, match="changed after authorization"
-    ):
+    with pytest.raises(SkyPilotSubmitError, match="changed after preflight"):
         submit_workflow(
             yaml_path,
             "libero-exact-profile-0001",

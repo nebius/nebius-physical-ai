@@ -51,6 +51,13 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         line for line in text.splitlines() if "Defaults!NPA_LIBERO_EXEC env_keep" in line
     )
     assert exec_environment.count("NPA_LIBERO_BOOTSTRAP_RECEIPT") == 1
+    assert (
+        exec_environment.count(
+            "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT"
+        )
+        == 1
+    )
+    assert "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_ID" not in exec_environment
     assert "execute-python" not in text
     for credential in (
         "AWS_ACCESS_KEY_ID",
@@ -87,11 +94,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "pip install" not in text
     assert "runtime-bootstrap.py ensure" not in text
     assert (
-        "--mount=type=secret,id=npa_libero_manager_acceptance_public_key_b64,required=true"
+        "--mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,required=true"
         in text
     )
-    assert "manager-acceptance-public-key.b64" in text
-    assert "chmod 0444 /opt/npa/libero/manager-acceptance-public-key.b64" in text
+    assert "customer-authorization-public-key.b64" in text
+    assert "chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64" in text
     for forbidden in (
         "nvidia/cuda:",
         "pytorch/pytorch:",
@@ -251,14 +258,23 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         "cudnn-eula",
     }
     assert all(
-        set(item) == {"id", "boundary", "url", "size_bytes", "sha256"}
+        set(item)
+        == {"id", "name", "boundary", "version", "url", "size_bytes", "sha256"}
+        and item["name"].strip()
+        and item["version"] == f"sha256:{item['sha256']}"
         and item["url"].startswith("https://")
         and item["size_bytes"] > 0
         and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in manifest["governing_terms"]
     )
     assert "ACCEPT_" not in serialized
-    assert "credential" not in serialized.lower()
+    assert manifest["customer_runtime_authorization"] == {
+        "schema": "npa.libero.customer-runtime-authorization.v1",
+        "required": True,
+        "credentials_establish_acceptance": False,
+    }
+    assert "HF_TOKEN" not in serialized
+    assert "NGC_API_KEY" not in serialized
     assert all(
         set(item)
         == {
@@ -306,6 +322,17 @@ def test_image_manifest_binds_runtime_manifest_requirements_and_terms() -> None:
         == hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
     )
     assert image_manifest["governing_terms_count"] == 7
+    assert image_manifest["customer_acceptance"]["terms"] == [
+        {
+            "id": term["id"],
+            "name": term["name"],
+            "official_url": term["url"],
+            "version": term["version"],
+        }
+        for term in json.loads(MANIFEST.read_text(encoding="utf-8"))[
+            "governing_terms"
+        ]
+    ]
 
 
 def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
@@ -349,20 +376,20 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
-    assert "libero_accepted_image_manifest" in text
-    assert "checked-in acceptance development SHA does not match" in text
-    assert "only the checked-in acceptance manifest may differ" in text
+    assert "libero_qualified_image_manifest" in text
+    assert "checked-in qualification development SHA does not match" in text
+    assert "only the checked-in qualification manifest may differ" in text
     assert 'git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD' in text
     assert 'build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")' in text
     assert '"npa/src/npa/deploy/libero_image_manifest.json"' in text
     assert "libero_publication_lineage_values" in text
     assert 'crane tag "$exact" "dev-$DEVELOPMENT_SHA"' in text
-    assert 'test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"' in text
-    assert "Revalidate accepted LIBERO repository and OCI lineage" in text
-    assert "LIBERO_ACCEPTED_ATTESTATION_LAYERS" in text
+    assert 'test "$digest" = "$LIBERO_QUALIFIED_OCI_DIGEST"' in text
+    assert "Revalidate qualified LIBERO repository and OCI lineage" in text
+    assert "LIBERO_QUALIFIED_ATTESTATION_LAYERS" in text
     assert "libero-final-attestation-manifest.json" in text
-    assert "LIBERO_ACCEPTED_PUBLICATION_BUNDLE_SHA256" in text
-    assert "LIBERO_ACCEPTED_INFRASTRUCTURE_BUNDLE_SHA256" in text
+    assert "LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256" in text
+    assert "LIBERO_QUALIFIED_INFRASTRUCTURE_BUNDLE_SHA256" not in text
     assert "inputs.libero_private_image_inventory_sha256" not in text
     assert "inputs.libero_private_config_digest" not in text
     assert (
@@ -376,7 +403,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert 'version_count="$(jq \'length\' "$versions")"' in text
     assert "Private destination contains image or referrer versions" in text
     assert "Private destination is genuinely empty" in text
-    assert "exactly the accepted untagged OCI graph" in text
+    assert "exactly the qualified untagged OCI graph" in text
     assert "tagged_count=" in text
     assert "public-image-${{ inputs.target" in text
     assert (
@@ -397,7 +424,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert '${TOOL}-public-package-versions.json' in text
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in text
     assert "reject every unexpected tag" in text
-    assert "Failed LIBERO cleanup cannot isolate every accepted" in text
+    assert "Failed LIBERO cleanup cannot isolate every qualified" in text
     for host_gate in (
         "npa/tests/workflows/test_byof_container_verify.py",
         "npa/tests/workflows/test_byof_libero.py",
@@ -407,13 +434,13 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     ):
         assert host_gate in text
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
-    assert "Retained the private accepted LIBERO versions" in text
-    assert "Deleted only the exact accepted failed public LIBERO OCI versions" in text
+    assert "Retained the private qualified LIBERO versions" in text
+    assert "Deleted only the exact qualified failed public LIBERO OCI versions" in text
     assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
-    assert "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" in text
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" in text
     assert (
-        "--secret id=npa_libero_manager_acceptance_public_key_b64,"
-        "env=NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64"
+        "--secret id=npa_libero_customer_authorization_public_key_b64,"
+        "env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64"
     ) in text
     assert "Deleted the complete exact requested public LIBERO OCI graph" in text
     assert '"failure","cancelled"' in text
@@ -492,7 +519,7 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
     gh.chmod(0o700)
     crane = bin_dir / "crane"
     crane.write_text(
-        f"#!{sys.executable}\nimport os\nprint(os.environ['LIBERO_ACCEPTED_OCI_DIGEST'])\n",
+        f"#!{sys.executable}\nimport os\nprint(os.environ['LIBERO_QUALIFIED_OCI_DIGEST'])\n",
         encoding="utf-8",
     )
     crane.chmod(0o700)
@@ -502,8 +529,8 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "IMAGE": f"ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-{sha}",
         "TOOL": "libero",
-        "LIBERO_ACCEPTED_OCI_DIGEST": root,
-        "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": json.dumps(expected),
+        "LIBERO_QUALIFIED_OCI_DIGEST": root,
+        "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(expected),
         "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
         "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
@@ -602,8 +629,8 @@ def test_failed_build_cleanup_accepts_only_proven_package_absence(
             "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-"
             + "1" * 40,
             "TOOL": "libero",
-            "LIBERO_ACCEPTED_OCI_DIGEST": "sha256:" + "a" * 64,
-            "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": "[]",
+            "LIBERO_QUALIFIED_OCI_DIGEST": "sha256:" + "a" * 64,
+            "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": "[]",
             "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
             "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
             "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
@@ -624,7 +651,7 @@ def test_failed_build_cleanup_accepts_only_proven_package_absence(
         )
 
 
-def test_failed_libero_cleanup_removes_only_accepted_versions_under_graph_drift(
+def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift(
     tmp_path: Path,
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
@@ -688,8 +715,8 @@ def test_failed_libero_cleanup_removes_only_accepted_versions_under_graph_drift(
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:" + tag,
             "TOOL": "libero",
-            "LIBERO_ACCEPTED_OCI_DIGEST": root,
-            "LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS": json.dumps(
+            "LIBERO_QUALIFIED_OCI_DIGEST": root,
+            "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
                 sorted([root, platform, attestation])
             ),
             "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
@@ -716,6 +743,6 @@ def test_failed_libero_cleanup_removes_only_accepted_versions_under_graph_drift(
             "metadata": {"container": {"tags": ["stable-other"]}},
         }
     ]
-    assert "Deleted only the exact accepted" in (tmp_path / "summary").read_text(
+    assert "Deleted only the exact qualified" in (tmp_path / "summary").read_text(
         encoding="utf-8"
     )

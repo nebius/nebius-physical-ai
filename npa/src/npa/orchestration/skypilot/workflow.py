@@ -871,7 +871,7 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     _chmod_owner_only(prepared.config_path)
     prepared_profile_bytes = yaml.safe_dump_all(prepared.docs, sort_keys=False).encode()
     if prepared.libero_submission and hashlib.sha256(prepared_profile_bytes).hexdigest() != executable_profile_sha256:
-        raise SkyPilotSubmitError("LIBERO executable profile changed after authorization")
+        raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
     prepared.yaml_path.write_bytes(prepared_profile_bytes)
     _chmod_owner_only(prepared.yaml_path)
 

@@ -46,12 +46,11 @@ NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
-LIBERO_RUNTIME_DECISION_SCHEMA = "npa.libero.runtime-use-decision.v3"
-LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV = (
-    "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE"
+LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA = (
+    "npa.libero.customer-runtime-authorization.v1"
 )
-LIBERO_RUNTIME_DECISION_BOUNDARIES = frozenset(
-    {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
+LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV = (
+    "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"
 )
 LIBERO_OFFICIAL_CANDIDATE_PREFIX = (
     "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
@@ -122,8 +121,8 @@ LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES = (
     b"_cleanup_libero_access_objects",
     b"_libero_external_rbac_inventory_sha256",
     b"libero_publication_enforcement_bundle_sha256",
-    b"validate_libero_accepted_image_manifest",
-    b"NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
+    b"validate_libero_qualified_image_manifest",
+    b"NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
     b"NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
 )
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
@@ -513,27 +512,18 @@ def _ssh_signature_string(value: bytes) -> bytes:
     return struct.pack(">I", len(value)) + value
 
 
-def libero_acceptance_signature_payload(payload: dict[str, Any]) -> bytes:
-    """Return the SSHSIG-framed bytes signed by the external LIBERO manager.
-
-    The checked-in signature remains a raw Ed25519 signature so the trusted
-    host can verify it without shelling out.  Framing the canonical manifest as
-    OpenSSH SSHSIG data also lets the neutral image verify the same signature
-    with its pinned system ``ssh-keygen`` and an image-baked public trust root.
-    """
+def libero_customer_authorization_signature_payload(
+    payload: dict[str, Any],
+) -> bytes:
+    """Return SSHSIG-framed bytes for a customer authorization envelope."""
 
     unsigned = json.loads(json.dumps(payload))
-    acceptance = unsigned.get("acceptance")
-    if not isinstance(acceptance, dict):
-        raise RuntimeError("LIBERO acceptance signature requires a manifest record")
-    acceptance.pop("manager_signature", None)
-    canonical = json.dumps(
-        unsigned, sort_keys=True, separators=(",", ":")
-    ).encode()
+    unsigned.pop("signature", None)
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
     return b"".join(
         (
             b"SSHSIG",
-            _ssh_signature_string(b"npa.libero.acceptance"),
+            _ssh_signature_string(b"npa.libero.customer-authorization"),
             _ssh_signature_string(b""),
             _ssh_signature_string(b"sha512"),
             _ssh_signature_string(hashlib.sha512(canonical).digest()),
@@ -541,21 +531,24 @@ def libero_acceptance_signature_payload(payload: dict[str, Any]) -> bytes:
     )
 
 
-def _verify_libero_manager_signature(
-    payload: dict[str, Any], *, manager_public_key_file: str = ""
+def _verify_libero_customer_authorization_signature(
+    payload: dict[str, Any], *, public_key_file: str = ""
 ) -> None:
-    acceptance = payload["acceptance"]
-    signature_record = acceptance.get("manager_signature")
+    signature_record = payload.get("signature")
     if not isinstance(signature_record, dict) or set(signature_record) != {
         "algorithm",
         "public_key_sha256",
         "signature_b64",
     }:
-        raise RuntimeError("LIBERO acceptance requires a closed manager signature")
+        raise RuntimeError(
+            "LIBERO customer authorization requires a closed control-plane signature"
+        )
     if signature_record.get("algorithm") != "ed25519":
-        raise RuntimeError("LIBERO acceptance requires an Ed25519 manager signature")
-    key_path_value = manager_public_key_file.strip() or os.environ.get(
-        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
+        raise RuntimeError(
+            "LIBERO customer authorization requires an Ed25519 signature"
+        )
+    key_path_value = public_key_file.strip() or os.environ.get(
+        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
     ).strip()
     try:
         key_descriptor = os.open(
@@ -564,7 +557,7 @@ def _verify_libero_manager_signature(
         )
     except OSError as exc:
         raise RuntimeError(
-            "LIBERO manager trust-root file is unavailable"
+            "LIBERO customer-authorization trust-root file is unavailable"
         ) from exc
     try:
         before = os.fstat(key_descriptor)
@@ -582,7 +575,9 @@ def _verify_libero_manager_signature(
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
         or encoded_key != encoded_key.strip()
     ):
-        raise RuntimeError("LIBERO manager trust-root file is mutable or invalid")
+        raise RuntimeError(
+            "LIBERO customer-authorization trust-root file is mutable or invalid"
+        )
     try:
         public_key = base64.b64decode(encoded_key, validate=True)
         signature = base64.b64decode(
@@ -590,7 +585,7 @@ def _verify_libero_manager_signature(
         )
     except (ValueError, binascii.Error) as exc:
         raise RuntimeError(
-            "LIBERO manager signature material is unavailable or invalid"
+            "LIBERO customer-authorization signature material is invalid"
         ) from exc
     if (
         len(public_key) != 32
@@ -598,13 +593,13 @@ def _verify_libero_manager_signature(
         or hashlib.sha256(public_key).hexdigest()
         != signature_record.get("public_key_sha256")
     ):
-        raise RuntimeError("LIBERO acceptance manager trust root differs")
+        raise RuntimeError("LIBERO customer-authorization trust root differs")
     try:
         Ed25519PublicKey.from_public_bytes(public_key).verify(
-            signature, libero_acceptance_signature_payload(payload)
+            signature, libero_customer_authorization_signature_payload(payload)
         )
     except (ValueError, InvalidSignature) as exc:
-        raise RuntimeError("LIBERO acceptance manager signature is invalid") from exc
+        raise RuntimeError("LIBERO customer authorization signature is invalid") from exc
 
 
 def _repository_file_bundle_sha256(
@@ -718,23 +713,23 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
 
 
 def libero_publication_lineage_values(
-    acceptance: dict[str, Any],
+    qualification: dict[str, Any],
     repository_root: Path,
     *,
     development_sha: str,
 ) -> dict[str, Any]:
-    """Resolve only an accepted, byte-identical LIBERO publication source."""
+    """Resolve only a qualified, byte-identical LIBERO publication source."""
 
-    if acceptance.get("development_sha") != development_sha:
-        raise RuntimeError("LIBERO acceptance development SHA differs")
+    if qualification.get("development_sha") != development_sha:
+        raise RuntimeError("LIBERO qualification development SHA differs")
     observed = libero_build_input_bundle_sha256(
         repository_root, development_sha=development_sha
     )
-    if observed != acceptance.get("build_input_bundle_sha256"):
-        raise RuntimeError("LIBERO neutral build inputs differ from acceptance")
+    if observed != qualification.get("build_input_bundle_sha256"):
+        raise RuntimeError("LIBERO neutral build inputs differ from qualification")
     enforcement = libero_publication_enforcement_bundle_sha256(repository_root)
-    if enforcement != acceptance.get("publication_enforcement_bundle_sha256"):
-        raise RuntimeError("LIBERO publication enforcement differs from acceptance")
+    if enforcement != qualification.get("publication_enforcement_bundle_sha256"):
+        raise RuntimeError("LIBERO publication enforcement differs from qualification")
     fields = (
         "candidate_image",
         "oci_digest",
@@ -749,37 +744,133 @@ def libero_publication_lineage_values(
         "complete_image_inventory_sha256",
         "base_provenance_sha256",
         "publication_bundle_sha256",
-        "infrastructure_bundle_sha256",
         "package_writer_repository",
     )
-    return {field: acceptance[field] for field in fields}
+    return {field: qualification[field] for field in fields}
 
 
-def validate_libero_accepted_image_manifest(
-    payload: Any, *, manager_public_key_file: str = ""
+def _libero_customer_terms(payload: dict[str, Any]) -> list[dict[str, str]]:
+    customer_acceptance = payload.get("customer_acceptance")
+    if (
+        not isinstance(customer_acceptance, dict)
+        or set(customer_acceptance)
+        != {
+            "schema",
+            "required",
+            "credentials_establish_acceptance",
+            "authorization_schema",
+            "terms",
+        }
+        or customer_acceptance.get("schema")
+        != "npa.libero.customer-acceptance-requirements.v1"
+        or customer_acceptance.get("required") is not True
+        or customer_acceptance.get("credentials_establish_acceptance") is not False
+        or customer_acceptance.get("authorization_schema")
+        != LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA
+    ):
+        raise RuntimeError("LIBERO customer-acceptance metadata is invalid")
+    terms = customer_acceptance.get("terms")
+    if not isinstance(terms, list) or len(terms) != 7:
+        raise RuntimeError("LIBERO customer terms inventory is incomplete")
+    observed_ids: set[str] = set()
+    normalized: list[dict[str, str]] = []
+    for term in terms:
+        if not isinstance(term, dict) or set(term) != {
+            "id",
+            "name",
+            "official_url",
+            "version",
+        }:
+            raise RuntimeError("LIBERO customer term metadata is not closed")
+        term_id = str(term.get("id") or "")
+        name = str(term.get("name") or "")
+        url = str(term.get("official_url") or "")
+        version = str(term.get("version") or "")
+        if (
+            not term_id
+            or term_id in observed_ids
+            or not name.strip()
+            or not url.startswith("https://")
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", version) is None
+        ):
+            raise RuntimeError("LIBERO customer term identity is invalid")
+        observed_ids.add(term_id)
+        normalized.append(
+            {
+                "id": term_id,
+                "name": name,
+                "official_url": url,
+                "version": version,
+            }
+        )
+    return normalized
+
+
+def libero_customer_acceptance_notification(
+    payload: dict[str, Any] | None = None,
+    *,
+    reason: str = "authorization_missing",
 ) -> dict[str, Any]:
-    """Validate the separately reviewed bytes and identities allowed to run.
+    """Return the public, side-effect-free customer acknowledgement prompt."""
 
-    This repository resource is the authenticated channel for LIBERO acceptance.
-    Command-line values and ambient environment variables can only match it; they
-    cannot create an acceptance decision.
-    """
+    manifest = payload or libero_image_manifest()
+    terms = _libero_customer_terms(manifest)
+    qualification = manifest.get("qualification")
+    candidate = (
+        str(qualification.get("candidate_image") or "")
+        if isinstance(qualification, dict)
+        else ""
+    )
+    return {
+        "schema": "npa.libero.customer-acceptance-notification.v1",
+        "status": "needs_customer_acceptance",
+        "solution": "libero",
+        "reason": reason,
+        "runtime_manifest_sha256": manifest.get("runtime_manifest_sha256"),
+        "candidate_image": candidate or None,
+        "terms": terms,
+        "acknowledgement": {
+            "required": True,
+            "instructions": (
+                "Review every listed official term in the authenticated NPA "
+                "customer/control-plane surface, then obtain a short-lived "
+                "authorization for this exact customer and run."
+            ),
+            "refusal": (
+                "Decline or omit authorization to stop before runtime fetch, "
+                "installation, cache mutation, or workload creation."
+            ),
+        },
+        "credentials": {
+            "purpose": "upstream_access_only",
+            "establish_terms_acceptance": False,
+        },
+    }
+
+
+def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
+    """Validate the separately reviewed immutable image qualification."""
 
     def require(ok: bool, field: str) -> None:
         if not ok:
-            raise RuntimeError(f"LIBERO acceptance requires valid {field}")
+            raise RuntimeError(f"LIBERO qualification requires valid {field}")
 
     require(isinstance(payload, dict), "manifest object")
     require(payload.get("schema") == "npa.workbench.image-manifest.v1", "schema")
     require(payload.get("tool") == "libero", "tool")
     require(payload.get("runtime_payloads_baked") is False, "neutral payload")
-    acceptance = payload.get("acceptance")
-    require(isinstance(acceptance, dict), "acceptance record")
+    require(
+        payload.get("customer_runtime_authorization_required") is True,
+        "customer authorization boundary",
+    )
+    _libero_customer_terms(payload)
+    qualification = payload.get("qualification")
+    require(isinstance(qualification, dict), "qualification record")
     expected_keys = {
         "schema",
         "status",
-        "acceptance_id",
-        "accepted_at",
+        "qualification_id",
+        "qualified_at",
         "expires_at",
         "candidate_image",
         "oci_digest",
@@ -799,26 +890,22 @@ def validate_libero_accepted_image_manifest(
         "publication_enforcement_bundle_sha256",
         "package_writer_repository",
         "runtime_manifest_sha256",
-        "runtime_use_decision_sha256",
-        "infrastructure_bundle_sha256",
-        "infrastructure",
-        "manager_signature",
     }
-    require(set(acceptance) == expected_keys, "closed acceptance schema")
+    require(set(qualification) == expected_keys, "closed qualification schema")
     require(
-        acceptance.get("schema") == "npa.libero.qualification-acceptance.v3",
-        "acceptance schema",
+        qualification.get("schema") == "npa.libero.image-qualification.v1",
+        "qualification schema",
     )
-    require(acceptance.get("status") == "accepted", "accepted status")
+    require(qualification.get("status") == "qualified", "qualified status")
     require(
         re.fullmatch(
             r"[a-z0-9][a-z0-9-]{15,79}",
-            str(acceptance.get("acceptance_id") or ""),
+            str(qualification.get("qualification_id") or ""),
         )
         is not None,
-        "acceptance ID",
+        "qualification ID",
     )
-    candidate = str(acceptance.get("candidate_image") or "")
+    candidate = str(qualification.get("candidate_image") or "")
     require(
         re.fullmatch(
             rf"{re.escape(LIBERO_OFFICIAL_CANDIDATE_PREFIX)}[0-9a-f]{{64}}",
@@ -828,7 +915,7 @@ def validate_libero_accepted_image_manifest(
         "official candidate image",
     )
     require(
-        candidate.rsplit("@", 1)[1] == acceptance.get("oci_digest"),
+        candidate.rsplit("@", 1)[1] == qualification.get("oci_digest"),
         "candidate digest",
     )
     for field in (
@@ -839,7 +926,7 @@ def validate_libero_accepted_image_manifest(
         "attestation_config_digest",
     ):
         require(
-            re.fullmatch(r"sha256:[0-9a-f]{64}", str(acceptance.get(field) or ""))
+            re.fullmatch(r"sha256:[0-9a-f]{64}", str(qualification.get(field) or ""))
             is not None,
             field,
         )
@@ -851,23 +938,21 @@ def validate_libero_accepted_image_manifest(
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
         "runtime_manifest_sha256",
-        "runtime_use_decision_sha256",
-        "infrastructure_bundle_sha256",
     ):
         require(
-            re.fullmatch(r"[0-9a-f]{64}", str(acceptance.get(field) or ""))
+            re.fullmatch(r"[0-9a-f]{64}", str(qualification.get(field) or ""))
             is not None,
             field,
         )
     require(
         re.fullmatch(
             r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
-            str(acceptance.get("package_writer_repository") or ""),
+            str(qualification.get("package_writer_repository") or ""),
         )
         is not None,
         "package writer repository",
     )
-    attestation_layers = acceptance.get("attestation_layers")
+    attestation_layers = qualification.get("attestation_layers")
     require(
         isinstance(attestation_layers, list)
         and len(attestation_layers) == len(LIBERO_REQUIRED_PUBLICATION_REFERRERS),
@@ -886,7 +971,7 @@ def validate_libero_accepted_image_manifest(
             and 0 < layer["size_bytes"] <= 64 * 1024 * 1024,
             f"attestation layer {predicate_type}",
         )
-    package_version_digests = acceptance.get("package_version_digests")
+    package_version_digests = qualification.get("package_version_digests")
     require(
         isinstance(package_version_digests, list)
         and all(
@@ -895,107 +980,56 @@ def validate_libero_accepted_image_manifest(
             for digest in package_version_digests
         )
         and package_version_digests == sorted(set(package_version_digests))
-        and acceptance.get("oci_digest") in package_version_digests
-        and acceptance.get("platform_manifest_digest") in package_version_digests
-        and acceptance.get("attestation_manifest_digest")
+        and qualification.get("oci_digest") in package_version_digests
+        and qualification.get("platform_manifest_digest") in package_version_digests
+        and qualification.get("attestation_manifest_digest")
         in package_version_digests,
         "closed package version digest set",
     )
     require(
-        re.fullmatch(r"[0-9a-f]{40}", str(acceptance.get("development_sha") or ""))
+        re.fullmatch(r"[0-9a-f]{40}", str(qualification.get("development_sha") or ""))
         is not None,
         "development SHA",
     )
     require(
-        acceptance.get("upstream_source_revision") == LIBERO_UPSTREAM_SOURCE_REVISION,
+        qualification.get("upstream_source_revision") == LIBERO_UPSTREAM_SOURCE_REVISION,
         "upstream source revision",
     )
     require(
-        acceptance.get("runtime_manifest_sha256")
+        qualification.get("runtime_manifest_sha256")
         == payload.get("runtime_manifest_sha256"),
         "runtime manifest binding",
     )
-    infrastructure = acceptance.get("infrastructure")
-    infrastructure_keys = {
-        "run_id",
-        "allowed_node_sha256",
-        "cluster_identity_sha256",
-        "namespace_sha256",
-        "namespace_uid_sha256",
-        "namespace_inventory_sha256",
-        "external_rbac_inventory_sha256",
-        "rbac_spec_sha256",
-        "role_binding_uid_sha256",
-        "role_uid_sha256",
-        "service_account_uid_sha256",
-        "controller_rbac_spec_sha256",
-        "controller_role_binding_uid_sha256",
-        "controller_role_uid_sha256",
-        "controller_service_account_uid_sha256",
-        "payload_kubeconfig_sha256",
-        "execution_kubeconfig_sha256",
-        "skypilot_config_sha256",
-        "output_storage_authorization_sha256",
-        "output_storage_prefix_sha256",
-        "output_storage_policy_sha256",
-    }
-    require(
-        isinstance(infrastructure, dict) and set(infrastructure) == infrastructure_keys,
-        "closed infrastructure record",
-    )
-    require(
-        re.fullmatch(
-            r"[a-z0-9][a-z0-9-]{15,62}", str(infrastructure.get("run_id") or "")
-        )
-        is not None,
-        "run ID",
-    )
-    for field in infrastructure_keys - {"run_id"}:
-        require(
-            re.fullmatch(r"[0-9a-f]{64}", str(infrastructure.get(field) or ""))
-            is not None,
-            f"infrastructure {field}",
-        )
-    require(
-        _canonical_sha256(
-            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure}
-        )
-        == acceptance.get("infrastructure_bundle_sha256"),
-        "canonical infrastructure bundle",
-    )
     publication_bundle = {
-        "schema": "npa.libero.publication-lineage-bundle.v2",
+        "schema": "npa.libero.publication-lineage-bundle.v3",
         "candidate_image": candidate,
-        "oci_digest": acceptance.get("oci_digest"),
-        "platform_manifest_digest": acceptance.get("platform_manifest_digest"),
-        "config_digest": acceptance.get("config_digest"),
-        "canonical_build_metadata_sha256": acceptance.get(
+        "oci_digest": qualification.get("oci_digest"),
+        "platform_manifest_digest": qualification.get("platform_manifest_digest"),
+        "config_digest": qualification.get("config_digest"),
+        "canonical_build_metadata_sha256": qualification.get(
             "canonical_build_metadata_sha256"
         ),
-        "attestation_manifest_digest": acceptance.get(
+        "attestation_manifest_digest": qualification.get(
             "attestation_manifest_digest"
         ),
-        "attestation_config_digest": acceptance.get("attestation_config_digest"),
+        "attestation_config_digest": qualification.get("attestation_config_digest"),
         "attestation_layers": attestation_layers,
         "package_version_digests": package_version_digests,
-        "complete_image_inventory_sha256": acceptance.get(
+        "complete_image_inventory_sha256": qualification.get(
             "complete_image_inventory_sha256"
         ),
-        "base_provenance_sha256": acceptance.get("base_provenance_sha256"),
-        "development_sha": acceptance.get("development_sha"),
-        "upstream_source_revision": acceptance.get("upstream_source_revision"),
-        "build_input_bundle_sha256": acceptance.get("build_input_bundle_sha256"),
-        "publication_enforcement_bundle_sha256": acceptance.get(
+        "base_provenance_sha256": qualification.get("base_provenance_sha256"),
+        "development_sha": qualification.get("development_sha"),
+        "upstream_source_revision": qualification.get("upstream_source_revision"),
+        "build_input_bundle_sha256": qualification.get("build_input_bundle_sha256"),
+        "publication_enforcement_bundle_sha256": qualification.get(
             "publication_enforcement_bundle_sha256"
         ),
-        "package_writer_repository": acceptance.get("package_writer_repository"),
-        "infrastructure_bundle_sha256": acceptance.get(
-            "infrastructure_bundle_sha256"
-        ),
+        "package_writer_repository": qualification.get("package_writer_repository"),
     }
     require(
         _canonical_sha256(publication_bundle)
-        == acceptance.get("publication_bundle_sha256"),
+        == qualification.get("publication_bundle_sha256"),
         "canonical publication lineage bundle",
     )
     artifact_review = payload.get("runtime_artifact_review")
@@ -1018,128 +1052,135 @@ def validate_libero_accepted_image_manifest(
         "complete runtime artifact review",
     )
     try:
-        accepted_at = datetime.fromisoformat(
-            str(acceptance["accepted_at"]).replace("Z", "+00:00")
+        qualified_at = datetime.fromisoformat(
+            str(qualification["qualified_at"]).replace("Z", "+00:00")
         )
         expires_at = datetime.fromisoformat(
-            str(acceptance["expires_at"]).replace("Z", "+00:00")
+            str(qualification["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO acceptance requires valid UTC timestamps") from exc
+        raise RuntimeError("LIBERO qualification requires valid UTC timestamps") from exc
     current = datetime.now(timezone.utc)
     require(
-        accepted_at.tzinfo is not None
+        qualified_at.tzinfo is not None
         and expires_at.tzinfo is not None
-        and accepted_at <= current + timedelta(minutes=5)
-        and accepted_at < expires_at
+        and qualified_at <= current + timedelta(minutes=5)
+        and qualified_at < expires_at
         and expires_at > current
-        and expires_at - accepted_at <= timedelta(days=7),
-        "unexpired acceptance window",
+        and expires_at - qualified_at <= timedelta(days=7),
+        "unexpired qualification window",
     )
-    _verify_libero_manager_signature(
-        payload, manager_public_key_file=manager_public_key_file
-    )
-    return acceptance
+    return qualification
 
 
-def libero_accepted_image_manifest() -> dict[str, Any]:
-    """Return only a current, complete, checked-in LIBERO acceptance record."""
+def libero_qualified_image_manifest() -> dict[str, Any]:
+    """Return only a current, complete, checked-in LIBERO qualification."""
 
-    return validate_libero_accepted_image_manifest(libero_image_manifest())
+    return validate_libero_qualified_image_manifest(libero_image_manifest())
 
 
-def validate_libero_runtime_decision(
-    decision_bytes: bytes,
+def validate_libero_customer_runtime_authorization(
+    authorization_bytes: bytes,
     *,
-    acceptance: dict[str, Any],
+    image_manifest: dict[str, Any],
     run_id: str,
+    customer_identity_sha256: str,
+    public_key_file: str = "",
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Validate one closed, replay-bounded decision against repo acceptance."""
+    """Validate one control-plane-issued customer/run authorization."""
 
-    observed_sha256 = hashlib.sha256(decision_bytes).hexdigest()
-    if observed_sha256 != acceptance.get("runtime_use_decision_sha256"):
-        raise RuntimeError("LIBERO runtime decision differs from checked-in acceptance")
     try:
-        decision = json.loads(decision_bytes)
+        authorization = json.loads(authorization_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("LIBERO runtime decision is not valid JSON") from exc
+        raise RuntimeError("LIBERO customer authorization is not valid JSON") from exc
     expected_keys = {
         "schema",
         "solution",
-        "decision",
-        "runtime_fetch_authorized",
-        "acceptance_id",
-        "candidate_image",
-        "publication_bundle_sha256",
-        "infrastructure_bundle_sha256",
-        "runtime_manifest_sha256",
-        "executable_profile_sha256",
-        "upstream_source_revision",
-        "authorized_boundaries",
+        "status",
+        "authorization_id",
+        "customer_identity_sha256",
         "run_id",
-        "namespace_sha256",
+        "candidate_image",
+        "runtime_manifest_sha256",
+        "terms",
         "issuer",
+        "acknowledged_at",
         "issued_at",
         "expires_at",
         "nonce",
+        "signature",
     }
-    if not isinstance(decision, dict) or set(decision) != expected_keys:
-        raise RuntimeError("LIBERO runtime decision schema is not closed")
-    infrastructure = acceptance["infrastructure"]
-    boundaries = decision.get("authorized_boundaries")
+    if not isinstance(authorization, dict) or set(authorization) != expected_keys:
+        raise RuntimeError("LIBERO customer authorization schema is not closed")
+    qualification = image_manifest.get("qualification")
+    if not isinstance(qualification, dict):
+        raise RuntimeError("LIBERO image qualification is unavailable")
+    expected_terms = [
+        {"id": term["id"], "version": term["version"]}
+        for term in _libero_customer_terms(image_manifest)
+    ]
     if (
-        decision.get("schema") != LIBERO_RUNTIME_DECISION_SCHEMA
-        or decision.get("solution") != "libero"
-        or decision.get("decision") != "authorized"
-        or decision.get("runtime_fetch_authorized") is not True
-        or decision.get("acceptance_id") != acceptance.get("acceptance_id")
-        or decision.get("candidate_image") != acceptance.get("candidate_image")
-        or decision.get("publication_bundle_sha256")
-        != acceptance.get("publication_bundle_sha256")
-        or decision.get("infrastructure_bundle_sha256")
-        != acceptance.get("infrastructure_bundle_sha256")
-        or decision.get("runtime_manifest_sha256")
-        != acceptance.get("runtime_manifest_sha256")
+        authorization.get("schema") != LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA
+        or authorization.get("solution") != "libero"
+        or authorization.get("status") != "authorized"
+        or re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}",
+            str(authorization.get("authorization_id") or ""),
+        )
+        is None
         or re.fullmatch(
             r"[0-9a-f]{64}",
-            str(decision.get("executable_profile_sha256") or ""),
+            str(authorization.get("customer_identity_sha256") or ""),
         )
         is None
-        or decision.get("upstream_source_revision")
-        != acceptance.get("upstream_source_revision")
-        or decision.get("run_id") != run_id
-        or run_id != infrastructure.get("run_id")
-        or decision.get("namespace_sha256") != infrastructure.get("namespace_sha256")
-        or decision.get("issuer") != "npa-manager"
-        or not isinstance(boundaries, list)
-        or len(boundaries) != len(LIBERO_RUNTIME_DECISION_BOUNDARIES)
-        or frozenset(boundaries) != LIBERO_RUNTIME_DECISION_BOUNDARIES
+        or authorization.get("customer_identity_sha256")
+        != customer_identity_sha256
+        or authorization.get("run_id") != run_id
+        or authorization.get("candidate_image")
+        != qualification.get("candidate_image")
+        or authorization.get("runtime_manifest_sha256")
+        != image_manifest.get("runtime_manifest_sha256")
+        or authorization.get("terms") != expected_terms
+        or authorization.get("issuer") != "npa-customer-control-plane"
         or re.fullmatch(
-            r"[A-Za-z0-9_-]{32,128}", str(decision.get("nonce") or "")
+            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
         )
         is None
     ):
-        raise RuntimeError("LIBERO runtime decision does not bind accepted identities")
+        raise RuntimeError(
+            "LIBERO customer authorization does not bind the exact customer/run contract"
+        )
     try:
+        acknowledged_at = datetime.fromisoformat(
+            str(authorization["acknowledged_at"]).replace("Z", "+00:00")
+        )
         issued_at = datetime.fromisoformat(
-            str(decision["issued_at"]).replace("Z", "+00:00")
+            str(authorization["issued_at"]).replace("Z", "+00:00")
         )
         expires_at = datetime.fromisoformat(
-            str(decision["expires_at"]).replace("Z", "+00:00")
+            str(authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO runtime decision timestamps are invalid") from exc
+        raise RuntimeError("LIBERO customer authorization timestamps are invalid") from exc
     current = now or datetime.now(timezone.utc)
     if (
-        issued_at.tzinfo is None
+        acknowledged_at.tzinfo is None
+        or issued_at.tzinfo is None
         or expires_at.tzinfo is None
+        or acknowledged_at > issued_at
+        or issued_at - acknowledged_at > timedelta(minutes=5)
         or issued_at > current + timedelta(minutes=5)
         or expires_at <= current
+        or issued_at >= expires_at
         or expires_at - issued_at > timedelta(hours=24)
     ):
-        raise RuntimeError("LIBERO runtime decision is expired or replayable")
-    return decision, observed_sha256
+        raise RuntimeError("LIBERO customer authorization is expired or replayable")
+    _verify_libero_customer_authorization_signature(
+        authorization, public_key_file=public_key_file
+    )
+    observed_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
+    return authorization, observed_sha256
 
 
 def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:

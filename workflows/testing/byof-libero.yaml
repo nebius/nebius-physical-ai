@@ -5,10 +5,10 @@ metadata:
   description: >
     Quarantined managed qualification path for the LIBERO public neutral
     bootstrap. The image is not a supported release: an explicit immutable
-    acceptance candidate and manager-issued runtime-use decision are required
+    qualified candidate and customer-scoped runtime authorization are required
     before the pinned source, runtime, demonstration, and task inputs can be
-    fetched into a run cache. Candidate lineage and the expected decision digest
-    come only from the checked-in acceptance manifest.
+    fetched into a run cache. Credentials establish upstream access only and
+    never substitute for the customer's exact terms acknowledgement.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/Lifelong-Robot-Learning/LIBERO.git"
@@ -31,8 +31,8 @@ config:
   num_demos: 1
   wait_timeout: -1
   poll_interval: 60
-  libero_acceptance_candidate_image: ""
-  libero_runtime_use_decision_file: ""
+  libero_qualified_candidate_image: ""
+  libero_customer_runtime_authorization_file: ""
   output_root: s3://{{config.bucket}}/oss-solutions/libero
   summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
   smoke_uri: "{{config.output_root}}/{{run.id}}/libero-smoke.json"
@@ -50,7 +50,8 @@ states:
   byof-run:
     description: >
       Submit through the managed scheduler and return its real scheduler job
-      identity. The host runner refuses an empty/unaccepted candidate before
+      identity. The host runner refuses an unqualified candidate or missing
+      customer/run authorization before
       image, cache, registry, or workload side effects.
     toolRef: workbench.byof.repo
     resources: gpu

@@ -22,9 +22,11 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
-    libero_accepted_image_manifest,
+    libero_customer_acceptance_notification,
+    libero_image_manifest,
     libero_publication_lineage_values,
-    validate_libero_runtime_decision,
+    validate_libero_customer_runtime_authorization,
+    validate_libero_qualified_image_manifest,
     wan_accepted_image_manifest,
 )
 from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
@@ -139,40 +141,75 @@ def _normalize_optional(value: str) -> str:
     return cleaned
 
 
-def _libero_acceptance_candidate(value: str, acceptance: dict[str, Any]) -> str:
+class LiberoCustomerAcceptanceRequired(ValueError):
+    """Carry the structured, public customer acknowledgement prompt."""
+
+    def __init__(self, notification: dict[str, Any]) -> None:
+        self.notification = notification
+        super().__init__("LIBERO customer authorization is required")
+
+
+def _libero_qualified_candidate(value: str, qualification: dict[str, Any]) -> str:
     candidate = str(value or "").strip().removeprefix("docker:")
-    if candidate != acceptance.get("candidate_image"):
+    if candidate != qualification.get("candidate_image"):
         raise ValueError(
-            "LIBERO candidate must exactly match checked-in accepted image lineage"
+            "LIBERO candidate must exactly match checked-in qualified image lineage"
         )
     return candidate
 
 
-def _libero_runtime_decision(
-    args: argparse.Namespace, acceptance: dict[str, Any]
+def _libero_customer_authorization(
+    args: argparse.Namespace, image_manifest: dict[str, Any]
 ) -> tuple[Path, bytes, str]:
-    path = Path(str(args.libero_runtime_use_decision_file or "")).expanduser()
+    path_value = str(args.libero_customer_runtime_authorization_file or "").strip()
+    if not path_value:
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(image_manifest)
+        )
+    path = Path(path_value).expanduser()
     try:
         metadata = path.lstat()
     except OSError as exc:
-        raise ValueError("LIBERO runtime-use decision file is unavailable") from exc
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(image_manifest)
+        ) from exc
     if (
         not stat.S_ISREG(metadata.st_mode)
         or path.is_symlink()
         or metadata.st_uid != os.getuid()
         or metadata.st_mode & 0o077
     ):
-        raise ValueError("LIBERO runtime-use decision must be an owner-private regular file")
-    decision_bytes = path.read_bytes()
+        raise ValueError(
+            "LIBERO customer authorization must be an owner-private regular file"
+        )
+    authorization_bytes = path.read_bytes()
     try:
-        _, observed = validate_libero_runtime_decision(
-            decision_bytes,
-            acceptance=acceptance,
+        authorization_status = json.loads(authorization_bytes).get("status")
+    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+        authorization_status = None
+    if authorization_status == "denied":
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(
+                image_manifest, reason="authorization_denied"
+            )
+        )
+    customer_identity_sha256 = os.environ.get(
+        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", ""
+    ).strip()
+    if re.fullmatch(r"[0-9a-f]{64}", customer_identity_sha256) is None:
+        raise ValueError(
+            "LIBERO requires the authenticated customer identity binding"
+        )
+    try:
+        _, observed = validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=image_manifest,
             run_id=args.run_id,
+            customer_identity_sha256=customer_identity_sha256,
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
-    return path.resolve(), decision_bytes, observed
+    return path.resolve(), authorization_bytes, observed
 
 
 def _validate_libero_identity(args: argparse.Namespace) -> None:
@@ -234,17 +271,30 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
             "LIBERO cannot use --skip-run because live qualification is mandatory"
         )
     try:
-        acceptance = libero_accepted_image_manifest()
+        image_manifest = libero_image_manifest()
+        if not str(args.libero_customer_runtime_authorization_file or "").strip():
+            raise LiberoCustomerAcceptanceRequired(
+                libero_customer_acceptance_notification(image_manifest)
+            )
+        qualification = validate_libero_qualified_image_manifest(image_manifest)
         libero_publication_lineage_values(
-            acceptance,
+            qualification,
             SCRIPT_DIR.parents[1],
-            development_sha=acceptance["development_sha"],
+            development_sha=qualification["development_sha"],
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
-    args._libero_acceptance = acceptance
-    _libero_acceptance_candidate(args.libero_acceptance_candidate_image, acceptance)
-    _libero_runtime_decision(args, acceptance)
+    args._libero_image_manifest = image_manifest
+    args._libero_qualification = qualification
+    _libero_qualified_candidate(args.libero_qualified_candidate_image, qualification)
+    _, authorization_bytes, authorization_sha256 = _libero_customer_authorization(
+        args, image_manifest
+    )
+    args._libero_customer_authorization_bytes = authorization_bytes
+    args._libero_customer_authorization_sha256 = authorization_sha256
+    args._libero_customer_identity_sha256 = os.environ[
+        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256"
+    ].strip()
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -443,7 +493,7 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
         exact_values = {name: str(os.environ.get(name) or "") for name in exact_names}
         if not all(exact_values.values()):
             raise ValueError(
-                "LIBERO requires one complete manager-authorized storage credential triplet"
+                "LIBERO requires one complete control-plane-authorized storage credential triplet"
             )
         endpoint_names = (
             "AWS_ENDPOINT_URL_S3",
@@ -459,7 +509,7 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
         }
         if len(endpoints) != 1:
             raise ValueError(
-                "LIBERO requires one exact manager-authorized storage endpoint"
+                "LIBERO requires one exact control-plane-authorized storage endpoint"
             )
         env.update(exact_values)
         env.update(
@@ -951,14 +1001,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--libero-acceptance-candidate-image",
+        "--libero-qualified-candidate-image",
         default="",
         help=(
-            "Explicit digest-pinned npa-libero image for a separately authorized "
-            "acceptance run; never read from ambient environment."
+            "Explicit digest-pinned npa-libero image matching the checked-in "
+            "qualification; never read from ambient environment."
         ),
     )
-    parser.add_argument("--libero-runtime-use-decision-file", default="")
+    parser.add_argument("--libero-customer-runtime-authorization-file", default="")
     parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
@@ -999,6 +1049,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         _validate_libero_identity(args)
+    except LiberoCustomerAcceptanceRequired as exc:
+        print(json.dumps(exc.notification, indent=2, sort_keys=True))
+        return 3
     except ValueError as exc:
         print(
             json.dumps(
@@ -1048,9 +1101,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     explicit_base = _normalize_optional(args.base_image)
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
-        explicit_base = _libero_acceptance_candidate(
-            args.libero_acceptance_candidate_image,
-            args._libero_acceptance,
+        explicit_base = _libero_qualified_candidate(
+            args.libero_qualified_candidate_image,
+            args._libero_qualification,
         )
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
@@ -1455,17 +1508,23 @@ def _run_byof(
                 else _live_runner_env(args.project)
             )
             if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
-                _, decision_bytes, decision_sha256 = _libero_runtime_decision(
-                    args, args._libero_acceptance
-                )
+                authorization_bytes = args._libero_customer_authorization_bytes
+                authorization_sha256 = args._libero_customer_authorization_sha256
                 live_env.update(
                     {
-                        "NPA_LIBERO_RUNTIME_USE_DECISION_B64": base64.b64encode(
-                            decision_bytes
+                        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64": base64.b64encode(
+                            authorization_bytes
                         ).decode("ascii"),
-                        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256": decision_sha256,
+                        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": (
+                            authorization_sha256
+                        ),
+                        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": (
+                            args._libero_customer_identity_sha256
+                        ),
                         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": (
-                            args._libero_acceptance["canonical_build_metadata_sha256"]
+                            args._libero_qualification[
+                                "canonical_build_metadata_sha256"
+                            ]
                         ),
                     }
                 )

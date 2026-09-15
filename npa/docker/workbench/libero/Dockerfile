@@ -5,7 +5,7 @@ ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG SOURCE_DATE_EPOCH
 
 LABEL org.opencontainers.image.title="NPA LIBERO neutral bootstrap" \
-      org.opencontainers.image.description="Public neutral bootstrap; LIBERO and GPU/runtime payloads are fetched under an external manager decision" \
+      org.opencontainers.image.description="Public neutral bootstrap; LIBERO and GPU/runtime payloads require customer/run authorization" \
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -65,23 +65,23 @@ RUN set -eux; \
       'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
       'Cmnd_Alias NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute' \
       'Defaults!NPA_LIBERO_EXEC closefrom_override' \
-      'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_BOOTSTRAP_RECEIPT NPA_LIBERO_RUNTIME_USE_DECISION_SHA256 NPA_LIBERO_EXPECTED_ACCEPTANCE_ID NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
+      'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_BOOTSTRAP_RECEIPT NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256 NPA_LIBERO_CUSTOMER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
       'ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC' \
       > /etc/sudoers.d/npa-skypilot-ssh; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
-# The key is public verification material, but it is injected as a BuildKit
-# secret so Docker history and build arguments cannot substitute runtime trust.
-RUN --mount=type=secret,id=npa_libero_manager_acceptance_public_key_b64,required=true \
+# The customer-control-plane key is public verification material, injected as a
+# BuildKit secret so Docker history and build arguments cannot substitute trust.
+RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,required=true \
     set -eux; \
     tr -d '\r\n' \
-      < /run/secrets/npa_libero_manager_acceptance_public_key_b64 \
-      > /opt/npa/libero/manager-acceptance-public-key.b64; \
-    test "$(base64 -d /opt/npa/libero/manager-acceptance-public-key.b64 | wc -c)" = 32; \
-    chown root:root /opt/npa/libero/manager-acceptance-public-key.b64; \
-    chmod 0444 /opt/npa/libero/manager-acceptance-public-key.b64
+      < /run/secrets/npa_libero_customer_authorization_public_key_b64 \
+      > /opt/npa/libero/customer-authorization-public-key.b64; \
+    test "$(base64 -d /opt/npa/libero/customer-authorization-public-key.b64 | wc -c)" = 32; \
+    chown root:root /opt/npa/libero/customer-authorization-public-key.b64; \
+    chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64
 
 COPY docker/workbench/libero/runtime-manifest.json /opt/npa/libero/runtime-manifest.json
 COPY docker/workbench/libero/runtime-requirements.txt /opt/npa/libero/runtime-requirements.txt
@@ -94,7 +94,7 @@ COPY docker/workbench/libero/entrypoint.sh /usr/local/bin/npa-libero-entrypoint
 COPY docker/workbench/libero/smoke.sh /opt/npa/libero/smoke.sh
 
 RUN set -eux; \
-    echo '660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
+    echo '9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
     echo '8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
     chmod 0755 /opt/npa/libero/runtime-bootstrap.py /opt/npa/libero/smoke.sh /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/npa-libero-entrypoint; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \

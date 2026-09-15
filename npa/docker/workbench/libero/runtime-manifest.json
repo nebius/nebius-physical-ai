@@ -9,49 +9,63 @@
   "governing_terms": [
     {
       "id": "libero-mit",
+      "name": "LIBERO MIT License",
       "boundary": "source",
+      "version": "sha256:e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6",
       "url": "https://raw.githubusercontent.com/Lifelong-Robot-Learning/LIBERO/8f1084e3132a39270c3a13ebe37270a43ece2a01/LICENSE",
       "size_bytes": 1080,
       "sha256": "e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6"
     },
     {
       "id": "dataset-cc-by-4.0",
+      "name": "Creative Commons Attribution 4.0 International",
       "boundary": "demonstration",
+      "version": "sha256:9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
       "url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
       "size_bytes": 18657,
       "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
     },
     {
       "id": "bert-apache-2.0",
+      "name": "Apache License 2.0",
       "boundary": "language_model",
+      "version": "sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
       "size_bytes": 11358,
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
     {
       "id": "pytorch-bsd",
+      "name": "PyTorch BSD-Style License",
       "boundary": "runtime_packages",
+      "version": "sha256:bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43",
       "url": "https://raw.githubusercontent.com/pytorch/pytorch/v2.13.0/LICENSE",
       "size_bytes": 3464,
       "sha256": "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
     },
     {
       "id": "cuda-eula",
+      "name": "NVIDIA CUDA Toolkit End User License Agreement",
       "boundary": "runtime_packages",
+      "version": "sha256:c441d0f8e3ad7ede569d4c5b2a9a50c4d46f278e820a6be81f2e34f1d6f89653",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
       "size_bytes": 103131,
       "sha256": "c441d0f8e3ad7ede569d4c5b2a9a50c4d46f278e820a6be81f2e34f1d6f89653"
     },
     {
       "id": "nvidia-software-license",
+      "name": "NVIDIA Software License Agreement",
       "boundary": "runtime_packages",
+      "version": "sha256:d7f741cc20084c5f03a7c6191e7cdd6a30f2b0cfe5a52dfc04e2fe161b176a14",
       "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
       "size_bytes": 355751,
       "sha256": "d7f741cc20084c5f03a7c6191e7cdd6a30f2b0cfe5a52dfc04e2fe161b176a14"
     },
     {
       "id": "cudnn-eula",
+      "name": "NVIDIA cuDNN Software License Agreement",
       "boundary": "runtime_packages",
+      "version": "sha256:9ee6e64c6f2545e0fe482681c97d8cf244992e57e2cd36335d9c0e008a5628c4",
       "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
       "size_bytes": 44129,
       "sha256": "9ee6e64c6f2545e0fe482681c97d8cf244992e57e2cd36335d9c0e008a5628c4"
@@ -1494,10 +1508,10 @@
       "metadata_source": "https://pypi.org/pypi/zipp/4.1.0/json"
     }
   ],
-  "runtime_use_decision": {
-    "schema": "npa.libero.runtime-use-decision.v3",
+  "customer_runtime_authorization": {
+    "schema": "npa.libero.customer-runtime-authorization.v1",
     "required": true,
-    "accepted_by_download": false
+    "credentials_establish_acceptance": false
   },
   "boundaries": {
     "cache": "operator-owned non-root atomic runtime cache",

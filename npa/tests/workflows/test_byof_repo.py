@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 from __future__ import annotations
 
 import argparse
@@ -41,52 +42,40 @@ def _libero_contract_args(
     runtime_manifest = (
         ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-manifest.json"
     )
-    decision = {
-        "schema": "npa.libero.runtime-use-decision.v3",
+    authorization = {
+        "schema": "npa.libero.customer-runtime-authorization.v1",
         "solution": "libero",
-        "decision": "authorized",
-        "runtime_fetch_authorized": True,
-        "acceptance_id": "libero-acceptance-test-0001",
+        "status": "authorized",
+        "authorization_id": "libero-customer-authorization-test-0001",
+        "customer_identity_sha256": "8" * 64,
         "candidate_image": (
             "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "1" * 64
         ),
-        "publication_bundle_sha256": "2" * 64,
-        "infrastructure_bundle_sha256": "3" * 64,
         "runtime_manifest_sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
-        "executable_profile_sha256": "6" * 64,
-        "upstream_source_revision": config["repo_ref"],
-        "authorized_boundaries": [
-            "demonstration",
-            "language_model",
-            "runtime_packages",
-            "source",
-            "task_inputs",
-        ],
+        "terms": [],
         "run_id": run_id,
-        "namespace_sha256": "4" * 64,
-        "issuer": "npa-manager",
+        "issuer": "npa-customer-control-plane",
+        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "nonce": "unique-libero-test-nonce-0000000001",
+        "signature": {},
     }
-    decision_path = tmp_path / "libero-runtime-use-decision.json"
-    decision_path.write_text(json.dumps(decision, sort_keys=True) + "\n", encoding="utf-8")
-    decision_path.chmod(0o600)
-    decision_sha256 = hashlib.sha256(decision_path.read_bytes()).hexdigest()
-    acceptance = {
-        "acceptance_id": decision["acceptance_id"],
+    authorization_path = tmp_path / "libero-customer-authorization.json"
+    authorization_path.write_text(
+        json.dumps(authorization, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    authorization_path.chmod(0o600)
+    authorization_sha256 = hashlib.sha256(
+        authorization_path.read_bytes()
+    ).hexdigest()
+    qualification = {
         "development_sha": "a" * 40,
-        "candidate_image": decision["candidate_image"],
+        "candidate_image": authorization["candidate_image"],
         "canonical_build_metadata_sha256": "5" * 64,
-        "publication_bundle_sha256": decision["publication_bundle_sha256"],
-        "infrastructure_bundle_sha256": decision["infrastructure_bundle_sha256"],
-        "runtime_manifest_sha256": decision["runtime_manifest_sha256"],
-        "runtime_use_decision_sha256": decision_sha256,
-        "upstream_source_revision": decision["upstream_source_revision"],
-        "infrastructure": {
-            "run_id": run_id,
-            "namespace_sha256": decision["namespace_sha256"],
-        },
+        "publication_bundle_sha256": "2" * 64,
+        "runtime_manifest_sha256": authorization["runtime_manifest_sha256"],
+        "upstream_source_revision": config["repo_ref"],
     }
     arguments = [
         "--repo-url", config["repo_url"],
@@ -106,11 +95,16 @@ def _libero_contract_args(
         "--iterations", str(config["iterations"]),
         "--num-envs", str(config["num_envs"]),
         "--num-demos", str(config["num_demos"]),
-        "--libero-acceptance-candidate-image",
-        str(decision["candidate_image"]),
-        "--libero-runtime-use-decision-file", str(decision_path),
+        "--libero-qualified-candidate-image",
+        str(authorization["candidate_image"]),
+        "--libero-customer-runtime-authorization-file", str(authorization_path),
     ]
-    return arguments, acceptance
+    return arguments, {
+        "image_manifest": {"qualification": qualification},
+        "qualification": qualification,
+        "authorization": authorization,
+        "authorization_sha256": authorization_sha256,
+    }
 
 
 def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
@@ -130,6 +124,87 @@ def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
     assert hashlib.sha256(config["smoke_command"].encode()).hexdigest() == (
         module.LIBERO_SMOKE_COMMAND_SHA256
     )
+
+
+def test_libero_missing_customer_authorization_notifies_before_registry(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, _ = _libero_contract_args(tmp_path)
+    authorization_index = arguments.index(
+        "--libero-customer-runtime-authorization-file"
+    )
+    del arguments[authorization_index : authorization_index + 2]
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail(
+            "registry must not resolve before customer acceptance"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "command must not run before customer acceptance"
+        ),
+    )
+
+    assert module.main(["--run-id", "libero-managed-route", *arguments]) == 3
+    notification = json.loads(capsys.readouterr().out)
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["reason"] == "authorization_missing"
+    assert len(notification["terms"]) == 7
+    assert all(term["official_url"].startswith("https://") for term in notification["terms"])
+    assert "Decline or omit authorization" in notification["acknowledgement"]["refusal"]
+    assert notification["credentials"] == {
+        "purpose": "upstream_access_only",
+        "establish_terms_acceptance": False,
+    }
+
+
+def test_libero_denied_customer_authorization_notifies_without_validation(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, contract = _libero_contract_args(tmp_path)
+    authorization_path = Path(
+        arguments[
+            arguments.index("--libero-customer-runtime-authorization-file") + 1
+        ]
+    )
+    authorization = contract["authorization"]
+    assert isinstance(authorization, dict)
+    authorization["status"] = "denied"
+    authorization_path.write_text(
+        json.dumps(authorization, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    authorization_path.chmod(0o600)
+    image_manifest = json.loads(json.dumps(module.libero_image_manifest()))
+    image_manifest["qualification"] = contract["qualification"]
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: image_manifest)
+    monkeypatch.setattr(
+        module,
+        "validate_libero_qualified_image_manifest",
+        lambda _value: contract["qualification"],
+    )
+    monkeypatch.setattr(
+        module,
+        "libero_publication_lineage_values",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_libero_customer_runtime_authorization",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a denial must never enter the authorization path"
+        ),
+    )
+
+    assert module.main(["--run-id", "libero-managed-route", *arguments]) == 3
+    notification = json.loads(capsys.readouterr().out)
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["reason"] == "authorization_denied"
 
 
 def _load_module():
@@ -859,8 +934,23 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
-    libero_args, acceptance = _libero_contract_args(tmp_path)
-    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
+    libero_args, contract = _libero_contract_args(tmp_path)
+    qualification = contract["qualification"]
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: contract["image_manifest"])
+    monkeypatch.setattr(
+        module, "validate_libero_qualified_image_manifest", lambda _value: qualification
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_libero_customer_runtime_authorization",
+        lambda *_args, **_kwargs: (
+            contract["authorization"],
+            contract["authorization_sha256"],
+        ),
+    )
+    monkeypatch.setenv(
+        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", "8" * 64
+    )
     seen: dict[str, object] = {}
 
     def validate_lineage(value, repository_root, *, development_sha):
@@ -917,9 +1007,9 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     assert isinstance(cmd, list)
     assert cmd.count("--no-direct-launch") == 1
     assert seen["lineage"] == (
-        acceptance,
+        qualification,
         module.SCRIPT_DIR.parents[1],
-        acceptance["development_sha"],
+        qualification["development_sha"],
     )
 
 
@@ -927,11 +1017,19 @@ def test_main_refuses_local_libero_enforcement_drift_before_registry(
     monkeypatch, tmp_path, capsys
 ) -> None:
     module = _load_module()
-    libero_args, acceptance = _libero_contract_args(tmp_path)
-    monkeypatch.setattr(module, "libero_accepted_image_manifest", lambda: acceptance)
+    libero_args, contract = _libero_contract_args(tmp_path)
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: contract["image_manifest"])
+    monkeypatch.setattr(
+        module,
+        "validate_libero_qualified_image_manifest",
+        lambda _value: contract["qualification"],
+    )
+    monkeypatch.setenv(
+        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", "8" * 64
+    )
 
     def refuse(*_args, **_kwargs):
-        raise RuntimeError("LIBERO publication enforcement differs from acceptance")
+        raise RuntimeError("LIBERO publication enforcement differs from qualification")
 
     monkeypatch.setattr(module, "libero_publication_lineage_values", refuse)
     monkeypatch.setattr(

@@ -62,7 +62,7 @@ DATASET_URL = (
 DATASET_SHA256 = "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
 DATASET_SIZE = 508779600
 RUNTIME_MANIFEST_SHA256 = (
-    "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2"
+    "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
 )
 BDDL_RELATIVE = f"libero/libero/bddl_files/{SUITE}/{TASK}.bddl"
 BDDL_SHA256 = "9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b"
@@ -183,8 +183,11 @@ def runtime_materialized_this_run(output_dir: Path, runtime_root: Path) -> bool:
         or receipt.get("warm_reuse") is not False
         or receipt.get("governing_terms_fetched_this_invocation") is not True
         or receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256
-        or receipt.get("decision_sha256")
-        != os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256")
+        or receipt.get("customer_authorization_sha256")
+        != os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256")
+        or receipt.get("customer_identity_sha256")
+        != os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256")
+        or receipt.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
         or receipt.get("source_revision") != SOURCE_REF
         or receipt.get("runtime_artifact_count") != 135
         or receipt.get("demonstration_sha256") != DATASET_SHA256

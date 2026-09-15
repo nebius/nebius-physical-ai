@@ -1,6 +1,6 @@
 # Headless, state-based LIBERO one-task BC-RNN qualification. The candidate
 # image is neutral: every LIBERO/runtime/data/model byte is fetched only after
-# the manager-issued decision is verified and remains in the non-root cache.
+# the customer/run authorization is verified and remains in a scoped cache.
 name: byof-solution-smoke-libero-b200-gpu
 execution: serial
 ---
@@ -34,6 +34,7 @@ envs:
   NPA_LIBERO_EXPECTED_ROLE_UID_SHA256: ""
   NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256: ""
   NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256: ""
+  NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT: ""
   NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256: ""
   NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256: ""
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
@@ -45,22 +46,19 @@ setup: |
   /usr/local/sbin/npa-skypilot-bootstrap-guard verify
   test "$(id -u)" = 1000
   test "$(id -un)" = ubuntu
-  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}"
-  test -n "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
-  test -n "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}"
+  test -n "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64}"
+  test -n "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}"
+  test -n "${NPA_LIBERO_CUSTOMER_IDENTITY_SHA256}"
   test -n "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64}"
-  decision="$(mktemp /tmp/npa-libero-runtime-use-decision.XXXXXXXX)"
-  acceptance="$(mktemp /tmp/npa-libero-manager-acceptance.XXXXXXXX)"
-  cleanup_decision() {
-    rm -f "${decision}" "${acceptance}"
+  authorization="$(mktemp /tmp/npa-libero-customer-authorization.XXXXXXXX)"
+  cleanup_authorization() {
+    rm -f "${authorization}"
   }
-  trap cleanup_decision EXIT INT TERM
-  printf '%s' "${NPA_LIBERO_RUNTIME_USE_DECISION_B64}" | base64 -d > "${decision}"
-  chmod 0600 "${decision}"
-  printf '%s' "${NPA_LIBERO_MANAGER_ACCEPTANCE_B64}" | base64 -d > "${acceptance}"
-  chmod 0600 "${acceptance}"
-  test "$(sha256sum "${decision}" | cut -d ' ' -f 1)" = \
-    "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}"
+  trap cleanup_authorization EXIT INT TERM
+  printf '%s' "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64}" | base64 -d > "${authorization}"
+  chmod 0600 "${authorization}"
+  test "$(sha256sum "${authorization}" | cut -d ' ' -f 1)" = \
+    "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}"
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   install -d -m 1770 "${output_dir}"
   chgrp npa-libero-exec "${output_dir}"
@@ -73,9 +71,8 @@ setup: |
     --manifest /opt/npa/libero/runtime-manifest.json \
     --requirements /opt/npa/libero/runtime-requirements.txt \
     --cache-root /workspace/.cache/npa/libero \
-    --decision "${decision}" \
-    --decision-sha256 "${NPA_LIBERO_RUNTIME_USE_DECISION_SHA256}" \
-    --acceptance "${acceptance}" \
+    --authorization "${authorization}" \
+    --authorization-sha256 "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}" \
     --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
     rm -f "${bootstrap_receipt}.partial"
     exit 1
@@ -83,18 +80,16 @@ setup: |
   chmod 0640 "${bootstrap_receipt}.partial"
   chgrp npa-libero-exec "${bootstrap_receipt}.partial"
   mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
-  cleanup_decision
+  cleanup_authorization
   trap - EXIT INT TERM
-  unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
-  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
+  unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
   test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
   test -d "${BYOF_REPO_ROOT}/libero/lifelong"
   test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
   test ! -e "${BYOF_REPO_ROOT}/.git"
 run: |
   set -euo pipefail
-  unset NPA_LIBERO_RUNTIME_USE_DECISION_B64
-  unset NPA_LIBERO_MANAGER_ACCEPTANCE_B64
+  unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
   /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1

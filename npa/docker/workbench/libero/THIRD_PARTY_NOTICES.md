@@ -22,12 +22,14 @@ metadata, not embedded software or a permission claim. When separately
 authorized, pinned LIBERO source is MIT, the selected demonstration is
 CC-BY-4.0 with attribution to LIBERO / Lifelong Robot Learning, and
 `google-bert/bert-base-cased` is Apache-2.0. Each GPU/runtime package remains
-subject to its own upstream terms and the manager-issued use decision. The
+subject to its own upstream terms and the customer's personal acknowledgement. The
 manifest's hash-bound official MIT, CC BY 4.0, Apache 2.0, PyTorch, CUDA,
 NVIDIA software, and cuDNN terms sources are runtime refusal inputs only; none
 of their fetched bytes is retained in this image or treated as acceptance.
 All 135 runtime artifacts now have a reviewed positive size and license
 classification, and the image manifest binds the owner review report. Runtime
-use remains disabled until a separate manager-issued use decision and signed
-candidate acceptance bind the exact runtime manifest; metadata review is not
-consent or authorization to download.
+use remains disabled until an authenticated NPA customer/control-plane surface
+issues a short-lived authorization bound to the customer, run, exact terms,
+runtime manifest, and immutable qualified candidate when one exists. HF/NGC
+credentials prove upstream access only; metadata review and download success
+are not consent or authorization to download.

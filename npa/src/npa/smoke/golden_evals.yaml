@@ -58,9 +58,10 @@ containers:
       notes: >-
         The public candidate is an unbuilt, quarantined neutral bootstrap. It
         contains no LIBERO, GPU runtime, model, demonstration, task/render
-        asset, cache, checkpoint, credential, or output bytes. A manager-issued
-        exact-manifest use decision and explicit immutable acceptance-candidate
-        digest are mandatory. The eval remains blocked until byte, anonymous
+        asset, cache, checkpoint, credential, or output bytes. A short-lived
+        customer/run authorization for the exact named terms and manifest plus
+        an explicit immutable qualified-candidate digest are mandatory. HF/NGC
+        credentials prove access only. The eval remains blocked until byte, anonymous
         pull, and exact-digest one-B200 evidence is accepted.
     golden_eval:
       kind: container-smoke

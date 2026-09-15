@@ -75,7 +75,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "governing_terms": [
             {
                 "id": term_id,
+                "name": f"Fixture term {index}",
                 "boundary": boundary,
+                "version": "sha256:" + _sha(f"term-{index}".encode()),
                 "url": f"https://www.apache.org/licenses/{index}.txt",
                 "size_bytes": len(f"term-{index}"),
                 "sha256": _sha(f"term-{index}".encode()),
@@ -151,7 +153,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "runtime_artifact_count": len(artifacts),
         "runtime_artifacts": artifacts,
         "runtime_python": dict(module.EXPECTED_RUNTIME_PYTHON),
-        "runtime_use_decision": dict(module.EXPECTED_RUNTIME_DECISION_METADATA),
+        "customer_runtime_authorization": dict(
+            module.EXPECTED_CUSTOMER_AUTHORIZATION_METADATA
+        ),
         "boundaries": dict(module.EXPECTED_BOUNDARIES),
     }
     manifest_path = tmp_path / "runtime-manifest.json"
@@ -167,102 +171,62 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         encoding="utf-8",
     )
     module.EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = _sha(requirements_path.read_bytes())
-    infrastructure = {
-        "run_id": "libero-runtime-bootstrap-fixture",
-        "namespace_sha256": "c" * 64,
-    }
-    infrastructure_sha256 = _sha(
-        json.dumps(
-            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    )
-    decision = {
-        "schema": module.DECISION_SCHEMA,
+    authorization = {
+        "schema": module.CUSTOMER_AUTHORIZATION_SCHEMA,
         "solution": "libero",
-        "decision": "authorized",
-        "runtime_fetch_authorized": True,
-        "acceptance_id": "libero-fixture-acceptance-0001",
+        "status": "authorized",
+        "authorization_id": "libero-customer-authorization-0001",
+        "customer_identity_sha256": "8" * 64,
+        "run_id": "libero-runtime-bootstrap-fixture",
         "candidate_image": "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
         + "9" * 64,
-        "publication_bundle_sha256": "a" * 64,
-        "infrastructure_bundle_sha256": infrastructure_sha256,
         "runtime_manifest_sha256": manifest_sha,
-        "executable_profile_sha256": "e" * 64,
-        "upstream_source_revision": "1" * 40,
-        "authorized_boundaries": sorted(module.EXPECTED_DECISION_BOUNDARIES),
-        "run_id": "libero-runtime-bootstrap-fixture",
-        "namespace_sha256": "c" * 64,
-        "issuer": "npa-manager",
+        "terms": [
+            {"id": term["id"], "version": term["version"]}
+            for term in manifest["governing_terms"]
+        ],
+        "issuer": "npa-customer-control-plane",
+        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        "nonce": "libero-runtime-bootstrap-fixture-nonce-0001",
-    }
-    decision_path = tmp_path / "runtime-use-decision.json"
-    decision_sha = _write_json(decision_path, decision)
-    manager_key = Ed25519PrivateKey.generate()
-    manager_public_key = manager_key.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
-    trust_root = tmp_path / "manager-acceptance-public-key.b64"
-    trust_root.write_bytes(module.base64.b64encode(manager_public_key))
-    trust_root.chmod(0o444)
-    module.MANAGER_ACCEPTANCE_PUBLIC_KEY = trust_root
-    module.MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID = os.getuid()
-    acceptance = {
-        "schema": "npa.libero.qualification-acceptance.v3",
-        "status": "accepted",
-        "acceptance_id": decision["acceptance_id"],
-        "accepted_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": decision["expires_at"],
-        "candidate_image": decision["candidate_image"],
-        "runtime_manifest_sha256": manifest_sha,
-        "runtime_use_decision_sha256": decision_sha,
-        "publication_bundle_sha256": decision["publication_bundle_sha256"],
-        "infrastructure_bundle_sha256": infrastructure_sha256,
-        "infrastructure": infrastructure,
-        "manager_signature": {
+        "nonce": "libero-customer-authorization-nonce-0001",
+        "signature": {
             "algorithm": "ed25519",
-            "public_key_sha256": _sha(manager_public_key),
+            "public_key_sha256": "",
             "signature_b64": "",
         },
     }
-    signed_manifest = {
-        "schema": "npa.workbench.image-manifest.v1",
-        "tool": "libero",
-        "image_name": "npa-libero",
-        "runtime_payloads_baked": False,
-        "runtime_use_decision_required": True,
-        "acceptance": acceptance,
-    }
-    acceptance["manager_signature"]["signature_b64"] = module.base64.b64encode(
-        manager_key.sign(module._manager_signature_payload(signed_manifest))
+    customer_key = Ed25519PrivateKey.generate()
+    customer_public_key = customer_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    trust_root = tmp_path / "customer-authorization-public-key.b64"
+    trust_root.write_bytes(module.base64.b64encode(customer_public_key))
+    trust_root.chmod(0o444)
+    module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY = trust_root
+    module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = os.getuid()
+    authorization["signature"]["public_key_sha256"] = _sha(customer_public_key)
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        customer_key.sign(
+            module._customer_authorization_signature_payload(authorization)
+        )
     ).decode("ascii")
-    acceptance_path = tmp_path / "manager-acceptance.json"
-    _write_json(acceptance_path, signed_manifest)
+    authorization_path = tmp_path / "customer-authorization.json"
+    authorization_sha256 = _write_json(authorization_path, authorization)
     args = argparse.Namespace(
         manifest=str(manifest_path),
         requirements=str(requirements_path),
         cache_root=str(tmp_path / "cache"),
-        decision=str(decision_path),
-        decision_sha256=decision_sha,
-        acceptance=str(acceptance_path),
+        authorization=str(authorization_path),
+        authorization_sha256=authorization_sha256,
         output_dir=str(tmp_path / "output"),
     )
     os.environ.update(
         {
-            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
-            "BYOF_IMAGE": decision["candidate_image"],
-            "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": decision[
-                "publication_bundle_sha256"
-            ],
-            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": decision[
-                "infrastructure_bundle_sha256"
-            ],
-            "NPA_BYOF_RUN_ID": decision["run_id"],
-            "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256": decision[
-                "namespace_sha256"
+            "BYOF_IMAGE": authorization["candidate_image"],
+            "NPA_BYOF_RUN_ID": authorization["run_id"],
+            "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": authorization[
+                "customer_identity_sha256"
             ],
         }
     )
@@ -274,9 +238,16 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "demonstration": demonstration_bytes,
         "model": model_bytes,
         "manifest_sha": manifest_sha,
-        "manager_private_key": manager_key,
-        "manager_public_key": manager_public_key,
-        "acceptance_path": acceptance_path,
+        "scope_sha": module._runtime_cache_scope_sha256(
+            manifest_sha,
+            authorization["customer_identity_sha256"],
+            authorization["run_id"],
+        ),
+        "customer_private_key": customer_key,
+        "customer_public_key": customer_public_key,
+        "authorization_path": authorization_path,
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "run_id": authorization["run_id"],
     }
     return module, args, fixture
 
@@ -285,7 +256,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     "mutation,expected",
     [
         ("unknown_top_level", "top-level schema"),
-        ("stale_decision_schema", "decision metadata"),
+        ("stale_authorization_schema", "runtime-authorization metadata"),
         ("runtime_python_drift", "Python identity"),
         ("output_boundary_drift", "boundary metadata"),
     ],
@@ -298,9 +269,9 @@ def test_runtime_manifest_rejects_unknown_or_stale_contract_metadata(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if mutation == "unknown_top_level":
         manifest["unreviewed"] = True
-    elif mutation == "stale_decision_schema":
-        manifest["runtime_use_decision"]["schema"] = (
-            "npa.libero.runtime-use-decision.v1"
+    elif mutation == "stale_authorization_schema":
+        manifest["customer_runtime_authorization"]["schema"] = (
+            "npa.libero.customer-runtime-authorization.v0"
         )
     elif mutation == "runtime_python_drift":
         manifest["runtime_python"]["abi"] = "cp311"
@@ -318,7 +289,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     module = _load_module()
     for name in module.STORAGE_SECRET_ENV_NAMES:
         monkeypatch.setenv(name, f"secret-{name}")
-    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_B64", "decision-secret")
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", "authorization-secret")
     monkeypatch.setenv("HF_TOKEN", "provider-secret")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/attacker-controlled-libraries")
     monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-runtime-environment")
@@ -327,7 +298,7 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
     environment = module._runtime_execution_environment(Path("/proc/self/fd/7"))
 
     assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
-    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in environment
     assert "HF_TOKEN" not in environment
     assert "LD_LIBRARY_PATH" not in environment
     assert environment["NPA_BYOF_RUN_ID"] == "libero-runtime-environment"
@@ -352,7 +323,7 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     policy_sha256 = "a" * 64
     authorization = {
         "schema": "npa.libero.output-storage-authorization.v2",
-        "issuer": "npa-manager",
+        "issuer": "npa-control-plane",
         "run_id": run_id,
         "output_prefix": prefix,
         "endpoint_url": endpoint,
@@ -379,6 +350,10 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     )
     monkeypatch.setenv(
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", policy_sha256
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
+        (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
     )
 
     assert module._storage_authorization(prefix, run_id, endpoint) == authorization
@@ -546,11 +521,11 @@ def _install_fake_materializers(
     )
 
 
-def test_missing_decision_refuses_before_network_or_cache_mutation(
+def test_missing_customer_authorization_refuses_before_network_or_cache_mutation(
     monkeypatch, tmp_path
 ) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
-    Path(args.decision).unlink()
+    Path(args.authorization).unlink()
     monkeypatch.setattr(
         module,
         "_fetch_source",
@@ -558,27 +533,58 @@ def test_missing_decision_refuses_before_network_or_cache_mutation(
     )
 
     with pytest.raises(
-        module.BootstrapRefusal, match="decision file is unavailable|owner-only"
+        module.CustomerAcceptanceRequired, match="authorization missing"
     ):
         module.ensure(args)
     assert not Path(args.cache_root).exists()
 
 
-def test_locally_invented_manager_acceptance_refuses_before_network_or_cache(
+def test_missing_authorization_notification_names_exact_terms_and_refusal(
+    tmp_path,
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest, manifest_sha256 = module._validate_manifest(Path(args.manifest))
+
+    notification = module._customer_acceptance_notification(
+        manifest,
+        manifest_sha256=manifest_sha256,
+        reason="authorization_missing",
+    )
+
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["runtime_manifest_sha256"] == manifest_sha256
+    assert notification["reason"] == "authorization_missing"
+    assert notification["terms"] == [
+        {
+            "id": term["id"],
+            "name": term["name"],
+            "official_url": term["url"],
+            "version": term["version"],
+        }
+        for term in manifest["governing_terms"]
+    ]
+    assert "Decline" in notification["acknowledgement"]["refusal"]
+    assert notification["credentials"] == {
+        "purpose": "upstream_access_only",
+        "establish_terms_acceptance": False,
+    }
+
+
+def test_locally_invented_customer_authorization_refuses_before_network_or_cache(
     monkeypatch, tmp_path
 ) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
-    payload = json.loads(Path(args.acceptance).read_text(encoding="utf-8"))
+    payload = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
     attacker = Ed25519PrivateKey.generate()
     attacker_public = attacker.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
-    signature = payload["acceptance"]["manager_signature"]
+    signature = payload["signature"]
     signature["public_key_sha256"] = _sha(attacker_public)
     signature["signature_b64"] = module.base64.b64encode(
-        attacker.sign(module._manager_signature_payload(payload))
+        attacker.sign(module._customer_authorization_signature_payload(payload))
     ).decode("ascii")
-    _write_json(Path(args.acceptance), payload)
+    args.authorization_sha256 = _write_json(Path(args.authorization), payload)
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
@@ -591,23 +597,24 @@ def test_locally_invented_manager_acceptance_refuses_before_network_or_cache(
     assert not Path(args.cache_root).exists()
 
 
-def test_manager_acceptance_payload_cannot_select_its_trust_root(tmp_path) -> None:
+def test_customer_authorization_payload_cannot_select_its_trust_root(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
-    authoritative_key = module._trusted_manager_public_key()
-    payload = json.loads(Path(args.acceptance).read_text(encoding="utf-8"))
-    payload["acceptance"]["manager_signature"]["public_key_sha256"] = "0" * 64
-    _write_json(Path(args.acceptance), payload)
+    authoritative_key = module._trusted_customer_authorization_public_key()
+    payload = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    payload["signature"]["public_key_sha256"] = "0" * 64
+    args.authorization_sha256 = _write_json(Path(args.authorization), payload)
 
-    assert module._trusted_manager_public_key() == authoritative_key
+    assert module._trusted_customer_authorization_public_key() == authoritative_key
     with pytest.raises(module.BootstrapRefusal, match="trust root differs"):
-        module._validate_manager_acceptance(
-            Path(args.acceptance),
-            manifest_sha256=module.EXPECTED_RUNTIME_MANIFEST_SHA256,
-            decision_sha256=args.decision_sha256,
+        module._validate_customer_authorization(
+            Path(args.authorization),
+            args.authorization_sha256,
+            json.loads(Path(args.manifest).read_text(encoding="utf-8")),
+            module.EXPECTED_RUNTIME_MANIFEST_SHA256,
         )
 
 
-def test_manager_trust_root_rejects_descriptor_metadata_race(
+def test_customer_trust_root_rejects_descriptor_metadata_race(
     monkeypatch, tmp_path
 ) -> None:
     module, _args, _fixture_values = _fixture(tmp_path)
@@ -620,7 +627,7 @@ def test_manager_trust_root_rejects_descriptor_metadata_race(
         if not touched:
             touched = True
             os.utime(
-                module.MANAGER_ACCEPTANCE_PUBLIC_KEY,
+                module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
                 ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
             )
         return metadata
@@ -628,7 +635,7 @@ def test_manager_trust_root_rejects_descriptor_metadata_race(
     monkeypatch.setattr(module.os, "fstat", racing_fstat)
 
     with pytest.raises(module.BootstrapRefusal, match="mutable or invalid"):
-        module._trusted_manager_public_key()
+        module._trusted_customer_authorization_public_key()
 
 
 @pytest.mark.parametrize("field", ["size_bytes", "license_expression"])
@@ -666,18 +673,35 @@ def test_runtime_artifact_total_size_budget_refuses_before_cache_mutation(
     assert not Path(args.cache_root).exists()
 
 
-@pytest.mark.parametrize("mutation", ["hash", "boundary", "acceptance-proxy"])
-def test_mismatched_decision_refuses_before_cache_mutation(tmp_path, mutation) -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    ["hash", "run", "customer", "manifest", "expired", "denied", "acceptance-proxy"],
+)
+def test_mismatched_customer_authorization_refuses_before_cache_mutation(
+    tmp_path, mutation
+) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     if mutation == "hash":
-        args.decision_sha256 = "0" * 64
+        args.authorization_sha256 = "0" * 64
     else:
-        decision = json.loads(Path(args.decision).read_text(encoding="utf-8"))
-        if mutation == "boundary":
-            decision["authorized_boundaries"].remove("demonstration")
+        authorization = json.loads(
+            Path(args.authorization).read_text(encoding="utf-8")
+        )
+        if mutation == "run":
+            authorization["run_id"] = "libero-wrong-customer-run"
+        elif mutation == "customer":
+            authorization["customer_identity_sha256"] = "7" * 64
+        elif mutation == "manifest":
+            authorization["runtime_manifest_sha256"] = "0" * 64
+        elif mutation == "expired":
+            authorization["expires_at"] = "2000-01-01T00:00:00+00:00"
+        elif mutation == "denied":
+            authorization["status"] = "denied"
         else:
-            decision["ACCEPT_LIBERO_TERMS"] = "YES"
-        args.decision_sha256 = _write_json(Path(args.decision), decision)
+            authorization["ACCEPT_LIBERO_TERMS"] = "YES"
+        args.authorization_sha256 = _write_json(
+            Path(args.authorization), authorization
+        )
 
     with pytest.raises(module.BootstrapRefusal):
         module.ensure(args)
@@ -853,7 +877,7 @@ def test_authorized_materialization_is_atomic_and_warm_reusable(
     cold = module.ensure(args)
     warm = module.ensure(args)
 
-    final = Path(args.cache_root) / fixture["manifest_sha"]
+    final = Path(args.cache_root) / fixture["scope_sha"]
     assert cold["warm_reuse"] is False
     assert warm["warm_reuse"] is True
     assert cold["governing_terms_fetched_this_invocation"] is True
@@ -891,7 +915,7 @@ def test_materialized_source_path_targets_published_cache_after_rename(
 
     module.ensure(args)
 
-    final = Path(args.cache_root) / fixture["manifest_sha"]
+    final = Path(args.cache_root) / fixture["scope_sha"]
     source_record = (
         final / "venv" / "lib" / "site-packages" / "npa-libero-source.pth"
     )
@@ -910,9 +934,14 @@ def _prepared_execute(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
     monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
     monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", args.decision_sha256
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", args.authorization_sha256
     )
-    final = Path(args.cache_root) / fixture["manifest_sha"]
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+        fixture["customer_identity_sha256"],
+    )
+    monkeypatch.setenv("NPA_BYOF_RUN_ID", fixture["run_id"])
+    final = Path(args.cache_root) / fixture["scope_sha"]
     return module, final, Path(args.cache_root) / "current"
 
 
@@ -981,7 +1010,7 @@ def test_smoke_propagates_status_and_never_writes_into_sealed_cache(
     module, args, fixture = _fixture(tmp_path)
     _install_fake_materializers(monkeypatch, module, fixture, python_exit=python_exit)
     module.ensure(args)
-    final = Path(args.cache_root) / fixture["manifest_sha"]
+    final = Path(args.cache_root) / fixture["scope_sha"]
     output = Path(args.output_dir)
     output.mkdir()
     before = module._inventory_entries(final)
@@ -1029,7 +1058,7 @@ def test_manifest_cache_entry_symlink_to_output_refuses_without_network(
     cache_root.mkdir()
     output = Path(args.output_dir)
     output.mkdir()
-    (cache_root / fixture["manifest_sha"]).symlink_to(output, target_is_directory=True)
+    (cache_root / fixture["scope_sha"]).symlink_to(output, target_is_directory=True)
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
@@ -1038,8 +1067,7 @@ def test_manifest_cache_entry_symlink_to_output_refuses_without_network(
 
     with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
         module.ensure(args)
-    with pytest.raises(module.BootstrapRefusal, match="must be a real directory"):
-        module.status(args)
+    assert module.status(args)["materialized"] is False
 
     assert not (cache_root / "current").exists()
 
@@ -1051,7 +1079,7 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
     _install_fake_materializers(monkeypatch, module, fixture)
     module.ensure(args)
     cache_root = Path(args.cache_root)
-    final = cache_root / fixture["manifest_sha"]
+    final = cache_root / fixture["scope_sha"]
     preserved = cache_root / ".preserved-final"
     output = Path(args.output_dir)
     output.mkdir()
@@ -1093,7 +1121,7 @@ def test_manifest_cache_entry_swap_during_validation_removes_current_link(
     _install_fake_materializers(monkeypatch, module, fixture)
     module.ensure(args)
     cache_root = Path(args.cache_root)
-    final = cache_root / fixture["manifest_sha"]
+    final = cache_root / fixture["scope_sha"]
     preserved = cache_root / ".preserved-final"
     output = Path(args.output_dir)
     output.mkdir()
@@ -1124,7 +1152,7 @@ def test_cold_cache_entry_swap_after_publication_removes_current_link(
     module, args, fixture = _fixture(tmp_path)
     _install_fake_materializers(monkeypatch, module, fixture)
     cache_root = Path(args.cache_root)
-    final = cache_root / fixture["manifest_sha"]
+    final = cache_root / fixture["scope_sha"]
     preserved = cache_root / ".preserved-final"
     output = Path(args.output_dir)
     output.mkdir()
@@ -1158,7 +1186,7 @@ def test_warm_cache_refuses_tampered_source_or_runtime(
     module, args, fixture = _fixture(tmp_path)
     _install_fake_materializers(monkeypatch, module, fixture)
     module.ensure(args)
-    target = Path(args.cache_root) / fixture["manifest_sha"] / relative
+    target = Path(args.cache_root) / fixture["scope_sha"] / relative
     target.chmod(0o600)
     target.write_bytes(target.read_bytes() + b"tampered")
     target.chmod(0o400)
@@ -1173,7 +1201,7 @@ def test_warm_cache_refuses_writable_tree(monkeypatch, tmp_path) -> None:
     module.ensure(args)
     target = (
         Path(args.cache_root)
-        / fixture["manifest_sha"]
+        / fixture["scope_sha"]
         / "source"
         / "libero"
         / "lifelong"
@@ -1207,7 +1235,7 @@ def test_status_validates_inventory_before_reporting_materialized(
     module.ensure(args)
     target = (
         Path(args.cache_root)
-        / fixture["manifest_sha"]
+        / fixture["scope_sha"]
         / "source"
         / "libero"
         / "lifelong"
@@ -1233,7 +1261,7 @@ def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> 
     with pytest.raises(RuntimeError, match="fixture failure"):
         module.ensure(args)
     cache = Path(args.cache_root)
-    assert not (cache / fixture["manifest_sha"]).exists()
+    assert not (cache / fixture["scope_sha"]).exists()
     assert not list(cache.glob(".*.partial-*"))
     assert not (cache / "current").exists()
 
@@ -1266,7 +1294,7 @@ def test_failed_post_rename_publication_discards_only_new_cache(
         module.ensure(args)
 
     cache = Path(args.cache_root)
-    assert not (cache / fixture["manifest_sha"]).exists()
+    assert not (cache / fixture["scope_sha"]).exists()
     assert not (cache / "current").exists()
     assert not list(cache.glob(".*.partial-*"))
     assert not list(cache.glob(".*.failed-*"))
@@ -1387,10 +1415,10 @@ def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
         module.ensure(args)
 
 
-def test_decision_must_be_owner_private_regular_file(tmp_path) -> None:
+def test_customer_authorization_must_be_owner_private_regular_file(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
-    os.chmod(args.decision, 0o644)
-    with pytest.raises(module.BootstrapRefusal, match="owner-only regular file"):
+    os.chmod(args.authorization, 0o644)
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization missing"):
         module.ensure(args)
 
 
@@ -1611,14 +1639,18 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
     monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
     monkeypatch.setattr(module, "_run_output_root", lambda _run_id: output)
-    receipt = Path(args.cache_root) / "run-receipts" / "libero-lock-test-0001.json"
+    receipt = Path(args.cache_root) / "run-receipts" / f"{fixture['run_id']}.json"
     receipt.parent.mkdir(mode=0o750)
     receipt.write_text('{"status":"ready"}\n', encoding="utf-8")
     receipt.chmod(0o640)
-    monkeypatch.setenv("NPA_BYOF_RUN_ID", "libero-lock-test-0001")
+    monkeypatch.setenv("NPA_BYOF_RUN_ID", fixture["run_id"])
     monkeypatch.setenv("BYOF_SMOKE_ARTIFACT_NAME", "libero-smoke.json")
     monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", args.decision_sha256
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", args.authorization_sha256
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+        fixture["customer_identity_sha256"],
     )
 
     class Completed:
@@ -1638,9 +1670,9 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
         assert stat.S_ISDIR(opened.st_mode)
         environment = kwargs["env"]
         assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
-        assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in environment
+        assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in environment
         assert "HF_TOKEN" not in environment
-        assert environment["NPA_BYOF_RUN_ID"] == "libero-lock-test-0001"
+        assert environment["NPA_BYOF_RUN_ID"] == fixture["run_id"]
         assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
         assert environment["PATH"] == "/usr/bin:/bin"

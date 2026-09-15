@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
-from npa.deploy.images import libero_accepted_image_manifest
+from npa.deploy.images import libero_qualified_image_manifest
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -545,18 +545,22 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     reason="Set NPA_BYOF_LIBERO_LIVE_B200=1 to verify an operator-selected one-B200 qualification report.",
 )
 def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
-    """Own one accepted managed run and independently read back every artifact."""
+    """Own one customer-authorized run and independently read back every artifact."""
 
-    acceptance = libero_accepted_image_manifest()
-    decision_path = os.environ.get(
-        "NPA_BYOF_LIBERO_RUNTIME_DECISION_FILE", ""
+    qualification = libero_qualified_image_manifest()
+    authorization_path = os.environ.get(
+        "NPA_BYOF_LIBERO_CUSTOMER_AUTHORIZATION_FILE", ""
     ).strip()
-    assert decision_path, (
-        "NPA_BYOF_LIBERO_RUNTIME_DECISION_FILE must select the owner-private "
-        "manager decision"
+    assert authorization_path, (
+        "NPA_BYOF_LIBERO_CUSTOMER_AUTHORIZATION_FILE must select the "
+        "owner-private customer/run authorization"
+    )
+    authorization = json.loads(Path(authorization_path).read_text(encoding="utf-8"))
+    assert os.environ.get("NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256") == (
+        authorization["customer_identity_sha256"]
     )
     bucket = live_bucket(e2e_project)
-    run_id = acceptance["infrastructure"]["run_id"]
+    run_id = authorization["run_id"]
     profile = (
         REPO_ROOT
         / "npa"
@@ -573,7 +577,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "--repo-url",
         "https://github.com/Lifelong-Robot-Learning/LIBERO.git",
         "--repo-ref",
-        acceptance["upstream_source_revision"],
+        qualification["upstream_source_revision"],
         "--repo-auth",
         "none",
         "--project",
@@ -596,10 +600,10 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "libero_spatial_bc_rnn_train_reload_heldout",
         "--smoke-artifact-name",
         "libero-smoke.json",
-        "--libero-acceptance-candidate-image",
-        acceptance["candidate_image"],
-        "--libero-runtime-use-decision-file",
-        decision_path,
+        "--libero-qualified-candidate-image",
+        qualification["candidate_image"],
+        "--libero-customer-runtime-authorization-file",
+        authorization_path,
         "--num-envs",
         "1",
         "--num-demos",
@@ -648,7 +652,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
     runner_summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert runner_summary["status"] == "ok"
-    assert runner_summary["image"] == acceptance["candidate_image"]
+    assert runner_summary["image"] == qualification["candidate_image"]
     run_summary = runner_summary["run"]
     assert run_summary["run_id"] == run_id
     assert run_summary["final"]["status"] == "SUCCEEDED"
@@ -668,12 +672,8 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "preserved_for_cleanup_recovery": False,
     }
     binding = run_summary["libero_runtime_binding"]
-    assert binding["namespace_sha256"] == acceptance["infrastructure"][
-        "namespace_sha256"
-    ]
-    assert binding["rbac_spec_sha256"] == acceptance["infrastructure"][
-        "rbac_spec_sha256"
-    ]
+    assert re.fullmatch(r"[0-9a-f]{64}", binding["namespace_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", binding["rbac_spec_sha256"])
     for key in (
         "controller_service_account_uid_sha256",
         "controller_role_uid_sha256",
@@ -689,7 +689,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     assert manager_live["gpu_family"] == "B200"
     assert manager_live["pod_gpu_count"] == 1
     assert manager_live["node_allocatable_gpu_count"] >= 1
-    assert manager_live["pod_observed_image_digest"] == acceptance["oci_digest"]
+    assert manager_live["pod_observed_image_digest"] == qualification["oci_digest"]
     for key in (
         "scheduler_job_id_sha256",
         "payload_pod_name_sha256",
@@ -757,7 +757,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     remote_summary = json.loads(retrieved["npa_byof_summary.json"])
     assert remote_summary["status"] == "success"
     assert remote_summary["run_id"] == run_id
-    assert remote_summary["image"] == acceptance["candidate_image"]
+    assert remote_summary["image"] == qualification["candidate_image"]
     report = json.loads(retrieved["libero-smoke.json"])
 
     assert report["schema"] == "npa.workbench.libero.bc-smoke.v1"

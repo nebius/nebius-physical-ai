@@ -27,9 +27,13 @@ equivalent corresponding-source access for copyleft packages. Python 3.10.21
 is distributed under the Python Software Foundation License; its upstream
 source hash is `a0da1e72132e950154eca0f6f47d5db828454700de20e5113667940d81e0db04`.
 
-At run time the operator must supply a manager-issued, exact-manifest-bound
-use decision. Missing or mismatched decisions refuse before cache creation or
-network access. Runtime fetch changes delivery only; it is not consent and
+At run time the customer must personally acknowledge the seven exact terms in
+the authenticated NPA customer/control-plane surface. That surface supplies a
+short-lived authorization bound to the customer, run, exact terms and runtime
+manifest, plus the immutable qualified image when available. Missing, denied,
+expired, invalid, or mismatched authorization refuses before cache creation or
+network access. HF/NGC credentials prove upstream access only. Runtime fetch
+changes delivery only; it is not consent and
 does not grant use, redistribution, commercial, service, or output rights.
 The fetched cache stays non-root, atomic, and separate from
 `NPA_SMOKE_OUTPUT_DIR`; it is never uploaded as a workflow artifact. A bootstrap
@@ -44,21 +48,20 @@ from the current run.
 
 The manifest separately pins seven official governing-terms documents by URL,
 size, and SHA-256. They are resolved into ephemeral storage only after the
-manager decision passes and before any cache mutation; drift or unavailability
+customer authorization passes and before any cache mutation; drift or unavailability
 refuses. The image-shipped runtime requirements lock must exactly match all 135
 artifact identities, and installation uses `--require-hashes --no-deps` from a
 read-only wheelhouse. Materialization additionally requires a positive reviewed
 size and license expression for all 135 artifacts plus a bounded total download;
 the manifest closes those metadata checks at 3,277,640,175 total bytes. Runtime
-materialization still refuses without a manager-issued, manifest-bound use
-decision and signed candidate acceptance. These controls prove identity and
-refusal, not consent.
+materialization still refuses without the customer/run authorization. These
+controls prove identity and refusal; they do not accept terms for a customer.
 
 The candidate remains unbuilt, unvalidated, and quarantined. A private stage
 must first emit a canonical complete-image inventory and OCI config digest for
-manager review. The inventory binds every byte in each ordered uncompressed
+independent review. The inventory binds every byte in each ordered uncompressed
 layer tar and the canonical flattened-rootfs records. The public workflow
-refuses before building unless a current strict checked-in acceptance record
+refuses before building unless a current strict checked-in qualification record
 binds those exact identities and the exact development source revision. Dispatch
 inputs cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
 scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
@@ -66,7 +69,7 @@ commit; the package layer removes APT/dpkg/account logs and normalizes the
 non-root account's shadow day to that epoch. It must also pass the
 SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
 hard gate before any supported release or public catalog claim.
-The first package visibility transition requires exactly the manager-accepted,
+The first package visibility transition requires exactly the independently qualified,
 repository-bound package-version digest set for one OCI index. Every version
 starts untagged; the index contains the accepted linux/amd64 manifest plus the
 exact embedded provenance and SBOM manifests. The trusted workflow adds only

@@ -92,18 +92,18 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO manager trust root
+      - name: Materialize owner-private LIBERO customer-control-plane trust root
         if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         env:
-          NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
+          NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
-          key_file="$RUNNER_TEMP/libero-manager-acceptance-public-key.b64"
-          printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" > "$key_file"
+          key_file="$RUNNER_TEMP/libero-customer-authorization-public-key.b64"
+          printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" > "$key_file"
           test "$(base64 -d "$key_file" | wc -c)" = 32
           chmod 0600 "$key_file"
-          echo "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
+          echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
 
       - name: Resolve immutable public development plan
         id: plan
@@ -126,7 +126,7 @@ jobs:
           from npa.deploy.images import (
               development_image_for_tool,
               development_tag,
-              libero_accepted_image_manifest,
+              libero_qualified_image_manifest,
               libero_publication_lineage_values,
           )
 
@@ -145,23 +145,23 @@ jobs:
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
           cleanup_tools = tools("CLEANUP_TOOLS")
-          libero_acceptance = None
+          libero_qualification = None
           if "libero" in {*build_tools, *cleanup_tools}:
               if target != "ghcr.io/nebius/nebius-physical-ai":
                   raise SystemExit("libero: publication target must be the official GHCR namespace")
-              libero_acceptance = libero_accepted_image_manifest()
-              if libero_acceptance["development_sha"] != sha:
+              libero_qualification = libero_qualified_image_manifest()
+              if libero_qualification["development_sha"] != sha:
                   raise SystemExit(
-                      "libero: checked-in acceptance development SHA does not match "
+                      "libero: checked-in qualification development SHA does not match "
                       "the exact development SHA"
                   )
               if subprocess.run(
                   ["git", "merge-base", "--is-ancestor", sha, head], check=False
               ).returncode:
                   raise SystemExit(
-                      "libero: accepted development SHA is not an ancestor of HEAD"
+                      "libero: qualified development SHA is not an ancestor of HEAD"
                   )
-              acceptance_delta = subprocess.check_output(
+              qualification_delta = subprocess.check_output(
                   [
                       "git",
                       "diff",
@@ -172,14 +172,14 @@ jobs:
                   ],
                   text=True,
               ).splitlines()
-              if acceptance_delta != ["npa/src/npa/deploy/libero_image_manifest.json"]:
+              if qualification_delta != ["npa/src/npa/deploy/libero_image_manifest.json"]:
                   raise SystemExit(
-                      "libero: only the checked-in acceptance manifest may differ "
-                      "from the accepted development SHA"
+                      "libero: only the checked-in qualification manifest may differ "
+                      "from the qualified development SHA"
                   )
               try:
                   libero_publication_lineage_values(
-                      libero_acceptance, Path.cwd(), development_sha=sha
+                      libero_qualification, Path.cwd(), development_sha=sha
                   )
               except RuntimeError as exc:
                   raise SystemExit(f"libero: {exc}") from exc
@@ -207,73 +207,68 @@ jobs:
                   "image": image,
                   "lerobot_version": lerobot_version if tool == "lerobot" else "",
                   "libero_private_image_inventory_sha256": (
-                      libero_acceptance["complete_image_inventory_sha256"]
-                      if tool == "libero" and libero_acceptance is not None
+                      libero_qualification["complete_image_inventory_sha256"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
                   "libero_private_config_digest": (
-                      libero_acceptance["config_digest"]
-                      if tool == "libero" and libero_acceptance is not None
+                      libero_qualification["config_digest"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_candidate_image": (
-                      libero_acceptance["candidate_image"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_candidate_image": (
+                      libero_qualification["candidate_image"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_oci_digest": (
-                      libero_acceptance["oci_digest"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_oci_digest": (
+                      libero_qualification["oci_digest"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_platform_manifest_digest": (
-                      libero_acceptance["platform_manifest_digest"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_platform_manifest_digest": (
+                      libero_qualification["platform_manifest_digest"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_attestation_manifest_digest": (
-                      libero_acceptance["attestation_manifest_digest"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_attestation_manifest_digest": (
+                      libero_qualification["attestation_manifest_digest"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_attestation_config_digest": (
-                      libero_acceptance["attestation_config_digest"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_attestation_config_digest": (
+                      libero_qualification["attestation_config_digest"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_attestation_layers": (
-                      json.dumps(libero_acceptance["attestation_layers"], separators=(",", ":"))
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_attestation_layers": (
+                      json.dumps(libero_qualification["attestation_layers"], separators=(",", ":"))
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_package_version_digests": (
-                      json.dumps(libero_acceptance["package_version_digests"], separators=(",", ":"))
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_package_version_digests": (
+                      json.dumps(libero_qualification["package_version_digests"], separators=(",", ":"))
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
                   "libero_package_writer_repository": (
-                      libero_acceptance["package_writer_repository"]
-                      if tool == "libero" and libero_acceptance is not None
+                      libero_qualification["package_writer_repository"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_canonical_build_metadata_sha256": (
-                      libero_acceptance["canonical_build_metadata_sha256"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_canonical_build_metadata_sha256": (
+                      libero_qualification["canonical_build_metadata_sha256"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_base_provenance_sha256": (
-                      libero_acceptance["base_provenance_sha256"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_base_provenance_sha256": (
+                      libero_qualification["base_provenance_sha256"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_accepted_publication_bundle_sha256": (
-                      libero_acceptance["publication_bundle_sha256"]
-                      if tool == "libero" and libero_acceptance is not None
-                      else ""
-                  ),
-                  "libero_accepted_infrastructure_bundle_sha256": (
-                      libero_acceptance["infrastructure_bundle_sha256"]
-                      if tool == "libero" and libero_acceptance is not None
+                  "libero_qualified_publication_bundle_sha256": (
+                      libero_qualification["publication_bundle_sha256"]
+                      if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
               })
@@ -284,14 +279,14 @@ jobs:
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
               }
-              if tool == "libero" and libero_acceptance is not None:
+              if tool == "libero" and libero_qualification is not None:
                   item.update({
-                      "libero_accepted_oci_digest": libero_acceptance["oci_digest"],
-                      "libero_accepted_package_version_digests": json.dumps(
-                          libero_acceptance["package_version_digests"],
+                      "libero_qualified_oci_digest": libero_qualification["oci_digest"],
+                      "libero_qualified_package_version_digests": json.dumps(
+                          libero_qualification["package_version_digests"],
                           separators=(",", ":"),
                       ),
-                      "libero_package_writer_repository": libero_acceptance[
+                      "libero_package_writer_repository": libero_qualification[
                           "package_writer_repository"
                       ],
                   })
@@ -348,18 +343,17 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ matrix.libero_private_image_inventory_sha256 }}
       LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}
-      LIBERO_ACCEPTED_CANDIDATE_IMAGE: ${{ matrix.libero_accepted_candidate_image }}
-      LIBERO_ACCEPTED_OCI_DIGEST: ${{ matrix.libero_accepted_oci_digest }}
-      LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST: ${{ matrix.libero_accepted_platform_manifest_digest }}
-      LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST: ${{ matrix.libero_accepted_attestation_manifest_digest }}
-      LIBERO_ACCEPTED_ATTESTATION_CONFIG_DIGEST: ${{ matrix.libero_accepted_attestation_config_digest }}
-      LIBERO_ACCEPTED_ATTESTATION_LAYERS: ${{ matrix.libero_accepted_attestation_layers }}
-      LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_accepted_package_version_digests }}
+      LIBERO_QUALIFIED_CANDIDATE_IMAGE: ${{ matrix.libero_qualified_candidate_image }}
+      LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
+      LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST: ${{ matrix.libero_qualified_platform_manifest_digest }}
+      LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST: ${{ matrix.libero_qualified_attestation_manifest_digest }}
+      LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST: ${{ matrix.libero_qualified_attestation_config_digest }}
+      LIBERO_QUALIFIED_ATTESTATION_LAYERS: ${{ matrix.libero_qualified_attestation_layers }}
+      LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
       LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
-      LIBERO_ACCEPTED_CANONICAL_BUILD_METADATA_SHA256: ${{ matrix.libero_accepted_canonical_build_metadata_sha256 }}
-      LIBERO_ACCEPTED_BASE_PROVENANCE_SHA256: ${{ matrix.libero_accepted_base_provenance_sha256 }}
-      LIBERO_ACCEPTED_PUBLICATION_BUNDLE_SHA256: ${{ matrix.libero_accepted_publication_bundle_sha256 }}
-      LIBERO_ACCEPTED_INFRASTRUCTURE_BUNDLE_SHA256: ${{ matrix.libero_accepted_infrastructure_bundle_sha256 }}
+      LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256: ${{ matrix.libero_qualified_canonical_build_metadata_sha256 }}
+      LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256: ${{ matrix.libero_qualified_base_provenance_sha256 }}
+      LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256: ${{ matrix.libero_qualified_publication_bundle_sha256 }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -378,18 +372,18 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO manager trust root
+      - name: Materialize owner-private LIBERO customer-control-plane trust root
         if: matrix.tool == 'libero'
         env:
-          NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64 }}
+          NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
-          key_file="$RUNNER_TEMP/libero-manager-acceptance-public-key.b64"
-          printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" > "$key_file"
+          key_file="$RUNNER_TEMP/libero-customer-authorization-public-key.b64"
+          printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" > "$key_file"
           test "$(base64 -d "$key_file" | wc -c)" = 32
           chmod 0600 "$key_file"
-          echo "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
+          echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
 
       - name: Refuse source, license, packaging, or skill guard drift
         run: |
@@ -498,7 +492,7 @@ jobs:
             if [ "$visibility" = public ]; then
               echo "NPA_FIRST_PUBLICATION_REQUIRED=0" >> "$GITHUB_ENV"
               if [ "$TOOL" = libero ]; then
-                echo "::error::Accepted LIBERO candidate must remain private until this gate completes"
+                echo "::error::Qualified LIBERO candidate must remain private until this gate completes"
                 exit 1
               fi
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
@@ -515,14 +509,14 @@ jobs:
                 test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
                   "$LIBERO_PACKAGE_WRITER_REPOSITORY"
                 test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-                jq -e --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+                jq -e --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
                   ([.[].name] | sort) == $expected and
                   all(.[]; (.metadata.container.tags // []) == [])
                 ' "$versions" >/dev/null || {
-                  echo "::error::Private LIBERO package versions differ from the accepted untagged OCI graph"
+                  echo "::error::Private LIBERO package versions differ from the qualified untagged OCI graph"
                   exit 1
                 }
-                echo "Private destination is repository-bound and contains exactly the accepted untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
+                echo "Private destination is repository-bound and contains exactly the qualified untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
               else
                 if [ "$version_count" != 0 ]; then
                   if [ "$tagged_count" != 0 ]; then
@@ -543,7 +537,7 @@ jobs:
             # passes. The pushed digest is scanned again before the package visibility
             # changes, and any failure triggers exact run-owned version cleanup.
             if [ "$TOOL" = libero ]; then
-              echo "::error::Accepted LIBERO candidate package is absent"
+              echo "::error::Qualified LIBERO candidate package is absent"
               exit 1
             fi
             echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
@@ -595,7 +589,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify exact accepted private LIBERO candidate lineage
+      - name: Verify exact qualified private LIBERO candidate lineage
         if: matrix.tool == 'libero'
         run: |
           set -euo pipefail
@@ -608,56 +602,56 @@ jobs:
           def read(command):
               return subprocess.check_output(command)
 
-          candidate = os.environ["LIBERO_ACCEPTED_CANDIDATE_IMAGE"]
+          candidate = os.environ["LIBERO_QUALIFIED_CANDIDATE_IMAGE"]
           repository = candidate.rsplit("@", 1)[0]
-          platform_digest = os.environ["LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST"]
-          attestation_digest = os.environ["LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST"]
-          if read(["crane", "digest", candidate]).decode().strip() != os.environ["LIBERO_ACCEPTED_OCI_DIGEST"]:
-              raise SystemExit("accepted OCI index digest differs")
+          platform_digest = os.environ["LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST"]
+          attestation_digest = os.environ["LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"]
+          if read(["crane", "digest", candidate]).decode().strip() != os.environ["LIBERO_QUALIFIED_OCI_DIGEST"]:
+              raise SystemExit("qualified OCI index digest differs")
           root_bytes = read(["crane", "manifest", candidate])
           root = json.loads(root_bytes)
           descriptors = root.get("manifests")
           if root.get("mediaType") != "application/vnd.oci.image.index.v1+json" or not isinstance(descriptors, list) or len(descriptors) != 2:
-              raise SystemExit("accepted OCI index must contain exactly runtime and attestation manifests")
+              raise SystemExit("qualified OCI index must contain exactly runtime and attestation manifests")
           runtime = [item for item in descriptors if item.get("digest") == platform_digest]
           attest = [item for item in descriptors if item.get("digest") == attestation_digest]
           if len(runtime) != 1 or runtime[0].get("platform") != {"architecture": "amd64", "os": "linux"}:
-              raise SystemExit("accepted runtime platform descriptor differs")
+              raise SystemExit("qualified runtime platform descriptor differs")
           if len(attest) != 1:
-              raise SystemExit("accepted attestation descriptor is absent")
+              raise SystemExit("qualified attestation descriptor is absent")
           annotations = attest[0].get("annotations") or {}
           if annotations.get("vnd.docker.reference.digest") != platform_digest or annotations.get("vnd.docker.reference.type") != "attestation-manifest":
-              raise SystemExit("accepted attestation descriptor does not bind the runtime manifest")
+              raise SystemExit("qualified attestation descriptor does not bind the runtime manifest")
           attestation_ref = f"{repository}@{attestation_digest}"
           if read(["crane", "digest", attestation_ref]).decode().strip() != attestation_digest:
-              raise SystemExit("accepted attestation manifest digest differs")
+              raise SystemExit("qualified attestation manifest digest differs")
           manifest_bytes = read(["crane", "manifest", attestation_ref])
           manifest = json.loads(manifest_bytes)
           config = manifest.get("config") or {}
-          if config.get("digest") != os.environ["LIBERO_ACCEPTED_ATTESTATION_CONFIG_DIGEST"]:
-              raise SystemExit("accepted attestation config descriptor differs")
+          if config.get("digest") != os.environ["LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"]:
+              raise SystemExit("qualified attestation config descriptor differs")
           config_bytes = read(["crane", "blob", f"{repository}@{config['digest']}"])
           if "sha256:" + hashlib.sha256(config_bytes).hexdigest() != config["digest"] or len(config_bytes) != config.get("size"):
-              raise SystemExit("accepted attestation config bytes differ")
-          expected_layers = json.loads(os.environ["LIBERO_ACCEPTED_ATTESTATION_LAYERS"])
+              raise SystemExit("qualified attestation config bytes differ")
+          expected_layers = json.loads(os.environ["LIBERO_QUALIFIED_ATTESTATION_LAYERS"])
           layers = manifest.get("layers")
           if not isinstance(layers, list) or len(layers) != len(expected_layers):
-              raise SystemExit("accepted attestation layer set is incomplete")
+              raise SystemExit("qualified attestation layer set is incomplete")
           for layer, expected in zip(layers, expected_layers, strict=True):
               if {"predicate_type": (layer.get("annotations") or {}).get("in-toto.io/predicate-type"), "digest": layer.get("digest"), "size_bytes": layer.get("size")} != expected:
-                  raise SystemExit("accepted attestation layer descriptor differs")
+                  raise SystemExit("qualified attestation layer descriptor differs")
               payload = read(["crane", "blob", f"{repository}@{expected['digest']}"])
               if len(payload) != expected["size_bytes"] or "sha256:" + hashlib.sha256(payload).hexdigest() != expected["digest"]:
-                  raise SystemExit("accepted attestation layer bytes differ")
+                  raise SystemExit("qualified attestation layer bytes differ")
               statement = json.loads(payload)
               if statement.get("predicateType") != expected["predicate_type"]:
-                  raise SystemExit("accepted attestation predicate type differs")
+                  raise SystemExit("qualified attestation predicate type differs")
               subjects = statement.get("subject")
               if not isinstance(subjects, list) or not any((subject.get("digest") or {}).get("sha256") == platform_digest.removeprefix("sha256:") for subject in subjects if isinstance(subject, dict)):
-                  raise SystemExit("accepted attestation subject does not bind the runtime manifest")
+                  raise SystemExit("qualified attestation subject does not bind the runtime manifest")
           platform = json.loads(read(["crane", "manifest", "--platform", "linux/amd64", candidate]))
           if platform.get("config", {}).get("digest") != os.environ["LIBERO_PRIVATE_CONFIG_DIGEST"]:
-              raise SystemExit("accepted OCI config differs")
+              raise SystemExit("qualified OCI config differs")
           PY
 
       - name: Stage supported workflow catalog in the package build context
@@ -697,16 +691,16 @@ jobs:
           metadata_args=()
           secret_args=()
           if [[ "$TOOL" == libero ]]; then
-            NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE")"
-            export NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64
-            test "$(printf '%s' "$NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
+            NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE")"
+            export NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
+            test "$(printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
               --provenance=mode=max
               --sbom=true
             )
             secret_args+=(
-              --secret id=npa_libero_manager_acceptance_public_key_b64,env=NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64
+              --secret id=npa_libero_customer_authorization_public_key_b64,env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
             )
             export BUILDX_METADATA_PROVENANCE=max
           fi
@@ -786,8 +780,8 @@ jobs:
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
               --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
               --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
-              --expected-canonical-build-metadata-sha256 "$LIBERO_ACCEPTED_CANONICAL_BUILD_METADATA_SHA256" \
-              --expected-base-provenance-sha256 "$LIBERO_ACCEPTED_BASE_PROVENANCE_SHA256" \
+              --expected-canonical-build-metadata-sha256 "$LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256" \
+              --expected-base-provenance-sha256 "$LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256" \
               --image-inventory-output "$RUNNER_TEMP/${TOOL}-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
@@ -963,15 +957,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$TOOL" = libero ]; then
-            # Publish the already accepted OCI index. Its embedded, byte-bound
-            # provenance/SBOM graph remains identical to manager acceptance. Do
+            # Publish the already qualified OCI index. Its embedded, byte-bound
+            # provenance/SBOM graph remains identical to image qualification. Do
             # not add the public tag yet: every fallible byte and graph gate runs
             # against the immutable digest first, leaving a failed private gate
-            # with the accepted untagged graph completely unchanged.
-            digest="$(crane digest "$LIBERO_ACCEPTED_CANDIDATE_IMAGE")"
-            test "$digest" = "$LIBERO_ACCEPTED_OCI_DIGEST"
-            test "$(crane digest --platform linux/amd64 "$LIBERO_ACCEPTED_CANDIDATE_IMAGE")" = \
-              "$LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST"
+            # with the qualified untagged graph completely unchanged.
+            digest="$(crane digest "$LIBERO_QUALIFIED_CANDIDATE_IMAGE")"
+            test "$digest" = "$LIBERO_QUALIFIED_OCI_DIGEST"
+            test "$(crane digest --platform linux/amd64 "$LIBERO_QUALIFIED_CANDIDATE_IMAGE")" = \
+              "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST"
           else
             docker push "$IMAGE"
             digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
@@ -988,7 +982,7 @@ jobs:
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
-          # LIBERO preserves its separately accepted embedded OCI graph. Its
+          # LIBERO preserves its separately qualified embedded OCI graph. Its
           # immutable-action workflow attestation is not another GHCR version.
           push-to-registry: ${{ matrix.tool != 'libero' }}
 
@@ -1017,7 +1011,7 @@ jobs:
             test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"
           fi
 
-      - name: Revalidate accepted LIBERO repository and OCI lineage
+      - name: Revalidate qualified LIBERO repository and OCI lineage
         if: matrix.tool == 'libero'
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
@@ -1027,26 +1021,23 @@ jobs:
           import os
           from pathlib import Path
 
-          from npa.deploy.images import libero_accepted_image_manifest, libero_publication_lineage_values
+          from npa.deploy.images import libero_publication_lineage_values, libero_qualified_image_manifest
 
-          acceptance = libero_accepted_image_manifest()
+          qualification = libero_qualified_image_manifest()
           lineage = libero_publication_lineage_values(
-              acceptance,
+              qualification,
               Path.cwd(),
               development_sha=os.environ["DEVELOPMENT_SHA"],
           )
           expected = {
               "publication_bundle_sha256": os.environ[
-                  "LIBERO_ACCEPTED_PUBLICATION_BUNDLE_SHA256"
-              ],
-              "infrastructure_bundle_sha256": os.environ[
-                  "LIBERO_ACCEPTED_INFRASTRUCTURE_BUNDLE_SHA256"
+                  "LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256"
               ],
           }
           if any(lineage[name] != value for name, value in expected.items()):
               raise SystemExit("checked-in LIBERO lineage bundle changed after resolution")
           if os.environ["DIGEST"] != lineage["oci_digest"]:
-              raise SystemExit("published LIBERO OCI index differs from acceptance")
+              raise SystemExit("published LIBERO OCI index differs from qualification")
           if lineage["package_writer_repository"] != os.environ["GITHUB_REPOSITORY"]:
               raise SystemExit("LIBERO package writer repository differs")
           PY
@@ -1157,8 +1148,8 @@ jobs:
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
               --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
               --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
-              --expected-canonical-build-metadata-sha256 "$LIBERO_ACCEPTED_CANONICAL_BUILD_METADATA_SHA256" \
-              --expected-base-provenance-sha256 "$LIBERO_ACCEPTED_BASE_PROVENANCE_SHA256" \
+              --expected-canonical-build-metadata-sha256 "$LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256" \
+              --expected-base-provenance-sha256 "$LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256" \
               --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
@@ -1186,7 +1177,7 @@ jobs:
           package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$TOOL" = libero ]; then
             # This is the last operation before the package-wide visibility
-            # transition. Re-read the complete version set and accepted OCI
+            # transition. Re-read the complete version set and qualified OCI
             # graph so no tag, version, or embedded attestation can be injected.
             test "$(gh api "$package_api" --jq .visibility)" = private
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
@@ -1194,8 +1185,8 @@ jobs:
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
             versions="$RUNNER_TEMP/libero-final-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
-            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ([.[].name] | sort) == $expected and
               ([.[] | select(.name == $root)] | length) == 1 and
               all(.[]; (.metadata.container.tags // []) == [])
@@ -1203,26 +1194,26 @@ jobs:
 
             root_manifest="$RUNNER_TEMP/libero-final-index.json"
             crane manifest "$exact" > "$root_manifest"
-            test "$(crane digest "$exact")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
-            jq -e --arg runtime "$LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST" \
-              --arg attestation "$LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST" '
+            test "$(crane digest "$exact")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
+            jq -e --arg runtime "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST" \
+              --arg attestation "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" '
               .mediaType == "application/vnd.oci.image.index.v1+json" and
               (.manifests | length) == 2 and
               ([.manifests[] | select(.digest == $runtime and .platform == {"architecture":"amd64","os":"linux"})] | length) == 1 and
               ([.manifests[] | select(.digest == $attestation and .annotations["vnd.docker.reference.digest"] == $runtime and .annotations["vnd.docker.reference.type"] == "attestation-manifest")] | length) == 1
             ' "$root_manifest" >/dev/null
             attestation_manifest="$RUNNER_TEMP/libero-final-attestation-manifest.json"
-            test "$(crane digest "${repository}@${LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST}")" = \
-              "$LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST"
-            crane manifest "${repository}@${LIBERO_ACCEPTED_ATTESTATION_MANIFEST_DIGEST}" > "$attestation_manifest"
+            test "$(crane digest "${repository}@${LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST}")" = \
+              "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"
+            crane manifest "${repository}@${LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST}" > "$attestation_manifest"
             test "$(jq -r '.config.digest' "$attestation_manifest")" = \
-              "$LIBERO_ACCEPTED_ATTESTATION_CONFIG_DIGEST"
+              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
             config_blob="$RUNNER_TEMP/libero-final-attestation-config.json"
-            crane blob "${repository}@${LIBERO_ACCEPTED_ATTESTATION_CONFIG_DIGEST}" > "$config_blob"
+            crane blob "${repository}@${LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST}" > "$config_blob"
             test "sha256:$(sha256sum "$config_blob" | cut -d ' ' -f 1)" = \
-              "$LIBERO_ACCEPTED_ATTESTATION_CONFIG_DIGEST"
+              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
             expected_layers="$RUNNER_TEMP/libero-final-expected-layers.json"
-            printf '%s' "$LIBERO_ACCEPTED_ATTESTATION_LAYERS" > "$expected_layers"
+            printf '%s' "$LIBERO_QUALIFIED_ATTESTATION_LAYERS" > "$expected_layers"
             test "$(jq '.layers | length' "$attestation_manifest")" = \
               "$(jq 'length' "$expected_layers")"
             while IFS= read -r index; do
@@ -1238,7 +1229,7 @@ jobs:
               test "$(wc -c < "$layer")" = "$layer_size"
               test "sha256:$(sha256sum "$layer" | cut -d ' ' -f 1)" = "$layer_digest"
               jq -e --arg predicate "$predicate_type" \
-                --arg subject "${LIBERO_ACCEPTED_PLATFORM_MANIFEST_DIGEST#sha256:}" '
+                --arg subject "${LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST#sha256:}" '
                 .predicateType == $predicate and
                 any(.subject[]; .digest.sha256 == $subject)
               ' "$layer" >/dev/null
@@ -1271,7 +1262,7 @@ jobs:
               "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$post_versions")"
           fi
           if [ "$TOOL" = libero ]; then
-            test "$(crane digest "$exact")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            test "$(crane digest "$exact")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
           fi
           anonymous_config="$(mktemp -d)"
           anonymous_reference="$IMAGE"
@@ -1301,12 +1292,12 @@ jobs:
             # the failure cleanup deletes the whole previously verified public
             # package graph, including every untagged platform/referrer version.
             crane tag "$exact" "dev-$DEVELOPMENT_SHA"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
+            test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
             tagged_versions="$RUNNER_TEMP/libero-tagged-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$tagged_versions"
-            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
               --arg tag "dev-$DEVELOPMENT_SHA" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ([.[].name] | sort) == $expected and
               all(.[];
                 if .name == $root
@@ -1315,7 +1306,7 @@ jobs:
                 end)
             ' "$tagged_versions" >/dev/null
             test "$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE")" = \
-              "$LIBERO_ACCEPTED_OCI_DIGEST"
+              "$LIBERO_QUALIFIED_OCI_DIGEST"
             DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
           fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
@@ -1344,8 +1335,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
           TOOL: ${{ matrix.tool }}
-          LIBERO_ACCEPTED_OCI_DIGEST: ${{ matrix.libero_accepted_oci_digest }}
-          LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_accepted_package_version_digests }}
+          LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
+          LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
           LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
@@ -1378,10 +1369,10 @@ jobs:
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$LIBERO_PACKAGE_WRITER_REPOSITORY"
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_ACCEPTED_OCI_DIGEST"
-            jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+            test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
+            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
               --arg tag "$tag" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ([.[].name] | sort) == $expected and
               ([.[] | select(.name == $root)] | length) == 1 and
               all(.[];
@@ -1457,8 +1448,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
           TOOL: ${{ matrix.tool }}
-          LIBERO_ACCEPTED_OCI_DIGEST: ${{ matrix.libero_accepted_oci_digest }}
-          LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_accepted_package_version_digests }}
+          LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
+          LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
           LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
@@ -1487,10 +1478,10 @@ jobs:
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$LIBERO_PACKAGE_WRITER_REPOSITORY"
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            accepted_rows="$(mktemp)"
-            if ! jq -e --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
+            qualified_rows="$(mktemp)"
+            if ! jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
               --arg tag "$tag" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ($expected | length > 0 and length == (unique | length) and
                 all(.[]; test("^sha256:[0-9a-f]{64}$"))) and
               ([.[] | select(.name as $name | $expected | index($name))] |
@@ -1505,19 +1496,19 @@ jobs:
                   else (.metadata.container.tags // []) == []
                   end))
             ' "$versions" >/dev/null; then
-              echo "::error::Failed LIBERO cleanup cannot isolate every accepted ownership-bound version"
+              echo "::error::Failed LIBERO cleanup cannot isolate every qualified ownership-bound version"
               echo "WARNING: unresolved failed LIBERO candidate state was preserved for recovery." >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            jq --arg root "$LIBERO_ACCEPTED_OCI_DIGEST" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+            jq --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               [.[] | select(.name as $name | $expected | index($name)) |
                 {id:(.id | tostring), name,
                  tags:(.metadata.container.tags // [])}] |
               sort_by(.name == $root)
-            ' "$versions" > "$accepted_rows"
+            ' "$versions" > "$qualified_rows"
             if [ "$visibility" = private ]; then
-              echo "Retained the private accepted LIBERO versions; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
+              echo "Retained the private qualified LIBERO versions; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             test "$visibility" = public || {
@@ -1525,7 +1516,7 @@ jobs:
               exit 1
             }
             unrelated_before="$(mktemp)"
-            jq --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+            jq --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               [.[] | select(.name as $name | $expected | index($name) | not) |
                 {id:(.id | tostring), name,
                  tags:(.metadata.container.tags // [])}] | sort_by(.id)
@@ -1539,22 +1530,22 @@ jobs:
                 [.[] | select((.id | tostring) == $id and .name == $digest and
                   (.metadata.container.tags // []) == $tags)] | length == 1
               ' "$current_versions" >/dev/null || {
-                echo "::error::Accepted LIBERO version identity changed during cleanup"
+                echo "::error::Qualified LIBERO version identity changed during cleanup"
                 exit 1
               }
               gh api --method DELETE "${package_api}/versions/${version_id}"
-            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$accepted_rows")
+            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$qualified_rows")
             post_versions="$(mktemp)"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" |
               jq 'add' > "$post_versions"
-            jq -e --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+            jq -e --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               all(.[]; (.name as $name | $expected | index($name) | not))
             ' "$post_versions" >/dev/null || {
               echo "::error::Failed LIBERO candidate versions remain after cleanup"
               exit 1
             }
             jq -e --slurpfile before "$unrelated_before" \
-              --argjson expected "$LIBERO_ACCEPTED_PACKAGE_VERSION_DIGESTS" '
+              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ([.[] | select(.name as $name | $expected | index($name) | not) |
                 {id:(.id | tostring), name,
                  tags:(.metadata.container.tags // [])}] | . as $after |
@@ -1564,7 +1555,7 @@ jobs:
               echo "::error::Unrelated LIBERO package versions changed during cleanup"
               exit 1
             }
-            echo "Deleted only the exact accepted failed public LIBERO OCI versions." >> "$GITHUB_STEP_SUMMARY"
+            echo "Deleted only the exact qualified failed public LIBERO OCI versions." >> "$GITHUB_STEP_SUMMARY"
             echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi

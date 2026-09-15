@@ -212,8 +212,8 @@ scans, anonymous pull, and the exact-digest hard gate.
 Before that trusted build, a separately authorized private stage must emit a
 canonical complete-image inventory that binds every byte in each ordered
 uncompressed layer tar, every flattened-rootfs record, and the observed OCI
-config digest for manager acceptance. The trusted workflow refuses a LIBERO
-build without those two accepted identities and requires exact equality before
+config digest for independent qualification. The trusted workflow refuses a LIBERO
+build without those two qualified identities and requires exact equality before
 push; finite path or source-signature rules are defense in depth rather than an
 arbitrary-byte absence proof.
 
@@ -233,14 +233,16 @@ demonstration in a run-scoped runtime cache outside `$NPA_SMOKE_OUTPUT_DIR` and
 never bake it. The selected task names Google Scanned Objects and a HOPE
 distractor; the headless qualification's runtime sparse checkout never fetches
 the unused render-asset tree while retaining the hash-bound MIT task
-definitions. Require a manager-issued manifest/source/boundary-bound use
-decision before any cache or network mutation. The neutral image must verify
-the complete signed acceptance against its baked, root-owned Ed25519 public
-trust root and derive the permitted decision digest from that record; caller
-environment hashes are not authorization. Keep the payload on its pods/get-only
+definitions. Require a short-lived authorization from the authenticated NPA
+customer/control-plane surface, bound to the customer, run, exact terms,
+runtime manifest, and immutable qualified image when available, before any
+cache or network mutation. The neutral image must verify that authorization
+against its baked, root-owned Ed25519 public trust root; caller environment
+hashes and upstream credentials are not terms acceptance. Keep the payload on its pods/get-only
 account and require the separately precreated, non-wildcard controller Role to
 pass exact namespaced and no-ClusterRoleBinding checks before submission.
-Never invent an acceptance variable or treat fetch/authentication as permission.
+Never invent an `ACCEPT_*` variable, automate a vendor acceptance action, or
+treat fetch/authentication as permission.
 Rendered closed-loop sweeps, all 130
 tasks, lifelong-algorithm comparison, and physical-robot use remain deferred.
 

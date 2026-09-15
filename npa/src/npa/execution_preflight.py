@@ -45,9 +45,9 @@ LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
-    "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
-    "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-    "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+    "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
+    "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
+    "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
     "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
 )
 
@@ -578,13 +578,12 @@ def _verify_libero_submission_authorization(
     documents: Sequence[Mapping[str, Any]],
     process_env: Mapping[str, str],
     *,
-    authorization_global_config: Mapping[str, Any],
     submission_backend: str,
     infra: str,
     run_id: str,
     executable_profile_sha256: str,
 ) -> dict[str, Any]:
-    """Bind secret forwarding to one signed decision and exact profile bytes."""
+    """Bind secret forwarding to one customer/run authorization."""
 
     try:
         _validate_libero_submission_identity(
@@ -594,33 +593,25 @@ def _verify_libero_submission_authorization(
             submission_backend=submission_backend,
             infra=infra,
         )
-        decision, decision_sha256, acceptance = _libero_submission_decision(
-            process_env, run_id
+        authorization, authorization_sha256, qualification = (
+            _libero_submission_authorization(process_env, run_id)
         )
     except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
         raise ExecutionPreflightError(
             "authorization",
-            "LIBERO requires a valid signed acceptance and runtime decision",
+            "LIBERO requires a valid customer/run authorization",
+            status="needs_customer_acceptance",
         ) from exc
     if (
-        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", "")
-        != decision_sha256
-        or decision.get("executable_profile_sha256")
-        != executable_profile_sha256
-        or (acceptance.get("infrastructure") or {}).get(
-            "skypilot_config_sha256"
-        )
-        != hashlib.sha256(
-            json.dumps(
-                authorization_global_config,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", "")
+        != authorization_sha256
+        or process_env.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "")
+        != authorization.get("customer_identity_sha256")
     ):
         raise ExecutionPreflightError(
             "authorization",
-            "LIBERO runtime decision does not authorize the executable submission",
+            "LIBERO customer authorization secret pair differs",
+            status="needs_customer_acceptance",
         )
     candidate_images = {
         str((document.get("resources") or {}).get("image_id") or "").removeprefix(
@@ -633,12 +624,12 @@ def _verify_libero_submission_authorization(
         )
         for document in skypilot_task_documents(documents)
     }
-    if candidate_images != {acceptance.get("candidate_image")}:
+    if candidate_images != {qualification.get("candidate_image")}:
         raise ExecutionPreflightError(
             "authorization",
-            "LIBERO executable submission differs from the accepted candidate image",
+            "LIBERO executable submission differs from the qualified candidate image",
         )
-    return acceptance
+    return authorization
 
 
 def _validate_libero_submission_identity(
@@ -649,7 +640,7 @@ def _validate_libero_submission_identity(
     submission_backend: str,
     infra: str,
 ) -> None:
-    """Require the decision target to match the submitted run and profile."""
+    """Require the preflight target to match the submitted run and profile."""
 
     if (
         submission_backend != "kubernetes"
@@ -666,48 +657,43 @@ def _validate_libero_submission_identity(
         raise RuntimeError("LIBERO executable profile selects a different run")
 
 
-def _libero_submission_decision(
+def _libero_submission_authorization(
     process_env: Mapping[str, str], run_id: str
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
-    """Validate the signed repository acceptance and paired runtime decision."""
+    """Validate the repository qualification and customer authorization."""
 
-    encoded_acceptance = process_env.get("NPA_LIBERO_MANAGER_ACCEPTANCE_B64", "")
-    supplied_manifest = json.loads(
-        base64.b64decode(encoded_acceptance, validate=True)
-    )
-    decision_bytes = base64.b64decode(
-        process_env.get("NPA_LIBERO_RUNTIME_USE_DECISION_B64", ""),
+    authorization_bytes = base64.b64decode(
+        process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""),
         validate=True,
     )
     from npa.deploy.images import (
-        LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV,
+        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
         libero_image_manifest,
-        validate_libero_accepted_image_manifest,
-        validate_libero_runtime_decision,
+        validate_libero_customer_runtime_authorization,
+        validate_libero_qualified_image_manifest,
     )
 
     repository_manifest = libero_image_manifest()
-    if supplied_manifest != repository_manifest:
-        raise RuntimeError(
-            "LIBERO supplied acceptance differs from repository acceptance"
-        )
-    acceptance = validate_libero_accepted_image_manifest(
-        repository_manifest,
-        manager_public_key_file=process_env.get(
-            LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE_ENV, ""
+    qualification = validate_libero_qualified_image_manifest(repository_manifest)
+    authorization, authorization_sha256 = validate_libero_customer_runtime_authorization(
+        authorization_bytes,
+        image_manifest=repository_manifest,
+        run_id=run_id,
+        customer_identity_sha256=process_env.get(
+            "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+        ),
+        public_key_file=process_env.get(
+            LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
         ),
     )
-    decision, decision_sha256 = validate_libero_runtime_decision(
-        decision_bytes, acceptance=acceptance, run_id=run_id
-    )
-    return decision, decision_sha256, acceptance
+    return authorization, authorization_sha256, qualification
 
 
 def _verify_libero_output_storage_authorization(
     documents: Sequence[Mapping[str, Any]],
     process_env: Mapping[str, str],
     *,
-    acceptance: Mapping[str, Any],
+    customer_authorization: Mapping[str, Any],
     run_id: str,
 ) -> None:
     """Verify the exact temporary upload authority before target resolution."""
@@ -749,7 +735,42 @@ def _verify_libero_output_storage_authorization(
     if configured_endpoints != {endpoint}:
         raise ValueError("LIBERO output endpoint differs from the executing environment")
 
-    infrastructure = acceptance.get("infrastructure") or {}
+    expected_authorization_hashes = {
+        str(
+            (document.get("envs") or {}).get(
+                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"
+            )
+            or ""
+        )
+        for document in task_documents
+    }
+    expected_prefix_hashes = {
+        str(
+            (document.get("envs") or {}).get(
+                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"
+            )
+            or ""
+        )
+        for document in task_documents
+    }
+    expected_policy_hashes = {
+        str(
+            (document.get("envs") or {}).get(
+                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"
+            )
+            or ""
+        )
+        for document in task_documents
+    }
+    if any(
+        len(values) != 1 or not next(iter(values), "")
+        for values in (
+            expected_authorization_hashes,
+            expected_prefix_hashes,
+            expected_policy_hashes,
+        )
+    ):
+        raise ValueError("LIBERO output storage binding is incomplete")
     encoded = str(
         process_env.get("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64") or ""
     ).strip()
@@ -757,10 +778,8 @@ def _verify_libero_output_storage_authorization(
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO output storage authorization is invalid") from exc
-    if hashlib.sha256(payload).hexdigest() != infrastructure.get(
-        "output_storage_authorization_sha256"
-    ):
-        raise ValueError("LIBERO output storage authorization is not manager-bound")
+    if hashlib.sha256(payload).hexdigest() != expected_authorization_hashes.pop():
+        raise ValueError("LIBERO output storage authorization is not bound")
     try:
         authorization = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -791,8 +810,8 @@ def _verify_libero_output_storage_authorization(
         expires_at = datetime.fromisoformat(
             str(authorization["expires_at"]).replace("Z", "+00:00")
         )
-        acceptance_expires_at = datetime.fromisoformat(
-            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        customer_authorization_expires_at = datetime.fromisoformat(
+            str(customer_authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
@@ -800,14 +819,14 @@ def _verify_libero_output_storage_authorization(
     valid = (
         authorization.get("schema")
         == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("issuer") == "npa-control-plane"
         and authorization.get("run_id") == run_id
         and authorization.get("output_prefix") == output_prefix
         and authorization.get("endpoint_url") == endpoint
         and hashlib.sha256(output_prefix.encode()).hexdigest()
-        == infrastructure.get("output_storage_prefix_sha256")
+        == expected_prefix_hashes.pop()
         and authorization.get("policy_sha256")
-        == infrastructure.get("output_storage_policy_sha256")
+        == expected_policy_hashes.pop()
         and all((access_key, secret_key, session_token))
         and authorization.get("access_key_id_sha256")
         == hashlib.sha256(access_key.encode()).hexdigest()
@@ -821,12 +840,12 @@ def _verify_libero_output_storage_authorization(
         is not None
         and issued_at.tzinfo is not None
         and expires_at.tzinfo is not None
-        and acceptance_expires_at.tzinfo is not None
+        and customer_authorization_expires_at.tzinfo is not None
         and issued_at <= now + timedelta(minutes=5)
         and issued_at < expires_at
         and expires_at > now
         and expires_at - issued_at <= timedelta(hours=24)
-        and expires_at <= acceptance_expires_at
+        and expires_at <= customer_authorization_expires_at
     )
     if not valid:
         raise ValueError("LIBERO output storage authorization is invalid or expired")
@@ -851,6 +870,9 @@ def preflight_skypilot_submission(
     """
     process_env = dict(os.environ)
     process_env.update(extra_env or {})
+    # The caller owns controller-config integrity separately. Customer terms
+    # authorization intentionally cannot bind infrastructure configuration.
+    del authorization_global_config
     if process_env.get("SKYPILOT_CONFIG"):
         raise ExecutionPreflightError("worker_environment", "internal SkyPilot config override prevents verification of the effective task environment", status="unknown")
     if cwd is not None or process_env.get("SKYPILOT_PROJECT_CONFIG"):
@@ -870,10 +892,9 @@ def preflight_skypilot_submission(
         documents, global_config=global_config
     )
     if libero_submission:
-        acceptance = _verify_libero_submission_authorization(
+        customer_authorization = _verify_libero_submission_authorization(
             documents,
             process_env,
-            authorization_global_config=authorization_global_config or {},
             submission_backend=submission_backend,
             infra=infra,
             run_id=run_id,
@@ -883,13 +904,13 @@ def preflight_skypilot_submission(
             _verify_libero_output_storage_authorization(
                 documents,
                 process_env,
-                acceptance=acceptance,
+                customer_authorization=customer_authorization,
                 run_id=run_id,
             )
         except ValueError as exc:
             raise ExecutionPreflightError(
                 "credentials",
-                "LIBERO requires exact manager-bound temporary output authority",
+                "LIBERO requires exact control-plane-bound temporary output authority",
             ) from exc
     if any(not isinstance(document.get("resources") or {}, Mapping) for document in documents):
         raise ExecutionPreflightError("gpu", "alternative resource targets are ambiguous; select one effective resource mapping")

@@ -4,7 +4,8 @@
 The public image contains this fetcher and immutable manifests, not LIBERO,
 PyTorch/CUDA wheels, demonstrations, task assets, models, or populated caches.
 Download success is never treated as permission: ``ensure`` refuses before the
-first cache mutation unless a manager-issued decision is present and hash-bound.
+first network or cache effect unless a customer/run authorization is present,
+hash-bound, and signed by the authenticated NPA customer control plane.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
-DECISION_SCHEMA = "npa.libero.runtime-use-decision.v3"
+CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v1"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_MANIFEST_KEYS = frozenset(
@@ -47,7 +48,7 @@ EXPECTED_MANIFEST_KEYS = frozenset(
         "runtime_artifact_count",
         "runtime_artifacts",
         "runtime_python",
-        "runtime_use_decision",
+        "customer_runtime_authorization",
         "schema",
         "solution",
         "source",
@@ -59,10 +60,10 @@ EXPECTED_RUNTIME_PYTHON = {
     "abi": "cp310",
     "platform": "linux_x86_64",
 }
-EXPECTED_RUNTIME_DECISION_METADATA = {
-    "schema": DECISION_SCHEMA,
+EXPECTED_CUSTOMER_AUTHORIZATION_METADATA = {
+    "schema": CUSTOMER_AUTHORIZATION_SCHEMA,
     "required": True,
-    "accepted_by_download": False,
+    "credentials_establish_acceptance": False,
 }
 EXPECTED_BOUNDARIES = {
     "cache": "operator-owned non-root atomic runtime cache",
@@ -70,7 +71,7 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2"
+    "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -78,11 +79,11 @@ EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
-MANAGER_ACCEPTANCE_PUBLIC_KEY = Path(
-    "/opt/npa/libero/manager-acceptance-public-key.b64"
+CUSTOMER_AUTHORIZATION_PUBLIC_KEY = Path(
+    "/opt/npa/libero/customer-authorization-public-key.b64"
 )
-MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID = 0
-MANAGER_ACCEPTANCE_NAMESPACE = b"npa.libero.acceptance"
+CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
+CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
         "files.pythonhosted.org",
@@ -114,9 +115,6 @@ ALLOWED_TERMS_HOSTS = frozenset(
         "www.nvidia.com",
     }
 )
-EXPECTED_DECISION_BOUNDARIES = frozenset(
-    {"source", "runtime_packages", "demonstration", "task_inputs", "language_model"}
-)
 EXPECTED_GOVERNING_TERMS = frozenset(
     {
         "libero-mit",
@@ -137,7 +135,7 @@ STORAGE_SECRET_ENV_NAMES = frozenset(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
     }
 )
 RUNTIME_MATERIALIZATION_PASSTHROUGH_ENV_NAMES = frozenset(
@@ -170,7 +168,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LC_ALL",
         "LC_CTYPE",
         "NPA_BYOF_RUN_ID",
-        "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID",
+        "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
         "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256",
@@ -188,7 +186,8 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256",
         "NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256",
         "NPA_LIBERO_BOOTSTRAP_RECEIPT",
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
         "NPA_SMOKE_OUTPUT_DIR",
         "NVIDIA_DRIVER_CAPABILITIES",
         "NVIDIA_VISIBLE_DEVICES",
@@ -212,6 +211,14 @@ MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 
 class BootstrapRefusal(RuntimeError):
     """A fail-closed identity, permission, or boundary refusal."""
+
+
+class CustomerAcceptanceRequired(BootstrapRefusal):
+    """The customer must use the authenticated acceptance surface."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason.replace("_", " "))
 
 
 def _sha256(path: Path) -> str:
@@ -260,8 +267,13 @@ def _validate_manifest(
         raise BootstrapRefusal("runtime manifest top-level schema is not closed")
     if manifest.get("runtime_python") != EXPECTED_RUNTIME_PYTHON:
         raise BootstrapRefusal("runtime Python identity is invalid")
-    if manifest.get("runtime_use_decision") != EXPECTED_RUNTIME_DECISION_METADATA:
-        raise BootstrapRefusal("runtime-use decision metadata is stale or invalid")
+    if (
+        manifest.get("customer_runtime_authorization")
+        != EXPECTED_CUSTOMER_AUTHORIZATION_METADATA
+    ):
+        raise BootstrapRefusal(
+            "customer runtime-authorization metadata is stale or invalid"
+        )
     if manifest.get("boundaries") != EXPECTED_BOUNDARIES:
         raise BootstrapRefusal("runtime cache/output boundary metadata is invalid")
     governing_terms = manifest.get("governing_terms")
@@ -274,7 +286,9 @@ def _validate_manifest(
     for term in governing_terms:
         if not isinstance(term, dict) or set(term) != {
             "id",
+            "name",
             "boundary",
+            "version",
             "url",
             "size_bytes",
             "sha256",
@@ -284,7 +298,16 @@ def _validate_manifest(
         boundary = str(term.get("boundary") or "")
         if (
             term_id in term_ids
-            or boundary not in EXPECTED_DECISION_BOUNDARIES
+            or boundary
+            not in {
+                "source",
+                "runtime_packages",
+                "demonstration",
+                "task_inputs",
+                "language_model",
+            }
+            or not str(term.get("name") or "").strip()
+            or term.get("version") != f"sha256:{term.get('sha256')}"
             or not isinstance(term.get("size_bytes"), int)
             or term["size_bytes"] <= 0
             or not _is_hex(term.get("sha256"), 64)
@@ -795,21 +818,18 @@ def _ssh_string(value: bytes) -> bytes:
     return struct.pack(">I", len(value)) + value
 
 
-def _canonical_unsigned_acceptance(payload: dict[str, Any]) -> bytes:
+def _canonical_unsigned_customer_authorization(payload: dict[str, Any]) -> bytes:
     unsigned = json.loads(json.dumps(payload))
-    acceptance = unsigned.get("acceptance")
-    if not isinstance(acceptance, dict):
-        raise BootstrapRefusal("manager acceptance record is unavailable")
-    acceptance.pop("manager_signature", None)
+    unsigned.pop("signature", None)
     return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _manager_signature_payload(payload: dict[str, Any]) -> bytes:
-    canonical = _canonical_unsigned_acceptance(payload)
+def _customer_authorization_signature_payload(payload: dict[str, Any]) -> bytes:
+    canonical = _canonical_unsigned_customer_authorization(payload)
     return b"".join(
         (
             b"SSHSIG",
-            _ssh_string(MANAGER_ACCEPTANCE_NAMESPACE),
+            _ssh_string(CUSTOMER_AUTHORIZATION_NAMESPACE),
             _ssh_string(b""),
             _ssh_string(b"sha512"),
             _ssh_string(hashlib.sha512(canonical).digest()),
@@ -817,7 +837,7 @@ def _manager_signature_payload(payload: dict[str, Any]) -> bytes:
     )
 
 
-def _manager_sshsig(public_key: bytes, signature: bytes) -> bytes:
+def _customer_authorization_sshsig(public_key: bytes, signature: bytes) -> bytes:
     public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
     signature_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(signature)
     payload = b"".join(
@@ -825,7 +845,7 @@ def _manager_sshsig(public_key: bytes, signature: bytes) -> bytes:
             b"SSHSIG",
             struct.pack(">I", 1),
             _ssh_string(public_key_blob),
-            _ssh_string(MANAGER_ACCEPTANCE_NAMESPACE),
+            _ssh_string(CUSTOMER_AUTHORIZATION_NAMESPACE),
             _ssh_string(b""),
             _ssh_string(b"sha512"),
             _ssh_string(signature_blob),
@@ -840,28 +860,32 @@ def _manager_sshsig(public_key: bytes, signature: bytes) -> bytes:
     ).encode()
 
 
-def _trusted_manager_public_key() -> bytes:
-    """Load the image-baked trust root without accepting a payload selector."""
+def _trusted_customer_authorization_public_key() -> bytes:
+    """Load the image-baked control-plane trust root."""
 
     try:
         descriptor = os.open(
-            MANAGER_ACCEPTANCE_PUBLIC_KEY,
+            CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
             os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
         )
     except OSError as exc:
-        raise BootstrapRefusal("manager acceptance trust root is unavailable") from exc
+        raise BootstrapRefusal(
+            "customer-authorization trust root is unavailable"
+        ) from exc
     try:
         before = os.fstat(descriptor)
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
             encoded = stream.read()
         after = os.fstat(descriptor)
     except OSError as exc:
-        raise BootstrapRefusal("manager acceptance trust root is unavailable") from exc
+        raise BootstrapRefusal(
+            "customer-authorization trust root is unavailable"
+        ) from exc
     finally:
         os.close(descriptor)
     if (
         not stat.S_ISREG(before.st_mode)
-        or before.st_uid != MANAGER_ACCEPTANCE_PUBLIC_KEY_OWNER_UID
+        or before.st_uid != CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID
         or before.st_nlink != 1
         or stat.S_IMODE(before.st_mode) != 0o444
         or (
@@ -886,49 +910,53 @@ def _trusted_manager_public_key() -> bytes:
         )
         or encoded != encoded.strip()
     ):
-        raise BootstrapRefusal("manager acceptance trust root is mutable or invalid")
+        raise BootstrapRefusal(
+            "customer-authorization trust root is mutable or invalid"
+        )
     try:
         public_key = base64.b64decode(encoded, validate=True)
     except ValueError as exc:
-        raise BootstrapRefusal("manager acceptance trust root is invalid") from exc
+        raise BootstrapRefusal("customer-authorization trust root is invalid") from exc
     if len(public_key) != 32:
-        raise BootstrapRefusal("manager acceptance trust root is invalid")
+        raise BootstrapRefusal("customer-authorization trust root is invalid")
     return public_key
 
 
-def _verify_manager_signature(
+def _verify_customer_authorization_signature(
     payload: dict[str, Any], signature_record: dict[str, Any]
 ) -> None:
-    public_key = _trusted_manager_public_key()
+    public_key = _trusted_customer_authorization_public_key()
     claimed_fingerprint = str(signature_record.get("public_key_sha256") or "")
     if (
         not _is_hex(claimed_fingerprint, 64)
         or hashlib.sha256(public_key).hexdigest() != claimed_fingerprint
     ):
-        # The root-owned key baked into the image is authoritative. This signed
-        # field is only a consistency assertion; it can never select a key.
-        raise BootstrapRefusal("manager acceptance trust root differs")
+        raise BootstrapRefusal("customer-authorization trust root differs")
     try:
         signature = base64.b64decode(
             str(signature_record.get("signature_b64") or ""), validate=True
         )
     except ValueError as exc:
-        raise BootstrapRefusal("manager acceptance signature is invalid") from exc
+        raise BootstrapRefusal("customer authorization signature is invalid") from exc
     if len(signature) != 64:
-        raise BootstrapRefusal("manager acceptance signature is invalid")
-    canonical = _canonical_unsigned_acceptance(payload)
+        raise BootstrapRefusal("customer authorization signature is invalid")
+    canonical = _canonical_unsigned_customer_authorization(payload)
     public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
     allowed_signer = (
-        "npa-manager ssh-ed25519 "
+        "npa-customer-control-plane ssh-ed25519 "
         + base64.b64encode(public_key_blob).decode("ascii")
         + "\n"
     )
-    with tempfile.TemporaryDirectory(prefix="npa-libero-manager-signature-") as root:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-libero-customer-authorization-signature-"
+    ) as root:
         root_path = Path(root)
         allowed_path = root_path / "allowed-signers"
-        signature_path = root_path / "acceptance.sig"
+        signature_path = root_path / "authorization.sig"
         allowed_path.write_text(allowed_signer, encoding="ascii")
-        signature_path.write_bytes(_manager_sshsig(public_key, signature))
+        signature_path.write_bytes(
+            _customer_authorization_sshsig(public_key, signature)
+        )
         os.chmod(allowed_path, 0o600)
         os.chmod(signature_path, 0o600)
         completed = subprocess.run(
@@ -939,9 +967,9 @@ def _verify_manager_signature(
                 "-f",
                 str(allowed_path),
                 "-I",
-                "npa-manager",
+                "npa-customer-control-plane",
                 "-n",
-                MANAGER_ACCEPTANCE_NAMESPACE.decode("ascii"),
+                CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
                 "-s",
                 str(signature_path),
             ],
@@ -952,164 +980,154 @@ def _verify_manager_signature(
             check=False,
         )
     if completed.returncode:
-        raise BootstrapRefusal("manager acceptance signature is invalid")
+        raise BootstrapRefusal("customer authorization signature is invalid")
 
 
-def _validate_manager_acceptance(
-    path: Path, *, manifest_sha256: str, decision_sha256: str
+def _customer_acceptance_notification(
+    manifest: dict[str, Any], *, manifest_sha256: str, reason: str
 ) -> dict[str, Any]:
-    """Verify the image-local decision against a non-substitutable trust root."""
-
-    if not _is_private_regular_file(path):
-        raise BootstrapRefusal("manager acceptance must be an owner-only regular file")
-    payload = _load_json(path)
-    acceptance = payload.get("acceptance")
-    signature_record = (
-        acceptance.get("manager_signature") if isinstance(acceptance, dict) else None
-    )
-    if (
-        payload.get("schema") != "npa.workbench.image-manifest.v1"
-        or payload.get("tool") != "libero"
-        or payload.get("image_name") != "npa-libero"
-        or payload.get("runtime_payloads_baked") is not False
-        or payload.get("runtime_use_decision_required") is not True
-        or not isinstance(acceptance, dict)
-        or acceptance.get("schema") != "npa.libero.qualification-acceptance.v3"
-        or acceptance.get("status") != "accepted"
-        or not isinstance(signature_record, dict)
-        or set(signature_record)
-        != {"algorithm", "public_key_sha256", "signature_b64"}
-        or signature_record.get("algorithm") != "ed25519"
-        or acceptance.get("runtime_manifest_sha256") != manifest_sha256
-        or acceptance.get("runtime_use_decision_sha256") != decision_sha256
-    ):
-        raise BootstrapRefusal("manager acceptance does not authorize this runtime")
-    infrastructure = acceptance.get("infrastructure")
-    if not isinstance(infrastructure, dict):
-        raise BootstrapRefusal("manager acceptance infrastructure is invalid")
-    observed_infrastructure = hashlib.sha256(
-        json.dumps(
-            {"schema": "npa.libero.infrastructure-bundle.v1", **infrastructure},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    if observed_infrastructure != acceptance.get("infrastructure_bundle_sha256"):
-        raise BootstrapRefusal("manager acceptance infrastructure differs")
-    try:
-        accepted_at = datetime.fromisoformat(
-            str(acceptance["accepted_at"]).replace("Z", "+00:00")
-        )
-        expires_at = datetime.fromisoformat(
-            str(acceptance["expires_at"]).replace("Z", "+00:00")
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BootstrapRefusal("manager acceptance timestamps are invalid") from exc
-    now = datetime.now(timezone.utc)
-    if (
-        accepted_at.tzinfo is None
-        or expires_at.tzinfo is None
-        or accepted_at > now + timedelta(minutes=5)
-        or accepted_at >= expires_at
-        or expires_at <= now
-        or expires_at - accepted_at > timedelta(days=7)
-    ):
-        raise BootstrapRefusal("manager acceptance is expired or replayable")
-    _verify_manager_signature(payload, signature_record)
-    return acceptance
+    return {
+        "schema": "npa.libero.customer-acceptance-notification.v1",
+        "status": "needs_customer_acceptance",
+        "solution": "libero",
+        "reason": reason,
+        "runtime_manifest_sha256": manifest_sha256,
+        "candidate_image": os.environ.get("BYOF_IMAGE") or None,
+        "terms": [
+            {
+                "id": term["id"],
+                "name": term["name"],
+                "official_url": term["url"],
+                "version": term["version"],
+            }
+            for term in manifest["governing_terms"]
+        ],
+        "acknowledgement": {
+            "required": True,
+            "instructions": (
+                "Review every listed official term in the authenticated NPA "
+                "customer/control-plane surface, then obtain a short-lived "
+                "authorization for this exact customer and run."
+            ),
+            "refusal": (
+                "Decline or omit authorization to stop before runtime fetch, "
+                "installation, cache mutation, or workload execution."
+            ),
+        },
+        "credentials": {
+            "purpose": "upstream_access_only",
+            "establish_terms_acceptance": False,
+        },
+    }
 
 
-def _validate_decision(
+def _validate_customer_authorization(
     path: Path,
     expected_sha256: str,
     manifest: dict[str, Any],
     manifest_sha256: str,
-    acceptance: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
+    """Verify a customer/run authorization before all external effects."""
+
     if not _is_hex(expected_sha256, 64):
-        raise BootstrapRefusal("expected decision SHA-256 is required")
+        raise CustomerAcceptanceRequired("authorization_missing")
     if not _is_private_regular_file(path):
-        raise BootstrapRefusal(
-            "runtime-use decision must be an owner-only regular file"
-        )
-    observed = _sha256(path)
-    if observed != expected_sha256:
-        raise BootstrapRefusal("runtime-use decision hash does not match")
-    decision = _load_json(path)
-    source = manifest["source"]
-    infrastructure = acceptance["infrastructure"]
-    boundaries = decision.get("authorized_boundaries")
+        raise CustomerAcceptanceRequired("authorization_missing")
+    observed_sha256 = _sha256(path)
+    if observed_sha256 != expected_sha256:
+        raise BootstrapRefusal("customer authorization hash does not match")
+    authorization = _load_json(path)
+    signature_record = authorization.get("signature")
     expected_keys = {
         "schema",
         "solution",
-        "decision",
-        "runtime_fetch_authorized",
-        "acceptance_id",
-        "candidate_image",
-        "publication_bundle_sha256",
-        "infrastructure_bundle_sha256",
-        "runtime_manifest_sha256",
-        "executable_profile_sha256",
-        "upstream_source_revision",
-        "authorized_boundaries",
+        "status",
+        "authorization_id",
+        "customer_identity_sha256",
         "run_id",
-        "namespace_sha256",
+        "candidate_image",
+        "runtime_manifest_sha256",
+        "terms",
         "issuer",
+        "acknowledged_at",
         "issued_at",
         "expires_at",
         "nonce",
+        "signature",
     }
+    expected_terms = [
+        {"id": term["id"], "version": term["version"]}
+        for term in manifest["governing_terms"]
+    ]
     if (
-        set(decision) != expected_keys
-        or decision.get("schema") != DECISION_SCHEMA
-        or decision.get("solution") != "libero"
-        or decision.get("decision") != "authorized"
-        or decision.get("runtime_fetch_authorized") is not True
-        or decision.get("acceptance_id")
-        != acceptance.get("acceptance_id")
-        or decision.get("candidate_image") != acceptance.get("candidate_image")
-        or decision.get("publication_bundle_sha256")
-        != acceptance.get("publication_bundle_sha256")
-        or decision.get("infrastructure_bundle_sha256")
-        != acceptance.get("infrastructure_bundle_sha256")
-        or decision.get("runtime_manifest_sha256") != manifest_sha256
-        or not _is_hex(str(decision.get("executable_profile_sha256") or ""), 64)
-        or decision.get("upstream_source_revision") != source["revision"]
-        or decision.get("run_id") != infrastructure.get("run_id")
-        or decision.get("namespace_sha256")
-        != infrastructure.get("namespace_sha256")
-        or os.environ.get("BYOF_IMAGE") != acceptance.get("candidate_image")
-        or os.environ.get("NPA_BYOF_RUN_ID") != infrastructure.get("run_id")
-        or decision.get("issuer") != "npa-manager"
-        or not isinstance(boundaries, list)
-        or frozenset(boundaries) != EXPECTED_DECISION_BOUNDARIES
-        or len(boundaries) != len(EXPECTED_DECISION_BOUNDARIES)
-        or not 32 <= len(str(decision.get("nonce") or "")) <= 128
-        or not all(
-            character.isalnum() or character in "_-"
-            for character in str(decision.get("nonce") or "")
+        set(authorization) != expected_keys
+        or authorization.get("schema") != CUSTOMER_AUTHORIZATION_SCHEMA
+        or authorization.get("solution") != "libero"
+        or authorization.get("status") != "authorized"
+        or re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}",
+            str(authorization.get("authorization_id") or ""),
         )
+        is None
+        or not _is_hex(authorization.get("customer_identity_sha256"), 64)
+        or authorization.get("customer_identity_sha256")
+        != os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256")
+        or authorization.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
+        or re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,62}",
+            str(authorization.get("run_id") or ""),
+        )
+        is None
+        or authorization.get("candidate_image") != os.environ.get("BYOF_IMAGE")
+        or re.fullmatch(
+            r"ghcr\.io/nebius/nebius-physical-ai/npa-libero@sha256:[0-9a-f]{64}",
+            str(authorization.get("candidate_image") or ""),
+        )
+        is None
+        or authorization.get("runtime_manifest_sha256") != manifest_sha256
+        or authorization.get("terms") != expected_terms
+        or authorization.get("issuer") != "npa-customer-control-plane"
+        or not isinstance(signature_record, dict)
+        or set(signature_record)
+        != {"algorithm", "public_key_sha256", "signature_b64"}
+        or signature_record.get("algorithm") != "ed25519"
+        or re.fullmatch(
+            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
+        )
+        is None
     ):
-        raise BootstrapRefusal("runtime-use decision does not bind the exact contract")
+        if authorization.get("status") == "denied":
+            raise CustomerAcceptanceRequired("authorization_denied")
+        raise BootstrapRefusal(
+            "customer authorization does not bind the exact customer/run contract"
+        )
     try:
+        acknowledged_at = datetime.fromisoformat(
+            str(authorization["acknowledged_at"]).replace("Z", "+00:00")
+        )
         issued_at = datetime.fromisoformat(
-            str(decision["issued_at"]).replace("Z", "+00:00")
+            str(authorization["issued_at"]).replace("Z", "+00:00")
         )
         expires_at = datetime.fromisoformat(
-            str(decision["expires_at"]).replace("Z", "+00:00")
+            str(authorization["expires_at"]).replace("Z", "+00:00")
         )
-    except (TypeError, ValueError) as exc:
-        raise BootstrapRefusal("runtime-use decision timestamps are invalid") from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BootstrapRefusal("customer authorization timestamps are invalid") from exc
     now = datetime.now(timezone.utc)
     if (
-        issued_at.tzinfo is None
+        acknowledged_at.tzinfo is None
+        or issued_at.tzinfo is None
         or expires_at.tzinfo is None
+        or acknowledged_at > issued_at
+        or issued_at - acknowledged_at > timedelta(minutes=5)
         or issued_at > now + timedelta(minutes=5)
+        or issued_at >= expires_at
         or expires_at <= now
         or expires_at - issued_at > timedelta(hours=24)
     ):
-        raise BootstrapRefusal("runtime-use decision is expired or replayable")
-    return decision, observed
+        raise BootstrapRefusal("customer authorization is expired or replayable")
+    _verify_customer_authorization_signature(authorization, signature_record)
+    return authorization, observed_sha256
 
 
 def _download_verified(
@@ -1533,7 +1551,9 @@ def _complete_record(
     root: Path,
     manifest: dict[str, Any],
     manifest_sha256: str,
-    decision_sha256: str,
+    authorization_sha256: str,
+    customer_identity_sha256: str,
+    run_id: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
 ) -> dict[str, Any]:
@@ -1544,7 +1564,9 @@ def _complete_record(
         "schema": COMPLETE_SCHEMA,
         "solution": "libero",
         "manifest_sha256": manifest_sha256,
-        "decision_sha256": decision_sha256,
+        "customer_authorization_sha256": authorization_sha256,
+        "customer_identity_sha256": customer_identity_sha256,
+        "run_id": run_id,
         "runtime_requirements_sha256": requirements_sha256,
         "governing_terms_sha256": governing_terms_sha256,
         "governing_terms_count": len(manifest["governing_terms"]),
@@ -1573,7 +1595,9 @@ def _validate_complete(
     root: Path,
     manifest: dict[str, Any],
     manifest_sha256: str,
-    decision_sha256: str,
+    authorization_sha256: str,
+    customer_identity_sha256: str,
+    run_id: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
 ) -> dict[str, Any]:
@@ -1582,7 +1606,9 @@ def _validate_complete(
     expected = _complete_record_values(
         manifest,
         manifest_sha256,
-        decision_sha256,
+        authorization_sha256,
+        customer_identity_sha256,
+        run_id,
         requirements_sha256,
         governing_terms_sha256,
     )
@@ -1647,7 +1673,9 @@ def _validate_and_publish_cache(
     identity: tuple[int, int],
     manifest: dict[str, Any],
     manifest_sha256: str,
-    decision_sha256: str,
+    authorization_sha256: str,
+    customer_identity_sha256: str,
+    run_id: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
 ) -> dict[str, Any]:
@@ -1657,7 +1685,9 @@ def _validate_and_publish_cache(
                 stable_final,
                 manifest,
                 manifest_sha256,
-                decision_sha256,
+                authorization_sha256,
+                customer_identity_sha256,
+                run_id,
                 requirements_sha256,
                 governing_terms_sha256,
             )
@@ -1671,7 +1701,9 @@ def _validate_and_publish_cache(
 def _complete_record_values(
     manifest: dict[str, Any],
     manifest_sha256: str,
-    decision_sha256: str,
+    authorization_sha256: str,
+    customer_identity_sha256: str,
+    run_id: str,
     requirements_sha256: str,
     governing_terms_sha256: str,
 ) -> dict[str, Any]:
@@ -1681,7 +1713,9 @@ def _complete_record_values(
         "schema": COMPLETE_SCHEMA,
         "solution": "libero",
         "manifest_sha256": manifest_sha256,
-        "decision_sha256": decision_sha256,
+        "customer_authorization_sha256": authorization_sha256,
+        "customer_identity_sha256": customer_identity_sha256,
+        "run_id": run_id,
         "runtime_requirements_sha256": requirements_sha256,
         "governing_terms_sha256": governing_terms_sha256,
         "governing_terms_count": len(manifest["governing_terms"]),
@@ -1700,28 +1734,48 @@ def _complete_record_values(
     }
 
 
+def _runtime_cache_scope_sha256(
+    manifest_sha256: str, customer_identity_sha256: str, run_id: str
+) -> str:
+    if (
+        not _is_hex(manifest_sha256, 64)
+        or not _is_hex(customer_identity_sha256, 64)
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None
+    ):
+        raise BootstrapRefusal("runtime cache scope is invalid")
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "schema": "npa.libero.customer-runtime-cache-scope.v1",
+                "customer_identity_sha256": customer_identity_sha256,
+                "run_id": run_id,
+                "runtime_manifest_sha256": manifest_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
 def ensure(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.manifest)
     manifest, manifest_sha256 = _validate_manifest(manifest_path)
-    decision_path = Path(args.decision)
-    acceptance = _validate_manager_acceptance(
-        Path(args.acceptance),
-        manifest_sha256=manifest_sha256,
-        decision_sha256=args.decision_sha256,
-    )
-    _, decision_sha256 = _validate_decision(
-        decision_path,
-        args.decision_sha256,
+    authorization, authorization_sha256 = _validate_customer_authorization(
+        Path(args.authorization),
+        args.authorization_sha256,
         manifest,
         manifest_sha256,
-        acceptance,
     )
+    customer_identity_sha256 = authorization["customer_identity_sha256"]
+    run_id = authorization["run_id"]
     requirement_lines, requirements_sha256 = _validate_requirements(
         Path(args.requirements), manifest
     )
     output = Path(args.output_dir) if args.output_dir else None
     cache_root = _validate_cache_root(Path(args.cache_root), output)
-    final = cache_root / manifest_sha256
+    final = cache_root / _runtime_cache_scope_sha256(
+        manifest_sha256, customer_identity_sha256, run_id
+    )
     initial_identity = _cache_entry_identity(final)
     governing_terms_sha256 = (
         _governing_terms_identity(manifest)
@@ -1751,7 +1805,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 identity=locked_identity,
                 manifest=manifest,
                 manifest_sha256=manifest_sha256,
-                decision_sha256=decision_sha256,
+                authorization_sha256=authorization_sha256,
+                customer_identity_sha256=customer_identity_sha256,
+                run_id=run_id,
                 requirements_sha256=requirements_sha256,
                 governing_terms_sha256=governing_terms_sha256,
             )
@@ -1781,7 +1837,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     partial,
                     manifest,
                     manifest_sha256,
-                    decision_sha256,
+                    authorization_sha256,
+                    customer_identity_sha256,
+                    run_id,
                     requirements_sha256,
                     governing_terms_sha256,
                 )
@@ -1807,7 +1865,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     identity=locked_identity,
                     manifest=manifest,
                     manifest_sha256=manifest_sha256,
-                    decision_sha256=decision_sha256,
+                    authorization_sha256=authorization_sha256,
+                    customer_identity_sha256=customer_identity_sha256,
+                    run_id=run_id,
                     requirements_sha256=requirements_sha256,
                     governing_terms_sha256=governing_terms_sha256,
                 )
@@ -1844,22 +1904,36 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     )
     _, requirements_sha256 = _validate_requirements(Path(args.requirements), manifest)
     cache_root = _validate_cache_root(Path(args.cache_root), None)
-    final = cache_root / manifest_sha256
-    identity = _cache_entry_identity(final)
     materialized = False
-    if identity is not None:
+    current = cache_root / "current"
+    if current.is_symlink():
+        target = os.readlink(current)
+        if not _is_hex(target, 64):
+            raise BootstrapRefusal("runtime current link has an invalid scope")
+        final = cache_root / target
+        identity = _cache_entry_identity(final)
+        if identity is None:
+            raise BootstrapRefusal("runtime current link target is unavailable")
         with _open_cache_entry(final, expected=identity) as stable_final:
             record = _load_json(stable_final / ".complete.json")
-            decision_sha256 = str(record.get("decision_sha256") or "")
-            if not _is_hex(decision_sha256, 64):
+            authorization_sha256 = str(
+                record.get("customer_authorization_sha256") or ""
+            )
+            customer_identity_sha256 = str(
+                record.get("customer_identity_sha256") or ""
+            )
+            run_id = str(record.get("run_id") or "")
+            if not _is_hex(authorization_sha256, 64):
                 raise BootstrapRefusal(
-                    "existing runtime cache decision identity is invalid"
+                    "existing runtime cache authorization identity is invalid"
                 )
             _validate_complete(
                 stable_final,
                 manifest,
                 manifest_sha256,
-                decision_sha256,
+                authorization_sha256,
+                customer_identity_sha256,
+                run_id,
                 requirements_sha256,
                 _governing_terms_identity(manifest),
             )
@@ -1886,18 +1960,34 @@ def _runtime_execution_environment(stable_root: Path) -> dict[str, str]:
     }
 
 
+def _execution_authorization_values(
+    manifest_sha256: str,
+) -> tuple[str, str, str, str]:
+    authorization_sha256 = os.environ.get(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", ""
+    ).strip()
+    customer_identity_sha256 = os.environ.get(
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+    ).strip()
+    run_id = os.environ.get("NPA_BYOF_RUN_ID", "").strip()
+    if not _is_hex(authorization_sha256, 64):
+        raise BootstrapRefusal("customer authorization SHA-256 is unavailable")
+    scope_sha256 = _runtime_cache_scope_sha256(
+        manifest_sha256, customer_identity_sha256, run_id
+    )
+    return authorization_sha256, customer_identity_sha256, run_id, scope_sha256
+
+
 def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
     """Run the fixed smoke from one locked, descriptor-stable cache snapshot."""
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
-    decision_sha256 = os.environ.get(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
-    ).strip()
-    if not _is_hex(decision_sha256, 64):
-        raise BootstrapRefusal("accepted decision SHA-256 is unavailable")
+    authorization_sha256, customer_identity_sha256, run_id, scope_sha256 = (
+        _execution_authorization_values(manifest_sha256)
+    )
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
-    final = cache_root / manifest_sha256
+    final = cache_root / scope_sha256
     identity = _cache_entry_identity(final)
     if identity is None:
         raise BootstrapRefusal("runtime cache is not materialized")
@@ -1923,7 +2013,9 @@ def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
             stable_root,
             manifest,
             manifest_sha256,
-            decision_sha256,
+            authorization_sha256,
+            customer_identity_sha256,
+            run_id,
             requirements_sha256,
             governing_terms_sha256,
         )
@@ -1938,7 +2030,9 @@ def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
             stable_root,
             manifest,
             manifest_sha256,
-            decision_sha256,
+            authorization_sha256,
+            customer_identity_sha256,
+            run_id,
             requirements_sha256,
             governing_terms_sha256,
         )
@@ -1970,7 +2064,7 @@ def _storage_authorization(
     except ValueError as exc:
         raise BootstrapRefusal("output storage authorization is not valid Base64") from exc
     if not _is_hex(expected, 64) or hashlib.sha256(payload).hexdigest() != expected:
-        raise BootstrapRefusal("output storage authorization is not manager-accepted")
+        raise BootstrapRefusal("output storage authorization is not control-plane-bound")
     try:
         authorization = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1997,10 +2091,14 @@ def _storage_authorization(
     prefix_sha256 = hashlib.sha256(output_prefix.encode()).hexdigest()
     issued_at = _parse_utc(authorization.get("issued_at"), "authorization issued_at")
     expires_at = _parse_utc(authorization.get("expires_at"), "authorization expires_at")
+    customer_authorization_expires_at = _parse_utc(
+        os.environ.get("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT"),
+        "customer authorization expires_at",
+    )
     now = datetime.now(timezone.utc)
     valid = (
         authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("issuer") == "npa-control-plane"
         and authorization.get("run_id") == run_id
         and authorization.get("output_prefix") == output_prefix
         and authorization.get("endpoint_url") == endpoint
@@ -2019,6 +2117,7 @@ def _storage_authorization(
         and issued_at < expires_at
         and expires_at > now
         and expires_at - issued_at <= timedelta(hours=24)
+        and expires_at <= customer_authorization_expires_at
     )
     if not valid:
         raise BootstrapRefusal("output storage authorization is invalid or expired")
@@ -2371,25 +2470,20 @@ def _materialize_supervisor_artifact(
 
 
 def execute_and_upload() -> int:
-    """Hold the accepted cache snapshot lock through smoke output readback."""
+    """Hold the customer-scoped cache lock through smoke output readback."""
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
-    decision_sha256 = os.environ.get(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", ""
-    ).strip()
-    if not _is_hex(decision_sha256, 64):
-        raise BootstrapRefusal("accepted decision SHA-256 is unavailable")
+    authorization_sha256, customer_identity_sha256, run_id, scope_sha256 = (
+        _execution_authorization_values(manifest_sha256)
+    )
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
-    final = cache_root / manifest_sha256
+    final = cache_root / scope_sha256
     identity = _cache_entry_identity(final)
     if identity is None:
         raise BootstrapRefusal("runtime cache is not materialized")
     current = cache_root / "current"
     governing_terms_sha256 = _governing_terms_identity(manifest)
-    run_id = os.environ.get("NPA_BYOF_RUN_ID", "")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id):
-        raise BootstrapRefusal("execution requires the accepted run ID")
     output_root = _run_output_root(run_id)
     root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -2441,7 +2535,9 @@ def execute_and_upload() -> int:
                     stable_root,
                     manifest,
                     manifest_sha256,
-                    decision_sha256,
+                    authorization_sha256,
+                    customer_identity_sha256,
+                    run_id,
                     requirements_sha256,
                     governing_terms_sha256,
                 )
@@ -2519,7 +2615,9 @@ def execute_and_upload() -> int:
                     stable_root,
                     manifest,
                     manifest_sha256,
-                    decision_sha256,
+                    authorization_sha256,
+                    customer_identity_sha256,
+                    run_id,
                     requirements_sha256,
                     governing_terms_sha256,
                 )
@@ -2543,9 +2641,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--requirements", default=str(DEFAULT_REQUIREMENTS))
     parser.add_argument("--cache-root", default=str(DEFAULT_CACHE))
-    parser.add_argument("--decision", default="")
-    parser.add_argument("--decision-sha256", default="")
-    parser.add_argument("--acceptance", default="")
+    parser.add_argument("--authorization", default="")
+    parser.add_argument("--authorization-sha256", default="")
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--smoke-exit-code", type=int, default=1)
     return parser.parse_args(argv)
@@ -2560,6 +2657,21 @@ def main(argv: list[str] | None = None) -> int:
             return execute_and_upload()
         else:
             payload = ensure(args) if args.command == "ensure" else status(args)
+    except CustomerAcceptanceRequired as exc:
+        try:
+            manifest, manifest_sha256 = _validate_manifest(Path(args.manifest))
+            notification = _customer_acceptance_notification(
+                manifest, manifest_sha256=manifest_sha256, reason=exc.reason
+            )
+        except Exception:
+            notification = {
+                "schema": "npa.libero.customer-acceptance-notification.v1",
+                "status": "needs_customer_acceptance",
+                "solution": "libero",
+                "reason": exc.reason,
+            }
+        print(json.dumps(notification, sort_keys=True), file=sys.stderr)
+        return 3
     except Exception as exc:
         print(
             json.dumps(

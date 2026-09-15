@@ -21,13 +21,15 @@ from npa.deploy.images import (
     LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS,
     LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER,
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
-    libero_acceptance_signature_payload,
-    libero_accepted_image_manifest,
+    libero_customer_acceptance_notification,
+    libero_customer_authorization_signature_payload,
+    libero_qualified_image_manifest,
     libero_build_input_bundle_sha256,
     libero_publication_enforcement_bundle_sha256,
     libero_publication_enforcement_paths,
     libero_publication_lineage_values,
-    validate_libero_accepted_image_manifest,
+    validate_libero_customer_runtime_authorization,
+    validate_libero_qualified_image_manifest,
 )
 
 
@@ -104,9 +106,8 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert config["capability_name"] == CAPABILITY
     assert config["smoke_artifact_name"] == "libero-smoke.json"
     assert config["wait_timeout"] == -1
-    assert config["libero_acceptance_candidate_image"] == ""
-    assert config["libero_runtime_use_decision_file"] == ""
-    assert "libero_runtime_use_decision_sha256" not in config
+    assert config["libero_qualified_candidate_image"] == ""
+    assert config["libero_customer_runtime_authorization_file"] == ""
     assert "libero_build_metadata_sha256" not in config
     resources = workflow["resources"]
     assert isinstance(resources, dict)
@@ -204,12 +205,13 @@ def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> N
     assert 'receipt.get("warm_reuse") is not False' in smoke
     assert 'receipt.get("governing_terms_fetched_this_invocation") is not True' in smoke
     assert 'receipt.get("manifest_sha256") != RUNTIME_MANIFEST_SHA256' in smoke
-    assert 'receipt.get("decision_sha256")' in smoke
+    assert 'receipt.get("customer_authorization_sha256")' in smoke
+    assert 'receipt.get("customer_identity_sha256")' in smoke
     assert ".render(" not in smoke
     assert "offscreen" not in smoke.lower()
 
 
-def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu() -> None:
+def test_libero_profile_binds_payload_identity_customer_authorization_and_headless_gpu() -> None:
     documents = list(yaml.safe_load_all(PROFILE_PATH.read_text(encoding="utf-8")))
     assert len(documents) == 2
     task = documents[1]
@@ -220,12 +222,13 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert pod_spec["serviceAccountName"] not in {"default", "skypilot-service-account"}
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
     assert "NVIDIA_VISIBLE_DEVICES" not in task["envs"]
-    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in task["envs"]
-    assert "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256" not in task["envs"]
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in task["envs"]
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256" not in task["envs"]
     profile = PROFILE_PATH.read_text(encoding="utf-8")
     for contract in (
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "/opt/npa/libero/runtime-bootstrap.py ensure",
         "/opt/npa/libero/runtime-bootstrap.py execute",
@@ -258,7 +261,7 @@ def test_libero_profile_binds_payload_identity_runtime_decision_and_headless_gpu
     assert '["git"' not in bootstrap
     assert '"/usr/bin/git"' in bootstrap
     assert "_discard_new_cache_entry" in bootstrap
-    assert profile.count("unset NPA_LIBERO_RUNTIME_USE_DECISION_B64") == 2
+    assert profile.count("unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64") == 2
     assert (
         "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "
         "execute-and-upload"
@@ -304,8 +307,14 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
             "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
         ),
     }
-    assert manifest["acceptance"]["status"] == "not_accepted"
-    assert manifest["acceptance"]["candidate_image"] == ""
+    assert manifest["qualification"]["status"] == "not_qualified"
+    assert manifest["qualification"]["candidate_image"] == ""
+    assert manifest["customer_runtime_authorization_required"] is True
+    notification = libero_customer_acceptance_notification(manifest)
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["credentials"]["establish_terms_acceptance"] is False
+    assert len(notification["terms"]) == 7
+    assert all(term["name"] and term["official_url"] for term in notification["terms"])
     assert manifest["catalog_release"] is False
     assert manifest["base_provenance"] == {
         "repository": "index.docker.io/library/python",
@@ -323,11 +332,11 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
         ),
     }
 
-    with pytest.raises(RuntimeError, match="accepted status"):
-        libero_accepted_image_manifest()
+    with pytest.raises(RuntimeError, match="qualified status"):
+        libero_qualified_image_manifest()
 
 
-def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
+def test_libero_qualification_and_customer_authorization_are_separate(
     monkeypatch, tmp_path
 ) -> None:
     manifest = json.loads(IMAGE_MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -339,12 +348,12 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
         "pending_license_artifacts": 0,
         "report_sha256": "2" * 64,
     }
-    acceptance = manifest["acceptance"]
-    acceptance.update(
+    qualification = manifest["qualification"]
+    qualification.update(
         {
-            "status": "accepted",
-            "acceptance_id": "libero-qualification-acceptance-0001",
-            "accepted_at": now.isoformat(),
+            "status": "qualified",
+            "qualification_id": "libero-image-qualification-0001",
+            "qualified_at": now.isoformat(),
             "expires_at": (now + timedelta(hours=1)).isoformat(),
             "candidate_image": (
                 "ghcr.io/nebius/nebius-physical-ai/npa-libero@" + digest
@@ -380,145 +389,122 @@ def test_libero_acceptance_closes_candidate_publication_and_infrastructure(
                 libero_publication_enforcement_bundle_sha256(ROOT)
             ),
             "package_writer_repository": "nebius/nebius-physical-ai",
-            "runtime_use_decision_sha256": "9" * 64,
-            "infrastructure_bundle_sha256": "a" * 64,
         }
     )
-    acceptance["infrastructure"] = {
-        "run_id": "libero-qualification-run-0001",
-        **{
-            key: "b" * 64
-            for key in acceptance["infrastructure"]
-            if key != "run_id"
-        },
-    }
-    acceptance["infrastructure_bundle_sha256"] = hashlib.sha256(
+    qualification["publication_bundle_sha256"] = hashlib.sha256(
         json.dumps(
             {
-                "schema": "npa.libero.infrastructure-bundle.v1",
-                **acceptance["infrastructure"],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    acceptance["publication_bundle_sha256"] = hashlib.sha256(
-        json.dumps(
-            {
-                "schema": "npa.libero.publication-lineage-bundle.v2",
-                "candidate_image": acceptance["candidate_image"],
-                "oci_digest": acceptance["oci_digest"],
-                "platform_manifest_digest": acceptance["platform_manifest_digest"],
-                "config_digest": acceptance["config_digest"],
-                "canonical_build_metadata_sha256": acceptance[
+                "schema": "npa.libero.publication-lineage-bundle.v3",
+                "candidate_image": qualification["candidate_image"],
+                "oci_digest": qualification["oci_digest"],
+                "platform_manifest_digest": qualification["platform_manifest_digest"],
+                "config_digest": qualification["config_digest"],
+                "canonical_build_metadata_sha256": qualification[
                     "canonical_build_metadata_sha256"
                 ],
-                "attestation_manifest_digest": acceptance[
+                "attestation_manifest_digest": qualification[
                     "attestation_manifest_digest"
                 ],
-                "attestation_config_digest": acceptance[
+                "attestation_config_digest": qualification[
                     "attestation_config_digest"
                 ],
-                "attestation_layers": acceptance["attestation_layers"],
-                "package_version_digests": acceptance[
+                "attestation_layers": qualification["attestation_layers"],
+                "package_version_digests": qualification[
                     "package_version_digests"
                 ],
-                "complete_image_inventory_sha256": acceptance[
+                "complete_image_inventory_sha256": qualification[
                     "complete_image_inventory_sha256"
                 ],
-                "base_provenance_sha256": acceptance["base_provenance_sha256"],
-                "development_sha": acceptance["development_sha"],
-                "upstream_source_revision": acceptance[
+                "base_provenance_sha256": qualification["base_provenance_sha256"],
+                "development_sha": qualification["development_sha"],
+                "upstream_source_revision": qualification[
                     "upstream_source_revision"
                 ],
-                "build_input_bundle_sha256": acceptance[
+                "build_input_bundle_sha256": qualification[
                     "build_input_bundle_sha256"
                 ],
-                "publication_enforcement_bundle_sha256": acceptance[
+                "publication_enforcement_bundle_sha256": qualification[
                     "publication_enforcement_bundle_sha256"
                 ],
-                "package_writer_repository": acceptance[
+                "package_writer_repository": qualification[
                     "package_writer_repository"
-                ],
-                "infrastructure_bundle_sha256": acceptance[
-                    "infrastructure_bundle_sha256"
                 ],
             },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    assert validate_libero_qualified_image_manifest(manifest) == qualification
+    lineage = libero_publication_lineage_values(
+        qualification, ROOT, development_sha="d" * 40
+    )
+    assert lineage["candidate_image"] == qualification["candidate_image"]
+    assert lineage["platform_manifest_digest"] == qualification[
+        "platform_manifest_digest"
+    ]
+
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
-    key_file = tmp_path / "manager-acceptance-public-key.b64"
+    key_file = tmp_path / "customer-authorization-public-key.b64"
     key_file.write_bytes(base64.b64encode(public_key))
     key_file.chmod(0o600)
-    monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_file)
-    )
-    acceptance["manager_signature"] = {
-        "algorithm": "ed25519",
-        "public_key_sha256": hashlib.sha256(public_key).hexdigest(),
-        "signature_b64": base64.b64encode(
-            private_key.sign(libero_acceptance_signature_payload(manifest))
-        ).decode("ascii"),
+    run_id = "libero-customer-run-0001"
+    authorization = {
+        "schema": "npa.libero.customer-runtime-authorization.v1",
+        "solution": "libero",
+        "status": "authorized",
+        "authorization_id": "libero-customer-authorization-0001",
+        "customer_identity_sha256": "9" * 64,
+        "run_id": run_id,
+        "candidate_image": qualification["candidate_image"],
+        "runtime_manifest_sha256": manifest["runtime_manifest_sha256"],
+        "terms": [
+            {"id": term["id"], "version": term["version"]}
+            for term in manifest["customer_acceptance"]["terms"]
+        ],
+        "issuer": "npa-customer-control-plane",
+        "acknowledged_at": now.isoformat(),
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "nonce": "customer-authorization-nonce-000001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": hashlib.sha256(public_key).hexdigest(),
+            "signature_b64": "",
+        },
     }
-
-    assert validate_libero_accepted_image_manifest(manifest) == acceptance
-    lineage = libero_publication_lineage_values(
-        acceptance, ROOT, development_sha="d" * 40
-    )
-    assert lineage["candidate_image"] == acceptance["candidate_image"]
-    assert lineage["platform_manifest_digest"] == acceptance[
-        "platform_manifest_digest"
-    ]
-
-    signature = acceptance["manager_signature"]["signature_b64"]
-    acceptance["manager_signature"]["signature_b64"] = base64.b64encode(
-        b"\0" * 64
+    authorization["signature"]["signature_b64"] = base64.b64encode(
+        private_key.sign(libero_customer_authorization_signature_payload(authorization))
     ).decode("ascii")
-    with pytest.raises(RuntimeError, match="manager signature is invalid"):
-        validate_libero_accepted_image_manifest(manifest)
-    acceptance["manager_signature"]["signature_b64"] = signature
+    authorization_bytes = json.dumps(authorization, sort_keys=True).encode()
+    validated, observed_sha256 = validate_libero_customer_runtime_authorization(
+        authorization_bytes,
+        image_manifest=manifest,
+        run_id=run_id,
+        customer_identity_sha256="9" * 64,
+        public_key_file=str(key_file),
+        now=now,
+    )
+    assert validated == authorization
+    assert observed_sha256 == hashlib.sha256(authorization_bytes).hexdigest()
 
-    untrusted_key = Ed25519PrivateKey.generate().public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    key_file.write_bytes(base64.b64encode(untrusted_key))
-    with pytest.raises(RuntimeError, match="manager trust root differs"):
-        validate_libero_accepted_image_manifest(manifest)
-    key_file.write_bytes(base64.b64encode(public_key))
+    authorization["run_id"] = "libero-other-customer-run"
+    with pytest.raises(RuntimeError, match="exact customer/run contract"):
+        validate_libero_customer_runtime_authorization(
+            json.dumps(authorization).encode(),
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(key_file),
+            now=now,
+        )
 
-    key_file.chmod(0o640)
-    with pytest.raises(RuntimeError, match="trust-root file is mutable"):
-        validate_libero_accepted_image_manifest(manifest)
-    key_file.chmod(0o600)
-
-    key_link = tmp_path / "manager-acceptance-public-key-link.b64"
-    key_link.symlink_to(key_file)
-    monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_link)
-    )
-    with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
-        validate_libero_accepted_image_manifest(manifest)
-    monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_FILE", str(key_file)
-    )
-    monkeypatch.setenv(
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_PUBLIC_KEY_B64",
-        base64.b64encode(untrusted_key).decode("ascii"),
-    )
-    assert validate_libero_accepted_image_manifest(manifest) == acceptance
-
-    acceptance["candidate_image"] = (
-        "ghcr.io/attacker/example/npa-libero@" + digest
-    )
+    qualification["candidate_image"] = "ghcr.io/attacker/example/npa-libero@" + digest
     with pytest.raises(RuntimeError, match="official candidate image"):
-        validate_libero_accepted_image_manifest(manifest)
+        validate_libero_qualified_image_manifest(manifest)
 
 
 def test_publication_enforcement_bundle_detects_descendant_policy_drift(

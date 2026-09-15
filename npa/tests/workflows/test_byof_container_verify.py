@@ -372,31 +372,22 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     candidate = (
         "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
     )
-    decision = {
-        "schema": "npa.libero.runtime-use-decision.v3",
+    customer_authorization = {
+        "schema": "npa.libero.customer-runtime-authorization.v1",
         "solution": "libero",
-        "decision": "authorized",
-        "runtime_fetch_authorized": True,
-        "acceptance_id": "libero-acceptance-test-0001",
+        "status": "authorized",
+        "authorization_id": "libero-customer-authorization-test-0001",
+        "customer_identity_sha256": "7" * 64,
         "candidate_image": candidate,
-        "publication_bundle_sha256": "a" * 64,
-        "infrastructure_bundle_sha256": "b" * 64,
         "runtime_manifest_sha256": runtime_manifest_sha256,
-        "executable_profile_sha256": "0" * 64,
-        "upstream_source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
-        "authorized_boundaries": [
-            "demonstration",
-            "language_model",
-            "runtime_packages",
-            "source",
-            "task_inputs",
-        ],
+        "terms": [],
         "run_id": run_id,
-        "namespace_sha256": "5" * 64,
-        "issuer": "npa-manager",
+        "issuer": "npa-customer-control-plane",
+        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "nonce": "unique-libero-test-nonce-0000000001",
+        "signature": {},
     }
     output_prefix = f"s3://fixture-bucket/byof/{run_id}/"
     access_key = "fixture-temporary-access"
@@ -406,7 +397,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     endpoint = "https://storage.fixture.invalid"
     storage_authorization = {
         "schema": "npa.libero.output-storage-authorization.v2",
-        "issuer": "npa-manager",
+        "issuer": "npa-control-plane",
         "run_id": run_id,
         "output_prefix": output_prefix,
         "endpoint_url": endpoint,
@@ -415,7 +406,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "session_token_sha256": module.hashlib.sha256(session_token.encode()).hexdigest(),
         "policy_sha256": policy_sha256,
         "issued_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": decision["expires_at"],
+        "expires_at": customer_authorization["expires_at"],
         "nonce": "unique-libero-storage-nonce-0000000001",
     }
     storage_bytes = (json.dumps(storage_authorization, sort_keys=True) + "\n").encode()
@@ -517,15 +508,30 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     expected_envs.update(
         {
             "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": "c" * 64,
-            "NPA_LIBERO_EXPECTED_ACCEPTANCE_ID": decision["acceptance_id"],
+            "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT": customer_authorization[
+                "expires_at"
+            ],
             "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256": "a" * 64,
-            "NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256": "b" * 64,
             "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256": storage_sha256,
             "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256": module.hashlib.sha256(
                 output_prefix.encode()
             ).hexdigest(),
             "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256": policy_sha256,
         }
+    )
+    expected_envs["NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256"] = (
+        module._sha256_json(
+            {
+                "schema": "npa.libero.infrastructure-bundle.v2",
+                "run_id": run_id,
+                **expected_evidence,
+                "output_storage_authorization_sha256": storage_sha256,
+                "output_storage_prefix_sha256": module.hashlib.sha256(
+                    output_prefix.encode()
+                ).hexdigest(),
+                "output_storage_policy_sha256": policy_sha256,
+            }
+        )
     )
 
     def runtime_documents(envs, *, bound=False):
@@ -541,44 +547,39 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             },
         ]
 
-    expected_documents = runtime_documents(expected_envs, bound=True)
-    decision["executable_profile_sha256"] = module.hashlib.sha256(
-        module._serialized_task_documents(expected_documents)
-    ).hexdigest()
-    decision_bytes = (json.dumps(decision, sort_keys=True) + "\n").encode()
-    decision_sha256 = module.hashlib.sha256(decision_bytes).hexdigest()
+    authorization_bytes = (
+        json.dumps(customer_authorization, sort_keys=True) + "\n"
+    ).encode()
+    authorization_sha256 = module.hashlib.sha256(authorization_bytes).hexdigest()
     monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        module.base64.b64encode(decision_bytes).decode("ascii"),
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
+        module.base64.b64encode(authorization_bytes).decode("ascii"),
     )
-    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
-    acceptance = {
-        "acceptance_id": decision["acceptance_id"],
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", authorization_sha256
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+        customer_authorization["customer_identity_sha256"],
+    )
+    qualification = {
         "development_sha": "a" * 40,
-        "expires_at": decision["expires_at"],
         "candidate_image": candidate,
         "canonical_build_metadata_sha256": "c" * 64,
-        "publication_bundle_sha256": decision["publication_bundle_sha256"],
-        "infrastructure_bundle_sha256": decision["infrastructure_bundle_sha256"],
+        "publication_bundle_sha256": "a" * 64,
         "runtime_manifest_sha256": runtime_manifest_sha256,
-        "runtime_use_decision_sha256": decision_sha256,
-        "upstream_source_revision": decision["upstream_source_revision"],
-        "infrastructure": {
-            "run_id": run_id,
-            **expected_evidence,
-            "output_storage_authorization_sha256": storage_sha256,
-            "output_storage_prefix_sha256": module.hashlib.sha256(
-                output_prefix.encode()
-            ).hexdigest(),
-            "output_storage_policy_sha256": policy_sha256,
-        },
     }
-    signed_manifest = {"schema": "fixture", "acceptance": acceptance}
-    monkeypatch.setattr(module, "libero_image_manifest", lambda: signed_manifest)
+    image_manifest = {"schema": "fixture", "qualification": qualification}
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: image_manifest)
     monkeypatch.setattr(
         module,
-        "validate_libero_accepted_image_manifest",
-        lambda payload: payload["acceptance"],
+        "validate_libero_qualified_image_manifest",
+        lambda payload: payload["qualification"],
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_libero_customer_runtime_authorization",
+        lambda *_args, **_kwargs: (customer_authorization, authorization_sha256),
     )
     lineage_calls = []
     monkeypatch.setattr(
@@ -615,15 +616,15 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "cloud": "kubernetes",
         "region": "execution-context",
     }
-    assert "NPA_LIBERO_RUNTIME_USE_DECISION_B64" not in documents[1]["envs"]
-    assert json.loads(module.base64.b64decode(binding.manager_acceptance_b64)) == (
-        signed_manifest
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in documents[1]["envs"]
+    assert json.loads(module.base64.b64decode(binding.customer_authorization_b64)) == (
+        customer_authorization
     )
     assert lineage_calls == [
         (
-            acceptance,
+            qualification,
             module.Path(module.__file__).resolve().parents[2],
-            acceptance["development_sha"],
+            qualification["development_sha"],
         )
     ]
 
@@ -679,17 +680,8 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         lambda *_a: (dict(controller_evidence), dict(controller_identities)),
     )
 
-    invalid_decision = {**decision, "authorized_boundaries": ["source"]}
-    invalid_bytes = (json.dumps(invalid_decision, sort_keys=True) + "\n").encode()
-    monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        module.base64.b64encode(invalid_bytes).decode("ascii"),
-    )
-    monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
-        module.hashlib.sha256(invalid_bytes).hexdigest(),
-    )
-    with pytest.raises(ValueError, match="checked-in acceptance"):
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="secret pair differs"):
         module._bind_libero_runtime_contract(
             args,
             runtime_documents(
@@ -700,10 +692,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             run_id=run_id,
         )
     monkeypatch.setenv(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        module.base64.b64encode(decision_bytes).decode("ascii"),
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+        customer_authorization["customer_identity_sha256"],
     )
-    monkeypatch.setenv("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", decision_sha256)
 
     for direct, allowed in (
         (True, {"names": ["worker"]}),
@@ -725,20 +716,6 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             )
 
     args.direct_launch = False
-    acceptance["infrastructure"]["role_uid_sha256"] = "f" * 64
-    with pytest.raises(ValueError, match="checked-in infrastructure differs"):
-        module._bind_libero_runtime_contract(
-            args,
-            runtime_documents(
-                {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
-            ),
-            global_config={"kubernetes": {"allowed_nodes": {"names": ["worker"]}}},
-            infra="k8s/execution-context",
-            run_id=run_id,
-        )
-    acceptance["infrastructure"]["role_uid_sha256"] = expected_evidence[
-        "role_uid_sha256"
-    ]
     monkeypatch.setattr(
         module,
         "_libero_context_contract",
@@ -804,18 +781,18 @@ def test_libero_runtime_binding_refuses_local_enforcement_drift_before_access(
     monkeypatch,
 ) -> None:
     module = _load_module()
-    acceptance = {"development_sha": "a" * 40}
+    qualification = {"development_sha": "a" * 40}
     monkeypatch.setattr(
-        module, "libero_image_manifest", lambda: {"acceptance": acceptance}
+        module, "libero_image_manifest", lambda: {"qualification": qualification}
     )
     monkeypatch.setattr(
         module,
-        "validate_libero_accepted_image_manifest",
-        lambda _payload: acceptance,
+        "validate_libero_qualified_image_manifest",
+        lambda _payload: qualification,
     )
 
     def refuse(*_args, **_kwargs):
-        raise RuntimeError("LIBERO neutral build inputs differ from acceptance")
+        raise RuntimeError("LIBERO neutral build inputs differ from qualification")
 
     monkeypatch.setattr(module, "libero_publication_lineage_values", refuse)
     monkeypatch.setattr(
@@ -1815,7 +1792,7 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
     binding = SimpleNamespace(
-        manager_acceptance_b64="signed-manager-acceptance",
+        customer_authorization_b64="signed-customer-authorization",
         evidence={},
         access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
     )
@@ -2423,7 +2400,7 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
     binding = SimpleNamespace(
-        manager_acceptance_b64="signed-manager-acceptance",
+        customer_authorization_b64="signed-customer-authorization",
         evidence={},
         access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
     )

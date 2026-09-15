@@ -26,8 +26,8 @@ import yaml
 from npa.deploy.images import (
     libero_image_manifest,
     libero_publication_lineage_values,
-    validate_libero_accepted_image_manifest,
-    validate_libero_runtime_decision,
+    validate_libero_customer_runtime_authorization,
+    validate_libero_qualified_image_manifest,
 )
 from npa.execution_preflight import (
     SKYPILOT_ENGINE_SERVICE_ACCOUNT,
@@ -138,9 +138,9 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         "HF_TOKEN",
     ),
     "libero": (
-        "NPA_LIBERO_MANAGER_ACCEPTANCE_B64",
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64",
-        "NPA_LIBERO_RUNTIME_USE_DECISION_SHA256",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
     ),
 }
@@ -164,7 +164,7 @@ def resolve_secret_envs(
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
-    # Operator acceptance is runtime state, not workflow configuration. Always
+    # Customer authorization is runtime state, not workflow configuration. Always
     # carry an explicitly set gate through SkyPilot's redacted secret channel,
     # even when a caller supplies an otherwise explicit secret allowlist.
     names.extend(OPERATOR_RUNTIME_ENVS_BY_SOLUTION.get(solution_name.strip(), ()))
@@ -470,7 +470,7 @@ class LiberoAccessState:
 class LiberoRuntimeBinding:
     evidence: dict[str, str]
     access_state: LiberoAccessState
-    manager_acceptance_b64: str = ""
+    customer_authorization_b64: str = ""
     candidate_image: str = ""
     task_name: str = ""
 
@@ -1042,49 +1042,60 @@ def _bind_libero_runtime_contract(
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") == "0":
         raise ValueError("LIBERO requires verified isolated Sky API shutdown")
     try:
-        signed_manifest = libero_image_manifest()
-        acceptance = validate_libero_accepted_image_manifest(signed_manifest)
+        image_manifest = libero_image_manifest()
+        qualification = validate_libero_qualified_image_manifest(image_manifest)
         libero_publication_lineage_values(
-            acceptance,
+            qualification,
             Path(__file__).resolve().parents[2],
-            development_sha=acceptance["development_sha"],
+            development_sha=qualification["development_sha"],
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     image = str(args.image or "").strip().removeprefix("docker:")
-    if image != acceptance["candidate_image"]:
-        raise ValueError("LIBERO image differs from checked-in accepted lineage")
-    if run_id != acceptance["infrastructure"]["run_id"]:
-        raise ValueError("LIBERO run ID differs from checked-in infrastructure")
-    encoded_decision = os.environ.get(
-        "NPA_LIBERO_RUNTIME_USE_DECISION_B64", ""
+    if image != qualification["candidate_image"]:
+        raise ValueError("LIBERO image differs from checked-in qualified lineage")
+    encoded_authorization = os.environ.get(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""
     ).strip()
     try:
-        decision_bytes = base64.b64decode(encoded_decision, validate=True)
+        authorization_bytes = base64.b64decode(
+            encoded_authorization, validate=True
+        )
     except (ValueError, binascii.Error) as exc:
-        raise ValueError("LIBERO runtime-use decision secret is invalid") from exc
+        raise ValueError("LIBERO customer authorization secret is invalid") from exc
     try:
-        decision, decision_sha256 = validate_libero_runtime_decision(
-            decision_bytes,
-            acceptance=acceptance,
-            run_id=run_id,
+        customer_authorization, authorization_sha256 = (
+            validate_libero_customer_runtime_authorization(
+                authorization_bytes,
+                image_manifest=image_manifest,
+                run_id=run_id,
+                customer_identity_sha256=os.environ.get(
+                    "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+                ).strip(),
+            )
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     if (
-        os.environ.get("NPA_LIBERO_RUNTIME_USE_DECISION_SHA256", "").strip()
-        != decision_sha256
+        os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", "").strip()
+        != authorization_sha256
+        or os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "").strip()
+        != customer_authorization["customer_identity_sha256"]
     ):
-        raise ValueError("LIBERO runtime decision secret pair differs")
+        raise ValueError("LIBERO customer authorization secret pair differs")
     runtime_manifest_sha256 = hashlib.sha256(
         LIBERO_RUNTIME_MANIFEST.read_bytes()
     ).hexdigest()
-    if runtime_manifest_sha256 != acceptance["runtime_manifest_sha256"]:
-        raise ValueError("LIBERO runtime manifest differs from accepted lineage")
-    build_metadata_sha256 = acceptance["canonical_build_metadata_sha256"]
+    if (
+        runtime_manifest_sha256 != qualification["runtime_manifest_sha256"]
+        or runtime_manifest_sha256
+        != customer_authorization["runtime_manifest_sha256"]
+    ):
+        raise ValueError("LIBERO runtime manifest differs from authorized lineage")
+    build_metadata_sha256 = qualification["canonical_build_metadata_sha256"]
     storage_authorization = _validate_libero_output_storage_authorization(
         documents=documents,
-        acceptance=acceptance,
+        customer_authorization=customer_authorization,
         run_id=run_id,
     )
     if not infra.startswith("k8s/") or not infra.removeprefix("k8s/").strip():
@@ -1095,10 +1106,6 @@ def _bind_libero_runtime_contract(
     payload_kubeconfig_sha256 = hashlib.sha256(
         payload_kubeconfig.read_bytes()
     ).hexdigest()
-    if payload_kubeconfig_sha256 != acceptance["infrastructure"][
-        "payload_kubeconfig_sha256"
-    ]:
-        raise ValueError("LIBERO payload kubeconfig differs from checked-in acceptance")
     payload_context, namespace, payload_cluster_sha256 = _libero_context_contract(
         payload_kubeconfig, require_namespace=True
     )
@@ -1113,12 +1120,6 @@ def _bind_libero_runtime_contract(
     execution_kubeconfig_sha256 = hashlib.sha256(
         execution_kubeconfig.read_bytes()
     ).hexdigest()
-    if execution_kubeconfig_sha256 != acceptance["infrastructure"][
-        "execution_kubeconfig_sha256"
-    ]:
-        raise ValueError(
-            "LIBERO execution kubeconfig differs from checked-in acceptance"
-        )
     _, execution_namespace, execution_cluster_sha256 = _libero_context_contract(
         execution_kubeconfig,
         expected_context=execution_context,
@@ -1155,11 +1156,21 @@ def _bind_libero_runtime_contract(
     evidence["payload_kubeconfig_sha256"] = payload_kubeconfig_sha256
     evidence["execution_kubeconfig_sha256"] = execution_kubeconfig_sha256
     evidence["skypilot_config_sha256"] = _sha256_json(global_config)
-    expected_infrastructure = acceptance["infrastructure"]
-    for name, observed in evidence.items():
-        expected = expected_infrastructure.get(name)
-        if expected != observed:
-            raise ValueError(f"LIBERO checked-in infrastructure differs for {name}")
+    output_authorization_sha256 = storage_authorization["authorization_sha256"]
+    output_prefix = str(storage_authorization["output_prefix"])
+    output_policy_sha256 = str(storage_authorization["policy_sha256"])
+    infrastructure_bundle_sha256 = _sha256_json(
+        {
+            "schema": "npa.libero.infrastructure-bundle.v2",
+            "run_id": run_id,
+            **evidence,
+            "output_storage_authorization_sha256": output_authorization_sha256,
+            "output_storage_prefix_sha256": hashlib.sha256(
+                output_prefix.encode()
+            ).hexdigest(),
+            "output_storage_policy_sha256": output_policy_sha256,
+        }
+    )
     for document in documents[1:]:
         resources = document.get("resources")
         if (
@@ -1175,18 +1186,20 @@ def _bind_libero_runtime_contract(
         envs["NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256"] = (
             build_metadata_sha256
         )
-        envs["NPA_LIBERO_EXPECTED_ACCEPTANCE_ID"] = acceptance["acceptance_id"]
-        envs["NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256"] = acceptance[
+        envs["NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT"] = (
+            customer_authorization["expires_at"]
+        )
+        envs["NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256"] = qualification[
             "publication_bundle_sha256"
         ]
-        envs["NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256"] = acceptance[
-            "infrastructure_bundle_sha256"
-        ]
+        envs["NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256"] = (
+            infrastructure_bundle_sha256
+        )
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"] = (
-            expected_infrastructure["output_storage_authorization_sha256"]
+            output_authorization_sha256
         )
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"] = (
-            expected_infrastructure["output_storage_prefix_sha256"]
+            hashlib.sha256(output_prefix.encode()).hexdigest()
         )
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = (
             storage_authorization["policy_sha256"]
@@ -1196,21 +1209,11 @@ def _bind_libero_runtime_contract(
     }
     if task_names != {LIBERO_PROFILE_TASK_NAME}:
         raise ValueError("LIBERO requires one exact named SkyPilot task")
-    executable_profile_sha256 = hashlib.sha256(
-        _serialized_task_documents(documents)
-    ).hexdigest()
-    if decision.get("executable_profile_sha256") != executable_profile_sha256:
-        raise ValueError(
-            "LIBERO runtime decision does not authorize the executable profile"
-        )
-    manager_acceptance = json.dumps(
-        signed_manifest, sort_keys=True, separators=(",", ":")
-    ).encode()
     return LiberoRuntimeBinding(
         evidence=evidence,
         access_state=access_state,
-        manager_acceptance_b64=base64.b64encode(manager_acceptance).decode("ascii"),
-        candidate_image=acceptance["candidate_image"],
+        customer_authorization_b64=encoded_authorization,
+        candidate_image=qualification["candidate_image"],
         task_name=LIBERO_PROFILE_TASK_NAME,
     )
 
@@ -1497,7 +1500,7 @@ def _verify_libero_controller_unchanged(binding: LiberoRuntimeBinding) -> None:
     )
     for name, value in observed.items():
         if binding.evidence.get(name) != value:
-            raise RuntimeError("LIBERO controller RBAC changed after acceptance")
+            raise RuntimeError("LIBERO controller RBAC changed after binding")
 
 
 def _verify_libero_payload_unchanged(
@@ -1524,7 +1527,7 @@ def _verify_libero_payload_unchanged(
             else name
         )
         if binding.evidence.get(expected_name) != value:
-            raise RuntimeError("LIBERO payload RBAC changed after acceptance")
+            raise RuntimeError("LIBERO payload RBAC changed after binding")
     identities = (
         "namespace_uid",
         "service_account_uid",
@@ -1532,7 +1535,7 @@ def _verify_libero_payload_unchanged(
         "role_binding_uid",
     )
     if any(getattr(state, name) != getattr(observed_state, name) for name in identities):
-        raise RuntimeError("LIBERO payload RBAC identity changed after acceptance")
+        raise RuntimeError("LIBERO payload RBAC identity changed after binding")
     if state.payload_pod_name:
         try:
             _, pod_evidence = _libero_payload_pod_record(binding)
@@ -1549,12 +1552,11 @@ def _verify_libero_payload_unchanged(
 def _validate_libero_output_storage_authorization(
     *,
     documents: list[dict[str, Any]],
-    acceptance: dict[str, Any],
+    customer_authorization: dict[str, Any],
     run_id: str,
 ) -> dict[str, Any]:
-    """Verify manager-bound, short-lived, run-prefix-only upload credentials."""
+    """Verify short-lived, run-prefix-only upload credentials independently."""
 
-    expected = acceptance["infrastructure"]
     prefixes = {
         str((document.get("envs") or {}).get("S3_OUTPUT_PREFIX") or "").strip()
         for document in documents[1:]
@@ -1562,10 +1564,6 @@ def _validate_libero_output_storage_authorization(
     if len(prefixes) != 1:
         raise ValueError("LIBERO requires one exact output storage prefix")
     output_prefix = prefixes.pop().rstrip("/") + "/"
-    if hashlib.sha256(output_prefix.encode()).hexdigest() != expected[
-        "output_storage_prefix_sha256"
-    ]:
-        raise ValueError("LIBERO output prefix differs from checked-in acceptance")
     endpoints = {
         str((document.get("envs") or {}).get("AWS_ENDPOINT_URL") or "").rstrip("/")
         for document in documents[1:]
@@ -1592,10 +1590,7 @@ def _validate_libero_output_storage_authorization(
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO output storage authorization secret is invalid") from exc
-    if hashlib.sha256(payload).hexdigest() != expected[
-        "output_storage_authorization_sha256"
-    ]:
-        raise ValueError("LIBERO output storage authorization is not manager-accepted")
+    authorization_sha256 = hashlib.sha256(payload).hexdigest()
     try:
         authorization = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1626,20 +1621,22 @@ def _validate_libero_output_storage_authorization(
         expires_at = datetime.fromisoformat(
             str(authorization["expires_at"]).replace("Z", "+00:00")
         )
-        acceptance_expires_at = datetime.fromisoformat(
-            str(acceptance["expires_at"]).replace("Z", "+00:00")
+        customer_authorization_expires_at = datetime.fromisoformat(
+            str(customer_authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
     now = datetime.now(timezone.utc)
     valid = (
         authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-manager"
+        and authorization.get("issuer") == "npa-control-plane"
         and authorization.get("run_id") == run_id
         and authorization.get("output_prefix") == output_prefix
         and authorization.get("endpoint_url") == endpoint
-        and authorization.get("policy_sha256")
-        == expected["output_storage_policy_sha256"]
+        and re.fullmatch(
+            r"[0-9a-f]{64}", str(authorization.get("policy_sha256") or "")
+        )
+        is not None
         and all((access_key, secret_key, session_token))
         and authorization.get("access_key_id_sha256")
         == hashlib.sha256(access_key.encode()).hexdigest()
@@ -1655,11 +1652,12 @@ def _validate_libero_output_storage_authorization(
         and issued_at < expires_at
         and expires_at > now
         and expires_at - issued_at <= timedelta(hours=24)
-        and expires_at <= acceptance_expires_at
+        and customer_authorization_expires_at.tzinfo is not None
+        and expires_at <= customer_authorization_expires_at
     )
     if not valid:
         raise ValueError("LIBERO output storage authorization is invalid or expired")
-    return authorization
+    return {**authorization, "authorization_sha256": authorization_sha256}
 
 
 def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
@@ -1816,7 +1814,7 @@ def _resolved_storage_env() -> dict[str, str]:
 
 
 def _libero_output_storage_client() -> Any:
-    """Use only the complete manager-authorized temporary storage principal."""
+    """Use only the complete control-plane-authorized storage principal."""
 
     import boto3
     from botocore.config import Config
@@ -2542,8 +2540,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
-        previous_manager_acceptance = os.environ.get(
-            "NPA_LIBERO_MANAGER_ACCEPTANCE_B64"
+        previous_customer_authorization = os.environ.get(
+            "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"
         )
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
@@ -2592,8 +2590,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 run_id=run_id,
             )
             if libero_binding is not None:
-                os.environ["NPA_LIBERO_MANAGER_ACCEPTANCE_B64"] = (
-                    libero_binding.manager_acceptance_b64
+                os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"] = (
+                    libero_binding.customer_authorization_b64
                 )
 
                 def cleanup_before_submission() -> CleanupResult:
@@ -2995,11 +2993,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ.pop("KUBECONFIG", None)
             else:
                 os.environ["KUBECONFIG"] = previous_kubeconfig
-            if previous_manager_acceptance is None:
-                os.environ.pop("NPA_LIBERO_MANAGER_ACCEPTANCE_B64", None)
+            if previous_customer_authorization is None:
+                os.environ.pop("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", None)
             else:
-                os.environ["NPA_LIBERO_MANAGER_ACCEPTANCE_B64"] = (
-                    previous_manager_acceptance
+                os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"] = (
+                    previous_customer_authorization
                 )
             if (
                 os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"

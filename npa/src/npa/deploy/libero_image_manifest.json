@@ -24,8 +24,8 @@
     "blob_sha256": "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
   },
   "runtime_payloads_baked": false,
-  "runtime_use_decision_required": true,
-  "runtime_manifest_sha256": "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2",
+  "customer_runtime_authorization_required": true,
+  "runtime_manifest_sha256": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
@@ -34,11 +34,61 @@
     "pending_license_artifacts": 0,
     "report_sha256": "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
   },
-  "acceptance": {
-    "schema": "npa.libero.qualification-acceptance.v3",
-    "status": "not_accepted",
-    "acceptance_id": "",
-    "accepted_at": "",
+  "customer_acceptance": {
+    "schema": "npa.libero.customer-acceptance-requirements.v1",
+    "required": true,
+    "credentials_establish_acceptance": false,
+    "authorization_schema": "npa.libero.customer-runtime-authorization.v1",
+    "terms": [
+      {
+        "id": "libero-mit",
+        "name": "LIBERO MIT License",
+        "official_url": "https://raw.githubusercontent.com/Lifelong-Robot-Learning/LIBERO/8f1084e3132a39270c3a13ebe37270a43ece2a01/LICENSE",
+        "version": "sha256:e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6"
+      },
+      {
+        "id": "dataset-cc-by-4.0",
+        "name": "Creative Commons Attribution 4.0 International",
+        "official_url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+        "version": "sha256:9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+      },
+      {
+        "id": "bert-apache-2.0",
+        "name": "Apache License 2.0",
+        "official_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "version": "sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "id": "pytorch-bsd",
+        "name": "PyTorch BSD-Style License",
+        "official_url": "https://raw.githubusercontent.com/pytorch/pytorch/v2.13.0/LICENSE",
+        "version": "sha256:bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
+      },
+      {
+        "id": "cuda-eula",
+        "name": "NVIDIA CUDA Toolkit End User License Agreement",
+        "official_url": "https://docs.nvidia.com/cuda/eula/index.html",
+        "version": "sha256:c441d0f8e3ad7ede569d4c5b2a9a50c4d46f278e820a6be81f2e34f1d6f89653"
+      },
+      {
+        "id": "nvidia-software-license",
+        "name": "NVIDIA Software License Agreement",
+        "official_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
+        "version": "sha256:d7f741cc20084c5f03a7c6191e7cdd6a30f2b0cfe5a52dfc04e2fe161b176a14"
+      },
+      {
+        "id": "cudnn-eula",
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "official_url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
+        "version": "sha256:9ee6e64c6f2545e0fe482681c97d8cf244992e57e2cd36335d9c0e008a5628c4"
+      }
+    ]
+  },
+  "qualification": {
+    "schema": "npa.libero.image-qualification.v1",
+    "status": "not_qualified",
+    "qualification_id": "",
+    "qualified_at": "",
     "expires_at": "",
     "candidate_image": "",
     "oci_digest": "",
@@ -68,37 +118,7 @@
     "build_input_bundle_sha256": "",
     "publication_enforcement_bundle_sha256": "",
     "package_writer_repository": "",
-    "runtime_manifest_sha256": "660358a1e6c4c775d838fe83444e272e64b0b4bbd00fc954b34ab013b5e7dfa2",
-    "runtime_use_decision_sha256": "",
-    "infrastructure_bundle_sha256": "",
-    "manager_signature": {
-      "algorithm": "ed25519",
-      "public_key_sha256": "",
-      "signature_b64": ""
-    },
-    "infrastructure": {
-      "run_id": "",
-      "allowed_node_sha256": "",
-      "cluster_identity_sha256": "",
-      "namespace_sha256": "",
-      "namespace_uid_sha256": "",
-      "namespace_inventory_sha256": "",
-      "external_rbac_inventory_sha256": "",
-      "rbac_spec_sha256": "",
-      "role_binding_uid_sha256": "",
-      "role_uid_sha256": "",
-      "service_account_uid_sha256": "",
-      "controller_rbac_spec_sha256": "",
-      "controller_role_binding_uid_sha256": "",
-      "controller_role_uid_sha256": "",
-      "controller_service_account_uid_sha256": "",
-      "payload_kubeconfig_sha256": "",
-      "execution_kubeconfig_sha256": "",
-      "skypilot_config_sha256": "",
-      "output_storage_authorization_sha256": "",
-      "output_storage_prefix_sha256": "",
-      "output_storage_policy_sha256": ""
-    }
+    "runtime_manifest_sha256": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
   },
   "catalog_release": false
 }
