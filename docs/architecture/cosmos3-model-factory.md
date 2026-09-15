@@ -257,6 +257,13 @@ qualified resident-generation path. Both require their documented images,
 access, and GPU prerequisites; retain the precise run's artifacts and follow
 their cleanup instructions.
 
+The [2026-09-15 live exercise](../workbench/cosmos3-model-factory-live-20260915.md)
+ran the canonical video workflow on reserved RTX PRO 6000 capacity. Both
+generation passes produced temporally aligned videos, but both batches failed
+the shipped quality criteria. The retry improved appearance checks while one
+required hallucination score worsened. This is evidence for the generation and
+rejection path; it does not qualify a training corpus or the policy-learning loop.
+
 This proposal supplies the implementation plan for training and policy evaluation.
 It introduces no training command or container.
 Complete the qualification slices above before publishing a runnable model
