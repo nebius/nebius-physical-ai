@@ -52,6 +52,12 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
         "end_action_step": 4,
         "total_action_steps": 4,
     }
+    assert motion["visual_interval_strategy"] == "native_scored_episode"
+    assert motion["visual_interval"] == {
+        "start_action_step": 0,
+        "end_action_step": 4,
+        "total_action_steps": 4,
+    }
     assert motion["visual_progress_qualified"] is True
     assert len(result["files"][0]["sha256"]) == 64
 
@@ -82,6 +88,7 @@ def test_ordinary_preopened_success_remains_truthful_without_visual_qualificatio
     assert motion["task_success"] is True
     assert motion["visual_progress_qualified"] is False
     assert motion["progress_interval"] is None
+    assert "visual_interval" not in motion
 
 
 @pytest.mark.parametrize("length", [True, 2.7, "2", 0, -1])

@@ -232,6 +232,22 @@ def test_denoising_preserves_original_and_declares_transform(tmp_path: Path) -> 
     assert result["duration_seconds"] >= 2 * (45 - 1) / 15
 
 
+@pytest.mark.parametrize("kind", ["fine", "coarse", "flicker"])
+def test_denoised_static_render_noise_still_fails(tmp_path: Path, kind: str) -> None:
+    source = tmp_path / "noisy-static.mp4"
+    _encode(source, _add_noise(_scene(45), kind, 43))
+    derivative, _ = denoise_mp4(source)
+    with pytest.raises(IsaacArenaError, match="noise-resistant coherent scene motion"):
+        probe_mp4(
+            derivative,
+            evidence_interval={
+                "start_action_step": 0,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+        )
+
+
 def test_short_native_episode_is_slowed_without_adding_frames(tmp_path: Path) -> None:
     source = tmp_path / "short-native-episode.mp4"
     _encode(source, _scene(42, moving=True), rate=50)

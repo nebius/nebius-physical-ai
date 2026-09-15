@@ -22,6 +22,7 @@ class TaskProgressAdapter:
     environment: str
     supported_policy_types: tuple[str, ...]
     maximum_trailing_held_action_fraction: float
+    visual_interval_strategy: str
     signal_names: tuple[str, ...]
     qualifier: ProgressQualifier
     thresholds: Mapping[str, float]
@@ -114,6 +115,26 @@ def _microwave_motion_record(
     }
 
 
+def task_visual_interval(
+    adapter: TaskProgressAdapter,
+    progress_interval: Mapping[str, Any],
+    total_steps: int,
+) -> dict[str, int]:
+    """Resolve the adapter-declared visual horizon for one scored episode."""
+
+    if adapter.visual_interval_strategy == "native_scored_episode":
+        return {
+            "start_action_step": 0,
+            "end_action_step": total_steps,
+            "total_action_steps": total_steps,
+        }
+    if adapter.visual_interval_strategy == "task_progress":
+        return dict(progress_interval)
+    raise IsaacArenaError(
+        "task progress adapter has an invalid visual interval strategy"
+    )
+
+
 def _qualify_open_microwave(
     record: dict,
     signals: Mapping[str, Any],
@@ -140,6 +161,7 @@ _TASK_PROGRESS_ADAPTERS: Mapping[str, TaskProgressAdapter] = MappingProxyType(
             environment="gr1_open_microwave",
             supported_policy_types=("replay", "rsl_rl"),
             maximum_trailing_held_action_fraction=0.25,
+            visual_interval_strategy="native_scored_episode",
             signal_names=("revolute_joint_state",),
             qualifier=_qualify_open_microwave,
             thresholds=MappingProxyType(
@@ -170,6 +192,7 @@ def task_progress_capabilities() -> list[dict[str, Any]]:
             "maximum_trailing_held_action_fraction": (
                 adapter.maximum_trailing_held_action_fraction
             ),
+            "visual_interval_strategy": adapter.visual_interval_strategy,
             "signal_names": list(adapter.signal_names),
             "thresholds": dict(adapter.thresholds),
         }
@@ -193,9 +216,25 @@ def qualify_task_progress(
         )
     for record, signals in episodes:
         if record["success"]:
-            return adapter.qualifier(
+            motion = adapter.qualifier(
                 record, signals, expected_action_steps, require_success
             )
+            interval = motion.get("progress_interval")
+            if motion.get("visual_progress_qualified"):
+                if not isinstance(interval, Mapping):
+                    raise IsaacArenaError(
+                        "task progress adapter has no qualified progress interval"
+                    )
+                total_steps = motion.get("episode_length")
+                if type(total_steps) is not int or total_steps <= 0:
+                    raise IsaacArenaError(
+                        "task progress adapter has an invalid scored horizon"
+                    )
+                motion["visual_interval_strategy"] = adapter.visual_interval_strategy
+                motion["visual_interval"] = task_visual_interval(
+                    adapter, interval, total_steps
+                )
+            return motion
     if require_success:
         raise IsaacArenaError(
             f"{adapter.environment} produced no upstream-defined successful task episode"

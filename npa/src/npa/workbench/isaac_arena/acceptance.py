@@ -10,7 +10,7 @@ from .action_evidence import (
     validate_prepared_action_sequence,
 )
 from .errors import IsaacArenaError
-from .task_progress import task_progress_adapter
+from .task_progress import task_progress_adapter, task_visual_interval
 from .video_evidence import EVIDENCE_FILTER, EVIDENCE_PLAYBACK_RATE
 
 ACCEPTANCE_SCHEMA = "npa.isaac-arena.visual-acceptance.v1"
@@ -66,6 +66,16 @@ def _task_progress(
     registered = task_progress_adapter(environment)
     length = episode.get("episode_length")
     capture = motion.get("video_capture") if isinstance(motion, dict) else None
+    progress_interval = (
+        motion.get("progress_interval") if isinstance(motion, dict) else None
+    )
+    expected_visual_interval = (
+        task_visual_interval(registered, progress_interval, length)
+        if registered is not None
+        and isinstance(progress_interval, dict)
+        and _positive_integer(length)
+        else None
+    )
     capture_bound = (
         isinstance(capture, dict)
         and capture.get("initial_action_step") == 0
@@ -83,6 +93,9 @@ def _task_progress(
         and motion.get("episode_length") == episode.get("episode_length")
         and motion.get("task_success") is True
         and motion.get("visual_progress_qualified") is True
+        and motion.get("visual_interval_strategy")
+        == registered.visual_interval_strategy
+        and motion.get("visual_interval") == expected_visual_interval
         and capture_bound
     )
     if not valid:
@@ -328,7 +341,7 @@ def _video_contract(
     return {
         "frame_count": video["frame_count"],
         "motion": "noise_resistant_coherent_scene_motion",
-        "progress_action_steps": expected,
+        "visual_action_steps": expected,
         "source_mp4_sha256": source_mp4_sha256,
         "evidence_mp4_sha256": video["sha256"],
         "frame_evidence": frame_evidence,
@@ -353,8 +366,14 @@ def qualify_visual_acceptance(
         )
     episode, length = _native_episode(summary, ground_truth)
     progress = _task_progress(environment, policy_type, ground_truth, episode)
-    interval = progress.get("progress_interval")
-    if not isinstance(interval, dict) or interval.get("total_action_steps") != length:
+    progress_interval = progress.get("progress_interval")
+    visual_interval = progress.get("visual_interval")
+    if (
+        not isinstance(progress_interval, dict)
+        or progress_interval.get("total_action_steps") != length
+        or not isinstance(visual_interval, dict)
+        or visual_interval.get("total_action_steps") != length
+    ):
         raise IsaacArenaError(
             "visual acceptance progress does not span the scored episode"
         )
@@ -376,7 +395,7 @@ def qualify_visual_acceptance(
         "capture": capture_contract,
         "video": _video_contract(
             video,
-            interval,
+            visual_interval,
             episode,
             environment,
             policy_type,

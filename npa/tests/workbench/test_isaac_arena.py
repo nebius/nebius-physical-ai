@@ -113,6 +113,7 @@ def test_capabilities_are_complete_and_honest() -> None:
             "environment": "gr1_open_microwave",
             "supported_policy_types": ["replay", "rsl_rl"],
             "maximum_trailing_held_action_fraction": 0.25,
+            "visual_interval_strategy": "native_scored_episode",
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,
@@ -934,7 +935,7 @@ def test_passive_baseline_success_is_never_task_qualified_video(
             "meaningful": True,
             "analysis_interval": {
                 "source": "simulator_ground_truth",
-                "action_steps": {"start": 1, "end": 4, "total": 4},
+                "action_steps": {"start": 0, "end": 4, "total": 4},
             },
         },
         "frame_evidence": {

@@ -183,11 +183,12 @@ state-only replay. NPA selects the first sorted episode in the input HDF5.
 `--record-video` also requires one episode in one environment and an H.264
 evidence derivative at least 320×240 and one second long. The untouched source
 MP4 may be shorter when the native task succeeds quickly; its exact action-frame
-count remains mandatory. The labeled FFmpeg-denoised derivative plays those same
-frames at half speed without padding or duplication so task motion remains
-plainly reviewable. Acceptance checks temporal-median samples
-for coherent spatial change and binds that interval to the same run's simulator
-metric trace. A shared fail-closed contract requires one horizon across executed
+count remains mandatory. The labeled FFmpeg-denoised derivative uses declared
+spatiotemporal and low-pass filtering, then plays those same frames at half
+speed without padding or duplication so task motion remains plainly reviewable.
+Acceptance checks temporal-median samples for coherent spatial change and binds
+that interval to the same run's simulator metric trace. A shared fail-closed
+contract requires one horizon across executed
 actions, the native scored episode, task progress, simulator capture, and video;
 replay steps must be nonzero and must not be synthetically padded or dominated by
 an effectively held tail. Environment-specific
@@ -196,11 +197,13 @@ thresholds, and each entry declares its supported policy types. The sole current
 entry supports `gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
 `success_rate > 0`, and HDF5 success flag must agree, the final door openness
 must exceed the upstream threshold of `0.8`, and maximum openness must increase
-at least `0.5` from the initial state. The acceptance interval runs from the
-first measured door progress to the first threshold crossing, excluding idle
-and reset frames from visual motion analysis. Capture and action evidence still
-span the complete native scored episode through its terminal action; an early
-threshold crossing cannot truncate the proof. The result records the named progress adapter and a
+at least `0.5` from the initial state. The adapter retains the progress interval
+from the first measured door movement to the first threshold crossing, and
+explicitly selects the full native scored episode as its visual-analysis
+interval. This includes the robot's approach/contact and door progress without
+including a post-terminal reset or invented frames. Capture and action evidence
+span that same complete native scored episode through its terminal action. The
+result records both intervals, the named progress adapter, and a
 `npa.isaac-arena.visual-acceptance.v1` binding. Other registered scored
 environments remain available for ordinary evaluation; their nonzero-policy
 video qualification is unsupported until a task-specific adapter is registered.
@@ -243,8 +246,10 @@ eight consecutive ready settling renders after the readiness baseline per captur
 frame while physics is frozen. Isaac Sim 6 otherwise remaps that
 renderer request to `RealTimePathTracing`; exact readback rejects the remap. The
 settling renders address the severe single-frame RTX grain observed with FXAA;
-the independent temporal-median and coherent block-tracking gate still rejects
-static scenes and incoherent flicker.
+the declared FFmpeg derivative adds strong spatiotemporal and low-pass denoising.
+The independent temporal-median and coherent block-tracking gate still rejects
+static scenes, fine/coarse stochastic grain, large stochastic blocks, and
+incoherent flicker after that transform.
 The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
 are selected through AppLauncher's native Kit startup arguments, reasserted at

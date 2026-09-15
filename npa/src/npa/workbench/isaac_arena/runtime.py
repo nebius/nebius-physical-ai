@@ -695,7 +695,7 @@ def _video_artifacts(
             "video recording was requested but no non-empty MP4 was written"
         )
     result = {}
-    interval = (ground_truth.get("task_motion") or {}).get("progress_interval")
+    interval = (ground_truth.get("task_motion") or {}).get("visual_interval")
     for source in videos:
         capture = _verify_capture_evidence(
             run_dir,

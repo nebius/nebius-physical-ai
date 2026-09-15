@@ -98,9 +98,13 @@ Task-qualified evidence also requires the registered environment/policy pair,
 a sanitized policy-to-`env.step` action journal covering the full scored episode,
 finite nonzero varied actions, and zero synthetic padding. Replay must match the
 exact prepared private action-sequence prefix through the native terminal, while
-the complete prepared source sequence independently passes held-tail checks. Keep the task-specific
-progress interval as a subset for visual motion analysis; capture, actions, and
-the terminal PNG must still span the complete native episode.
+the complete prepared source sequence independently passes held-tail checks.
+Require each task-progress registry entry to declare its visual interval
+strategy. Keep its measured task-progress interval separately; for the microwave
+adapter, analyze the complete native scored episode so approach/contact and door
+progress have enough frames without admitting post-terminal reset or invented
+frames. Capture, actions, and the terminal PNG must span that same complete
+native episode.
 Enforce the adapter's declared maximum trailing-held-action fraction on both
 prepared and executed sequences, using a shared maximum inter-step delta of `1e-6`;
 exact repetition or tiny numerical jitter cannot hide a dominant held final action.
@@ -234,9 +238,10 @@ An `unavailable` method-phase event means the native binding could not be
 overridden on its instance. Keep that binding untouched and use the enclosing
 simulator phase; availability is neither execution evidence nor task progress.
 Preserve the raw MP4 and label the denoised half-speed derivative with its
-source hash and transform. Keep the frame count unchanged; never use duplicated
-frames as padding. Validate coherent motion over the same progress
-interval after temporal/spatial denoising; a noisy static scene must fail.
+source hash and exact spatiotemporal/low-pass transform. Keep the frame count
+unchanged; never use duplicated frames as padding. Validate coherent motion over
+the adapter-declared visual interval; a noisy static scene must fail both before
+and after the evidence transform.
 Zero-action output is always a baseline and never task-qualified. If video is
 requested for that baseline, the same capture and coherent-motion checks still
 apply; static/noisy output fails and retains diagnostic artifacts. Independently

@@ -47,6 +47,12 @@ def _proof(length: int = 20, source_length: int | None = None) -> dict:
         "task_success": True,
         "visual_progress_qualified": True,
         "progress_interval": interval,
+        "visual_interval_strategy": "native_scored_episode",
+        "visual_interval": {
+            "start_action_step": 0,
+            "end_action_step": length,
+            "total_action_steps": length,
+        },
         "video_capture": {
             "initial_action_step": 0,
             "action_steps": list(range(1, length + 1)),
@@ -157,9 +163,9 @@ def _proof(length: int = 20, source_length: int | None = None) -> dict:
                 "analysis_interval": {
                     "source": "simulator_ground_truth",
                     "action_steps": {
-                        "start": interval["start_action_step"],
-                        "end": interval["end_action_step"],
-                        "total": interval["total_action_steps"],
+                        "start": 0,
+                        "end": length,
+                        "total": length,
                     },
                 },
             },
@@ -213,7 +219,7 @@ def test_shared_contract_binds_all_evidence_to_one_episode() -> None:
     }
     assert result["episode"]["native_success"] is True
     assert result["capture"]["captured_action_steps"] == 20
-    assert result["video"]["progress_action_steps"]["total"] == 20
+    assert result["video"]["visual_action_steps"]["total"] == 20
 
 
 def test_native_success_may_end_before_varied_replay_source_horizon() -> None:
@@ -232,11 +238,15 @@ def test_native_success_may_end_before_varied_replay_source_horizon() -> None:
 def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
     proof = _proof()
     proof["ground_truth"]["task_motion"]["progress_interval"]["end_action_step"] = 10
-    proof["video"]["motion"]["analysis_interval"]["action_steps"]["end"] = 10
     result = qualify_visual_acceptance(**proof)
-    assert result["video"]["progress_action_steps"] == {
-        "start": 2,
-        "end": 10,
+    assert result["task_progress"]["progress_interval"] == {
+        "start_action_step": 2,
+        "end_action_step": 10,
+        "total_action_steps": 20,
+    }
+    assert result["video"]["visual_action_steps"] == {
+        "start": 0,
+        "end": 20,
         "total": 20,
     }
     assert result["capture"]["terminal_action_step"] == 20
@@ -288,6 +298,16 @@ def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
             "ground_truth.task_motion.progress_interval.total_action_steps",
             19,
             "span the scored episode",
+        ),
+        (
+            "ground_truth.task_motion.visual_interval_strategy",
+            "task_progress",
+            "registered native task progress",
+        ),
+        (
+            "ground_truth.task_motion.visual_interval.start_action_step",
+            2,
+            "registered native task progress",
         ),
         ("capture.captured_action_steps", 19, "span the scored episode"),
         ("capture.terminal.action_step", 19, "span the scored episode"),
@@ -547,6 +567,7 @@ def test_task_specific_progress_is_explicitly_registered() -> None:
             "environment": "gr1_open_microwave",
             "supported_policy_types": ["replay", "rsl_rl"],
             "maximum_trailing_held_action_fraction": 0.25,
+            "visual_interval_strategy": "native_scored_episode",
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,

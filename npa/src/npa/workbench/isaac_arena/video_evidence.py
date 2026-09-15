@@ -23,7 +23,7 @@ _MINIMUM_PAIRS = 2
 _BLOCK_SIZE = 16
 _BLOCK_STRIDE = 8
 _SEARCH_RADIUS = 8
-DENOISE_FILTER = "hqdn3d=8:6:12:9"
+DENOISE_FILTER = "hqdn3d=20:16:30:24,gblur=sigma=3.5"
 EVIDENCE_PLAYBACK_RATE = 0.5
 EVIDENCE_FILTER = f"{DENOISE_FILTER},setpts={1 / EVIDENCE_PLAYBACK_RATE:g}*PTS"
 
@@ -63,6 +63,7 @@ def video_acceptance_thresholds() -> dict[str, Any]:
         "tracking_search_radius": _SEARCH_RADIUS,
         "tracking": "brightness-centered patches; adjacent agreeing displacements over three disjoint temporal windows",
         "consecutive_tracking_intervals": 2,
+        "evidence_filter": EVIDENCE_FILTER,
         "evidence_playback_rate": EVIDENCE_PLAYBACK_RATE,
     }
 
