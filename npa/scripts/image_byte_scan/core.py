@@ -474,7 +474,7 @@ class LiteralMatcher:
 
 
 AHO_PINS = {
-    "source": "372a9a5e0a178b49ba5e5eab709606370d3b06fa8a1ece6a4ce120adc5a4a3e0",
+    "source": "8ab2ea2152684fa7789dc4ba8dfedf5802b00bd08d4f91d8e88808feaa313455",
     "wheel": "9ec1d3465f25a5063c7eaa85ecb106cbe256064669c754e0b13b2483cf613a98",
     "extension": "6c44b1b03f94319834b9294d9720053071ce3ecfab584f3c479407d77249680c",
 }
