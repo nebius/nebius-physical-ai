@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -25,6 +27,39 @@ ENV_ID = "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
 
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _coordinator_source() -> str:
+    profile = PROFILE.read_text(encoding="utf-8")
+    return textwrap.dedent(profile.rsplit("<<'PY'\n", 1)[1].split("\n  PY", 1)[0])
+
+
+def _coordinator_helpers() -> dict[str, object]:
+    syntax = ast.parse(_coordinator_source())
+    helper_names = {
+        "_descriptor_identity",
+        "_open_bound_output_root",
+        "_require_owned_regular",
+        "_read_bound_json",
+        "_write_bound_summary",
+        "_output_uploads",
+    }
+    body = [
+        node
+        for node in syntax.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        or (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "MAX_OUTPUT_BYTES"
+                for target in node.targets
+            )
+        )
+        or (isinstance(node, ast.FunctionDef) and node.name in helper_names)
+    ]
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(PROFILE), "exec"), namespace)
+    return namespace
 
 
 def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
@@ -161,7 +196,12 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
-    assert 'upload_paths = (artifact_path, root / "npa_byof_summary.json")' in profile
+    assert "root_fd = _open_bound_output_root(root)" in profile
+    assert "artifact_payload = _read_bound_json(" in profile
+    assert "summary_payload = _write_bound_summary(" in profile
+    assert "upload_payloads = _output_uploads(" in profile
+    assert ".read_bytes()" not in profile
+    assert ".write_text(" not in profile
     assert 'ContentType="application/json"' in profile
     assert 'Metadata={"sha256": digest}' in profile
     assert 'get_paginator("list_objects_v2")' in profile
@@ -170,10 +210,7 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
 
 
 def test_profile_runtime_environment_is_the_exact_non_secret_allowlist() -> None:
-    profile = PROFILE.read_text(encoding="utf-8")
-    coordinator = textwrap.dedent(
-        profile.rsplit("<<'PY'\n", 1)[1].split("\n  PY", 1)[0]
-    )
+    coordinator = _coordinator_source()
     syntax = ast.parse(coordinator)
     assignments = {
         target.id: node.value
@@ -224,6 +261,127 @@ def test_profile_runtime_environment_is_the_exact_non_secret_allowlist() -> None
     }
     assert not authority.intersection(allowlist)
     assert 'runtime_environment["PATH"]' in coordinator
+
+
+def test_coordinator_binds_output_root_nofollow_and_close_on_exec(
+    tmp_path: Path,
+) -> None:
+    helpers = _coordinator_helpers()
+    root = tmp_path / "output"
+    root.mkdir()
+    root_link = tmp_path / "output-link"
+    root_link.symlink_to(root, target_is_directory=True)
+    with pytest.raises(
+        SystemExit, match="cannot bind Gymnasium output directory safely"
+    ):
+        helpers["_open_bound_output_root"](root_link)
+
+    root_fd = helpers["_open_bound_output_root"](root)
+    try:
+        assert not os.get_inheritable(root_fd)
+    finally:
+        os.close(root_fd)
+
+
+@pytest.mark.parametrize("attack", ["symlink", "hardlink"])
+def test_coordinator_refuses_linked_runtime_artifact(
+    tmp_path: Path, attack: str
+) -> None:
+    helpers = _coordinator_helpers()
+    root = tmp_path / "output"
+    root.mkdir()
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    artifact = root / "gymnasium-robotics-smoke.json"
+    if attack == "symlink":
+        artifact.symlink_to(target)
+        expected = "cannot open Gymnasium qualification artifact safely"
+    else:
+        os.link(target, artifact)
+        expected = "must have exactly one link"
+
+    root_fd = helpers["_open_bound_output_root"](root)
+    try:
+        with pytest.raises(SystemExit, match=expected):
+            helpers["_read_bound_json"](
+                root_fd,
+                artifact.name,
+                os.geteuid(),
+                "Gymnasium qualification artifact",
+            )
+    finally:
+        os.close(root_fd)
+
+
+@pytest.mark.parametrize("attack", ["symlink", "regular"])
+def test_coordinator_refuses_precreated_summary(tmp_path: Path, attack: str) -> None:
+    helpers = _coordinator_helpers()
+    root = tmp_path / "output"
+    root.mkdir()
+    summary = root / "npa_byof_summary.json"
+    if attack == "symlink":
+        target = tmp_path / "target.json"
+        target.write_text("{}", encoding="utf-8")
+        summary.symlink_to(target)
+    else:
+        summary.write_text("{}", encoding="utf-8")
+
+    root_fd = helpers["_open_bound_output_root"](root)
+    try:
+        with pytest.raises(
+            SystemExit, match="cannot create Gymnasium summary exclusively"
+        ):
+            helpers["_write_bound_summary"](
+                root_fd, summary.name, b"{}\n", os.geteuid()
+            )
+    finally:
+        os.close(root_fd)
+
+
+def test_coordinator_uploads_descriptor_bound_bytes_after_path_substitution(
+    tmp_path: Path,
+) -> None:
+    helpers = _coordinator_helpers()
+    root = tmp_path / "output"
+    root.mkdir()
+    root_fd = helpers["_open_bound_output_root"](root)
+    bound_root = tmp_path / "bound-output"
+    root.rename(bound_root)
+    root.mkdir()
+    artifact_name = "gymnasium-robotics-smoke.json"
+    bound_payload = b'{"source":"descriptor"}\n'
+    pathname_payload = b'{"source":"pathname"}\n'
+    (bound_root / artifact_name).write_bytes(bound_payload)
+    (root / artifact_name).write_bytes(pathname_payload)
+
+    try:
+        artifact_payload = helpers["_read_bound_json"](
+            root_fd,
+            artifact_name,
+            os.geteuid(),
+            "Gymnasium qualification artifact",
+        )
+        summary_payload = helpers["_write_bound_summary"](
+            root_fd,
+            "npa_byof_summary.json",
+            b'{"status":"success"}\n',
+            os.geteuid(),
+        )
+        uploads = helpers["_output_uploads"](
+            artifact_name, artifact_payload, summary_payload
+        )
+    finally:
+        os.close(root_fd)
+
+    assert artifact_payload == bound_payload
+    assert artifact_payload != (root / artifact_name).read_bytes()
+    assert dict(uploads)[artifact_name] == bound_payload
+    assert hashlib.sha256(dict(uploads)[artifact_name]).hexdigest() == hashlib.sha256(
+        bound_payload
+    ).hexdigest()
+    assert dict(uploads)["npa_byof_summary.json"] == summary_payload
+    assert (bound_root / "npa_byof_summary.json").read_bytes() == summary_payload
+    assert not (root / "npa_byof_summary.json").exists()
 
 
 def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:

@@ -153,10 +153,117 @@ run: |
   import hashlib
   import json
   import os
+  import stat
   import subprocess
   import time
   from pathlib import Path
   from urllib.parse import urlparse
+
+  MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+
+
+  def _descriptor_identity(file_stat):
+      return (
+          file_stat.st_dev,
+          file_stat.st_ino,
+          file_stat.st_mode,
+          file_stat.st_nlink,
+          file_stat.st_uid,
+      )
+
+
+  def _open_bound_output_root(path):
+      flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+      try:
+          directory_fd = os.open(path, flags)
+      except OSError as exc:
+          raise SystemExit("cannot bind Gymnasium output directory safely") from exc
+      directory_stat = os.fstat(directory_fd)
+      if not stat.S_ISDIR(directory_stat.st_mode):
+          os.close(directory_fd)
+          raise SystemExit("Gymnasium output root is not a directory")
+      if directory_stat.st_uid != os.geteuid():
+          os.close(directory_fd)
+          raise SystemExit("Gymnasium output root has an unexpected owner")
+      return directory_fd
+
+
+  def _require_owned_regular(file_fd, expected_uid, label):
+      file_stat = os.fstat(file_fd)
+      if not stat.S_ISREG(file_stat.st_mode):
+          raise SystemExit(f"{label} is not a regular file")
+      if file_stat.st_nlink != 1:
+          raise SystemExit(f"{label} must have exactly one link")
+      if file_stat.st_uid != expected_uid:
+          raise SystemExit(f"{label} has an unexpected owner")
+      return file_stat
+
+
+  def _read_bound_json(directory_fd, name, expected_uid, label):
+      flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+      try:
+          file_fd = os.open(name, flags, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit(f"cannot open {label} safely") from exc
+      try:
+          before = _require_owned_regular(file_fd, expected_uid, label)
+          if before.st_size > MAX_OUTPUT_BYTES:
+              raise SystemExit(f"{label} exceeds the size limit")
+          remaining = before.st_size
+          chunks = []
+          while remaining:
+              chunk = os.read(file_fd, min(remaining, 1024 * 1024))
+              if not chunk:
+                  raise SystemExit(f"{label} changed while being read")
+              chunks.append(chunk)
+              remaining -= len(chunk)
+          if os.read(file_fd, 1):
+              raise SystemExit(f"{label} changed while being read")
+          payload = b"".join(chunks)
+          after = _require_owned_regular(file_fd, expected_uid, label)
+          if _descriptor_identity(before) != _descriptor_identity(after):
+              raise SystemExit(f"{label} identity changed while being read")
+          if after.st_size != len(payload) or before.st_size != after.st_size:
+              raise SystemExit(f"{label} size changed while being read")
+          json.loads(payload)
+          return payload
+      finally:
+          os.close(file_fd)
+
+
+  def _write_bound_summary(directory_fd, name, payload, expected_uid):
+      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+      try:
+          file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit("cannot create Gymnasium summary exclusively") from exc
+      try:
+          before = _require_owned_regular(file_fd, expected_uid, "Gymnasium summary")
+          if before.st_size != 0:
+              raise SystemExit("new Gymnasium summary is not empty")
+          view = memoryview(payload)
+          while view:
+              written = os.write(file_fd, view)
+              if written <= 0:
+                  raise SystemExit("cannot write complete Gymnasium summary")
+              view = view[written:]
+          os.fsync(file_fd)
+          after = _require_owned_regular(file_fd, expected_uid, "Gymnasium summary")
+          if _descriptor_identity(before) != _descriptor_identity(after):
+              raise SystemExit("Gymnasium summary identity changed while being written")
+          if after.st_size != len(payload):
+              raise SystemExit("Gymnasium summary size changed while being written")
+          return payload
+      finally:
+          os.close(file_fd)
+
+
+  def _output_uploads(artifact_name, artifact_payload, summary_payload):
+      return (
+          (artifact_name, artifact_payload),
+          ("npa_byof_summary.json", summary_payload),
+      )
+
 
   libc = ctypes.CDLL(None, use_errno=True)
   if libc.prctl(4, 0, 0, 0, 0) != 0:
@@ -164,6 +271,8 @@ run: |
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
+  root_fd = _open_bound_output_root(root)
+  expected_output_uid = os.geteuid()
   expected_command = "\n".join(
       (
           "export MUJOCO_GL=egl",
@@ -207,11 +316,12 @@ run: |
   artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
   if artifact_name != "gymnasium-robotics-smoke.json":
       raise SystemExit("unexpected Gymnasium qualification artifact name")
-  artifact_path = root / artifact_name
-  if not artifact_path.is_file():
-      raise SystemExit("Gymnasium qualification artifact is missing")
-  artifact_payload = artifact_path.read_bytes()
-  json.loads(artifact_payload)
+  artifact_payload = _read_bound_json(
+      root_fd,
+      artifact_name,
+      expected_output_uid,
+      "Gymnasium qualification artifact",
+  )
   artifact_evidence = {
       "name": artifact_name,
       "media_type": "application/json",
@@ -237,10 +347,16 @@ run: |
       "smoke_exit_code": smoke_exit_code,
       "created_unix": round(time.time(), 3),
   }
-  (root / "npa_byof_summary.json").write_text(
-      json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+  summary_payload = (
+      json.dumps(summary, indent=2, sort_keys=True) + "\n"
+  ).encode("utf-8")
+  summary_payload = _write_bound_summary(
+      root_fd,
+      "npa_byof_summary.json",
+      summary_payload,
+      expected_output_uid,
   )
-  print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+  print(summary_payload.decode("utf-8"), end="", flush=True)
   if smoke_exit_code != 0:
       raise SystemExit(smoke_exit_code)
 
@@ -271,13 +387,14 @@ run: |
               client_kwargs["aws_session_token"] = session_token
       s3 = boto3.client("s3", **client_kwargs)
       prefix = parsed.path.lstrip("/")
-      upload_paths = (artifact_path, root / "npa_byof_summary.json")
-      expected_keys = {prefix + path.name for path in upload_paths}
-      for path in upload_paths:
-          payload = path.read_bytes()
+      upload_payloads = _output_uploads(
+          artifact_name, artifact_payload, summary_payload
+      )
+      expected_keys = {prefix + name for name, _payload in upload_payloads}
+      for name, payload in upload_payloads:
           json.loads(payload)
           digest = hashlib.sha256(payload).hexdigest()
-          key = prefix + path.name
+          key = prefix + name
           s3.put_object(
               Bucket=parsed.netloc,
               Key=key,
@@ -301,5 +418,6 @@ run: |
       }
       if observed_keys != expected_keys:
           raise SystemExit("qualification output prefix contains unexpected objects")
-      print(f"uploaded_file_count={len(upload_paths)}", flush=True)
+      print(f"uploaded_file_count={len(upload_payloads)}", flush=True)
+  os.close(root_fd)
   PY
