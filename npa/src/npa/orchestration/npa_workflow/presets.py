@@ -8,15 +8,10 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 
 PUBLIC_FRANKA_LIFT = "public-franka-lift"
-PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY = (
-    "huyyyyan/pi05-Isaac-sim_Franka_lift_cube"
-)
-PUBLIC_FRANKA_LIFT_DATASET_REVISION = (
-    "42c181e40a43afb1702c29d6f24d5de25219aff8"
-)
+PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY = "huyyyyan/pi05-Isaac-sim_Franka_lift_cube"
+PUBLIC_FRANKA_LIFT_DATASET_REVISION = "42c181e40a43afb1702c29d6f24d5de25219aff8"
 PUBLIC_FRANKA_LIFT_DATASET_ID = (
-    f"{PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY}"
-    f"@{PUBLIC_FRANKA_LIFT_DATASET_REVISION}"
+    f"{PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY}@{PUBLIC_FRANKA_LIFT_DATASET_REVISION}"
 )
 PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
 PUBLIC_FRANKA_LIFT_CANONICAL_TASK_ID = "Isaac-Lift-Cube-Franka-v0"
@@ -31,8 +26,7 @@ _PRESETS: dict[tuple[str, str], dict[str, str]] = {
         "dataset_id": PUBLIC_FRANKA_LIFT_DATASET_ID,
         "task_id": PUBLIC_FRANKA_LIFT_CANONICAL_TASK_ID,
         "trigger_uri": (
-            "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/"
-            "public-franka-lift/"
+            "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/public-franka-lift/"
         ),
         "seed_manifest_uri": (
             "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/"

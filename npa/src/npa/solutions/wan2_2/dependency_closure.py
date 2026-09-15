@@ -105,9 +105,7 @@ def _logical_requirement_lines(path: Path) -> list[str]:
             logical_lines.append(current.strip())
             current = ""
     if current:
-        raise DependencyClosureError(
-            f"unterminated line continuation in {path.name}"
-        )
+        raise DependencyClosureError(f"unterminated line continuation in {path.name}")
     return logical_lines
 
 
@@ -127,7 +125,9 @@ def parse_runtime_requirements(path: Path) -> dict[str, PinnedRequirement]:
             raise DependencyClosureError(
                 f"runtime requirement must carry exactly one SHA-256: {logical}"
             )
-        if len(hash_text) != 64 or any(char not in "0123456789abcdef" for char in hash_text):
+        if len(hash_text) != 64 or any(
+            char not in "0123456789abcdef" for char in hash_text
+        ):
             raise DependencyClosureError(
                 f"runtime requirement has an invalid SHA-256: {logical}"
             )
@@ -248,7 +248,9 @@ def fetch_runtime_distribution_metadata(
                 f"hash-selected runtime wheel is not compatible: {filename}"
             )
         if selected.get("yanked") not in (False, None):
-            raise DependencyClosureError(f"hash-selected runtime wheel is yanked: {filename}")
+            raise DependencyClosureError(
+                f"hash-selected runtime wheel is yanked: {filename}"
+            )
         requires_python = selected.get("requires-python")
         if requires_python:
             try:
@@ -278,7 +280,10 @@ def fetch_runtime_distribution_metadata(
             )
         wheel_url = str(selected.get("url") or "")
         parsed_url = urlparse(wheel_url)
-        if parsed_url.scheme != "https" or parsed_url.hostname != "files.pythonhosted.org":
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.hostname != "files.pythonhosted.org"
+        ):
             raise DependencyClosureError(
                 f"runtime wheel URL is outside files.pythonhosted.org: {filename}"
             )
@@ -438,7 +443,9 @@ def verify_closure_report(
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise DependencyClosureError(f"cannot read dependency closure report: {exc}") from exc
+        raise DependencyClosureError(
+            f"cannot read dependency closure report: {exc}"
+        ) from exc
     if not isinstance(report, dict):
         raise DependencyClosureError("dependency closure report is not an object")
     if report.get("schema") != REPORT_SCHEMA or report.get("status") != "validated":
@@ -449,14 +456,21 @@ def verify_closure_report(
         raise DependencyClosureError(
             "runtime requirements changed after closure validation"
         )
-    if frozenset(report.get("runtime_only_distributions") or ()) != RUNTIME_ONLY_DISTRIBUTIONS:
-        raise DependencyClosureError("dependency closure report runtime-only set drifted")
+    if (
+        frozenset(report.get("runtime_only_distributions") or ())
+        != RUNTIME_ONLY_DISTRIBUTIONS
+    ):
+        raise DependencyClosureError(
+            "dependency closure report runtime-only set drifted"
+        )
     runtime_wheels = report.get("runtime_wheels")
     if not isinstance(runtime_wheels, dict):
         raise DependencyClosureError("dependency closure report lacks runtime wheels")
     pins = parse_runtime_requirements(runtime_requirements)
     if set(runtime_wheels) != set(pins):
-        raise DependencyClosureError("dependency closure report runtime wheel set drifted")
+        raise DependencyClosureError(
+            "dependency closure report runtime wheel set drifted"
+        )
     for name, pin in pins.items():
         wheel = runtime_wheels.get(name)
         if not isinstance(wheel, dict) or (
@@ -470,7 +484,9 @@ def verify_closure_report(
 
 
 def _write_report(path: Path, report: Mapping[str, Any]) -> None:
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def main(argv: Iterable[str] | None = None) -> int:

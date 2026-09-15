@@ -173,15 +173,60 @@ def test_readiness_interruption_is_prompt_and_typed() -> None:
 @pytest.mark.parametrize(
     ("phase", "detail", "state", "category"),
     [
-        ("launch", "connect: connection refused", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "HTTP 429 Too Many Requests", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_RATE_LIMIT),
-        ("launch", "503 Service Unavailable", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_SERVER),
-        ("launch", "TLS handshake timeout", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "forbidden: cannot list pods", EvidenceState.TERMINAL, FailureCategory.RBAC),
-        ("launch", "x509: certificate expired", EvidenceState.TERMINAL, FailureCategory.CERTIFICATE),
-        ("launch", "context not found", EvidenceState.TERMINAL, FailureCategory.CONTEXT),
-        ("launch", "task timed out running user code", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
-        ("workload", "connection refused", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
+        (
+            "launch",
+            "connect: connection refused",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "HTTP 429 Too Many Requests",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_RATE_LIMIT,
+        ),
+        (
+            "launch",
+            "503 Service Unavailable",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_SERVER,
+        ),
+        (
+            "launch",
+            "TLS handshake timeout",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "forbidden: cannot list pods",
+            EvidenceState.TERMINAL,
+            FailureCategory.RBAC,
+        ),
+        (
+            "launch",
+            "x509: certificate expired",
+            EvidenceState.TERMINAL,
+            FailureCategory.CERTIFICATE,
+        ),
+        (
+            "launch",
+            "context not found",
+            EvidenceState.TERMINAL,
+            FailureCategory.CONTEXT,
+        ),
+        (
+            "launch",
+            "task timed out running user code",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
+        (
+            "workload",
+            "connection refused",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
     ],
 )
 def test_failure_taxonomy_is_phase_aware(
@@ -248,15 +293,17 @@ def test_launch_accepted_but_client_failed_is_adopted() -> None:
         logical_id="accepted",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND,
-            "41",
-            "PENDING",
-            workload_observable=True,
-            workload_evidence="scheduler_state",
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "41",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            )
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
     )
     assert result.state is LaunchState.ADOPTED
@@ -283,15 +330,17 @@ def test_getcwd_rsync_failure_rejects_phantom_pending_queue_record() -> None:
             logical_id="getcwd-rsync-phantom",
             readiness=_stable,
             launch=launch,
-            reconcile=lambda: ReconciliationEvidence(
-                ReconciliationState.FOUND,
-                "125",
-                "PENDING",
-                workload_observable=False,
-                workload_evidence="",
-            )
-            if exists
-            else ReconciliationEvidence(ReconciliationState.ABSENT),
+            reconcile=lambda: (
+                ReconciliationEvidence(
+                    ReconciliationState.FOUND,
+                    "125",
+                    "PENDING",
+                    workload_observable=False,
+                    workload_evidence="",
+                )
+                if exists
+                else ReconciliationEvidence(ReconciliationState.ABSENT)
+            ),
             classify_launch_error=_transient,
         )
 
@@ -326,10 +375,7 @@ def test_resume_rejects_existing_unobservable_phantom_record() -> None:
         )
 
     assert caught.value.result.state is LaunchState.INDETERMINATE
-    assert (
-        caught.value.result.recovery_decision
-        == "block_unobservable_existing_record"
-    )
+    assert caught.value.result.recovery_decision == "block_unobservable_existing_record"
 
 
 def test_resume_relaunches_instead_of_adopting_cancelled_job() -> None:
@@ -388,11 +434,11 @@ def test_authoritative_absence_allows_one_safe_retry() -> None:
         logical_id="safe-retry",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, "9", "PENDING"
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, "9", "PENDING")
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,
@@ -426,7 +472,10 @@ def test_repeated_transient_failure_stops_at_recovery_deadline() -> None:
             sleeper=clock.sleep,
             random_source=lambda: 0.5,
         )
-    assert caught.value.result.recovery_decision == "recovery_deadline_exhausted_verified_absent"
+    assert (
+        caught.value.result.recovery_decision
+        == "recovery_deadline_exhausted_verified_absent"
+    )
     assert caught.value.result.state is LaunchState.TRANSIENT_API_FAILURE
     assert caught.value.result.existence == "absent"
     assert launches == 2
@@ -664,11 +713,11 @@ def test_hermetic_incident_boundary_recovers_without_cancellation() -> None:
         logical_id=logical_launch_identity("project", "paidf-run", "wave-001", "1"),
         readiness=readiness,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, exact_job, "PENDING"
-        )
-        if exact_job
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, exact_job, "PENDING")
+            if exact_job
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,

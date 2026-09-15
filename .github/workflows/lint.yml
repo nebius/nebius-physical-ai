@@ -1,5 +1,8 @@
 name: Lint
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -31,6 +34,11 @@ jobs:
         # in npa/scripts, npa/examples and npa/docker while the documented
         # contributor command was red.
         run: cd npa && ruff check .
+
+      - name: Ruff format check (blocking)
+        # Same scope as `make format`. The tree was bulk-formatted once; keep it
+        # that way so formatting drift is caught on PRs.
+        run: cd npa && ruff format --check .
 
   docs-drift:
     # Fail when docs/cli/ is out of date relative to `npa --help`.

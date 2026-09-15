@@ -178,7 +178,10 @@ def satisfied_preflight(mocker, monkeypatch):
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
 
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
 
     mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
@@ -203,13 +206,16 @@ def fake_runtime(mocker, satisfied_preflight):
 
     def _run(spec, **kwargs):
         from npa.orchestration.npa_workflow.submission_state import (
-            load_submission_state, submission_proves_never_launched,
+            load_submission_state,
+            submission_proves_never_launched,
         )
 
         receipt = load_submission_state(kwargs["options"].project, kwargs["run_id"])
         assert receipt["launch"] == {"status": "launching", "kind": "runtime"}
         assert not submission_proves_never_launched(
-            receipt, project=kwargs["options"].project, run_id=kwargs["run_id"],
+            receipt,
+            project=kwargs["options"].project,
+            run_id=kwargs["run_id"],
         )
         captured["spec"] = spec
         captured.update(kwargs)
@@ -430,34 +436,57 @@ states:
 
 @pytest.mark.parametrize("resume", [False, True])
 def test_runtime_defers_free_capacity_to_the_actual_wave(
-    fake_runtime, gpu_then_cpu_spec: Path, tmp_path: Path, mocker, resume: bool,
+    fake_runtime,
+    gpu_then_cpu_spec: Path,
+    tmp_path: Path,
+    mocker,
+    resume: bool,
 ) -> None:
     capacity = mocker.patch(
         "npa.cli.workbench.workflow._preflight_submit_gang_capacity",
         side_effect=RuntimeError("completed generation no longer has free GPUs"),
     )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
-    mocker.patch("npa.cli.workbench.workflow._resolve_submit_accelerators", return_value={})
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators", return_value={}
+    )
     mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
     mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
-    mocker.patch("npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim", return_value="")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value="",
+    )
 
     def target_preflight(_spec, **kwargs):
         if kwargs.get("gpu_check") is not None:
             kwargs["gpu_check"]()
         return None, {}
 
-    target = mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", side_effect=target_preflight)
-    arguments = ["workbench", "workflow", "submit", str(gpu_then_cpu_spec),
-                 "--run-id", "wave-capacity", "--runtime", "--infra", "k8s/unit-context",
-                 "--no-deploy-if-absent"]
+    target = mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        side_effect=target_preflight,
+    )
+    arguments = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(gpu_then_cpu_spec),
+        "--run-id",
+        "wave-capacity",
+        "--runtime",
+        "--infra",
+        "k8s/unit-context",
+        "--no-deploy-if-absent",
+    ]
     result = RUNNER.invoke(app, [*arguments, *(["--resume"] if resume else [])])
     assert result.exit_code == 0, result.output
     assert fake_runtime["options"].resume is resume
     target.assert_called_once()
     assert target.call_args.kwargs["verify_cluster"] is True
     wave = tmp_path / "publish.yaml"
-    wave.write_text("name: publish\nresources: {cloud: kubernetes, cpus: 4, memory: 16}\nrun: 'true'\n")
+    wave.write_text(
+        "name: publish\nresources: {cloud: kubernetes, cpus: 4, memory: 16}\nrun: 'true'\n"
+    )
     fake_runtime["options"].pre_submit_hook(wave)
     capacity.assert_not_called()
 
@@ -893,7 +922,8 @@ def runtime_capacity_preflight(fake_runtime, mocker):
     from npa.cli.workbench import workflow as workflow_cli
 
     capacity = mocker.patch.object(
-        workflow_cli, "_preflight_submit_gang_capacity",
+        workflow_cli,
+        "_preflight_submit_gang_capacity",
         side_effect=RuntimeError("existing GPU job occupies available capacity"),
     )
     mocker.patch.object(workflow_cli, "_submit_prerequisites", return_value=[])
@@ -912,26 +942,42 @@ def runtime_capacity_preflight(fake_runtime, mocker):
         return None, {"scope": "pass"}
 
     target = mocker.patch.object(
-        workflow_cli, "_execution_target_preflight", side_effect=verify_target,
+        workflow_cli,
+        "_execution_target_preflight",
+        side_effect=verify_target,
     )
     return capacity, target
 
 
 def _capacity_submit_args(*extra):
     return [
-        "workbench", "workflow", "submit", str(FANOUT),
-        "--infra", "k8s/unit-context", "--no-deploy-if-absent",
-        "--var", "bucket=rt-bucket", *extra,
+        "workbench",
+        "workflow",
+        "submit",
+        str(FANOUT),
+        "--infra",
+        "k8s/unit-context",
+        "--no-deploy-if-absent",
+        "--var",
+        "bucket=rt-bucket",
+        *extra,
     ]
 
 
-@pytest.mark.parametrize("runtime_args,resume", [
-    (["--run-id", "rt-capacity-fresh"], False),
-    (["--resume-run", "rt-capacity-resume"], True),
-    (["--run-id", "rt-capacity-resume", "--resume"], True),
-])
+@pytest.mark.parametrize(
+    "runtime_args,resume",
+    [
+        (["--run-id", "rt-capacity-fresh"], False),
+        (["--resume-run", "rt-capacity-resume"], True),
+        (["--run-id", "rt-capacity-resume", "--resume"], True),
+    ],
+)
 def test_runtime_capacity_evidence_waits_for_the_sdk_wave_gate(
-    fake_runtime, runtime_capacity_preflight, tmp_path, runtime_args, resume,
+    fake_runtime,
+    runtime_capacity_preflight,
+    tmp_path,
+    runtime_args,
+    resume,
 ):
     capacity, target = runtime_capacity_preflight
     result = RUNNER.invoke(app, _capacity_submit_args("--runtime", *runtime_args))
@@ -951,12 +997,17 @@ def test_runtime_capacity_evidence_waits_for_the_sdk_wave_gate(
     capacity.assert_not_called()
 
 
-@pytest.mark.parametrize("extra", [
-    ["--run-id", "rt-fresh-capacity"],
-    ["--resume-run", "rt-one-shot-capacity"],
-])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--run-id", "rt-fresh-capacity"],
+        ["--resume-run", "rt-one-shot-capacity"],
+    ],
+)
 def test_one_shot_submit_still_requires_free_capacity(
-    fake_runtime, runtime_capacity_preflight, extra,
+    fake_runtime,
+    runtime_capacity_preflight,
+    extra,
 ):
     capacity, target = runtime_capacity_preflight
     result = RUNNER.invoke(app, _capacity_submit_args(*extra))
@@ -969,13 +1020,19 @@ def test_one_shot_submit_still_requires_free_capacity(
 
 
 def test_runtime_resume_keeps_execution_scope_gate(
-    fake_runtime, runtime_capacity_preflight,
+    fake_runtime,
+    runtime_capacity_preflight,
 ):
     capacity, target = runtime_capacity_preflight
     target.side_effect = RuntimeError("execution scope mismatch")
-    result = RUNNER.invoke(app, _capacity_submit_args(
-        "--runtime", "--resume-run", "rt-scope-mismatch",
-    ))
+    result = RUNNER.invoke(
+        app,
+        _capacity_submit_args(
+            "--runtime",
+            "--resume-run",
+            "rt-scope-mismatch",
+        ),
+    )
     assert result.exit_code == 1, result.output
     assert "execution scope mismatch" in result.output
     capacity.assert_not_called()
@@ -986,25 +1043,43 @@ def test_runtime_resume_keeps_execution_scope_gate(
 def runtime_api_environment(fake_runtime, mocker, monkeypatch, tmp_path):
     """Capture the real readiness/runtime boundary with only network calls faked."""
     from npa.orchestration.npa_workflow.submit_credentials import (
-        STORAGE_ENDPOINT_ENV_NAMES, SubmitCredentialContext,
+        STORAGE_ENDPOINT_ENV_NAMES,
+        SubmitCredentialContext,
     )
 
     monkeypatch.setenv("NPA_S3_PREFIX", "inherited/old-run")
     monkeypatch.setenv("NPA_S3_BUCKET", "inherited-bucket")
     for name in STORAGE_ENDPOINT_ENV_NAMES:
         monkeypatch.setenv(name, "https://inherited.invalid")
-    selected = {"AWS_ACCESS_KEY_ID": "selected-access", "AWS_SECRET_ACCESS_KEY": "selected-secret"}
+    selected = {
+        "AWS_ACCESS_KEY_ID": "selected-access",
+        "AWS_SECRET_ACCESS_KEY": "selected-secret",
+    }
     credentials = SubmitCredentialContext(
-        endpoint_url="https://selected.invalid", secret_values=selected,
-        access_key_id=selected["AWS_ACCESS_KEY_ID"], secret_access_key=selected["AWS_SECRET_ACCESS_KEY"],
+        endpoint_url="https://selected.invalid",
+        secret_values=selected,
+        access_key_id=selected["AWS_ACCESS_KEY_ID"],
+        secret_access_key=selected["AWS_SECRET_ACCESS_KEY"],
     )
-    mocker.patch("npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
-                 return_value=credentials)
-    mocker.patch("npa.orchestration.skypilot.k8s_gpu_catalog.spec_accelerators", return_value={"L4": 1})
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=credentials,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.spec_accelerators",
+        return_value={"L4": 1},
+    )
     snapshots = []
-    for target in ("npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
-                   "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators"):
-        mocker.patch(target, side_effect=lambda *args, **kwargs: snapshots.append(dict(os.environ)) or {})
+    for target in (
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+    ):
+        mocker.patch(
+            target,
+            side_effect=lambda *args, **kwargs: (
+                snapshots.append(dict(os.environ)) or {}
+            ),
+        )
     driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
     wave = tmp_path / "wave.yaml"
     wave.write_text("name: next-wave\nrun: echo next\n")
@@ -1012,30 +1087,54 @@ def runtime_api_environment(fake_runtime, mocker, monkeypatch, tmp_path):
     def run(spec, **kwargs):
         snapshots.append(dict(os.environ))
         kwargs["options"].pre_submit_hook(wave)
-        return RuntimeReport(workflow=spec.name, run_id=kwargs["run_id"], status="succeeded")
+        return RuntimeReport(
+            workflow=spec.name, run_id=kwargs["run_id"], status="succeeded"
+        )
 
     driver.side_effect = run
     names = ("NPA_S3_PREFIX", "NPA_S3_BUCKET", *STORAGE_ENDPOINT_ENV_NAMES, *selected)
     return snapshots, driver, names
 
 
-@pytest.mark.parametrize("prefix_args,ambient,expected", [
-    (["--var", "prefix=selected/{{run.id}}"], True, "selected/environment-test"),
-    (["--var", "prefix=ignored", "--s3-prefix", "explicit/{{run.id}}"], True, "explicit/environment-test"),
-    ([], False, "token-factory-fanout/environment-test"),
-    ([], True, "inherited/old-run"),
-])
+@pytest.mark.parametrize(
+    "prefix_args,ambient,expected",
+    [
+        (["--var", "prefix=selected/{{run.id}}"], True, "selected/environment-test"),
+        (
+            ["--var", "prefix=ignored", "--s3-prefix", "explicit/{{run.id}}"],
+            True,
+            "explicit/environment-test",
+        ),
+        ([], False, "token-factory-fanout/environment-test"),
+        ([], True, "inherited/old-run"),
+    ],
+)
 def test_runtime_readiness_uses_resolved_environment(
-    runtime_api_environment, monkeypatch, prefix_args, ambient, expected,
+    runtime_api_environment,
+    monkeypatch,
+    prefix_args,
+    ambient,
+    expected,
 ):
     snapshots, driver, names = runtime_api_environment
     if not ambient:
         monkeypatch.delenv("NPA_S3_PREFIX")
     before = {name: os.environ.get(name) for name in names}
-    result = RUNNER.invoke(app, [
-        "workbench", "workflow", "submit", str(FANOUT), "--runtime",
-        "--run-id", "environment-test", "--var", "bucket=selected-bucket", *prefix_args,
-    ])
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "environment-test",
+            "--var",
+            "bucket=selected-bucket",
+            *prefix_args,
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert driver.call_count == 1
     assert len(snapshots) == 5
@@ -1049,17 +1148,33 @@ def test_runtime_readiness_uses_resolved_environment(
 
 
 @pytest.mark.parametrize("boundary", ["readiness", "runtime"])
-def test_runtime_environment_is_restored_after_failure(runtime_api_environment, mocker, boundary):
+def test_runtime_environment_is_restored_after_failure(
+    runtime_api_environment, mocker, boundary
+):
     snapshots, driver, names = runtime_api_environment
     before = {name: os.environ.get(name) for name in names}
-    target = ("npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators"
-              if boundary == "readiness" else "npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    target = (
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators"
+        if boundary == "readiness"
+        else "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
     failure = mocker.patch(target, side_effect=ValueError("executing identity changed"))
-    result = RUNNER.invoke(app, [
-        "workbench", "workflow", "submit", str(FANOUT), "--runtime",
-        "--run-id", "environment-failure", "--var", "bucket=selected-bucket",
-        "--var", "prefix=selected/{{run.id}}",
-    ])
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "environment-failure",
+            "--var",
+            "bucket=selected-bucket",
+            "--var",
+            "prefix=selected/{{run.id}}",
+        ],
+    )
     assert result.exit_code != 0
     failure.assert_called_once()
     assert snapshots[0]["NPA_S3_PREFIX"] == "selected/environment-failure"
@@ -1071,11 +1186,23 @@ def test_runtime_environment_is_restored_after_failure(runtime_api_environment, 
 def test_plan_only_does_not_bind_runtime_api_environment(runtime_api_environment):
     snapshots, driver, names = runtime_api_environment
     before = {name: os.environ.get(name) for name in names}
-    result = RUNNER.invoke(app, [
-        "workbench", "workflow", "submit", str(FANOUT), "--runtime", "--plan-only",
-        "--run-id", "environment-plan", "--var", "bucket=selected-bucket",
-        "--var", "prefix=selected/{{run.id}}",
-    ])
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--plan-only",
+            "--run-id",
+            "environment-plan",
+            "--var",
+            "bucket=selected-bucket",
+            "--var",
+            "prefix=selected/{{run.id}}",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert snapshots == []
     driver.assert_not_called()

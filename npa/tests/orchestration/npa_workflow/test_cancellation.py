@@ -184,9 +184,7 @@ def test_exact_live_job_outweighs_reused_terminal_numeric_id() -> None:
         looked_up.append(job_id)
         return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
 
-    assessment = assess_run_cancellation(
-        resolution, lookup=lookup, exact_job_id="1"
-    )
+    assessment = assess_run_cancellation(resolution, lookup=lookup, exact_job_id="1")
 
     assert assessment.detected_state == "ACTIVE"
     assert [job.job_id for job in assessment.active_jobs] == ["1"]
@@ -243,9 +241,7 @@ def test_active_job_is_reverified_immediately_before_cancellation() -> None:
     errors = reverify_active_cancellation(assessment, lookup=completed)
 
     assert calls == ["7"]
-    assert errors == [
-        "exact job 7 is no longer active before cancellation: SUCCEEDED"
-    ]
+    assert errors == ["exact job 7 is no longer active before cancellation: SUCCEEDED"]
 
 
 def test_active_job_reverification_accepts_only_same_exact_live_job() -> None:
@@ -268,12 +264,15 @@ def test_active_job_reverification_accepts_only_same_exact_live_job() -> None:
         ),
     )
 
-    assert reverify_active_cancellation(
-        assessment,
-        lookup=lambda *args, **kwargs: ManagedJobEvidence(
-            "found", job_id="7", status="RECOVERING"
-        ),
-    ) == []
+    assert (
+        reverify_active_cancellation(
+            assessment,
+            lookup=lambda *args, **kwargs: ManagedJobEvidence(
+                "found", job_id="7", status="RECOVERING"
+            ),
+        )
+        == []
+    )
 
 
 def test_active_job_reverification_falls_back_to_resolution_run_id() -> None:

@@ -53,9 +53,7 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-WAN_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-wan2.2.yaml"
-)
+WAN_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-wan2.2.yaml"
 PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles"
 EXPECTED_CAPABILITIES = {
     "wan2.2_ti2v_5b_text_to_video",

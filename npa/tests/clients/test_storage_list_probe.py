@@ -40,10 +40,15 @@ def test_probe_checks_empty_or_populated_prefix_without_paginating(
         stubber.assert_no_pending_responses()
 
 
-@pytest.mark.parametrize("code,status", [
-    ("AccessDenied", 403), ("SignatureDoesNotMatch", 403),
-    ("NoSuchBucket", 404), ("ServiceUnavailable", 503),
-])
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        ("AccessDenied", 403),
+        ("SignatureDoesNotMatch", 403),
+        ("NoSuchBucket", 404),
+        ("ServiceUnavailable", 503),
+    ],
+)
 def test_probe_preserves_service_denial(storage, code, status):
     with Stubber(storage.s3) as stubber:
         stubber.add_client_error(
@@ -53,7 +58,9 @@ def test_probe_preserves_service_denial(storage, code, status):
             storage.probe_list_access("s3://test-bucket")
 
 
-@pytest.mark.parametrize("uri", ["test-bucket/prefix", "https://storage.invalid/bucket"])
+@pytest.mark.parametrize(
+    "uri", ["test-bucket/prefix", "https://storage.invalid/bucket"]
+)
 def test_probe_rejects_non_s3_destinations_before_request(storage, uri):
     with Stubber(storage.s3), pytest.raises(StorageError, match="Expected s3://"):
         storage.probe_list_access(uri)

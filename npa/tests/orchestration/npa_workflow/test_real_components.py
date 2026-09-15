@@ -116,7 +116,9 @@ def test_agent_generated_paidf_runs_named_real_components() -> None:
         "--sam2-model",
         "--sam2-model-revision",
     ):
-        assert option in TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
+        assert (
+            option in TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
+        )
     assert states["evaluate"]["toolRef"] == "workbench.cosmos_evaluator.evaluate"
     assert (
         states["review-terminal-candidates"]["toolRef"]
@@ -251,7 +253,9 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     assert len(_spec()["config"]["sam2_model_revision"]) == 40
     transfer_argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
     protected_index = transfer_argv.index("--protected-regions-json")
-    assert transfer_argv[protected_index + 1] == "{{config.protected_chroma_regions_json}}"
+    assert (
+        transfer_argv[protected_index + 1] == "{{config.protected_chroma_regions_json}}"
+    )
     luma_index = transfer_argv.index("--protected-luma-max-delta")
     assert transfer_argv[luma_index + 1] == "{{config.protected_luma_max_delta}}"
     feather_index = transfer_argv.index("--protected-feather-pixels")
@@ -483,7 +487,9 @@ def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
 # Living-lab 16-zone neural-reconstruction digital twin (real nurec fan-out)
 # ---------------------------------------------------------------------------------
 LIVING_LAB_SPEC = resolve_npa_workflow_spec("living-lab-nurec-fanout.yaml")
-assert LIVING_LAB_SPEC is not None, "living-lab-nurec-fanout.yaml not found in any spec root"
+assert LIVING_LAB_SPEC is not None, (
+    "living-lab-nurec-fanout.yaml not found in any spec root"
+)
 
 
 def _living_lab_states() -> dict:

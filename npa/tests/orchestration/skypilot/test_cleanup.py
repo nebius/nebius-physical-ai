@@ -407,7 +407,9 @@ def test_stale_explicit_cluster_identity_refuses_before_any_mutation(
     )
     assert result.outcome == "unsafe"
     assert result.commands == []
-    assert any("cleanup identity conflict for cluster_id" in error for error in result.errors)
+    assert any(
+        "cleanup identity conflict for cluster_id" in error for error in result.errors
+    )
 
 
 def test_cleanup_all_for_run_with_no_matching_jobs_succeeds(
@@ -608,9 +610,7 @@ def test_controller_pod_scope_excludes_unrelated_shared_controller() -> None:
 
     targeted = cleanup_module._controller_pods_for_clusters(pods, clusters)
 
-    assert targeted == [
-        ("default", "target-head", "sky-jobs-controller-target")
-    ]
+    assert targeted == [("default", "target-head", "sky-jobs-controller-target")]
 
 
 def test_exact_context_controller_pod_inventory_can_prove_absence(

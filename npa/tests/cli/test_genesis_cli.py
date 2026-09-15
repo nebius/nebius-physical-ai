@@ -12,7 +12,12 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.clients.config import SSHConfig, StorageConfig, TerraformStateConfig, WorkbenchConfig
+from npa.clients.config import (
+    SSHConfig,
+    StorageConfig,
+    TerraformStateConfig,
+    WorkbenchConfig,
+)
 from npa.clients.serverless import EndpointNotFoundError
 from npa.clients.ssh import SSHError
 
@@ -162,13 +167,21 @@ def test_train_teacher_missing_torch_shows_actionable_hint(
 
     result = runner.invoke(
         app,
-        ["workbench", "genesis", "train-teacher", "--n-envs", "1", "--max-iterations", "1"],
+        [
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+        ],
     )
 
     assert result.exit_code == 1, result.output
     normalized = " ".join(result.output.split())
     # Rendered (rich-escaped) extra, not a bare ModuleNotFoundError.
-    assert 'npa[genesis]' in normalized
+    assert "npa[genesis]" in normalized
     assert "-p <project> -n <workbench>" in normalized
     assert "serverless" in normalized
 
@@ -194,7 +207,15 @@ def test_train_teacher_internal_import_error_is_not_masked(
 
     result = runner.invoke(
         app,
-        ["workbench", "genesis", "train-teacher", "--n-envs", "1", "--max-iterations", "1"],
+        [
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+        ],
     )
 
     assert result.exit_code != 0
@@ -213,9 +234,17 @@ def test_train_teacher_rejects_bad_n_envs() -> None:
 
 
 def _mock_genesis_serverless_env(mocker):
-    mocker.patch("npa.execution_preflight.verify_serverless_execution", return_value={"status": "ready"})
-    mocker.patch("npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image)
-    mocker.patch("npa.cli.genesis.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.execution_preflight.verify_serverless_execution",
+        return_value={"status": "ready"},
+    )
+    mocker.patch(
+        "npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image
+    )
+    mocker.patch(
+        "npa.cli.genesis.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1"),
+    )
     mocker.patch(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
         return_value=SimpleNamespace(
@@ -225,7 +254,10 @@ def _mock_genesis_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.genesis.container_image_for_tool", return_value="registry.example/npa-genesis:smoke")
+    mocker.patch(
+        "npa.cli.genesis.container_image_for_tool",
+        return_value="registry.example/npa-genesis:smoke",
+    )
     return mocker.patch("npa.cli.genesis.resolve_subnet", return_value="vpcsubnet-auto")
 
 
@@ -235,8 +267,15 @@ def test_genesis_serverless_requires_output_path(mocker) -> None:
     result = runner.invoke(
         app,
         [
-            "workbench", "genesis", "train-teacher",
-            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
         ],
     )
 
@@ -248,16 +287,32 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     resolver = _mock_genesis_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="genesis-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "genesis", "train-teacher",
-            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
-            "--output-path", "s3://bucket/genesis/", "--submit-only",
-            "--gpu-type", "h200", "--job-name", "genesis-job", "--output-format", "json",
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--submit-only",
+            "--gpu-type",
+            "h200",
+            "--job-name",
+            "genesis-job",
+            "--output-format",
+            "json",
         ],
     )
 
@@ -273,7 +328,9 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
-def test_genesis_worker_environment_uses_the_effective_credential_pair(mocker, monkeypatch):
+def test_genesis_worker_environment_uses_the_effective_credential_pair(
+    mocker, monkeypatch
+):
     from npa.cli.genesis import _serverless_job_env
 
     _mock_genesis_serverless_env(mocker)
@@ -348,13 +405,29 @@ def test_genesis_serverless_preflight_denial_prevents_create(mocker) -> None:
     mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
     check = mocker.patch(
         "npa.execution_preflight.verify_serverless_execution",
-        side_effect=ExecutionPreflightError("storage_access", "task prefix write denied"),
+        side_effect=ExecutionPreflightError(
+            "storage_access", "task prefix write denied"
+        ),
     )
-    result = runner.invoke(app, [
-        "workbench", "genesis", "train-teacher", "--runtime", "serverless",
-        "--output-path", "s3://bucket/genesis/", "--submit-only", "--gpu-type", "h200",
-        "--job-name", "genesis-job", "--output-format", "json",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--submit-only",
+            "--gpu-type",
+            "h200",
+            "--job-name",
+            "genesis-job",
+            "--output-format",
+            "json",
+        ],
+    )
     assert result.exit_code == 1
     assert "task prefix write denied" in result.output
     assert check.call_args.kwargs["project_id"] == "project-1"
@@ -368,7 +441,9 @@ def _genesis_reconnect_provider(mocker):
     from npa.clients.serverless import ServerlessClient
 
     _mock_genesis_serverless_env(mocker)
-    mocker.patch("npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image)
+    mocker.patch(
+        "npa.cli.genesis._pin_serverless_image", side_effect=lambda image: image
+    )
     provider = {"id": "", "create_calls": 0}
 
     def run(args, **_kwargs):
@@ -381,18 +456,39 @@ def _genesis_reconnect_provider(mocker):
             requested = args[args.index(flag) + 1]
             if not provider["id"] or requested not in {provider["id"], "genesis-job"}:
                 return subprocess.CompletedProcess(args, 1, "", "not found")
-        body = json.dumps({
-            "metadata": {"id": provider["id"], "name": "genesis-job", "parent_id": "project-1"},
-            "status": {"state": "RUNNING"},
-        })
+        body = json.dumps(
+            {
+                "metadata": {
+                    "id": provider["id"],
+                    "name": "genesis-job",
+                    "parent_id": "project-1",
+                },
+                "status": {"state": "RUNNING"},
+            }
+        )
         return subprocess.CompletedProcess(args, 0, body, "")
 
-    mocker.patch("npa.cli.genesis.ServerlessClient", side_effect=lambda: ServerlessClient(subprocess_runner=run))
+    mocker.patch(
+        "npa.cli.genesis.ServerlessClient",
+        side_effect=lambda: ServerlessClient(subprocess_runner=run),
+    )
     argv = [
-        "workbench", "genesis", "train-teacher", "--runtime", "serverless",
-        "--output-path", "s3://unit-bucket/genesis/", "--submit-only", "--gpu-type", "h200",
-        "--job-name", "genesis-job", "--output-format", "json",
-        "--image", "registry.example/genesis@sha256:" + "a" * 64,
+        "workbench",
+        "genesis",
+        "train-teacher",
+        "--runtime",
+        "serverless",
+        "--output-path",
+        "s3://unit-bucket/genesis/",
+        "--submit-only",
+        "--gpu-type",
+        "h200",
+        "--job-name",
+        "genesis-job",
+        "--output-format",
+        "json",
+        "--image",
+        "registry.example/genesis@sha256:" + "a" * 64,
     ]
     return provider, argv
 
@@ -420,7 +516,12 @@ def test_genesis_submit_only_pins_image_for_later_supervised_reconnect(mocker):
     argv.remove("--submit-only")
     supervisor = mocker.patch(
         "npa.cli.genesis._supervise_genesis_serverless_job",
-        return_value=JobInfo(id="provider-original", name="genesis-job", project_id="project-1", status="succeeded"),
+        return_value=JobInfo(
+            id="provider-original",
+            name="genesis-job",
+            project_id="project-1",
+            status="succeeded",
+        ),
     )
     second = runner.invoke(app, argv)
     assert second.exit_code == 0, second.output
@@ -432,7 +533,9 @@ def test_genesis_submit_only_pins_image_for_later_supervised_reconnect(mocker):
 
 @pytest.mark.parametrize("change", ["command", "image", "output", "provider_id"])
 @pytest.mark.parametrize("submit_only", [True, False])
-def test_genesis_actual_cli_reconnect_refuses_changed_contract_or_identity(mocker, change, submit_only):
+def test_genesis_actual_cli_reconnect_refuses_changed_contract_or_identity(
+    mocker, change, submit_only
+):
     provider, argv = _genesis_reconnect_provider(mocker)
     first = runner.invoke(app, argv)
     assert first.exit_code == 0, first.output
@@ -450,7 +553,9 @@ def test_genesis_actual_cli_reconnect_refuses_changed_contract_or_identity(mocke
     second = runner.invoke(app, argv)
     assert second.exit_code == 1, second.output
     diagnostic = " ".join(second.output.split())
-    assert "different launch contract" in diagnostic or "not yet observable" in diagnostic
+    assert (
+        "different launch contract" in diagnostic or "not yet observable" in diagnostic
+    )
     assert provider["create_calls"] == 1
     supervisor.assert_not_called()
 
@@ -468,16 +573,30 @@ def test_genesis_serverless_warns_non_hopper_gpu_type(mocker) -> None:
     _mock_genesis_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="genesis-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "genesis", "train-teacher",
-            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
-            "--output-path", "s3://bucket/genesis/", "--submit-only",
-            "--gpu-type", "l40s", "--job-name", "genesis-job",
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--submit-only",
+            "--gpu-type",
+            "l40s",
+            "--job-name",
+            "genesis-job",
         ],
     )
 
@@ -489,16 +608,30 @@ def test_genesis_serverless_uploads_output_dir(mocker) -> None:
     _mock_genesis_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="genesis-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "genesis", "train-teacher",
-            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
-            "--output-path", "s3://bucket/genesis/", "--submit-only",
-            "--gpu-type", "h200", "--job-name", "genesis-job",
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--submit-only",
+            "--gpu-type",
+            "h200",
+            "--job-name",
+            "genesis-job",
         ],
     )
 
@@ -679,12 +812,14 @@ def test_run_multi_gpu_generate_demos_retries_without_egl_device(
 
         def start(self) -> None:
             if self._shard.set_egl_device:
-                self._queue.put({
-                    "rank": self._shard.rank,
-                    "gpu_id": self._shard.gpu_id,
-                    "ok": False,
-                    "error": "RuntimeError: EGL device unavailable",
-                })
+                self._queue.put(
+                    {
+                        "rank": self._shard.rank,
+                        "gpu_id": self._shard.gpu_id,
+                        "ok": False,
+                        "error": "RuntimeError: EGL device unavailable",
+                    }
+                )
                 self.exitcode = 1
                 return
 
@@ -692,18 +827,20 @@ def test_run_multi_gpu_generate_demos_retries_without_egl_device(
             episode_dir = shard_output / f"episode_{self._shard.rank:04d}"
             episode_dir.mkdir(parents=True)
             (episode_dir / "data.json").write_text("{}")
-            self._queue.put({
-                "rank": self._shard.rank,
-                "gpu_id": self._shard.gpu_id,
-                "ok": True,
-                "output_dir": self._shard.output_dir,
-                "result": {
-                    "total_attempted": 1,
-                    "total_successes": 1,
-                    "total_episodes": 1,
-                    "fps": 30,
-                },
-            })
+            self._queue.put(
+                {
+                    "rank": self._shard.rank,
+                    "gpu_id": self._shard.gpu_id,
+                    "ok": True,
+                    "output_dir": self._shard.output_dir,
+                    "result": {
+                        "total_attempted": 1,
+                        "total_successes": 1,
+                        "total_episodes": 1,
+                        "fps": 30,
+                    },
+                }
+            )
             self.exitcode = 0
 
         def join(self) -> None:
@@ -793,11 +930,13 @@ def test_genesis_generate_shard_pins_single_gpu_env(
     seen_env: dict[str, str] = {}
 
     def fake_generate_demos(**_kwargs):
-        seen_env.update({
-            "CUDA_VISIBLE_DEVICES": os.environ["CUDA_VISIBLE_DEVICES"],
-            "QD_VISIBLE_DEVICE": os.environ["QD_VISIBLE_DEVICE"],
-            "EGL_DEVICE_ID": os.environ["EGL_DEVICE_ID"],
-        })
+        seen_env.update(
+            {
+                "CUDA_VISIBLE_DEVICES": os.environ["CUDA_VISIBLE_DEVICES"],
+                "QD_VISIBLE_DEVICE": os.environ["QD_VISIBLE_DEVICE"],
+                "EGL_DEVICE_ID": os.environ["EGL_DEVICE_ID"],
+            }
+        )
         return {"status": "success", "total_episodes": 1}
 
     monkeypatch.setitem(
@@ -1298,7 +1437,9 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     write_config = mocker.patch("npa.clients.config.write_config")
     update_status = mocker.patch("npa.clients.config.update_workbench_app_status")
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
-    deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    deploy_container = mocker.patch(
+        "npa.deploy.configurator.deploy_workbench_container"
+    )
     write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     mocker.patch("npa.deploy.configurator.write_manifest")
 
@@ -1336,11 +1477,17 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     )
     env_vars = write_env.call_args.args[2]
     assert env_vars["NVIDIA_DRIVER_CAPABILITIES"] == "all"
-    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["sim-container"]
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
+        "sim-container"
+    ]
     assert wb_cfg["runtime"] == "container"
     assert deploy_container.call_args.kwargs["group_add"] == ["0", "video", "render"]
     assert deploy_container.call_args.kwargs["devices"] == ["/dev/dri"]
-    assert update_status.call_args_list[0].args == ("proj", "sim-container", "installing")
+    assert update_status.call_args_list[0].args == (
+        "proj",
+        "sim-container",
+        "installing",
+    )
     assert update_status.call_args_list[-1].args == ("proj", "sim-container", "healthy")
 
 
@@ -1358,9 +1505,14 @@ def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None
         ),
     )
     mocker.patch("npa.clients.config.resolve_environment", return_value=None)
-    mocker.patch("npa.clients.config.resolve_credentials", return_value=SimpleNamespace(tokens={}))
+    mocker.patch(
+        "npa.clients.config.resolve_credentials",
+        return_value=SimpleNamespace(tokens={}),
+    )
     mocker.patch("npa.clients.config.list_projects", return_value={})
-    mocker.patch("npa.clients.config.resolve_container_registry", return_value="registry.example")
+    mocker.patch(
+        "npa.clients.config.resolve_container_registry", return_value="registry.example"
+    )
     write_config = mocker.patch("npa.clients.config.write_config")
     update_status = mocker.patch("npa.clients.config.update_workbench_app_status")
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
@@ -1398,7 +1550,9 @@ def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None
     )
 
     assert result.exit_code == 0
-    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["sim-byovm"]
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
+        "sim-byovm"
+    ]
     assert wb_cfg["storage"] == {
         "checkpoint_bucket": "s3://state-bucket/checkpoints/",
         "endpoint_url": "https://storage.example",
@@ -1410,7 +1564,9 @@ def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None
     assert update_status.call_args_list[-1].args == ("proj", "sim-byovm", "healthy")
 
 
-def test_genesis_deploy_vm_keeps_terraform_boot_disk_default(tmp_path: Path, mocker) -> None:
+def test_genesis_deploy_vm_keeps_terraform_boot_disk_default(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.deploy.provisioner.init")
     apply = mocker.patch(
         "npa.deploy.provisioner.apply",

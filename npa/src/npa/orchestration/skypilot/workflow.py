@@ -326,14 +326,10 @@ def _probe_local_api_daemon_cwd(
     daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
-        if cmdline
-        and "-m" in cmdline
-        and "sky.server.server" in cmdline
+        if cmdline and "-m" in cmdline and "sky.server.server" in cmdline
     }
     roots = {
-        pid
-        for pid in daemon_roots
-        if _api_server_port(records[pid][1]) == str(port)
+        pid for pid in daemon_roots if _api_server_port(records[pid][1]) == str(port)
     }
     if caller_network_namespace is not None or caller_mount_namespace is not None:
         # Localhost is scoped by network namespace, not the interpreter or
@@ -450,9 +446,11 @@ def _probe_local_api_daemon_cwd(
     runtime_roots: set[int] = set()
     for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+        if (
             expected_home
-        ).expanduser().absolute():
+            and Path(daemon_home).expanduser().absolute()
+            != Path(expected_home).expanduser().absolute()
+        ):
             return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
@@ -661,8 +659,10 @@ def _ensure_local_api_daemon_cwd_locked(
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
         return _ensure_isolated_api(
-            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
-            environment=env, cwd=cwd,
+            isolated_dir=Path(isolated_api_dir),
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=cwd,
         )
 
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
@@ -684,7 +684,10 @@ def _ensure_local_api_daemon_cwd_locked(
 
 
 def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
-    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+    from npa.orchestration.skypilot.local_api import (
+        IsolatedApiError,
+        ensure_isolated_api,
+    )
 
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
@@ -846,7 +849,8 @@ def submit_workflow(
         controller_context = _controller_region_from_infra(infra, controller_backend)
         global_config = _controller_config_for_execution(
             _load_base_config(runtime_config.global_config_path),
-            controller_backend=controller_backend, infra=infra,
+            controller_backend=controller_backend,
+            infra=infra,
         )
         if controller_context:
             # ``--infra k8s/<context>`` is an exact target, not merely a
@@ -880,8 +884,12 @@ def submit_workflow(
 
         try:
             _target, _target_report, injected = _execution_preflight(
-                docs, project=project, infra=infra, extra_env=env,
-                target=execution_target, global_config=global_config,
+                docs,
+                project=project,
+                infra=infra,
+                extra_env=env,
+                target=execution_target,
+                global_config=global_config,
                 sky_bin=sky_executable,
                 cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
             )
@@ -892,9 +900,13 @@ def submit_workflow(
             env["NPA_SKYPILOT_PROJECT"] = _target.project
         # Native preflight pins the exact project/region in this per-submit
         # configuration; persist the verified version before any controller.
-        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated_config_path.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(generated_config_path)
-        prepared_yaml.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+        prepared_yaml.write_text(
+            yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(prepared_yaml)
 
         cmd = [
@@ -2019,9 +2031,7 @@ def _wait_for_healthy_jobs_controller(
         if (
             "--refresh" in status_args
             and result.returncode != 0
-            and _can_ignore_foreign_controller_refresh(
-                result, env
-            )
+            and _can_ignore_foreign_controller_refresh(result, env)
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -2279,9 +2289,12 @@ def _execution_preflight(*args, **kwargs):
 
 
 def _controller_config_for_execution(base_config, *, controller_backend, infra):
-    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get(
+        "resources"
+    ) or {}
     config = apply_controller_override(
-        base_config, controller_backend=controller_backend,
+        base_config,
+        controller_backend=controller_backend,
         controller_region=_controller_region_from_infra(infra, controller_backend),
     )
     if controller_backend == "nebius" and not configured.get("region"):

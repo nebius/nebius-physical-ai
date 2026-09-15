@@ -221,7 +221,11 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
         return args
     if case.image_tool:
         return ["--image", image_for(case.image_tool)]
-    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }:
         return ["--image", "none"]
     return []
 
@@ -311,7 +315,8 @@ def test_npa_workflow_submit_live_reaches_terminal(
     )
 
     if (
-        os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}
+        os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip()
+        in {"1", "true", "yes"}
         and not os.environ.get("NPA_SRC_S3_URI", "").strip()
     ):
         pytest.skip(
@@ -325,7 +330,12 @@ def test_npa_workflow_submit_live_reaches_terminal(
         # Real full-pipeline execution is covered by the runtime test below.
         return
     submit_payload = parse_json_payload(submitted, forbidden_markers)
-    assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
+    assert submit_payload.get("status") in {
+        "SUBMITTED",
+        "RUNNING",
+        "PENDING",
+        "STARTING",
+    }
     job_id = str(submit_payload.get("job_id") or run_id)
 
     # A case may declare its own budget when it is much slower than the rest
@@ -352,8 +362,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
                     (current.stderr or "")[-500:]
                     or (current.stdout or "")[-500:]
                     or getattr(current, "error", "")
-                    or "(no stderr/stdout; check: sky jobs logs "
-                    f"{job_id})"
+                    or f"(no stderr/stdout; check: sky jobs logs {job_id})"
                 )
                 pytest.fail(
                     f"{case.spec} reached terminal failure status={last_status} "
@@ -365,13 +374,17 @@ def test_npa_workflow_submit_live_reaches_terminal(
             f"last_status={last_status} job_id={job_id}"
         )
     finally:
-        if _cancel_on_timeout() and last_status not in TERMINAL_OK and not _is_terminal_fail(
-            last_status
+        if (
+            _cancel_on_timeout()
+            and last_status not in TERMINAL_OK
+            and not _is_terminal_fail(last_status)
         ):
             # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
-                from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
+                from npa.orchestration.skypilot.workflow_state import (
+                    cancel_workflow_job,
+                )
 
                 runtime = resolve_config()
                 cancel_workflow_job(
@@ -539,12 +552,16 @@ def test_npa_workflow_runtime_live_reaches_terminal(
 
     if case.expected_parallel_tasks > 1:
         parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]
-        assert parallel_waves, f"{case.spec} declared a parallel group but ran none: {waves}"
+        assert parallel_waves, (
+            f"{case.spec} declared a parallel group but ran none: {waves}"
+        )
         launched = sum(len(wave["states"]) for wave in parallel_waves)
         assert launched == case.expected_parallel_tasks
         # Two independent concurrency signals: live RUNNING observations taken
         # while polling, and overlapping submitted/end intervals afterwards.
-        observed = max(wave.get("max_concurrent_observed", 0) for wave in parallel_waves)
+        observed = max(
+            wave.get("max_concurrent_observed", 0) for wave in parallel_waves
+        )
         overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
         assert observed >= 2 or overlaps, (
             "parallel wave never showed concurrent tasks: "
@@ -575,7 +592,9 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
 
-def _assert_transfer_variant(client, bucket, prefix, variant, evaluated, source, folder, read_json):
+def _assert_transfer_variant(
+    client, bucket, prefix, variant, evaluated, source, folder, read_json
+):
     from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 
     clip = variant["clip"]
@@ -589,15 +608,21 @@ def _assert_transfer_variant(client, bucket, prefix, variant, evaluated, source,
     transfer = read_json(base + "transfer.json")
     assert transfer["source_frames"] == alignment["decoded_frames"]
     assert transfer["native_torch_compile"] is False
-    for field in ("control_loader_verified", "text_guardrail_passed", "video_guardrail_passed",
-                  "guardrail_postprocessing_applied"):
+    for field in (
+        "control_loader_verified",
+        "text_guardrail_passed",
+        "video_guardrail_passed",
+        "guardrail_postprocessing_applied",
+    ):
         assert transfer[field] is True
     control = folder / f"{clip}-edges.mkv"
     client.download_file(bucket, prefix + base + "source_edges.mkv", str(control))
     assert video_sha256(control) == transfer["control_sha256"]
 
 
-def _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json):
+def _assert_full_transfer_artifacts(
+    client, bucket, prefix, augment, evaluator, read_json
+):
     import tempfile
     from npa.workflows.paidf_cosmos3_annotation import _validate_caption_coverage
     from npa.workflows.paidf_cosmos3_media import probe_video
@@ -614,12 +639,28 @@ def _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, 
         client.download_file(bucket, prefix + "input/source.mp4", str(source))
         assert probe_video(source) == timeline["prepared"]
         original = folder / "original.mp4"
-        client.download_file(bucket, prefix + "input/original_source.mp4", str(original))
+        client.download_file(
+            bucket, prefix + "input/original_source.mp4", str(original)
+        )
         assert probe_video(original) == timeline["original"]
         for variant in augment["variants"]:
-            _assert_transfer_variant(client, bucket, prefix, variant, clips[variant["clip"]], source, folder, read_json)
-        _assert_transfer_recording(client, bucket, prefix, folder, augment["variants"], read_json)
-    expected = {item["clip"]: item["temporal_alignment"]["generated_sha256"] for item in augment["variants"]}
+            _assert_transfer_variant(
+                client,
+                bucket,
+                prefix,
+                variant,
+                clips[variant["clip"]],
+                source,
+                folder,
+                read_json,
+            )
+        _assert_transfer_recording(
+            client, bucket, prefix, folder, augment["variants"], read_json
+        )
+    expected = {
+        item["clip"]: item["temporal_alignment"]["generated_sha256"]
+        for item in augment["variants"]
+    }
     _validate_caption_coverage(read_json("labeled_augmented/captions.json"), expected)
 
 
@@ -657,18 +698,28 @@ def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_js
             for name in batch.schema.names:
                 if "text" in name.lower() or "body" in name.lower():
                     for row in batch.column(name).to_pylist():
-                        parts.extend(str(value) for value in (row if isinstance(row, list) else [row]))
+                        parts.extend(
+                            str(value)
+                            for value in (row if isinstance(row, list) else [row])
+                        )
         return "\n".join(parts)
 
-    for entity, relative in (("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
-                             ("/pipeline/4_curation", "curation/report.json")):
-        assert json.dumps(read_json(relative), indent=2, sort_keys=True) in document(entity)
+    for entity, relative in (
+        ("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
+        ("/pipeline/4_curation", "curation/report.json"),
+    ):
+        assert json.dumps(read_json(relative), indent=2, sort_keys=True) in document(
+            entity
+        )
     captions = document("/captions/labeled_augmented")
     for variant in variants:
         clip = variant["clip"]
         assert clip + "/" in captions
-        _assert_recorded_video(entities[f"/augmented/{clip}/video"], folder / f"{clip}.mp4",
-                               variant["temporal_alignment"])
+        _assert_recorded_video(
+            entities[f"/augmented/{clip}/video"],
+            folder / f"{clip}.mp4",
+            variant["temporal_alignment"],
+        )
         assert "ACCEPTED" in document(f"/augmented/{clip}/disposition").upper()
 
 
@@ -772,8 +823,12 @@ def _assert_paidf_live_artifacts(
     assert evaluator.get("schema") == "npa.cosmos_evaluator.report.v1"
     assert evaluator.get("engines")
     if spec == "paidf-cosmos3.yaml":
-        _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json)
-        quality_rrd = client.head_object(Bucket=bucket, Key=prefix + "reports/quality-evidence.rrd")
+        _assert_full_transfer_artifacts(
+            client, bucket, prefix, augment, evaluator, read_json
+        )
+        quality_rrd = client.head_object(
+            Bucket=bucket, Key=prefix + "reports/quality-evidence.rrd"
+        )
         assert int(quality_rrd["ContentLength"]) > 0
     decision = read_json("grade/decision.json")
     assert decision.get("decision") in {"promote_checkpoint", "loop_back"}
@@ -869,9 +924,7 @@ def _assert_status_and_zero_launch_resume(
         skypilot_config_args=_skypilot_config_args(),
         resume=True,
     )
-    resumed = parse_runtime_json(
-        RUNNER.invoke(app, resume_args), forbidden_markers
-    )
+    resumed = parse_runtime_json(RUNNER.invoke(app, resume_args), forbidden_markers)
     assert resumed["status"] == "succeeded", resumed
     assert resumed["waves"], resumed
     assert all(wave.get("replayed") is True for wave in resumed["waves"]), resumed

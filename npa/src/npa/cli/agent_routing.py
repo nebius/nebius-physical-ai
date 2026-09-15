@@ -80,7 +80,9 @@ def has_image_content(messages: Sequence[Any] | None) -> bool:
         content = item.get("content")
         if isinstance(content, list):
             for part in content:
-                if isinstance(part, dict) and str(part.get("type", "")).startswith("image"):
+                if isinstance(part, dict) and str(part.get("type", "")).startswith(
+                    "image"
+                ):
                     return True
         elif isinstance(content, str) and "data:image/" in content:
             return True
@@ -187,7 +189,9 @@ def build_model_ladder(
     return ladder
 
 
-def filter_available(ladder: Sequence[str], available: Iterable[str] | None) -> list[str]:
+def filter_available(
+    ladder: Sequence[str], available: Iterable[str] | None
+) -> list[str]:
     """Drop ladder entries the endpoint cannot serve (e.g. missing ``-fast``).
 
     ``available`` is the set of model IDs the Token Factory key actually
@@ -239,7 +243,11 @@ def parse_model_catalog(payload: Any) -> dict[str, list[str]] | None:
             if not isinstance(modality, str) or not modality.strip():
                 return None
             inputs, separator, output = modality.lower().partition("->")
-            if separator and output.strip() == "text" and "text" in inputs.replace(" ", "").split("+"):
+            if (
+                separator
+                and output.strip() == "text"
+                and "text" in inputs.replace(" ", "").split("+")
+            ):
                 chat.append(model)
             elif not separator:
                 unknown.append(model)
@@ -274,7 +282,9 @@ def model_availability(
     unknown = set(catalog["unknown_chat_models"]) if catalog is not None else set()
     selected = next((model for model in candidates if model in chat), None)
     status = "available" if selected else "unavailable"
-    if catalog is None or (selected is None and any(model in unknown for model in candidates)):
+    if catalog is None or (
+        selected is None and any(model in unknown for model in candidates)
+    ):
         status = "unknown"
     ordered = [model for model in candidates if model in observed]
     ordered.extend(model for model in observed if model not in ordered)
@@ -308,7 +318,9 @@ def chat_extra(tier: str, model: str) -> dict[str, Any]:
     return {}
 
 
-def enforce_input_budget(text: str, *, max_chars: int = MAX_INPUT_CHARS) -> tuple[bool, str]:
+def enforce_input_budget(
+    text: str, *, max_chars: int = MAX_INPUT_CHARS
+) -> tuple[bool, str]:
     """Cap a single user turn to ``max_chars``.
 
     Returns ``(within_budget, text_or_trimmed)``. When over budget, the middle
@@ -322,7 +334,9 @@ def enforce_input_budget(text: str, *, max_chars: int = MAX_INPUT_CHARS) -> tupl
     tail_len = max_chars - head_len
     head = value[:head_len].rstrip()
     tail = value[-tail_len:].lstrip() if tail_len > 0 else ""
-    trimmed = head + "\n\n...[input truncated to fit the agent token budget]...\n\n" + tail
+    trimmed = (
+        head + "\n\n...[input truncated to fit the agent token budget]...\n\n" + tail
+    )
     return False, trimmed
 
 

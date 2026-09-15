@@ -23,8 +23,10 @@ pytestmark = pytest.mark.e2e
 @pytest.mark.timeout(0)
 def test_one_then_eight_complete_generation_requests(monkeypatch):
     required = (
-        "NPA_COSMOS3_VIDEO_ENDPOINT", "NPA_COSMOS3_VIDEO_TOKEN",
-        "NPA_COSMOS3_VIDEO_EVIDENCE_DIR", "NPA_COSMOS3_SINGLE_OUTPUT_URI",
+        "NPA_COSMOS3_VIDEO_ENDPOINT",
+        "NPA_COSMOS3_VIDEO_TOKEN",
+        "NPA_COSMOS3_VIDEO_EVIDENCE_DIR",
+        "NPA_COSMOS3_SINGLE_OUTPUT_URI",
         "NPA_COSMOS3_FANOUT_OUTPUT_URI",
     )
     if any(not os.environ.get(name) for name in required):
@@ -40,14 +42,24 @@ def test_one_then_eight_complete_generation_requests(monkeypatch):
         if concurrency == 1:
             result = nano_video_batch(output_path=destination, concurrency=concurrency)
         else:
-            cli = CliRunner().invoke(app, [
-                "workbench", "cosmos3", "nano-video-batch", "--concurrency", "8",
-                "--output-path", destination,
-            ])
+            cli = CliRunner().invoke(
+                app,
+                [
+                    "workbench",
+                    "cosmos3",
+                    "nano-video-batch",
+                    "--concurrency",
+                    "8",
+                    "--output-path",
+                    destination,
+                ],
+            )
             (recovery / "cli-output.txt").write_text(cli.output)
             (recovery / "cli-stdout.txt").write_text(cli.stdout)
             (recovery / "cli-stderr.txt").write_text(cli.stderr)
-            assert cli.exit_code == 0, "Inspect retained CLI output and recovery artifacts"
+            assert cli.exit_code == 0, (
+                "Inspect retained CLI output and recovery artifacts"
+            )
             result = json.loads(cli.stdout)
         assert result["status"] == "succeeded"
         assert result["completed"] == concurrency

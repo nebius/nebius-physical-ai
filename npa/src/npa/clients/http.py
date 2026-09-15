@@ -14,7 +14,9 @@ class ServerError(Exception):
 
 
 class HTTPClient:
-    def __init__(self, base_url: str, *, timeout: float = 30.0, retries: int = 3) -> None:
+    def __init__(
+        self, base_url: str, *, timeout: float = 30.0, retries: int = 3
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._retries = retries
@@ -33,9 +35,7 @@ class HTTPClient:
 
         for attempt in range(self._retries):
             try:
-                resp = httpx.request(
-                    method, url, json=json, timeout=effective_timeout
-                )
+                resp = httpx.request(method, url, json=json, timeout=effective_timeout)
                 if resp.status_code >= 500:
                     raise ServerError(f"Server error {resp.status_code}: {resp.text}")
                 if resp.status_code >= 400:
@@ -44,12 +44,12 @@ class HTTPClient:
             except httpx.ConnectError as exc:
                 last_exc = exc
                 if attempt < self._retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                 continue
             except httpx.TimeoutException as exc:
                 last_exc = exc
                 if attempt < self._retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                 continue
 
         raise ServerError(
@@ -76,13 +76,17 @@ class HTTPClient:
             payload["env_task"] = env_task
         return self._request("POST", "/serve", json=payload)
 
-    def serve_model(self, model: str, *, timeout: float | None = None) -> dict[str, Any]:
+    def serve_model(
+        self, model: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
         return self._request("POST", "/serve", json={"model": model}, timeout=timeout)
 
     def stop_serve(self) -> dict[str, Any]:
         return self._request("DELETE", "/serve")
 
-    def infer(self, observation: dict[str, Any], *, timeout: float = 60.0) -> dict[str, Any]:
+    def infer(
+        self, observation: dict[str, Any], *, timeout: float = 60.0
+    ) -> dict[str, Any]:
         return self._request("POST", "/infer", json=observation, timeout=timeout)
 
     def job_status(self, job_id: str, *, timeout: float = 10.0) -> dict[str, Any]:

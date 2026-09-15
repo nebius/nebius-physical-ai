@@ -46,7 +46,11 @@ def _format_ner(exc: NotEnoughResourcesError, output_format: str) -> str:
     if output_format == "json":
         return _json(data)
 
-    heading = "Quota limit reached." if isinstance(exc, QuotaError) else "Not enough resources to schedule this request."
+    heading = (
+        "Quota limit reached."
+        if isinstance(exc, QuotaError)
+        else "Not enough resources to schedule this request."
+    )
     lines = [f"Error: {heading}", ""]
     for label, value in (
         ("Project", exc.project_id),
@@ -69,7 +73,14 @@ def _format_ner(exc: NotEnoughResourcesError, output_format: str) -> str:
 def _format_auth(exc: AuthError, output_format: str) -> str:
     if output_format == "json":
         return _json({"error": "Auth", "message": exc.message, "hint": exc.hint})
-    return "\n".join(["Error: Nebius authentication failed.", "", f"  Cause: {exc.message}", f"  Hint: {exc.hint}"])
+    return "\n".join(
+        [
+            "Error: Nebius authentication failed.",
+            "",
+            f"  Cause: {exc.message}",
+            f"  Hint: {exc.hint}",
+        ]
+    )
 
 
 def _format_not_found(exc: EndpointNotFoundError, output_format: str) -> str:

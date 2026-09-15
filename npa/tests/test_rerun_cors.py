@@ -206,9 +206,7 @@ def test_storage_cors_cli_is_plan_only_by_default(mocker) -> None:
         desired_rules=(rerun_browser_cors_rule(),),
         changed=True,
     )
-    configure = mocker.patch(
-        "npa.rerun.configure_browser_cors", return_value=plan
-    )
+    configure = mocker.patch("npa.rerun.configure_browser_cors", return_value=plan)
 
     result = runner.invoke(
         app,
@@ -312,7 +310,9 @@ def test_sdk_missing_project_configuration_is_actionable(
     operation.assert_not_called()
 
 
-def test_sdk_explicit_project_id_and_bucket_do_not_resolve_scoped_storage(mocker) -> None:
+def test_sdk_explicit_project_id_and_bucket_do_not_resolve_scoped_storage(
+    mocker,
+) -> None:
     from npa import rerun
 
     storage = mocker.patch(
@@ -321,7 +321,9 @@ def test_sdk_explicit_project_id_and_bucket_do_not_resolve_scoped_storage(mocker
     )
     environment = mocker.patch(
         "npa.rerun.resolve_environment",
-        side_effect=AssertionError("explicit target must bypass environment resolution"),
+        side_effect=AssertionError(
+            "explicit target must bypass environment resolution"
+        ),
     )
     operation = mocker.patch(
         "npa.rerun.plan_bucket_rerun_cors",

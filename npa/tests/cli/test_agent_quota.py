@@ -47,9 +47,7 @@ def _project_scoped_quota_setup(monkeypatch, project_payload: dict) -> list[str]
         assert parent_id == "project-test"
         return project_payload
 
-    monkeypatch.setattr(
-        "npa.clients.nebius.list_quota_allowances", list_allowances
-    )
+    monkeypatch.setattr("npa.clients.nebius.list_quota_allowances", list_allowances)
     return calls
 
 

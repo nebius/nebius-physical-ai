@@ -119,9 +119,7 @@ def test_run_redacts_private_source_values_from_command_and_captured_failure(
 
     monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
     with pytest.raises(RuntimeError) as exc_info:
-        module._run(
-            ["tool", *private_values], capture=True, redactions=private_values
-        )
+        module._run(["tool", *private_values], capture=True, redactions=private_values)
 
     combined = str(exc_info.value) + capsys.readouterr().out
     for private_value in private_values:
@@ -991,9 +989,7 @@ def test_registered_wan_refuses_a_nonaccepted_base_digest(monkeypatch, capsys) -
 
 def test_registered_wan_allows_only_the_explicit_cli_acceptance_candidate() -> None:
     module = _load_module()
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     args = module.argparse.Namespace(
         workload="solution-smoke",
         solution_name="wan2.2",
@@ -1015,9 +1011,7 @@ def test_registered_wan_ambient_live_environment_cannot_authorize_candidate(
     monkeypatch,
 ) -> None:
     module = _load_module()
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_LIVE_GPU", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_REUSE_IMAGE", candidate)
@@ -1034,6 +1028,7 @@ def test_registered_wan_ambient_live_environment_cannot_authorize_candidate(
         module._required_postprocess_key(
             args, base_image=candidate, base_profile="prebuilt"
         )
+
 
 def test_closed_postprocess_registry_ignores_unregistered_solution() -> None:
     from npa.workflows.byof.postprocess import (

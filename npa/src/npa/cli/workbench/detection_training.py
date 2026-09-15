@@ -13,7 +13,10 @@ from typing import Any
 import httpx
 import typer
 
-from npa.orchestration.npa_workflow.submit_credentials import SubmitCredentialContext, resolve_submit_credentials
+from npa.orchestration.npa_workflow.submit_credentials import (
+    SubmitCredentialContext,
+    resolve_submit_credentials,
+)
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 from npa.workbench.detection_training.artifacts import (
     EVAL_METRICS_FILENAME,
@@ -38,7 +41,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-DEFAULT_IMAGE = container_image_for_tool("detection-training", registry=DEFAULT_CONTAINER_REGISTRY)
+DEFAULT_IMAGE = container_image_for_tool(
+    "detection-training", registry=DEFAULT_CONTAINER_REGISTRY
+)
 DEFAULT_NAME = "npa-detection-training"
 DEFAULT_NAMESPACE = "default"
 #: `--gpu-type` shorthand -> the `node.kubernetes.io/instance-type` label to select on.
@@ -65,15 +70,26 @@ def fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = None) -> None:
+def emit(
+    payload: dict[str, Any], *, output: OutputFormat, text: str | None = None
+) -> None:
     if output == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(text if text is not None else "\n".join(f"{key}: {value}" for key, value in payload.items()))
+        typer.echo(
+            text
+            if text is not None
+            else "\n".join(f"{key}: {value}" for key, value in payload.items())
+        )
 
 
 def deploy_cmd(
-    project: str = typer.Option("", "--project", "-p", help="Project alias owning the cluster and output storage."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias owning the cluster and output storage.",
+    ),
     cluster_name: str = typer.Option(
         "",
         "--cluster-name",
@@ -81,28 +97,70 @@ def deploy_cmd(
             "Exact NPA cluster context. Empty selects the selected project's sole saved cluster."
         ),
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    image: str = typer.Option("", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."),
-    name: str = typer.Option(DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    image: str = typer.Option(
+        "", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."
+    ),
+    name: str = typer.Option(
+        DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
-    input_path: str = typer.Option(DEFAULT_LANCE_URI, "--input-path", help="Default LanceDB input URI."),
+    input_path: str = typer.Option(
+        DEFAULT_LANCE_URI, "--input-path", help="Default LanceDB input URI."
+    ),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
-    gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type: h100, b200, l40s, or rtxpro6000."),
-    node_selector_key: str = typer.Option("node.kubernetes.io/instance-type", "--node-selector-key", help="GPU node selector label key."),
-    node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
-    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
-    state_pvc: str = typer.Option("", "--state-pvc", help="Existing persistent volume claim for run records; defaults to a retained claim created for this service."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    auth_mode: str = typer.Option("token", "--auth-mode", help="Auth mode: none or token. Defaults to token (secure)."),
+    gpu_type: str = typer.Option(
+        "h100", "--gpu-type", help="GPU type: h100, b200, l40s, or rtxpro6000."
+    ),
+    node_selector_key: str = typer.Option(
+        "node.kubernetes.io/instance-type",
+        "--node-selector-key",
+        help="GPU node selector label key.",
+    ),
+    node_selector_value: str = typer.Option(
+        "", "--node-selector-value", help="GPU node selector label value override."
+    ),
+    image_pull_secret: str = typer.Option(
+        "",
+        "--image-pull-secret",
+        help="Existing operator-managed Kubernetes imagePullSecret for a private registry.",
+    ),
+    state_pvc: str = typer.Option(
+        "",
+        "--state-pvc",
+        help="Existing persistent volume claim for run records; defaults to a retained claim created for this service.",
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    auth_mode: str = typer.Option(
+        "token",
+        "--auth-mode",
+        help="Auth mode: none or token. Defaults to token (secure).",
+    ),
     insecure_no_auth: bool = typer.Option(
         False,
         "--insecure-no-auth",
         help="Explicitly deploy without token auth (overrides --auth-mode to none). Not recommended.",
     ),
-    destroy: bool = typer.Option(False, "--destroy", help="Delete the Kubernetes service, deployment, and secret."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print Kubernetes manifest without applying it."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    destroy: bool = typer.Option(
+        False,
+        "--destroy",
+        help="Delete the Kubernetes service, deployment, and secret.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print Kubernetes manifest without applying it."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy the detection-training service to an NPA Workbench Kubernetes cluster."""
     if port < 1024 or port > 65535:
@@ -113,18 +171,43 @@ def deploy_cmd(
         fail("--auth-mode must be none or token")
     if not output_path and not destroy:
         fail("--output-path is required")
-    resolved_kubeconfig = _resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    resolved_kubeconfig = _resolve_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     if destroy:
         if not dry_run:
-            identity = _deployment_cluster(project=project, cluster_name=cluster_name, kubeconfig=kubeconfig)
+            identity = _deployment_cluster(
+                project=project, cluster_name=cluster_name, kubeconfig=kubeconfig
+            )
             resolved_kubeconfig = str(identity.kubeconfig)
-        _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "secret", f"{name}-env", "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
+        _kubectl(
+            ["delete", "service", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            ["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            [
+                "delete",
+                "secret",
+                f"{name}-env",
+                "-n",
+                namespace,
+                "--ignore-not-found=true",
+            ],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
         emit({"status": "deleted", "name": name, "namespace": namespace}, output=output)
         return
 
-    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
+    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(
+        gpu_type.strip().lower()
+    )
     if not selector_value:
         fail(
             "--gpu-type must be one of "
@@ -149,25 +232,38 @@ def deploy_cmd(
     if dry_run:
         typer.echo(json.dumps(_redact_manifest(manifest), indent=2, sort_keys=True))
         return
-    identity = _deployment_cluster(project=project, cluster_name=cluster_name, kubeconfig=kubeconfig)
+    identity = _deployment_cluster(
+        project=project, cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     resolved_kubeconfig = str(identity.kubeconfig)
     try:
-        from npa.execution_preflight import resolve_execution_target, verify_execution_target
+        from npa.execution_preflight import (
+            resolve_execution_target,
+            verify_execution_target,
+        )
 
         credentials = resolve_submit_credentials(project=identity.project_alias)
         target = resolve_execution_target(
-            project=identity.project_alias, project_id=identity.project_id,
-            context=identity.context, output_uris=[output_path.rstrip("/") + "/"],
+            project=identity.project_alias,
+            project_id=identity.project_id,
+            context=identity.context,
+            output_uris=[output_path.rstrip("/") + "/"],
             credentials=credentials,
-            provenance={"outputs": "cli.output-path.directory", "context": "verified.cluster"},
+            provenance={
+                "outputs": "cli.output-path.directory",
+                "context": "verified.cluster",
+            },
         )
         preflight = verify_execution_target(
             target,
             gpu_check=lambda: _verify_deployment_gpu(
-                context=identity.context, kubeconfig=resolved_kubeconfig,
-                selector_key=node_selector_key, selector_value=selector_value,
+                context=identity.context,
+                kubeconfig=resolved_kubeconfig,
+                selector_key=node_selector_key,
+                selector_value=selector_value,
                 gpu_type=gpu_type,
-                deployment_name=name, namespace=namespace,
+                deployment_name=name,
+                namespace=namespace,
             ),
         )
     except (RuntimeError, ValueError) as exc:
@@ -180,11 +276,26 @@ def deploy_cmd(
             err=True,
         )
     _provision_service_secret(
-        name=name, namespace=namespace, kubeconfig=resolved_kubeconfig,
-        env=_service_env(input_path=input_path, output_path=output_path, auth_mode=auth_mode, token_env=token_env, port=port, credentials=credentials, region=target.region),
+        name=name,
+        namespace=namespace,
+        kubeconfig=resolved_kubeconfig,
+        env=_service_env(
+            input_path=input_path,
+            output_path=output_path,
+            auth_mode=auth_mode,
+            token_env=token_env,
+            port=port,
+            credentials=credentials,
+            region=target.region,
+        ),
     )
-    _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
-    _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
+    _kubectl(
+        ["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig
+    )
+    _kubectl(
+        ["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"],
+        kubeconfig=resolved_kubeconfig,
+    )
     endpoint = f"http://{name}.{namespace}.svc.cluster.local:{port}"
     emit(
         {
@@ -285,7 +396,9 @@ def wait_for_training_run(
             fail(f"detection-training run {run_id} failed")
         if time.monotonic() >= deadline:
             typer.echo(json.dumps(status_payload, indent=2, sort_keys=True), err=True)
-            fail(f"detection-training run {run_id} did not complete within {timeout_seconds:g}s")
+            fail(
+                f"detection-training run {run_id} did not complete within {timeout_seconds:g}s"
+            )
         time.sleep(max(poll_seconds, 0.0))
 
 
@@ -302,23 +415,48 @@ def _assert_training_run_is_complete(payload: dict[str, Any]) -> None:
 
 def train_cmd(
     view: str = typer.Option(..., "--view", help="Lance materialized view name."),
-    output_uri: str = typer.Option("", "--output-uri", "--output-path", help="S3/local output URI."),
-    data_path: str = typer.Option("", "--data-path", help="Custom LanceDB training data URI."),
-    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="Compatibility alias for --data-path."),
+    output_uri: str = typer.Option(
+        "", "--output-uri", "--output-path", help="S3/local output URI."
+    ),
+    data_path: str = typer.Option(
+        "", "--data-path", help="Custom LanceDB training data URI."
+    ),
+    lance_uri: str = typer.Option(
+        DEFAULT_LANCE_URI,
+        "--lance-uri",
+        "--input-path",
+        help="Compatibility alias for --data-path.",
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic override as KEY=VALUE. Supported keys map to detection-training request fields.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
-    num_classes: int | None = typer.Option(None, "--num-classes", help="Detector class count including background; inferred from --label-map, otherwise 10."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
+    num_classes: int | None = typer.Option(
+        None,
+        "--num-classes",
+        help="Detector class count including background; inferred from --label-map, otherwise 10.",
+    ),
     label_map: str = typer.Option(
         "",
         "--label-map",
@@ -326,21 +464,37 @@ def train_cmd(
     ),
     epochs: int = typer.Option(10, "--epochs", help="Training epochs."),
     batch_size: int = typer.Option(8, "--batch-size", help="Training batch size."),
-    learning_rate: float = typer.Option(0.005, "--learning-rate", help="SGD learning rate."),
-    validation_filter_sql: str = typer.Option("", "--validation-filter-sql", help="Optional validation filter SQL."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
+    learning_rate: float = typer.Option(
+        0.005, "--learning-rate", help="SGD learning rate."
+    ),
+    validation_filter_sql: str = typer.Option(
+        "", "--validation-filter-sql", help="Optional validation filter SQL."
+    ),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
     wait: bool = typer.Option(
         False,
         "--wait/--no-wait",
         help="Poll /status until the run completes, and fail if it does not.",
     ),
-    poll_seconds: float = typer.Option(30.0, "--poll-seconds", help="Interval between --wait polls."),
+    poll_seconds: float = typer.Option(
+        30.0, "--poll-seconds", help="Interval between --wait polls."
+    ),
     timeout_seconds: float = typer.Option(
         21600.0, "--timeout-seconds", help="Give up waiting after this many seconds."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Start a detection-training run."""
     checkpoint_s3 = CheckpointS3Settings(
@@ -374,7 +528,14 @@ def train_cmd(
     ).model_dump(mode="json")
     if service:
         resolved_endpoint = resolve_endpoint(endpoint)
-        result = request_json("POST", resolved_endpoint, "/train", payload=payload, token_env=token_env, timeout=60.0)
+        result = request_json(
+            "POST",
+            resolved_endpoint,
+            "/train",
+            payload=payload,
+            token_env=token_env,
+            timeout=60.0,
+        )
         if wait:
             result = wait_for_training_run(
                 str(result.get("run_id") or ""),
@@ -387,7 +548,11 @@ def train_cmd(
         from npa.sdk.workbench.detection_training import train
 
         result = train(**payload).model_dump(mode="json")
-    emit(result, output=output, text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}")
+    emit(
+        result,
+        output=output,
+        text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}",
+    )
 
 
 def eval_cmd(
@@ -399,9 +564,15 @@ def eval_cmd(
             "OUTPUT prefix to search instead."
         ),
     ),
-    eval_view: str = typer.Option(..., "--eval-view", help="Lance materialized view to evaluate."),
-    output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
-    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
+    eval_view: str = typer.Option(
+        ..., "--eval-view", help="Lance materialized view to evaluate."
+    ),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", "--output-path", help="S3/local output URI."
+    ),
+    lance_uri: str = typer.Option(
+        DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."
+    ),
     discover_checkpoint: bool = typer.Option(
         False,
         "--discover-checkpoint/--no-discover-checkpoint",
@@ -425,14 +596,26 @@ def eval_cmd(
         "--write-canonical-metrics/--no-write-canonical-metrics",
         help="Publish the eval response to <output-uri>/metrics.json.",
     ),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Evaluate a detection-training checkpoint."""
     if not checkpoint_uri.strip():
-        fail("--checkpoint-uri is required (with --discover-checkpoint it is the search prefix)")
+        fail(
+            "--checkpoint-uri is required (with --discover-checkpoint it is the search prefix)"
+        )
     resolved_endpoint = resolve_endpoint(endpoint) if service else ""
     if discover_checkpoint:
         if not service:
@@ -450,7 +633,14 @@ def eval_cmd(
         label_map=parse_label_map(label_map),
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolved_endpoint, "/eval", payload=payload, token_env=token_env, timeout=900.0)
+        result = request_json(
+            "POST",
+            resolved_endpoint,
+            "/eval",
+            payload=payload,
+            token_env=token_env,
+            timeout=900.0,
+        )
         # The template closed with a `jq -e` numeric check: a service can answer 200 with a
         # null mAP and the stage would otherwise report success on an unusable report.
         try:
@@ -464,13 +654,21 @@ def eval_cmd(
         result = sdk_eval(**payload).model_dump(mode="json")
     if write_canonical_metrics:
         result["metrics_uri"] = write_eval_metrics(result, output_uri=output_uri)
-    emit(result, output=output, text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}")
+    emit(
+        result,
+        output=output,
+        text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}",
+    )
 
 
-def resolve_checkpoint_from_runs(output_uri: str, *, endpoint: str, token_env: str) -> str:
+def resolve_checkpoint_from_runs(
+    output_uri: str, *, endpoint: str, token_env: str
+) -> str:
     """Ask ``/runs`` for the checkpoint the last completed run under ``output_uri`` wrote."""
 
-    runs_payload = request_json("GET", endpoint, "/runs", token_env=token_env, timeout=60.0)
+    runs_payload = request_json(
+        "GET", endpoint, "/runs", token_env=token_env, timeout=60.0
+    )
     runs = runs_payload.get("runs")
     if not isinstance(runs, list):
         fail(f"/runs did not return a runs list: {runs_payload!r}")
@@ -504,10 +702,20 @@ def write_eval_metrics(payload: dict[str, Any], *, output_uri: str) -> str:
 
 def status_cmd(
     run_id: str = typer.Option(..., "--run-id", help="Training run ID."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Fetch training run status."""
     if service:
@@ -523,18 +731,38 @@ def status_cmd(
         from npa.sdk.workbench.detection_training import status
 
         result = status(run_id=run_id).model_dump(mode="json")
-    emit(result, output=output, text=f"status: {result.get('status')}\nepochs_completed: {result.get('epochs_completed')}")
+    emit(
+        result,
+        output=output,
+        text=f"status: {result.get('status')}\nepochs_completed: {result.get('epochs_completed')}",
+    )
 
 
 def system_info_cmd(
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show detection-training runtime information."""
     if service:
-        result = request_json("GET", resolve_endpoint(endpoint), "/system-info", token_env=token_env, timeout=30.0)
+        result = request_json(
+            "GET",
+            resolve_endpoint(endpoint),
+            "/system-info",
+            token_env=token_env,
+            timeout=30.0,
+        )
     else:
         from npa.workbench.detection_training.service import system_info_payload
 
@@ -543,9 +771,17 @@ def system_info_cmd(
 
 
 def list_cmd(
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
     cluster_name: str = typer.Option(
         "",
         "--cluster-name",
@@ -554,14 +790,31 @@ def list_cmd(
             "ambient kubeconfig, i.e. the cluster `kubectl` is already pointed at."
         ),
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace for local listing."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace for local listing."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List service-managed runs or Kubernetes resources."""
     if service:
-        result = request_json("GET", resolve_endpoint(endpoint), "/runs", token_env=token_env, timeout=30.0)
-        emit(result, output=output, text="\n".join(run["run_id"] for run in result.get("runs", [])) or "No runs found.")
+        result = request_json(
+            "GET",
+            resolve_endpoint(endpoint),
+            "/runs",
+            token_env=token_env,
+            timeout=30.0,
+        )
+        emit(
+            result,
+            output=output,
+            text="\n".join(run["run_id"] for run in result.get("runs", []))
+            or "No runs found.",
+        )
         return
     stdout = _kubectl(
         [
@@ -575,12 +828,18 @@ def list_cmd(
             "json",
         ],
         capture=True,
-        kubeconfig=_resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig),
+        kubeconfig=_resolve_kubeconfig(
+            cluster_name=cluster_name, kubeconfig=kubeconfig
+        ),
     )
     data = json.loads(stdout or "{}")
     names = [item.get("metadata", {}).get("name", "") for item in data.get("items", [])]
     result = {"namespace": namespace, "resources": names, "count": len(names)}
-    emit(result, output=output, text="\n".join(names) or "No detection-training resources found.")
+    emit(
+        result,
+        output=output,
+        text="\n".join(names) or "No detection-training resources found.",
+    )
 
 
 def resolve_endpoint(endpoint: str) -> str:
@@ -617,7 +876,9 @@ def request_json(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        fail(f"Detection-training request failed ({exc.response.status_code}): {exc.response.text.strip()}")
+        fail(
+            f"Detection-training request failed ({exc.response.status_code}): {exc.response.text.strip()}"
+        )
     except httpx.HTTPError as exc:
         fail(f"Cannot reach detection-training endpoint {endpoint}: {exc}")
     try:
@@ -651,31 +912,70 @@ def _kubernetes_manifest(
         "apiVersion": "v1",
         "kind": "List",
         "items": [
-            *([] if state_pvc else [{
-                "apiVersion": "v1", "kind": "PersistentVolumeClaim",
-                "metadata": {"name": f"{name}-state", "namespace": namespace},
-                "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
-            }]),
+            *(
+                []
+                if state_pvc
+                else [
+                    {
+                        "apiVersion": "v1",
+                        "kind": "PersistentVolumeClaim",
+                        "metadata": {"name": f"{name}-state", "namespace": namespace},
+                        "spec": {
+                            "accessModes": ["ReadWriteOnce"],
+                            "resources": {"requests": {"storage": "1Gi"}},
+                        },
+                    }
+                ]
+            ),
             {
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {
                     "name": name,
                     "namespace": namespace,
-                    "labels": {"app.kubernetes.io/name": "npa-detection-training", "app.kubernetes.io/instance": name},
+                    "labels": {
+                        "app.kubernetes.io/name": "npa-detection-training",
+                        "app.kubernetes.io/instance": name,
+                    },
                 },
                 "spec": {
                     "replicas": 1,
                     "strategy": {"type": "Recreate"},
                     "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
                     "template": {
-                        "metadata": {"labels": {"app.kubernetes.io/name": "npa-detection-training", "app.kubernetes.io/instance": name}},
+                        "metadata": {
+                            "labels": {
+                                "app.kubernetes.io/name": "npa-detection-training",
+                                "app.kubernetes.io/instance": name,
+                            }
+                        },
                         "spec": {
-                            "securityContext": {"runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000},
-                            "volumes": [{"name": "run-state", "persistentVolumeClaim": {"claimName": state_pvc or f"{name}-state"}}],
+                            "securityContext": {
+                                "runAsUser": 1000,
+                                "runAsGroup": 1000,
+                                "fsGroup": 1000,
+                            },
+                            "volumes": [
+                                {
+                                    "name": "run-state",
+                                    "persistentVolumeClaim": {
+                                        "claimName": state_pvc or f"{name}-state"
+                                    },
+                                }
+                            ],
                             "nodeSelector": {node_selector_key: node_selector_value},
-                            **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
-                            "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+                            **(
+                                {"imagePullSecrets": [{"name": image_pull_secret}]}
+                                if image_pull_secret
+                                else {}
+                            ),
+                            "tolerations": [
+                                {
+                                    "key": "nvidia.com/gpu",
+                                    "operator": "Exists",
+                                    "effect": "NoSchedule",
+                                }
+                            ],
                             "containers": [
                                 {
                                     "name": "service",
@@ -683,13 +983,27 @@ def _kubernetes_manifest(
                                     "imagePullPolicy": "Always",
                                     "ports": [{"containerPort": port, "name": "http"}],
                                     "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
-                                    "env": [{"name": "DETECTION_TRAINING_STATE_DIR", "value": "/var/lib/npa/detection-training"}],
-                                    "volumeMounts": [{"name": "run-state", "mountPath": "/var/lib/npa/detection-training"}],
+                                    "env": [
+                                        {
+                                            "name": "DETECTION_TRAINING_STATE_DIR",
+                                            "value": "/var/lib/npa/detection-training",
+                                        }
+                                    ],
+                                    "volumeMounts": [
+                                        {
+                                            "name": "run-state",
+                                            "mountPath": "/var/lib/npa/detection-training",
+                                        }
+                                    ],
                                     "resources": {
                                         "limits": {"nvidia.com/gpu": "1"},
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
-                                    "readinessProbe": {"httpGet": {"path": "/readyz", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/readyz", "port": "http"},
+                                        "initialDelaySeconds": 10,
+                                        "periodSeconds": 10,
+                                    },
                                     "securityContext": {
                                         "allowPrivilegeEscalation": False,
                                         "capabilities": {"drop": ["ALL"]},
@@ -714,7 +1028,16 @@ def _kubernetes_manifest(
     }
 
 
-def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env: str, port: int, credentials: SubmitCredentialContext, region: str) -> dict[str, str]:
+def _service_env(
+    *,
+    input_path: str,
+    output_path: str,
+    auth_mode: str,
+    token_env: str,
+    port: int,
+    credentials: SubmitCredentialContext,
+    region: str,
+) -> dict[str, str]:
     env = {
         "DETECTION_TRAINING_AUTH_MODE": auth_mode,
         "DETECTION_TRAINING_PORT": str(port),
@@ -742,11 +1065,15 @@ def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env
 
 
 def _deployment_cluster(*, project: str, cluster_name: str, kubeconfig: str):
-    from npa.cluster.identity import ClusterIdentityError, resolve_verified_cluster_identity
+    from npa.cluster.identity import (
+        ClusterIdentityError,
+        resolve_verified_cluster_identity,
+    )
 
     try:
         identity = resolve_verified_cluster_identity(
-            project=project, context=cluster_name,
+            project=project,
+            context=cluster_name,
             kubeconfig=Path(kubeconfig) if kubeconfig else None,
         )
     except ClusterIdentityError:
@@ -756,11 +1083,22 @@ def _deployment_cluster(*, project: str, cluster_name: str, kubeconfig: str):
     return identity
 
 
-def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, selector_value: str, gpu_type: str, deployment_name: str, namespace: str) -> None:
+def _verify_deployment_gpu(
+    *,
+    context: str,
+    kubeconfig: str,
+    selector_key: str,
+    selector_value: str,
+    gpu_type: str,
+    deployment_name: str,
+    namespace: str,
+) -> None:
     from npa.execution_preflight import ExecutionPreflightError
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
-        KubernetesGpuCatalog, UnsatisfiableAcceleratorError,
-        discover_kubernetes_gpu_inventory, resolve_kubernetes_accelerator,
+        KubernetesGpuCatalog,
+        UnsatisfiableAcceleratorError,
+        discover_kubernetes_gpu_inventory,
+        resolve_kubernetes_accelerator,
     )
 
     pod_snapshot: list[dict[str, Any]] | None = None
@@ -768,7 +1106,11 @@ def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, 
     def capture_inventory(command, **kwargs):
         nonlocal pod_snapshot
         result = subprocess.run(command, **kwargs)
-        if "pods" in command and "--all-namespaces" in command and result.returncode == 0:
+        if (
+            "pods" in command
+            and "--all-namespaces" in command
+            and result.returncode == 0
+        ):
             try:
                 payload = json.loads(result.stdout)
                 if isinstance(payload, dict) and isinstance(payload.get("items"), list):
@@ -777,21 +1119,45 @@ def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, 
                 pod_snapshot = None
         return result
 
-    inventory = discover_kubernetes_gpu_inventory(context=context, kubeconfig=kubeconfig, runner=capture_inventory)
+    inventory = discover_kubernetes_gpu_inventory(
+        context=context, kubeconfig=kubeconfig, runner=capture_inventory
+    )
     if inventory.error:
-        raise ExecutionPreflightError("gpu", "exact cluster GPU inventory is unavailable", status="unknown")
+        raise ExecutionPreflightError(
+            "gpu", "exact cluster GPU inventory is unavailable", status="unknown"
+        )
     if pod_snapshot is None:
-        raise ExecutionPreflightError("gpu", "pod allocation snapshot is incomplete", status="unknown")
+        raise ExecutionPreflightError(
+            "gpu", "pod allocation snapshot is incomplete", status="unknown"
+        )
     if inventory.unbound_pending_gpu_pods:
-        raise ExecutionPreflightError("gpu", "unbound GPU workloads make free capacity uncertain", status="unknown")
-    candidates = [node for node in inventory.nodes if dict(node.labels).get(selector_key) == selector_value]
+        raise ExecutionPreflightError(
+            "gpu",
+            "unbound GPU workloads make free capacity uncertain",
+            status="unknown",
+        )
+    candidates = [
+        node
+        for node in inventory.nodes
+        if dict(node.labels).get(selector_key) == selector_value
+    ]
     compatible = []
     for node in candidates:
-        if not (node.ready and node.schedulable and node.allocatable >= 1 and node.capacity >= 1):
+        if not (
+            node.ready
+            and node.schedulable
+            and node.allocatable >= 1
+            and node.capacity >= 1
+        ):
             continue
         for product in node.products:
             try:
-                resolve_kubernetes_accelerator(f"{gpu_type}:1", catalog=KubernetesGpuCatalog({product: frozenset({1})}, context=context))
+                resolve_kubernetes_accelerator(
+                    f"{gpu_type}:1",
+                    catalog=KubernetesGpuCatalog(
+                        {product: frozenset({1})}, context=context
+                    ),
+                )
             except UnsatisfiableAcceleratorError:
                 continue
             compatible.append(node)
@@ -800,63 +1166,121 @@ def _verify_deployment_gpu(*, context: str, kubeconfig: str, selector_key: str, 
         return
     if compatible:
         credits = _owned_deployment_gpu_credits(
-            context=context, kubeconfig=kubeconfig, namespace=namespace,
-            deployment_name=deployment_name, pods=pod_snapshot,
+            context=context,
+            kubeconfig=kubeconfig,
+            namespace=namespace,
+            deployment_name=deployment_name,
+            pods=pod_snapshot,
         )
-        if any(node.free + min(node.committed, credits.get(node.name, 0)) >= 1 for node in compatible):
+        if any(
+            node.free + min(node.committed, credits.get(node.name, 0)) >= 1
+            for node in compatible
+        ):
             return
-    raise ExecutionPreflightError("gpu", "requested selector and GPU product have no free capacity or verified owned replacement allocation")
+    raise ExecutionPreflightError(
+        "gpu",
+        "requested selector and GPU product have no free capacity or verified owned replacement allocation",
+    )
 
 
-def _owned_deployment_gpu_credits(*, context: str, kubeconfig: str, namespace: str, deployment_name: str, pods: list[dict[str, Any]] | None) -> dict[str, int]:
+def _owned_deployment_gpu_credits(
+    *,
+    context: str,
+    kubeconfig: str,
+    namespace: str,
+    deployment_name: str,
+    pods: list[dict[str, Any]] | None,
+) -> dict[str, int]:
     """Credit only current Recreate allocations using immutable controller UIDs."""
     from npa.execution_preflight import ExecutionPreflightError
     from npa.orchestration.skypilot.k8s_gpu_catalog import _pod_commitment
 
     if pods is None:
-        raise ExecutionPreflightError("gpu", "pod allocation snapshot is unavailable", status="unknown")
+        raise ExecutionPreflightError(
+            "gpu", "pod allocation snapshot is unavailable", status="unknown"
+        )
 
     def read(args):
-        command = ["kubectl", "--kubeconfig", kubeconfig, "--context", context, "-n", namespace, *args, "-o", "json"]
+        command = [
+            "kubectl",
+            "--kubeconfig",
+            kubeconfig,
+            "--context",
+            context,
+            "-n",
+            namespace,
+            *args,
+            "-o",
+            "json",
+        ]
         try:
             result = subprocess.run(command, capture_output=True, text=True, check=True)
             return json.loads(result.stdout) if result.stdout.strip() else None
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            raise ExecutionPreflightError("gpu", "deployment allocation ownership is unavailable", status="unknown") from exc
+            raise ExecutionPreflightError(
+                "gpu",
+                "deployment allocation ownership is unavailable",
+                status="unknown",
+            ) from exc
 
     deployment = read(["get", "deployment", deployment_name, "--ignore-not-found"])
     if deployment is None:
         return {}
     metadata = deployment.get("metadata", {}) if isinstance(deployment, dict) else {}
     deployment_uid = metadata.get("uid")
-    if not deployment_uid or metadata.get("name") != deployment_name or metadata.get("namespace") != namespace:
-        raise ExecutionPreflightError("gpu", "deployment allocation identity is incomplete", status="unknown")
+    if (
+        not deployment_uid
+        or metadata.get("name") != deployment_name
+        or metadata.get("namespace") != namespace
+    ):
+        raise ExecutionPreflightError(
+            "gpu", "deployment allocation identity is incomplete", status="unknown"
+        )
     if deployment.get("spec", {}).get("strategy", {}).get("type") != "Recreate":
         return {}
     replica_sets = read(["get", "replicasets"])
-    if not isinstance(replica_sets, dict) or not isinstance(replica_sets.get("items"), list):
-        raise ExecutionPreflightError("gpu", "replica set ownership is incomplete", status="unknown")
+    if not isinstance(replica_sets, dict) or not isinstance(
+        replica_sets.get("items"), list
+    ):
+        raise ExecutionPreflightError(
+            "gpu", "replica set ownership is incomplete", status="unknown"
+        )
 
     def controller_uid(item, kind):
-        owners = [owner for owner in item.get("metadata", {}).get("ownerReferences", []) if isinstance(owner, dict) and owner.get("controller") is True]
-        return owners[0].get("uid") if len(owners) == 1 and owners[0].get("kind") == kind else None
+        owners = [
+            owner
+            for owner in item.get("metadata", {}).get("ownerReferences", [])
+            if isinstance(owner, dict) and owner.get("controller") is True
+        ]
+        return (
+            owners[0].get("uid")
+            if len(owners) == 1 and owners[0].get("kind") == kind
+            else None
+        )
 
     owned_sets = {
-        replica_set["metadata"]["uid"] for replica_set in replica_sets["items"]
-        if isinstance(replica_set, dict) and replica_set.get("metadata", {}).get("namespace") == namespace
+        replica_set["metadata"]["uid"]
+        for replica_set in replica_sets["items"]
+        if isinstance(replica_set, dict)
+        and replica_set.get("metadata", {}).get("namespace") == namespace
         and replica_set.get("metadata", {}).get("uid")
         and controller_uid(replica_set, "Deployment") == deployment_uid
     }
     credits: dict[str, int] = {}
     seen = set()
     for pod in pods:
-        if not isinstance(pod, dict) or pod.get("metadata", {}).get("namespace") != namespace:
+        if (
+            not isinstance(pod, dict)
+            or pod.get("metadata", {}).get("namespace") != namespace
+        ):
             continue
         if controller_uid(pod, "ReplicaSet") not in owned_sets:
             continue
         pod_uid = pod.get("metadata", {}).get("uid")
         if not pod_uid or pod_uid in seen:
-            raise ExecutionPreflightError("gpu", "pod allocation identity is incomplete", status="unknown")
+            raise ExecutionPreflightError(
+                "gpu", "pod allocation identity is incomplete", status="unknown"
+            )
         seen.add(pod_uid)
         node_name, gpu, *_ = _pod_commitment(pod)
         if node_name and gpu:
@@ -864,7 +1288,9 @@ def _owned_deployment_gpu_credits(*, context: str, kubeconfig: str, namespace: s
     return credits
 
 
-def _provision_service_secret(*, name: str, namespace: str, kubeconfig: str, env: dict[str, str]) -> None:
+def _provision_service_secret(
+    *, name: str, namespace: str, kubeconfig: str, env: dict[str, str]
+) -> None:
     """Provision only the Secret through private files/stdin; never print its payload."""
     with tempfile.TemporaryDirectory(prefix="npa-detection-secret-") as temporary:
         arguments = ["create", "secret", "generic", f"{name}-env", "-n", namespace]
@@ -874,8 +1300,19 @@ def _provision_service_secret(*, name: str, namespace: str, kubeconfig: str, env
             with os.fdopen(fd, "w") as handle:
                 handle.write(value)
             arguments.append(f"--from-file={key}={path}")
-        secret = _kubectl([*arguments, "--dry-run=client", "-o", "json"], capture=True, kubeconfig=kubeconfig, redact_errors=True)
-        _kubectl(["apply", "--server-side", "-f", "-"], stdin=secret, capture=True, kubeconfig=kubeconfig, redact_errors=True)
+        secret = _kubectl(
+            [*arguments, "--dry-run=client", "-o", "json"],
+            capture=True,
+            kubeconfig=kubeconfig,
+            redact_errors=True,
+        )
+        _kubectl(
+            ["apply", "--server-side", "-f", "-"],
+            stdin=secret,
+            capture=True,
+            kubeconfig=kubeconfig,
+            redact_errors=True,
+        )
 
 
 def _kubectl(
@@ -895,12 +1332,16 @@ def _kubectl(
         typer.echo(" ".join(cmd))
         return ""
     try:
-        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+        result = subprocess.run(
+            cmd, input=stdin, text=True, capture_output=True, check=True
+        )
     except FileNotFoundError:
         fail("kubectl is not installed or not on PATH")
     except subprocess.CalledProcessError as exc:
         if redact_errors:
-            fail("Kubernetes Secret provisioning failed; secret-bearing provider output withheld")
+            fail(
+                "Kubernetes Secret provisioning failed; secret-bearing provider output withheld"
+            )
         detail = (exc.stderr or exc.stdout or "").strip()
         fail(f"kubectl command failed: {detail}")
     if not capture and result.stdout.strip():

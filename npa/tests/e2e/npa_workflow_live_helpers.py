@@ -1180,7 +1180,9 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     return settings
 
 
-def _nurec_selected_frame_identities(local: Path, settings: dict) -> set[tuple[str, int]]:
+def _nurec_selected_frame_identities(
+    local: Path, settings: dict
+) -> set[tuple[str, int]]:
     """Derive the intended review identities from ordered source render paths."""
     from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
 

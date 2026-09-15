@@ -135,10 +135,14 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     runtime_state = RuntimeRunState(
         workflow="demo", run_id="demo-1", api_version="npa.workflow/v0.0.1"
     )
-    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "running", "job_id": "7"})
+    runtime_state.record_wave(
+        {"key": "001|serial|:a:-", "status": "running", "job_id": "7"}
+    )
     state_store.write_runtime_state(runtime_state)
     # Same key updated in place, not appended twice.
-    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "succeeded", "job_id": "7"})
+    runtime_state.record_wave(
+        {"key": "001|serial|:a:-", "status": "succeeded", "job_id": "7"}
+    )
     runtime_state.decisions.append({"decision": "promote_checkpoint"})
     runtime_state.watermarks["ingest"] = {"objects": 2}
     state_store.write_runtime_state(runtime_state)
@@ -303,7 +307,9 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
     def angry_reader(bucket: str, key: str) -> str:
         raise PermissionError(f"denied s3://{bucket}/{key}")
 
-    store = Store(bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None)
+    store = Store(
+        bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None
+    )
     with pytest.raises(PermissionError):
         store.read_runtime_state()
 
@@ -328,11 +334,19 @@ class _FakeStep:
 
 
 def test_plan_step_records_carry_the_resource_profile() -> None:
-    from npa.orchestration.npa_workflow.run_state import SUBMITTED_STATUS, plan_step_records
+    from npa.orchestration.npa_workflow.run_state import (
+        SUBMITTED_STATUS,
+        plan_step_records,
+    )
 
     records = plan_step_records(
         [
-            _FakeStep("train", "trainer-gpu", {"accelerators": "RTXPRO6000:4", "cpus": 16}, "workbench.rl.policy_train"),
+            _FakeStep(
+                "train",
+                "trainer-gpu",
+                {"accelerators": "RTXPRO6000:4", "cpus": 16},
+                "workbench.rl.policy_train",
+            ),
             _FakeStep("aggregate", "control-cpu", {"cpus": 4}),
         ]
     )

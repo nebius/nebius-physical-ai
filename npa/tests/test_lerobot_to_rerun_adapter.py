@@ -57,7 +57,9 @@ def _write_empty_lerobot_dataset(root: Path, *, fps: int = 10) -> Path:
     pq.write_table(
         pa.table(
             {
-                "observation.state": pa.array([], type=pa.list_(pa.float32(), G1_STATE_DIM)),
+                "observation.state": pa.array(
+                    [], type=pa.list_(pa.float32(), G1_STATE_DIM)
+                ),
                 "index": pa.array([], type=pa.int64()),
             }
         ),
@@ -87,7 +89,9 @@ def _dynamic_row_count(chunks, entity_path: str) -> int:
     )
 
 
-def test_lerobot_to_rerun_writes_expected_entities_and_frame_count(tmp_path: Path) -> None:
+def test_lerobot_to_rerun_writes_expected_entities_and_frame_count(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
     output = tmp_path / "isaac-lab-trajectory.rrd"
 
@@ -108,7 +112,9 @@ def test_lerobot_to_rerun_writes_expected_entities_and_frame_count(tmp_path: Pat
         assert _dynamic_row_count(chunks, f"/world/skeleton/angles/{joint_name}") == 10
 
 
-def test_lerobot_to_rerun_duration_cap_subsamples_to_five_seconds(tmp_path: Path) -> None:
+def test_lerobot_to_rerun_duration_cap_subsamples_to_five_seconds(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=100, fps=10)
     output = tmp_path / "capped.rrd"
 
@@ -119,7 +125,9 @@ def test_lerobot_to_rerun_duration_cap_subsamples_to_five_seconds(tmp_path: Path
     assert _dynamic_row_count(chunks, "/world/skeleton/bones") == 50
 
 
-def test_lerobot_to_rerun_caps_trajectory_longer_than_ten_seconds(tmp_path: Path) -> None:
+def test_lerobot_to_rerun_caps_trajectory_longer_than_ten_seconds(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=120, fps=10)
     output = tmp_path / "capped-long.rrd"
 
@@ -155,7 +163,9 @@ def test_lerobot_to_rerun_records_bone_segments(tmp_path: Path) -> None:
 
     chunks = _recording_chunks(output)
     bone_chunk = next(
-        chunk for chunk in chunks if str(chunk.entity_path) == "/world/skeleton/bones" and not chunk.is_static
+        chunk
+        for chunk in chunks
+        if str(chunk.entity_path) == "/world/skeleton/bones" and not chunk.is_static
     )
     batch = bone_chunk.to_record_batch()
     strips = batch.column("LineStrips3D:strips").to_pylist()[0]
@@ -164,7 +174,9 @@ def test_lerobot_to_rerun_records_bone_segments(tmp_path: Path) -> None:
     assert len(strips[0][0]) == 3
 
 
-def test_lerobot_to_rerun_uploads_s3_output_after_local_save(tmp_path: Path, mocker) -> None:
+def test_lerobot_to_rerun_uploads_s3_output_after_local_save(
+    tmp_path: Path, mocker
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
     storage = mocker.Mock()
 
@@ -185,7 +197,9 @@ def test_lerobot_to_rerun_uploads_s3_output_after_local_save(tmp_path: Path, moc
     storage.upload_file.assert_called_once()
 
 
-def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(tmp_path: Path, mocker) -> None:
+def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(
+    tmp_path: Path, mocker
+) -> None:
     output = tmp_path / "logical.rrd"
     output.write_bytes(b"rrd")
     counts = {"/input_dataset/episodes/episode_000000/state/dim_00": 3}
@@ -198,11 +212,14 @@ def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(tmp
 
     mocker.patch("builtins.__import__", side_effect=fake_import)
 
-    assert verify_rerun_entities(
-        output,
-        ["input_dataset/episodes/episode_000000/state/dim_00"],
-        fallback_counts=counts,
-    ) == counts
+    assert (
+        verify_rerun_entities(
+            output,
+            ["input_dataset/episodes/episode_000000/state/dim_00"],
+            fallback_counts=counts,
+        )
+        == counts
+    )
 
 
 class _FakePanelState:
@@ -239,12 +256,18 @@ def test_logical_blueprint_without_cameras_opens_state_and_actions() -> None:
     views = _view_nodes(blueprint)
 
     assert not any(view["kind"] == "Spatial2DView" for view in views)
-    assert {view.get("name") for view in views} == {"State", "Policy actions", "VLM/VLA eval"}
+    assert {view.get("name") for view in views} == {
+        "State",
+        "Policy actions",
+        "VLM/VLA eval",
+    }
     assert next(view for view in views if view.get("name") == "State")["contents"] == [
         "policy_rollout/episodes/episode_000000/state/**",
         "policy_rollout/episodes/episode_000001/state/**",
     ]
-    assert next(view for view in views if view.get("name") == "Policy actions")["contents"] == (
+    assert next(view for view in views if view.get("name") == "Policy actions")[
+        "contents"
+    ] == (
         [
             "policy_rollout/episodes/episode_000000/actions/**",
             "policy_rollout/episodes/episode_000001/actions/**",
@@ -265,9 +288,9 @@ def test_logical_blueprint_with_cameras_keeps_images_and_signals_visible() -> No
         "Input demos",
         "Isaac environment — trained policy",
     ]
-    assert next(view for view in views if view.get("name") == "Input demos")["contents"] == [
-        "input_dataset/episodes/episode_000000/camera/**"
-    ]
+    assert next(view for view in views if view.get("name") == "Input demos")[
+        "contents"
+    ] == ["input_dataset/episodes/episode_000000/camera/**"]
     assert next(
         view
         for view in views
@@ -333,14 +356,20 @@ def test_logical_rerun_maps_each_real_rgb_video_to_its_episode_timeline(
         max_frames_per_episode=4,
     )
 
-    assert result.entity_counts[
-        "/policy_rollout/episodes/episode_000000/camera/observation_images_workspace"
-    ] == 4
+    assert (
+        result.entity_counts[
+            "/policy_rollout/episodes/episode_000000/camera/observation_images_workspace"
+        ]
+        == 4
+    )
     chunks = _recording_chunks(output)
-    assert _dynamic_row_count(
-        chunks,
-        "/policy_rollout/episodes/episode_000001/camera/observation_images_workspace",
-    ) == 4
+    assert (
+        _dynamic_row_count(
+            chunks,
+            "/policy_rollout/episodes/episode_000001/camera/observation_images_workspace",
+        )
+        == 4
+    )
     paths = _entity_paths(chunks)
     assert "/videos/episode_000000/observation_images_workspace" in paths
     assert "/videos/episode_000001/observation_images_workspace" in paths

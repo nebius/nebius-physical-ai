@@ -284,7 +284,9 @@ def _iter_crane_export(image: str, *, max_attempts: int = 4):
             return
         if attempt == max_attempts:
             if returncode != 0:
-                raise subprocess.CalledProcessError(returncode, command) from archive_error
+                raise subprocess.CalledProcessError(
+                    returncode, command
+                ) from archive_error
             assert archive_error is not None
             raise archive_error
 
@@ -341,7 +343,14 @@ def _iter_docker_save(image: str):
 
 def _local_image_history(image: str) -> list[str]:
     docker = _require("docker")
-    command = [docker, "history", "--no-trunc", "--format", "{{json .CreatedBy}}", image]
+    command = [
+        docker,
+        "history",
+        "--no-trunc",
+        "--format",
+        "{{json .CreatedBy}}",
+        image,
+    ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, command)
@@ -464,7 +473,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    selected = sum(bool(value) for value in (args.image, args.tarball, args.docker_image))
+    selected = sum(
+        bool(value) for value in (args.image, args.tarball, args.docker_image)
+    )
     if selected != 1:
         parser.error("pass exactly one image reference, --tarball, or --docker-image")
 

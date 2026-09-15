@@ -557,9 +557,7 @@ def test_run_image_must_match_the_accepted_digest(tmp_path: Path, image: str) ->
 
 
 def test_explicit_acceptance_candidate_is_recorded_without_a_release_tag() -> None:
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     evidence = wan_rerun._validate_container_image(
         {"image": candidate}, acceptance_candidate_image=candidate
     )
@@ -575,9 +573,7 @@ def test_explicit_acceptance_candidate_is_recorded_without_a_release_tag() -> No
 def test_ambient_live_environment_cannot_bypass_accepted_wan_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_LIVE_GPU", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_REUSE_IMAGE", candidate)

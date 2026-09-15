@@ -153,7 +153,9 @@ def _declared_output_uri(output: Any) -> str:
 
     if isinstance(output, Mapping):
         uri = str(output.get("uri") or "").strip()
-        return uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        return (
+            uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        )
     return str(output or "").strip()
 
 
@@ -618,8 +620,7 @@ class SkyPilotWaveExecutor:
                 reached_running = any(
                     isinstance(item, Mapping)
                     and (
-                        str(item.get("scheduler_state") or "").upper()
-                        == "RUNNING"
+                        str(item.get("scheduler_state") or "").upper() == "RUNNING"
                         or "RUNNING"
                         in {
                             str(value or "").upper()
@@ -869,9 +870,7 @@ class SkyPilotWaveExecutor:
             outputs=list(record.get("outputs") or []),
             error=str(record.get("error") or ""),
             logical_launch_id=str(record.get("logical_launch_id") or ""),
-            scheduler_fence_sequence=int(
-                record.get("scheduler_fence_sequence") or 0
-            ),
+            scheduler_fence_sequence=int(record.get("scheduler_fence_sequence") or 0),
             launch_sequence=int(record.get("launch_sequence") or 0),
             error_category=str(record.get("error_category") or ""),
             readiness=list(record.get("readiness") or []),
@@ -1077,8 +1076,7 @@ class SkyPilotWaveExecutor:
                 }
             )
             verified_pre_id_launch_failure = (
-                not job_id
-                and attempt.recovery_decision == "verified_absent_no_retry"
+                not job_id and attempt.recovery_decision == "verified_absent_no_retry"
             )
             explicit_retry = (
                 self.options.retry_absent_in_flight
@@ -1545,6 +1543,7 @@ class SkyPilotWaveExecutor:
             WorkflowRunSupervisor,
             validate_declared_outputs,
         )
+
         if self.ledger.store is None:
             raise NpaWorkflowError(
                 "runtime supervision requires a durable run-state store"
@@ -1583,10 +1582,9 @@ class SkyPilotWaveExecutor:
             preflight=preflight,
             checkpoint=checkpoint,
             infrastructure_recoveries=attempt.infrastructure_recovery_count,
-            max_infrastructure_recoveries=(
-                self.options.max_infrastructure_recoveries
-            ),
+            max_infrastructure_recoveries=(self.options.max_infrastructure_recoveries),
         )
+
         def cancel_exact(current: AttemptIdentity) -> Mapping[str, Any]:
             state, error = self._cancel(
                 current.provider_job_id, current.provider_job_name
@@ -2033,8 +2031,7 @@ class SkyPilotWaveExecutor:
             for verification_attempt in range(CANCELLATION_VERIFY_ATTEMPTS):
                 try:
                     observed = str(
-                        getattr(self._status(str(job_id)), "status", "")
-                        or "UNKNOWN"
+                        getattr(self._status(str(job_id)), "status", "") or "UNKNOWN"
                     ).upper()
                     verification_error = ""
                 except Exception as verify_exc:  # noqa: BLE001 - retry exact query
@@ -2492,9 +2489,7 @@ def run_workflow_runtime(
             )
         migrations = ledger.state.plan_migrations
         if len(migrations) >= MAX_TERMINAL_PLAN_MIGRATIONS:
-            raise NpaWorkflowError(
-                "terminal plan migration limit reached for this run"
-            )
+            raise NpaWorkflowError("terminal plan migration limit reached for this run")
         seen_fingerprints: set[str] = set()
         expected_old = ""
         for index, migration in enumerate(migrations, 1):

@@ -72,7 +72,9 @@ def render_adversarial_rrd(
     target = viz_uri(output_uri)
     with tempfile.TemporaryDirectory(prefix="npa-scenario-gen-rrd-") as tmp:
         local = Path(tmp) / "scenarios.rrd"
-        recording = rr.RecordingStream(APPLICATION_ID, recording_id=run_id or "scenario-gen")
+        recording = rr.RecordingStream(
+            APPLICATION_ID, recording_id=run_id or "scenario-gen"
+        )
         recording.save(str(local))
 
         axes = sorted({axis for record in records for axis in record.perturbation})
@@ -90,14 +92,26 @@ def render_adversarial_rrd(
             f"{header}{rows}"
         )
         if hasattr(rr, "TextDocument"):
-            rr.log("summary/README", rr.TextDocument(summary, media_type="text/markdown"), static=True, recording=recording)
+            rr.log(
+                "summary/README",
+                rr.TextDocument(summary, media_type="text/markdown"),
+                static=True,
+                recording=recording,
+            )
 
         # Severity bar chart + severity-vs-diversity scatter (static).
         severities = np.array([r.severity for r in records], dtype=np.float32)
         if hasattr(rr, "BarChart"):
-            rr.log("summary/severity_ranked", rr.BarChart(severities), static=True, recording=recording)
+            rr.log(
+                "summary/severity_ranked",
+                rr.BarChart(severities),
+                static=True,
+                recording=recording,
+            )
         if hasattr(rr, "Points2D"):
-            positions = np.array([[r.diversity, r.severity] for r in records], dtype=np.float32)
+            positions = np.array(
+                [[r.diversity, r.severity] for r in records], dtype=np.float32
+            )
             rr.log(
                 "summary/severity_vs_diversity",
                 rr.Points2D(
@@ -111,7 +125,10 @@ def render_adversarial_rrd(
         # Scenario x axis perturbation heatmap.
         if axes and hasattr(rr, "Tensor"):
             matrix = np.array(
-                [[float(r.perturbation.get(axis, 0.0)) for axis in axes] for r in records],
+                [
+                    [float(r.perturbation.get(axis, 0.0)) for axis in axes]
+                    for r in records
+                ],
                 dtype=np.float32,
             )
             tensor_kwargs: dict[str, Any] = {}
@@ -123,15 +140,32 @@ def render_adversarial_rrd(
                     recording=recording,
                 )
             except TypeError:
-                rr.log("summary/perturbations", rr.Tensor(matrix, **tensor_kwargs), static=True, recording=recording)
+                rr.log(
+                    "summary/perturbations",
+                    rr.Tensor(matrix, **tensor_kwargs),
+                    static=True,
+                    recording=recording,
+                )
 
         # Per-rank time series.
         for index, record in enumerate(records, start=1):
             _set_rank(rr, recording, index)
             if hasattr(rr, "Scalars"):
-                rr.log("metrics/severity", rr.Scalars(float(record.severity)), recording=recording)
-                rr.log("metrics/diversity", rr.Scalars(float(record.diversity)), recording=recording)
-                rr.log("metrics/failure_score", rr.Scalars(float(record.failure_score)), recording=recording)
+                rr.log(
+                    "metrics/severity",
+                    rr.Scalars(float(record.severity)),
+                    recording=recording,
+                )
+                rr.log(
+                    "metrics/diversity",
+                    rr.Scalars(float(record.diversity)),
+                    recording=recording,
+                )
+                rr.log(
+                    "metrics/failure_score",
+                    rr.Scalars(float(record.failure_score)),
+                    recording=recording,
+                )
 
         flush = getattr(recording, "flush", None)
         if callable(flush):

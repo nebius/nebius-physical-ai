@@ -21,7 +21,9 @@ from npa.adapter.isaac_lab_lerobot import (
 def _write_episode(root: Path, index: int, frames: int = 3) -> None:
     episode = root / f"episode_{index:06d}"
     episode.mkdir(parents=True)
-    state = np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(frames, G1_STATE_DIM)
+    state = np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(
+        frames, G1_STATE_DIM
+    )
     actions = state + 0.25
     np.save(episode / "state.npy", state)
     np.save(episode / "actions.npy", actions)
@@ -61,7 +63,9 @@ def test_recorded_isaac_lab_sample_converts_to_lerobot(tmp_path: Path) -> None:
     assert data["episode_index"].to_pylist() == [0, 0, 1, 1, 1]
     assert data["frame_index"].to_pylist() == [0, 1, 0, 1, 2]
 
-    episodes = pq.read_table(out / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
+    episodes = pq.read_table(
+        out / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    )
     assert episodes["length"].to_pylist() == [2, 3]
     tasks = pq.read_table(out / "meta" / "tasks.parquet")
     assert tasks["task"].to_pylist() == ["Isaac-Velocity-Flat-G1-v0"]

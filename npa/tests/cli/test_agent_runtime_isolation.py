@@ -124,13 +124,18 @@ def test_deploy_does_not_activate_profile_before_project_resolution(monkeypatch)
 def test_rendered_backend_reads_selected_configuration_and_cluster_root(
     tmp_path, monkeypatch
 ):
-    helpers = runpy.run_path(str(Path(__file__).with_name("test_agent_backend_render.py")))
+    helpers = runpy.run_path(
+        str(Path(__file__).with_name("test_agent_backend_render.py"))
+    )
     source = helpers["_render_backend_body"](monkeypatch)
     functions = {
-        "_load_agent_config_yaml", "_agent_project_alias", "_agent_k8s_backends"
+        "_load_agent_config_yaml",
+        "_agent_project_alias",
+        "_agent_k8s_backends",
     }
     nodes = [
-        node for node in ast.parse(source).body
+        node
+        for node in ast.parse(source).body
         if isinstance(node, ast.FunctionDef) and node.name in functions
     ]
     assert len(nodes) == 3
@@ -145,7 +150,9 @@ def test_rendered_backend_reads_selected_configuration_and_cluster_root(
         return {}
 
     namespace = {
-        "Path": Path, "os": os, "NPA_PROJECT_ALIAS": "fallback",
+        "Path": Path,
+        "os": os,
+        "NPA_PROJECT_ALIAS": "fallback",
         "NPA_CLUSTER_TERRAFORM_DIR": tmp_path / "terraform",
         "_agent_npa_ready": lambda: (True, ""),
         "_agent_cloud_mk8s_clusters": lambda _alias: [],

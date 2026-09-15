@@ -57,7 +57,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Verify that Ray 2.58 working_dir delivers a local Python edit."
     )
-    parser.add_argument("--address", required=True, help="Explicit private Ray Jobs API address.")
+    parser.add_argument(
+        "--address", required=True, help="Explicit private Ray Jobs API address."
+    )
     parser.add_argument(
         "--evidence-dir",
         required=True,
@@ -79,7 +81,12 @@ def _write_private(path: Path, content: str) -> None:
         FileExistsError: The evidence path already exists.
         OSError: The file cannot be created or written.
     """
-    with open(path, "x", encoding="utf-8", opener=lambda name, flags: os.open(name, flags, 0o600)) as stream:
+    with open(
+        path,
+        "x",
+        encoding="utf-8",
+        opener=lambda name, flags: os.open(name, flags, 0o600),
+    ) as stream:
         stream.write(content)
 
 
@@ -99,7 +106,9 @@ def _prepare_evidence_directory(path: Path) -> Path:
     resolved = path.resolve(strict=True)
     metadata = resolved.stat()
     if path.is_symlink() or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
-        raise ValueError("evidence directory must be owned by the caller with mode 0700")
+        raise ValueError(
+            "evidence directory must be owned by the caller with mode 0700"
+        )
     return resolved
 
 
@@ -127,7 +136,7 @@ def _write_revision(source: Path, value: str) -> str:
     Raises:
         OSError: The source cannot be written or read back.
     """
-    source.write_text(f'VALUE = {value!r}\n', encoding="utf-8")
+    source.write_text(f"VALUE = {value!r}\n", encoding="utf-8")
     return _source_digest(source)
 
 
@@ -141,12 +150,18 @@ def _parse_result(logs: str) -> dict[str, str]:
     Raises:
         ValueError: The marker count or result schema is invalid.
     """
-    payloads = [line.split(RESULT_MARKER, 1)[1] for line in logs.splitlines() if RESULT_MARKER in line]
+    payloads = [
+        line.split(RESULT_MARKER, 1)[1]
+        for line in logs.splitlines()
+        if RESULT_MARKER in line
+    ]
     if len(payloads) != 1:
         raise ValueError(f"expected one fast-sync result, found {len(payloads)}")
     result = json.loads(payloads[0])
     required = {"ray_version", "source_sha256", "value"}
-    if set(result) != required or not all(isinstance(result[field], str) for field in required):
+    if set(result) != required or not all(
+        isinstance(result[field], str) for field in required
+    ):
         raise ValueError("fast-sync result has an invalid schema")
     return result
 
@@ -169,7 +184,9 @@ def _wait_for_terminal(client: object, submission_id: str) -> object:
         time.sleep(0.5)
 
 
-def _stop_nonterminal_jobs(client: object, submission_ids: list[str]) -> list[dict[str, str]]:
+def _stop_nonterminal_jobs(
+    client: object, submission_ids: list[str]
+) -> list[dict[str, str]]:
     """Stop only exact owned Jobs and record terminal cleanup status.
 
     Args:
@@ -190,7 +207,9 @@ def _stop_nonterminal_jobs(client: object, submission_ids: list[str]) -> list[di
     return cleanup
 
 
-def _submit_revision(client: object, source_root: Path, submission_id: str) -> dict[str, str]:
+def _submit_revision(
+    client: object, source_root: Path, submission_id: str
+) -> dict[str, str]:
     """Submit one source revision and return its terminal native evidence.
 
     Args:
@@ -261,7 +280,9 @@ def _exercise_revisions(
         source_root = Path(temporary)
         (source_root / "sync_probe.py").write_text(PROBE_SOURCE, encoding="utf-8")
         editable = source_root / "editable_value.py"
-        revisions = zip(("baseline", "changed"), ("before", "after"), identifiers, strict=True)
+        revisions = zip(
+            ("baseline", "changed"), ("before", "after"), identifiers, strict=True
+        )
         for name, value, submission_id in revisions:
             expected_digest = _write_revision(editable, value)
             owned.append(submission_id)
@@ -269,13 +290,19 @@ def _exercise_revisions(
             logs = observed.pop("logs")
             _write_private(evidence / f"{name}.log", logs)
             if observed["job_status"] != "SUCCEEDED":
-                raise RuntimeError(f"Ray Job finished with status {observed['job_status']}")
-            observed.update(_parse_result(logs), name=name, expected_sha256=expected_digest)
+                raise RuntimeError(
+                    f"Ray Job finished with status {observed['job_status']}"
+                )
+            observed.update(
+                _parse_result(logs), name=name, expected_sha256=expected_digest
+            )
             results.append(observed)
     return results
 
 
-def qualify(address: str, evidence_directory: Path, *, run_token: str | None = None) -> dict[str, object]:
+def qualify(
+    address: str, evidence_directory: Path, *, run_token: str | None = None
+) -> dict[str, object]:
     """Prove that a local edit changes a remote Ray task without an image build.
 
     Args:
@@ -304,10 +331,18 @@ def qualify(address: str, evidence_directory: Path, *, run_token: str | None = N
         results = _exercise_revisions(client, evidence, identifiers, owned)
     finally:
         cleanup = _stop_nonterminal_jobs(client, owned)
-        _write_private(evidence / "cleanup.json", json.dumps(cleanup, indent=2, sort_keys=True))
+        _write_private(
+            evidence / "cleanup.json", json.dumps(cleanup, indent=2, sort_keys=True)
+        )
     _validate_revisions(results)
-    private_result = {"submission_ids": identifiers, "revisions": results, "cleanup": cleanup}
-    _write_private(evidence / "result.json", json.dumps(private_result, indent=2, sort_keys=True))
+    private_result = {
+        "submission_ids": identifiers,
+        "revisions": results,
+        "cleanup": cleanup,
+    }
+    _write_private(
+        evidence / "result.json", json.dumps(private_result, indent=2, sort_keys=True)
+    )
     return {"status": "passed", "ray_version": RAY_VERSION, "revisions": results}
 
 
@@ -322,7 +357,9 @@ def main(argv: list[str] | None = None) -> int:
         Exception: Qualification or exact Job cleanup fails.
     """
     arguments = _parser().parse_args(argv)
-    print(json.dumps(qualify(arguments.address, arguments.evidence_dir), sort_keys=True))
+    print(
+        json.dumps(qualify(arguments.address, arguments.evidence_dir), sort_keys=True)
+    )
     return 0
 
 

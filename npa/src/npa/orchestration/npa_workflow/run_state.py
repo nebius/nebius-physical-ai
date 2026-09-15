@@ -354,7 +354,8 @@ def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
 
 
 def runtime_manifest_view(
-    manifest: RunManifest, runtime_waves: Sequence[Mapping[str, Any]],
+    manifest: RunManifest,
+    runtime_waves: Sequence[Mapping[str, Any]],
 ) -> RunManifest:
     """Include observed runtime stages omitted from an early manifest.
 
@@ -379,7 +380,9 @@ def runtime_manifest_view(
             known.add(identity)
             # Attempt outcomes come from attribution, which retains retries.
             # Copying a historical failure into the stage would make it final.
-            steps.append({"state": name, "iteration": iteration, "status": SUBMITTED_STATUS})
+            steps.append(
+                {"state": name, "iteration": iteration, "status": SUBMITTED_STATUS}
+            )
     return replace(manifest, steps=steps)
 
 
