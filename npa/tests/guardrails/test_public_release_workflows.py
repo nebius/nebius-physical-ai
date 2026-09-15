@@ -113,6 +113,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
+        "scan_image_alpamayo2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
@@ -204,6 +205,16 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
     )
     assert pushed_scan < visibility < anonymous
+    alpamayo_scans = [
+        index
+        for index in range(len(text))
+        if text.startswith("scan_image_alpamayo2_payload.py", index)
+    ]
+    assert len(alpamayo_scans) == 2
+    assert alpamayo_scans[0] < text.index(
+        "Push only after every pre-publication gate passes"
+    )
+    assert text.index("Verify pushed bytes") < alpamayo_scans[1] < visibility
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push

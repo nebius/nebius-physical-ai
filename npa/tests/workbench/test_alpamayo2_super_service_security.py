@@ -15,7 +15,7 @@ import httpx
 import pytest
 import uvicorn
 
-from npa.workbench.alpamayo2_super import service
+from npa.workbench.alpamayo2_super import healthcheck, service
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
     DEFAULT_MODEL_ID,
@@ -28,6 +28,16 @@ from npa.workbench.alpamayo2_super.runtime import (
 
 TOKEN = "test-inference-credential"
 HEADERS = {"Authorization": "Bearer " + TOKEN}
+
+
+class _HealthResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
 
 
 @pytest.fixture
@@ -109,6 +119,37 @@ def test_missing_admission_credential_fails_startup(monkeypatch):
     with pytest.raises(ValueError, match="TOKEN is required"):
         with TestClient(service.create_app()):
             pass
+
+
+def test_container_healthcheck_uses_the_runtime_admission_credential(monkeypatch):
+    observed = {}
+
+    def open_request(request, *, timeout):
+        observed["url"] = request.full_url
+        observed["authorization"] = request.get_header("Authorization")
+        observed["timeout"] = timeout
+        return _HealthResponse()
+
+    monkeypatch.setenv("NPA_ALPAMAYO2_SUPER_TOKEN", TOKEN)
+    monkeypatch.setattr(healthcheck, "urlopen", open_request)
+
+    assert healthcheck.main() == 0
+    assert observed == {
+        "url": "http://127.0.0.1:8080/health",
+        "authorization": "Bearer " + TOKEN,
+        "timeout": 3,
+    }
+
+
+def test_container_healthcheck_fails_closed_without_a_credential(monkeypatch):
+    monkeypatch.delenv("NPA_ALPAMAYO2_SUPER_TOKEN", raising=False)
+    monkeypatch.setattr(
+        healthcheck,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("health request must not be sent"),
+    )
+
+    assert healthcheck.main() == 1
 
 
 def test_upstream_errors_do_not_reflect_sensitive_diagnostics(configured, monkeypatch):

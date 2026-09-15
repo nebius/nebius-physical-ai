@@ -78,6 +78,10 @@ select samples and inference controls, but cannot change the pinned model,
 dataset revision, or startup snapshot of `NPA_ALPAMAYO2_SUPER_MANIFEST`.
 Their `output_path` is a result label, and the server creates a fresh prefix
 under its configured root. Trusted CLI/SDK customization remains available.
+Keep the container-native health check on
+`npa.workbench.alpamayo2_super.healthcheck`; it reads the admission credential
+from the runtime environment and authenticates `/health` without putting the
+credential in process arguments or output.
 
 - 401/403 before GPU allocation: accept the dataset agreement with the same HF
   account or replace the rejected token; do not add an NPA bypass boolean.
