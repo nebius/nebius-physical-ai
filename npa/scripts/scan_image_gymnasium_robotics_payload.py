@@ -664,6 +664,17 @@ def _validate_zip_compressed_stream(
         raise ValueError(f"zip compressed stream does not match central directory: {path}")
 
 
+def _reserve_zip_expansion(
+    path: str, infos: list[zipfile.ZipInfo], budget: _NestedArchiveBudget
+) -> None:
+    """Reserve every declared ZIP expansion before decoding any member."""
+
+    for info in infos:
+        if info.file_size > MAX_NESTED_ARCHIVE:
+            raise ValueError(f"nested archive member exceeds scan bound: {path}")
+        budget.account_expanded(path, info.file_size)
+
+
 def _validated_zip_infos(
     path: str,
     content: bytes,
@@ -716,6 +727,8 @@ def _validated_zip_infos(
     if budget is not None:
         budget.reserve_members(path, total_entries)
     ordered = sorted(infos, key=lambda item: item.header_offset)
+    if budget is not None:
+        _reserve_zip_expansion(path, ordered, budget)
     cursor = 0
     for index, info in enumerate(ordered):
         if info.header_offset != cursor or cursor + 30 > central_offset:
@@ -904,8 +917,7 @@ def _nested_archive_members(
             budget=budget,
         )
     if is_zip:
-        infos = _validated_zip_infos(path, content)
-        budget.reserve_members(path, len(infos))
+        infos = _validated_zip_infos(path, content, budget=budget)
         normalized_names = [_safe(member.filename) for member in infos]
         if len(normalized_names) != len(set(normalized_names)):
             raise ValueError(f"duplicate normalized nested ZIP member: {path}")
@@ -920,7 +932,6 @@ def _nested_archive_members(
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )
-                    budget.account_expanded(f"{path}:{safe}", member.file_size)
                     if member.is_dir():
                         _validate_zip_directory(archive, member, f"{path}:{safe}")
                         continue

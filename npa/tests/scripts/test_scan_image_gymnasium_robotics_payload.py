@@ -126,9 +126,11 @@ def _zip_with_member(
     return stream.getvalue()
 
 
-def _zip_with_files(files: dict[str, bytes]) -> bytes:
+def _zip_with_files(
+    files: dict[str, bytes], *, compression: int = zipfile.ZIP_STORED
+) -> bytes:
     stream = io.BytesIO()
-    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+    with zipfile.ZipFile(stream, "w", compression=compression) as archive:
         for name, content in files.items():
             archive.writestr(name, content)
     return stream.getvalue()
@@ -1404,6 +1406,55 @@ def test_zip_member_count_limit_refuses_before_infolist(
     monkeypatch.setattr(SCAN.zipfile, "ZipFile", forbidden_zipfile)
     with pytest.raises(ValueError, match="zip archive member count exceeds limit"):
         SCAN._validated_zip_infos("oversized.zip", content)
+
+
+def _multi_member_deflated_zip() -> tuple[bytes, int]:
+    files = {
+        f"neutral-{index}.txt": bytes([ord("a") + index]) * 64
+        for index in range(8)
+    }
+    return (
+        _zip_with_files(files, compression=zipfile.ZIP_DEFLATED),
+        sum(map(len, files.values())),
+    )
+
+
+@pytest.mark.parametrize("budget_kind", ["expanded", "work"])
+def test_zip_cumulative_budget_refuses_before_stream_validation(
+    monkeypatch: pytest.MonkeyPatch, budget_kind: str
+) -> None:
+    content, expanded_size = _multi_member_deflated_zip()
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", expanded_size)
+    monkeypatch.setattr(
+        SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", len(content) + expanded_size
+    )
+    if budget_kind == "expanded":
+        monkeypatch.setattr(
+            SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", expanded_size - 1
+        )
+    else:
+        monkeypatch.setattr(
+            SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", len(content) + expanded_size - 1
+        )
+
+    def forbidden_validation(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ZIP streams must not decode before aggregate refusal")
+
+    monkeypatch.setattr(SCAN, "_validate_zip_compressed_stream", forbidden_validation)
+    with pytest.raises(ValueError, match=f"{budget_kind}.*budget exceeded"):
+        SCAN._nested_archive_members("multi-entry.zip", content)
+
+
+def test_zip_cumulative_budget_accepts_exact_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content, expanded_size = _multi_member_deflated_zip()
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", expanded_size)
+    monkeypatch.setattr(
+        SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", len(content) + expanded_size
+    )
+
+    assert SCAN._nested_archive_members("multi-entry.zip", content) == 8
 
 
 def _sibling_nested_zip() -> bytes:

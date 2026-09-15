@@ -46,7 +46,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "is_tar = _looks_like_tar(content)",
         "MAX_NESTED_ARCHIVE_MEMBERS = 10_000",
         "max(disk_entries, total_entries) > MAX_NESTED_ARCHIVE_MEMBERS",
-        "_validated_zip_infos(path, content)",
+        "_validated_zip_infos(path, content, budget=budget)",
         "_validate_zip_data_descriptor(path, descriptor, info)",
         "zip local filename does not match central directory",
         "unsupported zip extra field",
