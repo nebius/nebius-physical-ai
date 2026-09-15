@@ -93,9 +93,7 @@ def test_known_project_no_provision_is_provider_free_and_deselects_old_storage(
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(nebius, "get_project_name", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
     monkeypatch.setattr(
         cli_main,
         "_saved_model_access_note",
@@ -159,9 +157,7 @@ def test_known_project_no_provision_disables_retained_exact_project_storage(
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(nebius, "get_project_name", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
 
     result = runner.invoke(app, _known_project_args(provision=False))
 
@@ -290,7 +286,9 @@ def test_failed_known_project_provision_preserves_prior_credential_selection(
             "npa.clients.storage_validation.probe_storage_write",
             lambda **_kwargs: type("Probe", (), {"ok": False})(),
         )
-        monkeypatch.setattr(cli_main, "_provision_object_storage", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            cli_main, "_provision_object_storage", lambda *_a, **_k: None
+        )
 
     result = runner.invoke(app, _known_project_args(provision=True))
 
@@ -315,9 +313,7 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
     monkeypatch.setattr(nebius, "get_iam_token", forbidden)
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
     access_probe_calls: list[tuple[str, str]] = []
 
     def access_note(hf_token: str, ngc_key: str) -> str:
@@ -325,9 +321,9 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
         return "[NOTE] HF token missing; NGC key missing (informational)."
 
     monkeypatch.setattr(cli_main, "_model_access_note", access_note)
-    answers = "\n".join(
-        ["tenant-synthetic", "project-synthetic", "", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-synthetic", "project-synthetic", "", "", "", ""]) + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -393,7 +389,12 @@ def test_access_advisory_reports_each_outcome_without_gating_or_secret_leak(
 
     def probe(_validator, _token, assets, **_kwargs):
         return {
-            (asset.repo, asset.repo_type, asset.revision, asset.probe_path): HFAccessResult(
+            (
+                asset.repo,
+                asset.repo_type,
+                asset.revision,
+                asset.probe_path,
+            ): HFAccessResult(
                 repo=asset.repo,
                 ok=hf_asset_status == 200,
                 status_code=hf_asset_status,
@@ -424,16 +425,10 @@ def test_access_probe_exceptions_are_informative_and_never_gate(
     def unavailable(*_args, **_kwargs):
         raise RuntimeError("provider failed with hf_synthetic_secret")
 
-    monkeypatch.setattr(
-        "npa.clients.huggingface.validate_hf_identity", unavailable
-    )
-    monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access", unavailable
-    )
+    monkeypatch.setattr("npa.clients.huggingface.validate_hf_identity", unavailable)
+    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", unavailable)
 
-    note = cli_main._model_access_note(
-        "hf_synthetic_secret", "nvapi-synthetic-secret"
-    )
+    note = cli_main._model_access_note("hf_synthetic_secret", "nvapi-synthetic-secret")
 
     assert "HF provider/network unavailable" in note
     assert "NGC provider/network unavailable" in note
@@ -504,7 +499,9 @@ def test_environment_credential_import_saves_then_reports_advisory(
     monkeypatch.setattr(
         cli_main,
         "_saved_model_access_note",
-        lambda: "[NOTE] Access checks are informational; HF token rejected; NGC key rejected.",
+        lambda: (
+            "[NOTE] Access checks are informational; HF token rejected; NGC key rejected."
+        ),
         raising=False,
     )
 
@@ -538,7 +535,9 @@ def test_prompt_free_project_and_environment_import_are_one_provider_free_intent
         access_probe_calls.append("called")
         return "[NOTE] Access checks are informational; HF token valid."
 
-    monkeypatch.setattr(cli_main, "_saved_model_access_note", access_note, raising=False)
+    monkeypatch.setattr(
+        cli_main, "_saved_model_access_note", access_note, raising=False
+    )
 
     result = runner.invoke(
         app, [*_known_project_args(provision=False), "--save-env-credentials"]
@@ -669,8 +668,7 @@ def test_configure_help_describes_provider_free_and_explicit_provision_intent() 
 
 def test_generated_configure_bucket_names_are_utc_and_collision_safe() -> None:
     names = {
-        cli_main._generated_configure_bucket_name("tenant", "project")
-        for _ in range(3)
+        cli_main._generated_configure_bucket_name("tenant", "project") for _ in range(3)
     }
 
     assert len(names) == 3

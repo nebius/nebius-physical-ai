@@ -43,13 +43,8 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-OPENPI_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
-)
-FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
-)
+OPENPI_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
+FOUR_MODE_SPEC = REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 EXPECTED_CAPABILITIES = {
     "pi05_droid_jointpos_polaris_checkpoint_download",
     "pi05_droid_jointpos_polaris_direct_infer",
@@ -1312,9 +1307,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
         "NPA_BYOF_OPENPI_REGISTRY must name an authenticated operator-controlled "
         "registry; restricted OpenPI bytes must not enter the official NPA GHCR namespace"
     )
-    assert project_registry.rstrip("/").lower() != (
-        "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert project_registry.rstrip("/").lower() != ("ghcr.io/nebius/nebius-physical-ai")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"

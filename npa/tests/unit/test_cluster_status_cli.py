@@ -253,18 +253,26 @@ def test_project_scoped_status_never_uses_an_unrelated_local_cluster(
     monkeypatch.setattr(
         config_mod,
         "resolve_environment",
-        lambda _project=None: SimpleNamespace(project_id="project-selected", region="r"),
+        lambda _project=None: SimpleNamespace(
+            project_id="project-selected", region="r"
+        ),
     )
 
-    listed = runner.invoke(
-        app, ["list", "--project", "selected", "--format", "json"]
-    )
+    listed = runner.invoke(app, ["list", "--project", "selected", "--format", "json"])
     assert listed.exit_code == 0, listed.output
     assert json.loads(listed.output) == []
 
     named = runner.invoke(
         app,
-        ["status", "--name", unrelated.name, "--project", "selected", "--format", "json"],
+        [
+            "status",
+            "--name",
+            unrelated.name,
+            "--project",
+            "selected",
+            "--format",
+            "json",
+        ],
     )
     assert named.exit_code == 0, named.output
     assert json.loads(named.output)[0]["project_id"] != "project-other"

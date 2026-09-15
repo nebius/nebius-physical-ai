@@ -5,6 +5,7 @@ This receipt verifies archive identity, graph closure, decoded layer digests and
 the all-ancestor regular-file population. It does not authorize publication or
 replace the mandatory byte scan, confidentiality policy, or other image gates.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,15 +29,27 @@ def inspect(fd, length, expected_id):
 
 
 def bind(result, verification, expected_id):
-    W.require(verification["expected_image_id"] == expected_id
-              == verification["image_index_digest"], "oci_expected_identity")
+    W.require(
+        verification["expected_image_id"]
+        == expected_id
+        == verification["image_index_digest"],
+        "oci_expected_identity",
+    )
     for key in ("image_manifest_digest", "image_config_digest"):
         W.require(result[key] == verification[key], "oci_verifier_image_binding")
     layers = result["layers"]
-    W.require(type(verification["layer_count"]) is int and len(layers) == verification["layer_count"]
-              and [row["diff_id"] for row in layers] == verification["verified_layer_diff_ids"], "oci_verifier_layer_binding")
+    W.require(
+        type(verification["layer_count"]) is int
+        and len(layers) == verification["layer_count"]
+        and [row["diff_id"] for row in layers]
+        == verification["verified_layer_diff_ids"],
+        "oci_verifier_layer_binding",
+    )
     for key in ("regular_files_read", "content_bytes_read"):
-        W.require(type(verification[key]) is int and verification[key] >= 0, "oci_verifier_population")
+        W.require(
+            type(verification[key]) is int and verification[key] >= 0,
+            "oci_verifier_population",
+        )
 
 
 def verify(archive_binding, expected_id):
@@ -44,11 +57,14 @@ def verify(archive_binding, expected_id):
         result = inspect(fd, info.st_size, expected_id)
         regular_files = regular_bytes = 0
         for row in result["layers"]:
+
             def decoded():
                 raw = W.Slice(fd, row["offset"], row["size"])
                 compressed = row["descriptor"]["mediaType"].endswith("+gzip")
                 magic = os.pread(fd, min(2, row["size"]), row["offset"])
-                W.require((magic == b"\x1f\x8b") == compressed, "oci_layer_codec_binding")
+                W.require(
+                    (magic == b"\x1f\x8b") == compressed, "oci_layer_codec_binding"
+                )
                 if compressed:
                     W.gzip_header(W.Slice(fd, row["offset"], row["size"]))
                 return W.GzipReader(raw) if compressed else raw
@@ -56,7 +72,9 @@ def verify(archive_binding, expected_id):
             reader, value = decoded(), hashlib.sha256()
             while data := reader.read(W.CHUNK):
                 value.update(data)
-            W.require("sha256:" + value.hexdigest() == row["diff_id"], "oci_layer_diff_id")
+            W.require(
+                "sha256:" + value.hexdigest() == row["diff_id"], "oci_layer_diff_id"
+            )
             # Independently count tarfile's regular members; core.walk_tar later
             # requires exact parity and verifies all physical headers/padding.
             with tarfile.open(fileobj=decoded(), mode="r|") as layer:
@@ -69,13 +87,22 @@ def verify(archive_binding, expected_id):
                         W.require(count == member.size, "oci_regular_file_size")
                         regular_files += 1
                         regular_bytes += count
-        W.require(W.descriptor_digest(fd) == archive_binding["sha256"], "oci_archive_changed")
-        return {"schema_version": SCHEMA, "valid": True, "expected_image_id": expected_id,
-                "image_index_digest": expected_id, "archive_sha256": archive_binding["sha256"],
-                "image_manifest_digest": result["image_manifest_digest"], "image_config_digest": result["image_config_digest"],
-                "verified_layer_diff_ids": [row["diff_id"] for row in result["layers"]],
-                "layer_count": len(result["layers"]), "regular_files_read": regular_files,
-                "content_bytes_read": regular_bytes}
+        W.require(
+            W.descriptor_digest(fd) == archive_binding["sha256"], "oci_archive_changed"
+        )
+        return {
+            "schema_version": SCHEMA,
+            "valid": True,
+            "expected_image_id": expected_id,
+            "image_index_digest": expected_id,
+            "archive_sha256": archive_binding["sha256"],
+            "image_manifest_digest": result["image_manifest_digest"],
+            "image_config_digest": result["image_config_digest"],
+            "verified_layer_diff_ids": [row["diff_id"] for row in result["layers"]],
+            "layer_count": len(result["layers"]),
+            "regular_files_read": regular_files,
+            "content_bytes_read": regular_bytes,
+        }
 
 
 def main(argv=None):

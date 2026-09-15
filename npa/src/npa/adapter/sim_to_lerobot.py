@@ -32,7 +32,9 @@ DEFAULT_VIDEO_SIZE_MB = 500
 
 DATA_PATH_TPL = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH_TPL = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
-EPISODES_PATH_TPL = "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+EPISODES_PATH_TPL = (
+    "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+)
 
 
 class AdapterError(Exception):
@@ -56,16 +58,26 @@ def encode_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
-        "-s", f"{w}x{h}",
-        "-r", str(fps),
-        "-i", "pipe:",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "23",
-        "-g", "2",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{w}x{h}",
+        "-r",
+        str(fps),
+        "-i",
+        "pipe:",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-g",
+        "2",
         str(output_path),
     ]
     proc = subprocess.run(
@@ -88,7 +100,9 @@ def _compute_video_stats(arrays: list[np.ndarray]) -> dict[str, Any]:
     if not arrays or arrays[0].ndim != 4:
         raise ValueError("video statistics require arrays shaped (N, H, W, C)")
     shape = arrays[0].shape[1:]
-    if not all(shape) or any(array.ndim != 4 or array.shape[1:] != shape for array in arrays):
+    if not all(shape) or any(
+        array.ndim != 4 or array.shape[1:] != shape for array in arrays
+    ):
         raise ValueError("video statistics require matching nonempty frame shapes")
     channels = shape[-1]
     minimum, maximum = np.full(channels, np.inf), np.full(channels, -np.inf)
@@ -101,10 +115,9 @@ def _compute_video_stats(arrays: list[np.ndarray]) -> dict[str, Any]:
             delta = frame_mean - mean
             combined_pixels = pixels + frame_pixels
             # Parallel variance merge retains small differences between frames.
-            squared_deviations += (
-                frame.var(axis=(0, 1), dtype=np.float64) * frame_pixels
-                + delta * delta * (pixels * frame_pixels / combined_pixels)
-            )
+            squared_deviations += frame.var(
+                axis=(0, 1), dtype=np.float64
+            ) * frame_pixels + delta * delta * (pixels * frame_pixels / combined_pixels)
             mean += delta * (frame_pixels / combined_pixels)
             minimum = np.minimum(minimum, frame.min(axis=(0, 1)))
             maximum = np.maximum(maximum, frame.max(axis=(0, 1)))
@@ -113,10 +126,14 @@ def _compute_video_stats(arrays: list[np.ndarray]) -> dict[str, Any]:
     if not frames:
         raise ValueError("video statistics require at least one frame")
     values = {
-        "min": minimum / 255.0, "max": maximum / 255.0,
-        "mean": mean / 255.0, "std": np.sqrt(squared_deviations / pixels) / 255.0,
+        "min": minimum / 255.0,
+        "max": maximum / 255.0,
+        "mean": mean / 255.0,
+        "std": np.sqrt(squared_deviations / pixels) / 255.0,
     }
-    result = {key: value.reshape(channels, 1, 1).tolist() for key, value in values.items()}
+    result = {
+        key: value.reshape(channels, 1, 1).tolist() for key, value in values.items()
+    }
     result["count"] = [frames]
     return result
 
@@ -164,15 +181,17 @@ def _build_data_schema(
     n_actions: int,
 ) -> pa.Schema:
     """Build the Arrow schema for data parquet files."""
-    return pa.schema([
-        ("observation.state", pa.list_(pa.float32(), n_state)),
-        ("action", pa.list_(pa.float32(), n_actions)),
-        ("episode_index", pa.int64()),
-        ("frame_index", pa.int64()),
-        ("timestamp", pa.float32()),
-        ("index", pa.int64()),
-        ("task_index", pa.int64()),
-    ])
+    return pa.schema(
+        [
+            ("observation.state", pa.list_(pa.float32(), n_state)),
+            ("action", pa.list_(pa.float32(), n_actions)),
+            ("episode_index", pa.int64()),
+            ("frame_index", pa.int64()),
+            ("timestamp", pa.float32()),
+            ("index", pa.int64()),
+            ("task_index", pa.int64()),
+        ]
+    )
 
 
 # ── Main conversion ────────────────────────────────────────────────────
@@ -181,8 +200,7 @@ def _build_data_schema(
 def discover_episodes(input_dir: Path) -> list[Path]:
     """Find episode directories sorted by name."""
     episodes = sorted(
-        d for d in input_dir.iterdir()
-        if d.is_dir() and d.name.startswith("episode_")
+        d for d in input_dir.iterdir() if d.is_dir() and d.name.startswith("episode_")
     )
     if not episodes:
         raise AdapterError(f"No episode_* directories found in {input_dir}")
@@ -220,7 +238,9 @@ def convert(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         records = metadata.get("episodes") or []
         by_index = {
-            int(record["episode_index"]): str(record.get("task") or record.get("env_id") or "").strip()
+            int(record["episode_index"]): str(
+                record.get("task") or record.get("env_id") or ""
+            ).strip()
             for record in records
             if isinstance(record, dict) and "episode_index" in record
         }
@@ -291,7 +311,9 @@ def convert(
             ("observation.images.workspace", obs_workspace),
             ("observation.images.wrist", obs_wrist),
         ]:
-            video_path = output_dir / "videos" / cam_key / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+            video_path = (
+                output_dir / "videos" / cam_key / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+            )
             encode_video(cam_frames, video_path, fps)
 
         episode_task = episode_tasks[ep_idx]
@@ -379,9 +401,7 @@ def convert(
         "timestamp": pa.array(
             [r["timestamp"] for r in all_data_rows], type=pa.float32()
         ),
-        "index": pa.array(
-            [r["index"] for r in all_data_rows], type=pa.int64()
-        ),
+        "index": pa.array([r["index"] for r in all_data_rows], type=pa.int64()),
         "task_index": pa.array(
             [r["task_index"] for r in all_data_rows], type=pa.int64()
         ),
@@ -543,10 +563,12 @@ def _write_episodes_parquet(
 def _write_tasks_parquet(task: str | list[str], output_path: Path) -> None:
     """Write the tasks.parquet metadata file."""
     tasks = [task] if isinstance(task, str) else task
-    table = pa.table({
-        "task_index": pa.array(list(range(len(tasks))), type=pa.int64()),
-        "task": pa.array(tasks, type=pa.string()),
-    })
+    table = pa.table(
+        {
+            "task_index": pa.array(list(range(len(tasks))), type=pa.int64()),
+            "task": pa.array(tasks, type=pa.string()),
+        }
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path, compression="snappy")
 

@@ -184,7 +184,9 @@ def create_mv(
         )
         print(f"Created {result.view_name} with {result.row_count} rows")
     """
-    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    service_mode = _resolve_mode_as(
+        mode=mode, service=service, validation_cls=MVValidationError
+    )
     payload = {
         "name": name,
         "source_table": source_table,
@@ -218,7 +220,9 @@ def refresh_mv(
     timeout: float = 600.0,
 ) -> MVResult:
     """Refresh a registered LanceDB materialized view."""
-    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    service_mode = _resolve_mode_as(
+        mode=mode, service=service, validation_cls=MVValidationError
+    )
     payload = {"name": name, "lance_uri": lance_uri}
     if service_mode:
         return _mv_result_from_payload(
@@ -249,7 +253,9 @@ def query_table(
     timeout: float = 120.0,
 ) -> QueryResult:
     """Run a bounded SQL-filtered LanceDB table query."""
-    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    service_mode = _resolve_mode_as(
+        mode=mode, service=service, validation_cls=MVValidationError
+    )
     payload = {
         "table": table,
         "lance_uri": lance_uri,
@@ -292,12 +298,17 @@ def create_bdd100k_failure_mode_views(
         for result in results:
             print(f"{result.view_name}: {result.row_count} rows")
     """
-    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    service_mode = _resolve_mode_as(
+        mode=mode, service=service, validation_cls=MVValidationError
+    )
     if service_mode:
         threshold = format(float(distant_person_threshold), ".12g")
         specs = [
             ("bdd100k_rider_train", "has_rider = true AND split = 'train'"),
-            ("bdd100k_nighttime_person_train", "timeofday = 'night' AND has_person = true AND split = 'train'"),
+            (
+                "bdd100k_nighttime_person_train",
+                "timeofday = 'night' AND has_person = true AND split = 'train'",
+            ),
             (
                 "bdd100k_distant_person_train",
                 f"has_person = true AND person_bbox_area_pct < {threshold} AND split = 'train'",
@@ -334,7 +345,9 @@ def _resolve_mode(*, mode: str | None, service: bool) -> bool:
     raise BDD100KValidationError("mode must be either 'local' or 'service'")
 
 
-def _resolve_mode_as(*, mode: str | None, service: bool, validation_cls: type[Exception]) -> bool:
+def _resolve_mode_as(
+    *, mode: str | None, service: bool, validation_cls: type[Exception]
+) -> bool:
     if mode is None:
         return service
     value = mode.strip().lower()
@@ -363,11 +376,15 @@ def _post_json(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.post(f"{resolved}{path}", json=payload, headers=headers, timeout=timeout)
+        response = httpx.post(
+            f"{resolved}{path}", json=payload, headers=headers, timeout=timeout
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
-        raise error_cls(f"LanceDB service request failed ({exc.response.status_code}): {detail}") from exc
+        raise error_cls(
+            f"LanceDB service request failed ({exc.response.status_code}): {detail}"
+        ) from exc
     except httpx.HTTPError as exc:
         raise error_cls(f"Cannot reach LanceDB service {resolved}: {exc}") from exc
     try:
@@ -389,7 +406,9 @@ def _result_from_payload(payload: dict[str, Any]) -> BDD100KImportResult:
 
 
 def _backfill_result_from_payload(payload: dict[str, Any]) -> BackfillResult:
-    return BackfillResult(**_dataclass_payload(payload, BackfillResult, BackfillServiceError))
+    return BackfillResult(
+        **_dataclass_payload(payload, BackfillResult, BackfillServiceError)
+    )
 
 
 def _mv_result_from_payload(payload: dict[str, Any]) -> MVResult:
@@ -400,7 +419,9 @@ def _query_result_from_payload(payload: dict[str, Any]) -> QueryResult:
     return QueryResult(**_dataclass_payload(payload, QueryResult, MVServiceError))
 
 
-def _dataclass_payload(payload: dict[str, Any], result_cls: type[Any], error_cls: type[Exception]) -> dict[str, Any]:
+def _dataclass_payload(
+    payload: dict[str, Any], result_cls: type[Any], error_cls: type[Exception]
+) -> dict[str, Any]:
     values: dict[str, Any] = {}
     missing: list[str] = []
     for field in fields(result_cls):

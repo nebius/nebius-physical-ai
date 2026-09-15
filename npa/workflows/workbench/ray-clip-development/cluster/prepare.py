@@ -17,16 +17,32 @@ WEIGHTS_SHA256 = "a63082132ba4f97a80bea76823f544493bffa8082296d62d71581a4feff157
 def _prepare_application_environment() -> str:
     """Install pinned Python packages while retaining the image's CUDA wheels."""
     # The image has pip but no ensurepip; it must remain the pip launcher.
-    subprocess.run([
-        sys.executable, "-m", "venv", "--system-site-packages", "--without-pip",
-        str(APPLICATION_ENVIRONMENT),
-    ], check=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "venv",
+            "--system-site-packages",
+            "--without-pip",
+            str(APPLICATION_ENVIRONMENT),
+        ],
+        check=True,
+    )
     application_python = str(APPLICATION_ENVIRONMENT / "bin/python")
     requirements = Path(__file__).with_name("requirements.txt")
-    subprocess.run([
-        sys.executable, "-m", "pip", "--python", application_python, "install",
-        "-r", str(requirements),
-    ], check=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "--python",
+            application_python,
+            "install",
+            "-r",
+            str(requirements),
+        ],
+        check=True,
+    )
     return application_python
 
 
@@ -82,12 +98,18 @@ print(json.dumps(versions))
     return json.loads(result)
 
 
-def _write_preparation_receipt(started: float, dependencies_ready: float,
-                               model_ready: float, weights_hash: str,
-                               application_python: str) -> None:
+def _write_preparation_receipt(
+    started: float,
+    dependencies_ready: float,
+    model_ready: float,
+    weights_hash: str,
+    application_python: str,
+) -> None:
     """Record setup boundaries and exact installed versions outside source delivery."""
     versions = _inspect_cuda_environment(application_python)
-    freeze = subprocess.check_output([application_python, "-m", "pip", "freeze"], text=True)
+    freeze = subprocess.check_output(
+        [application_python, "-m", "pip", "freeze"], text=True
+    )
     finished = time.time()
     receipt = {
         "started_at_unix": started,
@@ -124,9 +146,15 @@ def main() -> None:
     weights_hash = _download_and_verify_model(application_python)
     model_ready = time.time()
     _write_preparation_receipt(
-        started, dependencies_ready, model_ready, weights_hash, application_python,
+        started,
+        dependencies_ready,
+        model_ready,
+        weights_hash,
+        application_python,
     )
-    print("CLIP environment prepared; CUDA verified. Application source comes from Ray Jobs.")
+    print(
+        "CLIP environment prepared; CUDA verified. Application source comes from Ray Jobs."
+    )
 
 
 if __name__ == "__main__":

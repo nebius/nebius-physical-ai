@@ -30,7 +30,8 @@ def _documentation_paths(root: Path) -> list[Path]:
     for directory in ("npa", "deploy", "workbench", "research"):
         for parent, directories, files in os.walk(root / directory):
             directories[:] = [
-                name for name in directories
+                name
+                for name in directories
                 if not name.startswith(".") and name not in {"vendor", "node_modules"}
             ]
             if "README.md" in files:
@@ -70,7 +71,8 @@ class _HtmlReferences(HTMLParser):
 
 def _inline_text(token) -> str:
     return "".join(
-        child.content for child in token.children or []
+        child.content
+        for child in token.children or []
         if child.type in {"text", "code_inline", "image"}
     )
 
@@ -105,7 +107,9 @@ def _links(content: str) -> list[tuple[int, str]]:
             if child.type in {"link_open", "image"}:
                 found.append((line, child.attrGet("href") or child.attrGet("src")))
             elif child.type in {"html_block", "html_inline"}:
-                found.extend((line, href) for href in _HtmlReferences(child.content).links)
+                found.extend(
+                    (line, href) for href in _HtmlReferences(child.content).links
+                )
     return found
 
 
@@ -119,7 +123,8 @@ def _link_errors(path: Path) -> list[str]:
         if not target.exists():
             errors.append(f"line {line}: missing file: {href}")
         elif (
-            uri.fragment and target.suffix.lower() == ".md"
+            uri.fragment
+            and target.suffix.lower() == ".md"
             and unquote(uri.fragment) not in _anchors(target)
         ):
             errors.append(f"line {line}: missing anchor: {href}")
@@ -184,7 +189,10 @@ def _shell_syntax_errors(path: Path, bash: str) -> list[str]:
         if token.type != "fence" or token.info.strip() not in {"bash", "sh", "shell"}:
             continue
         result = subprocess.run(
-            [bash, "-n"], input=token.content, text=True, capture_output=True,
+            [bash, "-n"],
+            input=token.content,
+            text=True,
+            capture_output=True,
         )
         if result.returncode:
             line = (token.map or [0])[0] + 2
@@ -195,7 +203,8 @@ def _shell_syntax_errors(path: Path, bash: str) -> list[str]:
 def _option_parameters(command) -> dict:
     return {
         spelling: parameter
-        for parameter in command.params if isinstance(parameter, TyperOption)
+        for parameter in command.params
+        if isinstance(parameter, TyperOption)
         for spelling in [*parameter.opts, *parameter.secondary_opts]
     }
 
@@ -206,7 +215,11 @@ def _command_error(root, argv: list[str]) -> str:
     index = 1
     while index < len(argv):
         argument = argv[index]
-        if argument in _SHELL_BOUNDARIES or argument == "--" or argument.startswith("..."):
+        if (
+            argument in _SHELL_BOUNDARIES
+            or argument == "--"
+            or argument.startswith("...")
+        ):
             break
         if argument.startswith("-"):
             option = argument.split("=", 1)[0]
@@ -234,12 +247,14 @@ def _workflow_variable_errors(root: Path, argv: list[str]) -> list[str]:
     if argv[1:3] != ["workbench", "workflow"]:
         return []
     paths = [
-        root / value for value in argv
+        root / value
+        for value in argv
         if value.startswith("workflows/") and value.endswith(".yaml")
     ]
     variables = [
         argv[index + 1].split("=", 1)[0]
-        for index, value in enumerate(argv[:-1]) if value == "--var"
+        for index, value in enumerate(argv[:-1])
+        if value == "--var"
     ]
     errors = []
     for path in paths:
@@ -247,9 +262,14 @@ def _workflow_variable_errors(root: Path, argv: list[str]) -> list[str]:
             errors.append(f"missing workflow specification: {path.relative_to(root)}")
             continue
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(spec, dict) or spec.get("apiVersion") != "npa.workflow/v0.0.1":
+        if (
+            not isinstance(spec, dict)
+            or spec.get("apiVersion") != "npa.workflow/v0.0.1"
+        ):
             continue
         for variable in variables:
             if variable not in spec.get("config", {}):
-                errors.append(f"{path.name}: undeclared configuration variable {variable}")
+                errors.append(
+                    f"{path.name}: undeclared configuration variable {variable}"
+                )
     return errors

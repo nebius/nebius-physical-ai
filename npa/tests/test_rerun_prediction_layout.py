@@ -51,21 +51,30 @@ def _assert_motion_series(chunks, root: str, source: np.ndarray) -> None:
     for joint in JOINT_INDICES:
         rows = []
         for chunk in chunks:
-            if str(chunk.entity_path) != f"{root}/angles/joint_{joint}" or chunk.is_static:
+            if (
+                str(chunk.entity_path) != f"{root}/angles/joint_{joint}"
+                or chunk.is_static
+            ):
                 continue
             batch = chunk.to_record_batch()
             timestamps = batch.column("frame_time").cast("int64").to_pylist()
             values = batch.column("Scalars:scalars").to_pylist()
             rows.extend(zip(timestamps, values, strict=True))
         rows.sort(key=lambda row: row[0])
-        assert [row[0] for row in rows] == [frame * 250_000_000 for frame in range(len(source))]
+        assert [row[0] for row in rows] == [
+            frame * 250_000_000 for frame in range(len(source))
+        ]
         np.testing.assert_allclose([row[1][0] for row in rows], source[:, joint, 2])
 
 
 @pytest.mark.parametrize("moving", [False, True], ids=["stationary", "moving"])
 @pytest.mark.parametrize(
     ("layout", "horizon"),
-    [(layout, horizon) for layout in ("side-by-side", "overlay", "single") for horizon in (1, 2, 4)]
+    [
+        (layout, horizon)
+        for layout in ("side-by-side", "overlay", "single")
+        for horizon in (1, 2, 4)
+    ]
     + [("single", None)],
 )
 def test_frame_recordings_preserve_layout_and_prediction_horizon(
@@ -81,13 +90,23 @@ def test_frame_recordings_preserve_layout_and_prediction_horizon(
     original_predictions = None if predictions is None else predictions.copy()
     # These fixtures exercise both the minimum separation and trajectory-wide span.
     separation = (3.06 if horizon == FRAME_COUNT else 2.88) if moving else 1.2
-    input_shift = np.array([-separation / 2, 0, 0]) if layout == "side-by-side" else np.zeros(3)
+    input_shift = (
+        np.array([-separation / 2, 0, 0]) if layout == "side-by-side" else np.zeros(3)
+    )
     paths = backend._write_frame_recordings(
-        skeleton, predictions, layout, tmp_path / "recordings", FPS, 1.0,
-        "Synthetic prediction horizon", CONNECTIONS,
+        skeleton,
+        predictions,
+        layout,
+        tmp_path / "recordings",
+        FPS,
+        1.0,
+        "Synthetic prediction horizon",
+        CONNECTIONS,
     )
 
-    assert [path.name for path in paths] == [f"frame_{frame:06d}.rrd" for frame in range(FRAME_COUNT)]
+    assert [path.name for path in paths] == [
+        f"frame_{frame:06d}.rrd" for frame in range(FRAME_COUNT)
+    ]
     recording_ids = set()
     for frame, path in enumerate(paths):
         assert path.stat().st_size > 0
@@ -98,7 +117,9 @@ def test_frame_recordings_preserve_layout_and_prediction_horizon(
         chunks = list(recording.chunks())
         _assert_geometry(chunks, "/world/input", skeleton[frame] + input_shift)
         if predictions is not None and frame < len(predictions) and layout != "single":
-            _assert_geometry(chunks, "/world/predictions", predictions[frame] - input_shift)
+            _assert_geometry(
+                chunks, "/world/predictions", predictions[frame] - input_shift
+            )
         else:
             entities = {str(chunk.entity_path) for chunk in chunks}
             assert "/world/predictions/joints" not in entities
@@ -107,7 +128,10 @@ def test_frame_recordings_preserve_layout_and_prediction_horizon(
         if predictions is not None:
             _assert_motion_series(chunks, "/world/predictions", predictions)
         else:
-            assert not any(str(chunk.entity_path).startswith("/world/predictions/") for chunk in chunks)
+            assert not any(
+                str(chunk.entity_path).startswith("/world/predictions/")
+                for chunk in chunks
+            )
 
     assert len(recording_ids) == FRAME_COUNT
     np.testing.assert_array_equal(skeleton, original_skeleton)

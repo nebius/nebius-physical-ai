@@ -16,9 +16,7 @@ def test_sam2_config_is_pinned_and_validates_quality_bounds() -> None:
     assert config.model_id == "facebook/sam2.1-hiera-tiny"
     assert len(config.model_revision) == 40
     with pytest.raises(sm.Sam2MaskError, match="area fractions"):
-        sm.Sam2MaskConfig(
-            min_area_fraction=0.7, max_area_fraction=0.6
-        ).validate()
+        sm.Sam2MaskConfig(min_area_fraction=0.7, max_area_fraction=0.6).validate()
 
 
 def test_sam2_rejects_prompt_coordinates_in_the_workflow_surface() -> None:
@@ -30,8 +28,18 @@ def test_automatic_mask_selection_rejects_speckles_and_background() -> None:
     selected = sm._select_automatic_boxes(
         [
             {"area": 1, "bbox": [1, 1, 1, 1], "predicted_iou": 1, "stability_score": 1},
-            {"area": 9_900, "bbox": [0, 0, 100, 100], "predicted_iou": 1, "stability_score": 1},
-            {"area": 1_600, "bbox": [20, 20, 40, 40], "predicted_iou": 0.95, "stability_score": 0.96},
+            {
+                "area": 9_900,
+                "bbox": [0, 0, 100, 100],
+                "predicted_iou": 1,
+                "stability_score": 1,
+            },
+            {
+                "area": 1_600,
+                "bbox": [20, 20, 40, 40],
+                "predicted_iou": 0.95,
+                "stability_score": 0.96,
+            },
         ],
         width=100,
         height=100,

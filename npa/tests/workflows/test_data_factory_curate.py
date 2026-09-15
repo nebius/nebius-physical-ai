@@ -222,7 +222,9 @@ def test_terminal_rejected_review_uses_portable_fiftyone_dataset(
         def save(self) -> None:
             observed["saved"] = True
 
-        def export(self, *, export_dir: str, dataset_type: object, export_media: bool) -> None:
+        def export(
+            self, *, export_dir: str, dataset_type: object, export_media: bool
+        ) -> None:
             observed["dataset_type"] = dataset_type
             observed["export_media"] = export_media
             Path(export_dir, "metadata.json").write_text(
@@ -230,11 +232,7 @@ def test_terminal_rejected_review_uses_portable_fiftyone_dataset(
             )
 
         def get_field_schema(self) -> dict[str, object]:
-            fields = {
-                key: object()
-                for sample in self.samples
-                for key in sample
-            }
+            fields = {key: object() for sample in self.samples for key in sample}
             return {"filepath": object(), **fields}
 
         def delete(self) -> None:

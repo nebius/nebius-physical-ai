@@ -114,7 +114,9 @@ def test_bdd100k_invalid_split_raises_clear_error() -> None:
 
 def test_bdd100k_accepts_both_label_filename_conventions(tmp_path: Path) -> None:
     _write_fixture_split(tmp_path, "train", "det_train.json", "train-000.jpg")
-    _write_fixture_split(tmp_path, "val", "bdd100k_labels_images_val.json", "val-000.jpg")
+    _write_fixture_split(
+        tmp_path, "val", "bdd100k_labels_images_val.json", "val-000.jpg"
+    )
 
     result = import_bdd100k(
         source=str(tmp_path),
@@ -178,7 +180,9 @@ def test_bdd100k_sdk_accepts_explicit_local_mode(tmp_path: Path) -> None:
     assert result.total_rows == 3
 
 
-def test_bdd100k_sdk_service_mode_matches_http_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdd100k_sdk_service_mode_matches_http_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import npa.workbench.lancedb as sdk_module
 
     app = create_app(storage_path=str(tmp_path / "service-root"), auth_mode="none")
@@ -207,11 +211,16 @@ def test_bdd100k_sdk_service_mode_matches_http_endpoint(tmp_path: Path, monkeypa
 
 
 def test_lancedb_token_auth_rejects_missing_and_invalid_tokens(tmp_path: Path) -> None:
-    app = create_app(storage_path=str(tmp_path / "auth-root"), auth_mode="token", token="s3cr3t")
+    app = create_app(
+        storage_path=str(tmp_path / "auth-root"), auth_mode="token", token="s3cr3t"
+    )
     client = TestClient(app)
 
     assert client.get("/health").status_code == 401
-    assert client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert (
+        client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code
+        == 401
+    )
     assert client.get("/health", headers={"Authorization": "s3cr3t"}).status_code == 401
 
     ok = client.get("/health", headers={"Authorization": "Bearer s3cr3t"})
@@ -219,8 +228,12 @@ def test_lancedb_token_auth_rejects_missing_and_invalid_tokens(tmp_path: Path) -
     assert ok.json()["status"] == "ok"
 
 
-def test_lancedb_token_auth_mode_without_token_is_misconfiguration(tmp_path: Path) -> None:
-    app = create_app(storage_path=str(tmp_path / "auth-root"), auth_mode="token", token="")
+def test_lancedb_token_auth_mode_without_token_is_misconfiguration(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        storage_path=str(tmp_path / "auth-root"), auth_mode="token", token=""
+    )
     client = TestClient(app)
     response = client.get("/health", headers={"Authorization": "Bearer anything"})
     assert response.status_code == 500
@@ -263,7 +276,9 @@ def test_manifest_checksum_matches_table_rows(tmp_path: Path) -> None:
     assert manifest_checksum(entries) == result.manifest_sha256
 
 
-def _write_fixture_split(root: Path, split: str, label_name: str, image_name: str) -> None:
+def _write_fixture_split(
+    root: Path, split: str, label_name: str, image_name: str
+) -> None:
     image_dir = root / "images" / "100k" / split
     image_dir.mkdir(parents=True, exist_ok=True)
     _jpeg_bytes(image_dir / image_name)

@@ -155,7 +155,13 @@ def test_lerobot_uses_system_ffmpeg_without_bundled_payload() -> None:
 
 def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
     paths = (
-        REPO_ROOT / "npa" / "docker" / "workbench" / "base" / "cuda13-b300" / "Dockerfile",
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "base"
+        / "cuda13-b300"
+        / "Dockerfile",
         REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
         REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
     )
@@ -173,9 +179,7 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
 def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     openpi_dir = REPO_ROOT / "npa" / "docker" / "workbench" / "openpi"
     dockerfile = (openpi_dir / "Dockerfile").read_text(encoding="utf-8")
-    gcs_lock = (openpi_dir / "gcs-requirements.txt").read_text(
-        encoding="utf-8"
-    )
+    gcs_lock = (openpi_dir / "gcs-requirements.txt").read_text(encoding="utf-8")
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "      ca-certificates ffmpeg git" in dockerfile
@@ -201,8 +205,13 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "boto3.session.Session()" in dockerfile
     assert "'deepdiff==8.6.2'" in dockerfile
     assert "WANDB_MODE=disabled" in dockerfile
-    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
-    assert "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core" in dockerfile
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    )
+    assert (
+        "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core"
+        in dockerfile
+    )
     assert "import boto3, importlib.metadata as m, numpy, os, tensorflow" in dockerfile
     assert "import importlib.metadata as m, numpy, rerun" in dockerfile
     assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
@@ -247,7 +256,9 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
     assert "google-cloud-storage==3.13.1" in gcs_lock
     assert "--hash=sha256:" in gcs_lock
-    assert not any(name in gcs_lock for name in ("gsutil==", "httplib2==", "pyopenssl=="))
+    assert not any(
+        name in gcs_lock for name in ("gsutil==", "httplib2==", "pyopenssl==")
+    )
     assert "--no-deps --require-hashes -r /tmp/gcs-requirements.txt" in rerun_addons
     assert "pip check --python /opt/gcs-venv/bin/python" in rerun_addons
     assert "/usr/local/bin/npa-openpi-gcs --version" in rerun_addons
@@ -255,9 +266,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert dependency_layer.index("uv sync --active") < dependency_layer.index(
         "&& cd / \\"
     )
-    assert dependency_layer.index("&& cd / \\") < dependency_layer.index(
-        "'jax==0.6.2'"
-    )
+    assert dependency_layer.index("&& cd / \\") < dependency_layer.index("'jax==0.6.2'")
     assert dependency_layer.index("'jax==0.6.2'") < dependency_layer.index(
         "*/imageio_ffmpeg/binaries/ffmpeg*"
     )
@@ -802,9 +811,7 @@ def test_registry_export_failure_is_fatal_after_a_valid_partial_tar(
         calls += 1
         return FailedExport()
 
-    monkeypatch.setattr(
-        scanner.subprocess, "Popen", failed_export
-    )
+    monkeypatch.setattr(scanner.subprocess, "Popen", failed_export)
     monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.CalledProcessError, match="exit status 17"):
@@ -835,9 +842,13 @@ def test_registry_export_retry_deduplicates_partial_paths(monkeypatch) -> None:
         )
     )
     monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
-    monkeypatch.setattr(scanner.subprocess, "Popen", lambda *_args, **_kwargs: next(processes))
+    monkeypatch.setattr(
+        scanner.subprocess, "Popen", lambda *_args, **_kwargs: next(processes)
+    )
     monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(scanner, "_image_history", lambda _image: ([], "sha256:" + "a" * 64))
+    monkeypatch.setattr(
+        scanner, "_image_history", lambda _image: ([], "sha256:" + "a" * 64)
+    )
 
     report = scanner.scan("registry.example/image:tag", None)
 

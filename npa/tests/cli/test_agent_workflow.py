@@ -38,9 +38,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_YAML = (
-    REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
-)
+EXAMPLE_YAML = REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
     "nurec-reconstruct.yaml",
@@ -459,10 +457,9 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
 def test_embedded_agent_uses_the_exact_canonical_sim2real_yaml() -> None:
     from npa.cli.agent_contracts import _embedded_agent_workflow_source
 
-    canonical = (
-        REPO_ROOT
-        / "workflows" / "main" / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
+    canonical = (REPO_ROOT / "workflows" / "main" / "sim2real.yaml").read_text(
+        encoding="utf-8"
+    )
     source = _embedded_agent_workflow_source()
 
     assert f"_EMBEDDED_CANONICAL_SIM2REAL_YAML = {canonical!r}" in source
@@ -1405,9 +1402,7 @@ def test_every_agent_template_toolref_resolves_catalog() -> None:
     for template in _TEMPLATES:
         spec = yaml.safe_load(generate_workflow_yaml(template))
         emitted.extend(
-            state["toolRef"]
-            for state in spec["states"].values()
-            if "toolRef" in state
+            state["toolRef"] for state in spec["states"].values() if "toolRef" in state
         )
 
     unknown = sorted(set(emitted) - set(TOOL_CATALOG))

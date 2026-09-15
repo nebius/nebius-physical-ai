@@ -27,10 +27,7 @@ WORKFLOW = (
     / "examples"
     / "nurec-reconstruct.yaml"
 )
-SPEC = (
-    REPO_ROOT
-    / "workflows" / "main" / "nurec-reconstruct.yaml"
-)
+SPEC = REPO_ROOT / "workflows" / "main" / "nurec-reconstruct.yaml"
 
 #: GPUs with no RT cores. Reconstruction and rasterization are RT-core work, so a
 #: reference to any of these in the workflow is a routing bug.

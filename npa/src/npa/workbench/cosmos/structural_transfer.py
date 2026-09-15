@@ -41,14 +41,23 @@ class TransferSettings:
         """
         if type(self.fps) is not int or not 10 <= self.fps <= 30:
             raise ValueError("conditioning_fps must be an integer from 10 through 30")
-        if type(self.chunk_frames) is not int or not 9 <= self.chunk_frames <= 297 or (self.chunk_frames - 1) % 4:
+        if (
+            type(self.chunk_frames) is not int
+            or not 9 <= self.chunk_frames <= 297
+            or (self.chunk_frames - 1) % 4
+        ):
             raise ValueError("transfer_chunk_frames must be 4k+1 between 9 and 297")
-        if (type(self.control_guidance) not in {int, float}
-                or not math.isfinite(self.control_guidance) or not 0 < self.control_guidance <= 10):
+        if (
+            type(self.control_guidance) not in {int, float}
+            or not math.isfinite(self.control_guidance)
+            or not 0 < self.control_guidance <= 10
+        ):
             raise ValueError("control_guidance must be finite, positive and at most 10")
 
 
-def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Path, seed: int) -> dict[str, Any]:
+def transfer_sample(
+    base: dict[str, Any], settings: TransferSettings, output: Path, seed: int
+) -> dict[str, Any]:
     """Configure native full-source transfer using a prepared local reference.
 
     Args:
@@ -68,15 +77,27 @@ def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Pa
         raise ValueError("Structural transfer requires video2video mode")
     timeline = probe_video(Path(base["vision_path"]))
     validate_reference(timeline, settings.fps)
-    return {**base, "resolution": "480", "aspect_ratio": "16,9", "fps": settings.fps,
-            "num_frames": settings.chunk_frames, "seed": seed, "shift": 10.0,
-            "edge": {"control_path": str(output / "controls" / f"{base['name']}.mkv"),
-                     "preset_edge_threshold": "medium"},
-            "control_guidance": settings.control_guidance,
-            "num_video_frames_per_chunk": settings.chunk_frames,
-            "num_conditional_frames": 5, "num_first_chunk_conditional_frames": 1,
-            "max_frames": timeline["decoded_frames"], "share_vision_temporal_positions": True,
-            "show_input": False, "show_control_condition": False}
+    return {
+        **base,
+        "resolution": "480",
+        "aspect_ratio": "16,9",
+        "fps": settings.fps,
+        "num_frames": settings.chunk_frames,
+        "seed": seed,
+        "shift": 10.0,
+        "edge": {
+            "control_path": str(output / "controls" / f"{base['name']}.mkv"),
+            "preset_edge_threshold": "medium",
+        },
+        "control_guidance": settings.control_guidance,
+        "num_video_frames_per_chunk": settings.chunk_frames,
+        "num_conditional_frames": 5,
+        "num_first_chunk_conditional_frames": 1,
+        "max_frames": timeline["decoded_frames"],
+        "share_vision_temporal_positions": True,
+        "show_input": False,
+        "show_control_condition": False,
+    }
 
 
 def transfer_artifact(sample_dir: Path) -> tuple[Path, dict[str, Any]]:
@@ -93,12 +114,22 @@ def transfer_artifact(sample_dir: Path) -> tuple[Path, dict[str, Any]]:
     outputs = json.loads((sample_dir / "sample_outputs.json").read_text())
     evidence = json.loads((sample_dir / "transfer_evidence.json").read_text())
     artifact = sample_dir / "vision.mp4"
-    files = [str(item) for entry in outputs.get("outputs", []) for item in entry.get("files", [])]
-    if (outputs.get("status") != "success" or str(artifact) not in files
-            or not artifact.is_file() or artifact.stat().st_size <= 0
-            or evidence.get("schema") != "npa.cosmos3.structural-transfer.v1"
-            or evidence.get("text_guardrail_passed") is not True
-            or evidence.get("video_guardrail_passed") is not True
-            or evidence.get("guardrail_postprocessing_applied") is not True):
-        raise ValueError("Structural transfer lacks successful guarded generation evidence")
+    files = [
+        str(item)
+        for entry in outputs.get("outputs", [])
+        for item in entry.get("files", [])
+    ]
+    if (
+        outputs.get("status") != "success"
+        or str(artifact) not in files
+        or not artifact.is_file()
+        or artifact.stat().st_size <= 0
+        or evidence.get("schema") != "npa.cosmos3.structural-transfer.v1"
+        or evidence.get("text_guardrail_passed") is not True
+        or evidence.get("video_guardrail_passed") is not True
+        or evidence.get("guardrail_postprocessing_applied") is not True
+    ):
+        raise ValueError(
+            "Structural transfer lacks successful guarded generation evidence"
+        )
     return artifact, evidence

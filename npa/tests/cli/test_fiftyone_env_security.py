@@ -15,7 +15,9 @@ from npa.cli.fiftyone import (
 )
 
 
-@pytest.mark.parametrize("name", ["dataset\nAWS_ACCESS_KEY_ID=other", "dataset\rname", "dataset\0name"])
+@pytest.mark.parametrize(
+    "name", ["dataset\nAWS_ACCESS_KEY_ID=other", "dataset\rname", "dataset\0name"]
+)
 def test_dataset_name_cannot_inject_service_environment(name):
     with pytest.raises(ValueError, match="newline or NUL"):
         _service_setup_script(5151, dataset_name=name)

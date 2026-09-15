@@ -300,8 +300,7 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
         assert (
-            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"'
-            in dockerfile_text
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in dockerfile_text
         ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
@@ -472,9 +471,7 @@ def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
     assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
     assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
     assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
-    assert (
-        "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
-    )
+    assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
     assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
     assert "dpkg --purge --force-depends linux-libc-dev" not in text
 

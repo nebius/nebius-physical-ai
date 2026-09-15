@@ -24,10 +24,17 @@ _CONFIG_ERRORS = {
 }
 
 
-@pytest.mark.parametrize("scenario", ["success", "existing", "read-error", "upload-error", "corrupt", *_CONFIG_ERRORS])
-def test_private_live_reports_and_storage_guards(pytester, monkeypatch, scenario: str) -> None:
+@pytest.mark.parametrize(
+    "scenario",
+    ["success", "existing", "read-error", "upload-error", "corrupt", *_CONFIG_ERRORS],
+)
+def test_private_live_reports_and_storage_guards(
+    pytester, monkeypatch, scenario: str
+) -> None:
     pytester.makepyfile(test_private_live=_LIVE_TEST.read_text())
-    pytester.makeini("[pytest]\nmarkers = e2e: opted-in integration test\njunit_family = legacy\n")
+    pytester.makeini(
+        "[pytest]\nmarkers = e2e: opted-in integration test\njunit_family = legacy\n"
+    )
     destination_file = pytester.path / "destinations.json"
     destination_file.write_text(json.dumps(_DESTINATIONS))
     destination_file.chmod(0o600)
@@ -36,13 +43,21 @@ def test_private_live_reports_and_storage_guards(pytester, monkeypatch, scenario
     elif scenario == "malformed-json":
         destination_file.write_text('{"dataset": "' + _DESTINATIONS["dataset"])
     elif scenario == "invalid-uri":
-        destination_file.write_text(json.dumps({**_DESTINATIONS, "dataset": _DESTINATIONS["dataset"] + "?private"}))
+        destination_file.write_text(
+            json.dumps(
+                {**_DESTINATIONS, "dataset": _DESTINATIONS["dataset"] + "?private"}
+            )
+        )
     elif scenario == "permissions":
         destination_file.chmod(0o644)
     elif scenario == "duplicate":
-        destination_file.write_text(json.dumps(dict.fromkeys(_DESTINATIONS, _DESTINATIONS["dataset"])))
+        destination_file.write_text(
+            json.dumps(dict.fromkeys(_DESTINATIONS, _DESTINATIONS["dataset"]))
+        )
     monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
-    monkeypatch.setenv("NPA_E2E_CONVERT_RRD_S3_DESTINATIONS_FILE", str(destination_file))
+    monkeypatch.setenv(
+        "NPA_E2E_CONVERT_RRD_S3_DESTINATIONS_FILE", str(destination_file)
+    )
     monkeypatch.setenv("SYNTHETIC_RRD_SCENARIO", scenario)
     pytester.makeconftest(
         """
@@ -99,8 +114,15 @@ def synthetic_storage(monkeypatch, request):
 """
     )
     result = pytester.runpytest_subprocess(
-        "-q", "--showlocals", "--junitxml=report.xml", "-o", "junit_logging=all",
-        "-o", "log_cli=true", "-o", "log_cli_level=DEBUG",
+        "-q",
+        "--showlocals",
+        "--junitxml=report.xml",
+        "-o",
+        "junit_logging=all",
+        "-o",
+        "log_cli=true",
+        "-o",
+        "log_cli_level=DEBUG",
     )
     if scenario == "success":
         result.assert_outcomes(passed=2)
@@ -110,24 +132,38 @@ def synthetic_storage(monkeypatch, request):
     else:
         result.assert_outcomes(failed=2)
     if scenario == "existing":
-        result.stdout.fnmatch_lines(["*Refusing to overwrite an existing destination object*"])
+        result.stdout.fnmatch_lines(
+            ["*Refusing to overwrite an existing destination object*"]
+        )
     elif scenario in {"read-error", "upload-error", "corrupt"}:
         error_type = "AssertionError" if scenario == "corrupt" else "OSError"
-        result.stdout.fnmatch_lines([f"*Private S3 upload/readback failed ({error_type})*"])
+        result.stdout.fnmatch_lines(
+            [f"*Private S3 upload/readback failed ({error_type})*"]
+        )
     calls = pytester.path / "upload-calls"
     assert (len(calls.read_text().splitlines()) if calls.exists() else 0) == (
         0 if scenario in {"existing", "read-error", *_CONFIG_ERRORS} else 2
     )
     report = (pytester.path / "report.xml").read_text()
     output = result.stdout.str() + result.stderr.str() + report
-    for private_value in (*_DESTINATIONS.values(), "synthetic-private-bucket", "private-dataset.rrd", "private-predictions.rrd"):
+    for private_value in (
+        *_DESTINATIONS.values(),
+        "synthetic-private-bucket",
+        "private-dataset.rrd",
+        "private-predictions.rrd",
+    ):
         assert private_value not in output
     if scenario == "success":
         cases = ElementTree.fromstring(report).findall(".//testcase")
         assert len(cases) == 2
         for case in cases:
-            properties = {entry.attrib["name"]: entry.attrib["value"] for entry in case.findall("./properties/property")}
+            properties = {
+                entry.attrib["name"]: entry.attrib["value"]
+                for entry in case.findall("./properties/property")
+            }
             assert len(properties["rrd_sha256"]) == 64
             assert int(properties["rrd_bytes"]) > 0
             assert properties["decoded_frames_per_entity"] == "4"
-            assert properties["decoded_joint_entities"] == ("2" if "predictions" in case.attrib["name"] else "1")
+            assert properties["decoded_joint_entities"] == (
+                "2" if "predictions" in case.attrib["name"] else "1"
+            )

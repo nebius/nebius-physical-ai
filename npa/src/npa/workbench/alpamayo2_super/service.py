@@ -30,7 +30,12 @@ from npa.workbench.alpamayo2_super.schemas import InferenceBody
 def _output_root(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme == "s3":
-        if not parsed.netloc or not parsed.path.strip("/") or parsed.query or parsed.fragment:
+        if (
+            not parsed.netloc
+            or not parsed.path.strip("/")
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("The service output root requires an S3 bucket and prefix")
         return value.rstrip("/")
     if parsed.scheme or not value:
@@ -43,12 +48,16 @@ def _output_root(value: str) -> str:
         or info.st_uid != os.getuid()
         or stat.S_IMODE(info.st_mode) & 0o077
     ):
-        raise ValueError("The local service output root must be owned by this user with mode 0700")
+        raise ValueError(
+            "The local service output root must be owned by this user with mode 0700"
+        )
     return str(root.resolve())
 
 
 def create_app(
-    *, token: str | None = None, output_root: str | None = None,
+    *,
+    token: str | None = None,
+    output_root: str | None = None,
     manifest: str | None = None,
 ) -> FastAPI:
     """Snapshot the operator's trusted manifest and configure the HTTP boundary.
@@ -60,16 +69,26 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(service: FastAPI):
-        secret = token if token is not None else os.environ.get("NPA_ALPAMAYO2_SUPER_TOKEN", "")
+        secret = (
+            token
+            if token is not None
+            else os.environ.get("NPA_ALPAMAYO2_SUPER_TOKEN", "")
+        )
         if not secret:
             raise ValueError("NPA_ALPAMAYO2_SUPER_TOKEN is required")
         root = _output_root(
-            output_root if output_root is not None
+            output_root
+            if output_root is not None
             else os.environ.get("NPA_ALPAMAYO2_SUPER_OUTPUT_ROOT", "")
         )
-        source = Path(manifest if manifest is not None else os.environ.get(
-            "NPA_ALPAMAYO2_SUPER_MANIFEST", DEFAULT_MANIFEST,
-        ))
+        source = Path(
+            manifest
+            if manifest is not None
+            else os.environ.get(
+                "NPA_ALPAMAYO2_SUPER_MANIFEST",
+                DEFAULT_MANIFEST,
+            )
+        )
         contents = source.read_bytes()
         samples = json.loads(contents)["samples"]
         if not isinstance(samples, list) or not samples:
@@ -78,7 +97,12 @@ def create_app(
             snapshot = Path(scratch) / "manifest.json"
             snapshot.write_bytes(contents)
             snapshot.chmod(0o400)
-            service.state.configuration = (secret.encode(), root, snapshot, len(samples))
+            service.state.configuration = (
+                secret.encode(),
+                root,
+                snapshot,
+                len(samples),
+            )
             try:
                 yield
             finally:
@@ -90,11 +114,14 @@ def create_app(
     def authorize(request: Request) -> tuple[bytes, str, Path, int]:
         config = request.app.state.configuration
         if config is None:
-            raise HTTPException(status_code=503, detail="Service configuration is not ready")
+            raise HTTPException(
+                status_code=503, detail="Service configuration is not ready"
+            )
         supplied = request.headers.get("Authorization", "").encode()
         if not hmac.compare_digest(supplied, b"Bearer " + config[0]):
             raise HTTPException(
-                status_code=401, detail="Bearer authentication required",
+                status_code=401,
+                detail="Bearer authentication required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return config
@@ -107,14 +134,17 @@ def create_app(
     def system_info() -> dict[str, Any]:
         return {
             "model_id": DEFAULT_MODEL_ID,
-            "model_revision": DEFAULT_MODEL_REVISION, "weights_baked": False,
+            "model_revision": DEFAULT_MODEL_REVISION,
+            "weights_baked": False,
         }
 
     @service.post("/run")
     def run(body: InferenceBody, config=Depends(authorize)) -> dict[str, Any]:
         _, root, snapshot, sample_count = config
         if body.sample_index >= sample_count:
-            raise HTTPException(status_code=422, detail="sample_index exceeds the configured manifest")
+            raise HTTPException(
+                status_code=422, detail="sample_index exceeds the configured manifest"
+            )
         # Fresh outputs prevent clients from overwriting other runs or using the
         # service's storage identity outside its configured root.
         if root.startswith("s3://"):
@@ -123,12 +153,18 @@ def create_app(
             destination = tempfile.mkdtemp(prefix=body.output_path + "-", dir=root)
         try:
             values = body.model_dump(exclude={"output_path"})
-            return run_inference(Alpamayo2SuperRequest(
-                **values, output_path=destination, manifest=str(snapshot),
-            ))
+            return run_inference(
+                Alpamayo2SuperRequest(
+                    **values,
+                    output_path=destination,
+                    manifest=str(snapshot),
+                )
+            )
         except Alpamayo2SuperError as exc:
             # Upstream diagnostics can contain credential-bearing download URLs.
-            raise HTTPException(status_code=422, detail="Alpamayo inference failed") from exc
+            raise HTTPException(
+                status_code=422, detail="Alpamayo inference failed"
+            ) from exc
         finally:
             if not root.startswith("s3://"):
                 try:

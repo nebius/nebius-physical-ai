@@ -70,7 +70,10 @@ def _kubeconfig_env(kubeconfig: Kubeconfig) -> dict[str, str] | None:
 
 
 def kubernetes_sky_environment(
-    *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
+    *,
+    context: str,
+    kubeconfig: Kubeconfig,
+    sky_executable: str,
 ) -> dict[str, str]:
     """Bind cluster checks and discovery to one exact owned API when isolated."""
     env = _kubeconfig_env(kubeconfig) or os.environ.copy()

@@ -23,7 +23,9 @@ from npa.workbench.sonic.workflow import (
     submit_sonic_workflow,
 )
 
-train = make_cli_wrapper("npa.cli.workbench.sonic.train", "train_cmd", "Run SONIC training.")
+train = make_cli_wrapper(
+    "npa.cli.workbench.sonic.train", "train_cmd", "Run SONIC training."
+)
 eval = make_cli_wrapper(
     "npa.cli.workbench.sonic.eval",
     "eval_cmd",

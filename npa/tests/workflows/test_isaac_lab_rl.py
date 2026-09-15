@@ -12,20 +12,30 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 SINGLE_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train.yaml"
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "isaac-lab-rl-train.yaml"
 )
 # The raw isaac-lab-rl-sweep template is retired; its npa.workflow spec is the surface
 # (live-verified on four GPUs in two batches plus a barrier — EVIDENCE §R3).
-SWEEP_SPEC = (
-    ROOT
-    / "workflows" / "testing" / "isaac-lab-rl-sweep.yaml"
-)
+SWEEP_SPEC = ROOT / "workflows" / "testing" / "isaac-lab-rl-sweep.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
-FUNCTIONAL_SMOKE = ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "smoke_functional.py"
+FUNCTIONAL_SMOKE = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "smoke_functional.py"
+)
 
 
 def _docs(path: Path) -> list[dict]:
-    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+    return [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
 
 
 def _load_wrapper_module():
@@ -72,10 +82,38 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
 def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> None:
     yaml_paths = [
         SINGLE_YAML,
-        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train-rtxpro.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-datagen-rtxpro-smoke.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-container-smoke-rtxpro.yaml",
+        ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "isaac-lab-rl-train-rtxpro.yaml",
+        ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "isaac-lab-rl-train-rtxpro-smoke.yaml",
+        ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "byof-datagen-rtxpro-smoke.yaml",
+        ROOT
+        / "npa"
+        / "src"
+        / "npa"
+        / "workflows"
+        / "byof"
+        / "profiles"
+        / "byof-container-smoke-rtxpro.yaml",
     ]
     for path in yaml_paths:
         text = path.read_text(encoding="utf-8")
@@ -84,7 +122,9 @@ def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> Non
         for doc in docs[1:]:
             envs = doc.get("envs") or {}
             if "AWS_ENDPOINT_URL" in envs:
-                assert envs["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+                assert (
+                    envs["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+                )
 
 
 def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> None:
@@ -111,9 +151,14 @@ def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> Non
     ]
     for name in members:
         member = spec.states[name]
-        assert spec.resources[member.resources]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+        assert (
+            spec.resources[member.resources]["accelerators"]
+            == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+        )
         # Each variant writes under its own prefix, as the template's envs did.
-        assert member.params["variant_uri"].rstrip("/").endswith(member.params["variant"])
+        assert (
+            member.params["variant_uri"].rstrip("/").endswith(member.params["variant"])
+        )
 
     # The real RSL-RL entrypoint still runs in-pod, via the sweep stage module.
     plan = build_plan(spec, run_id="probe")
@@ -132,8 +177,17 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
     def fake_submit_workflow(yaml_path, run_id, **kwargs):
         captured["run_id"] = run_id
         captured["kwargs"] = kwargs
-        captured["docs"] = [doc for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8")) if doc is not None]
-        return wrapper.WorkflowResult(status="SUBMITTED", job_id="42", returncode=0, log_paths={"config": str(tmp_path / "config.yaml")})
+        captured["docs"] = [
+            doc
+            for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8"))
+            if doc is not None
+        ]
+        return wrapper.WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            log_paths={"config": str(tmp_path / "config.yaml")},
+        )
 
     def fake_workflow_status(job_id, **kwargs):
         return wrapper.WorkflowResult(status="SUCCEEDED", job_id=job_id, returncode=0)
@@ -170,22 +224,37 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
 
     assert rc == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["outputs"]["checkpoint"] == "s3://bucket/isaac-lab-rl/isaac-test-run/npa_isaac_lab_checkpoint.pt"
+    assert (
+        output["outputs"]["checkpoint"]
+        == "s3://bucket/isaac-lab-rl/isaac-test-run/npa_isaac_lab_checkpoint.pt"
+    )
     assert captured["run_id"] == "isaac-test-run"
     assert captured["kwargs"]["project"] == "test-project"
     assert captured["kwargs"]["infra"] == "k8s/test-context"
     rendered_task = captured["docs"][1]
     assert rendered_task["envs"]["ISAAC_LAB_ITERATIONS"] == "3"
-    assert rendered_task["envs"]["S3_OUTPUT_PREFIX"] == "s3://bucket/isaac-lab-rl/isaac-test-run/"
+    assert (
+        rendered_task["envs"]["S3_OUTPUT_PREFIX"]
+        == "s3://bucket/isaac-lab-rl/isaac-test-run/"
+    )
     assert json.loads(rendered_task["envs"]["NPA_EXECUTION_OUTPUTS"]) == [
         {
             "uri": "s3://bucket/isaac-lab-rl/isaac-test-run/",
             "kind": "directory",
         }
     ]
-    assert rendered_task["resources"]["image_id"] == "docker:registry.example/npa-isaac-lab:test"
-    assert rendered_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
-    assert rendered_task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
+    assert (
+        rendered_task["resources"]["image_id"]
+        == "docker:registry.example/npa-isaac-lab:test"
+    )
+    assert (
+        rendered_task["envs"]["AWS_ENDPOINT_URL"]
+        == "https://storage.eu-north1.nebius.cloud"
+    )
+    assert (
+        rendered_task["envs"]["NEBIUS_S3_ENDPOINT"]
+        == "https://storage.eu-north1.nebius.cloud"
+    )
 
 
 def test_isaac_lab_runner_materializes_endpoint_from_env(monkeypatch, tmp_path) -> None:
@@ -225,11 +294,17 @@ def test_isaac_lab_runner_render_only_keeps_rendered_yaml(capsys) -> None:
     output = json.loads(capsys.readouterr().out)
     rendered = Path(output["rendered_yaml"])
     assert rendered.is_file()
-    docs = [doc for doc in yaml.safe_load_all(rendered.read_text(encoding="utf-8")) if doc is not None]
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(rendered.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
     assert docs[1]["envs"]["NPA_ISAAC_LAB_RUN_ID"] == "isaac-render-only"
 
 
-def test_isaac_lab_runner_requires_live_context_before_teardown(monkeypatch, tmp_path) -> None:
+def test_isaac_lab_runner_requires_live_context_before_teardown(
+    monkeypatch, tmp_path
+) -> None:
     wrapper = _load_wrapper_module()
     monkeypatch.setattr(wrapper, "resolve_byof_project", lambda: "test-project")
     monkeypatch.setattr(

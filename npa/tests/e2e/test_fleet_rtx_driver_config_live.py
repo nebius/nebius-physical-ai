@@ -15,8 +15,12 @@ pytestmark = pytest.mark.e2e
 
 
 def test_fleet_rtx_driver_config_reaches_ready_pods() -> None:
-    if not os.environ.get("NPA_FLEET_RTX_VERIFY_SPEC") or not os.environ.get("NPA_FLEET_RTX_KUBECONFIGS"):
-        pytest.skip("supply an owner-private Fleet spec and project-key kubeconfig mapping")
+    if not os.environ.get("NPA_FLEET_RTX_VERIFY_SPEC") or not os.environ.get(
+        "NPA_FLEET_RTX_KUBECONFIGS"
+    ):
+        pytest.skip(
+            "supply an owner-private Fleet spec and project-key kubeconfig mapping"
+        )
     spec = load_spec(Path(os.environ["NPA_FLEET_RTX_VERIFY_SPEC"]))
     configs = json.loads(Path(os.environ["NPA_FLEET_RTX_KUBECONFIGS"]).read_text())
     assert spec.profile
@@ -33,9 +37,21 @@ def test_fleet_rtx_driver_config_reaches_ready_pods() -> None:
 
         def get(resource: str, *args: str) -> list[dict]:
             result = subprocess.run(
-                ["kubectl", "--kubeconfig", str(kubeconfig), "--request-timeout=30s",
-                 "get", resource, *args, "-o", "json"],
-                env=env, capture_output=True, text=True, check=False,
+                [
+                    "kubectl",
+                    "--kubeconfig",
+                    str(kubeconfig),
+                    "--request-timeout=30s",
+                    "get",
+                    resource,
+                    *args,
+                    "-o",
+                    "json",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             assert result.returncode == 0, f"unreadable live {resource} response"
             return json.loads(result.stdout)["items"]
@@ -45,34 +61,59 @@ def test_fleet_rtx_driver_config_reaches_ready_pods() -> None:
             "node.kubernetes.io/instance-type": cluster.gpu_nodes.platform,
             "nebius.com/resource-preset": cluster.gpu_nodes.preset,
         }
-        gpu_nodes = [node for node in nodes if all(
-            node["metadata"]["labels"].get(key) == value for key, value in selector.items()
-        )]
+        gpu_nodes = [
+            node
+            for node in nodes
+            if all(
+                node["metadata"]["labels"].get(key) == value
+                for key, value in selector.items()
+            )
+        ]
         assert len(gpu_nodes) == cluster.gpu_nodes.count
         expected_gpus = int(cluster.gpu_nodes.preset.split("gpu-", 1)[0])
-        assert all(int(node["status"]["allocatable"]["nvidia.com/gpu"]) == expected_gpus
-                   for node in gpu_nodes)
+        assert all(
+            int(node["status"]["allocatable"]["nvidia.com/gpu"]) == expected_gpus
+            for node in gpu_nodes
+        )
         drivers = get("nvidiadrivers")
-        matching = [driver for driver in drivers if driver["spec"].get("nodeSelector") == selector]
+        matching = [
+            driver
+            for driver in drivers
+            if driver["spec"].get("nodeSelector") == selector
+        ]
         assert len(matching) == 1
         driver = matching[0]
         assert driver["spec"]["rdma"]["enabled"] is False
         pods = get("pods", "-n", "gpu-operator")
-        toolkit_pods = [pod for pod in pods if any(
-            container["name"] == "nvidia-container-toolkit-ctr"
-            for container in pod["spec"]["containers"]
-        )]
+        toolkit_pods = [
+            pod
+            for pod in pods
+            if any(
+                container["name"] == "nvidia-container-toolkit-ctr"
+                for container in pod["spec"]["containers"]
+            )
+        ]
         assert len(toolkit_pods) == len(gpu_nodes)
         for pod in toolkit_pods:
-            container = next(container for container in pod["spec"]["containers"]
-                             if container["name"] == "nvidia-container-toolkit-ctr")
+            container = next(
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "nvidia-container-toolkit-ctr"
+            )
             assert {item["name"]: item.get("value") for item in container["env"]}[
                 "RUNTIME_CONFIG_SOURCE"
             ] == "file"
-            assert all(container["ready"] for container in pod["status"]["containerStatuses"])
-        driver_pods = [pod for pod in pods if any(
-            container["name"] == "nvidia-driver-ctr" for container in pod["spec"]["containers"]
-        )]
+            assert all(
+                container["ready"] for container in pod["status"]["containerStatuses"]
+            )
+        driver_pods = [
+            pod
+            for pod in pods
+            if any(
+                container["name"] == "nvidia-driver-ctr"
+                for container in pod["spec"]["containers"]
+            )
+        ]
         assert len(driver_pods) == len(gpu_nodes)
         assert {pod["spec"]["nodeName"] for pod in driver_pods} == {
             node["metadata"]["name"] for node in gpu_nodes
@@ -88,10 +129,16 @@ def test_fleet_rtx_driver_config_reaches_ready_pods() -> None:
             configmap = next(item for item in maps if item["metadata"]["name"] == name)
             assert configmap["data"] == files
             for pod in driver_pods:
-                volume = next(volume for volume in pod["spec"]["volumes"]
-                              if volume.get("configMap", {}).get("name") == name)
+                volume = next(
+                    volume
+                    for volume in pod["spec"]["volumes"]
+                    if volume.get("configMap", {}).get("name") == name
+                )
                 for container in pod["spec"]["containers"]:
-                    mounts = [mount for mount in container.get("volumeMounts", [])
-                              if mount["name"] == volume["name"]]
+                    mounts = [
+                        mount
+                        for mount in container.get("volumeMounts", [])
+                        if mount["name"] == volume["name"]
+                    ]
                     assert {mount["subPath"] for mount in mounts} == set(files)
                     assert all(mount.get("readOnly") for mount in mounts)

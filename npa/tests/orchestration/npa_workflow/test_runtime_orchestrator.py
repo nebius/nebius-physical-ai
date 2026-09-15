@@ -575,7 +575,10 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "controller_backend": "kubernetes",
         "infra": "k8s/test-context",
         "secret_envs": [],
-        "extra_env": {"NPA_S3_BUCKET": "example-bucket", "NPA_S3_PREFIX": "trigger/rt-isolated"},
+        "extra_env": {
+            "NPA_S3_BUCKET": "example-bucket",
+            "NPA_S3_PREFIX": "trigger/rt-isolated",
+        },
         "timeout": 1800,
         "logical_launch_id": "",
         "project": "default",
@@ -806,10 +809,14 @@ def test_runtime_refreshes_launch_dependencies_again_before_retry(
 
     assert report.status == "succeeded"
     assert len(refreshed) == len(submitter.calls) == 4
-    assert submitter.calls[0]["tasks"] == submitter.calls[1]["tasks"] == [
-        "shard-a",
-        "shard-b",
-    ]
+    assert (
+        submitter.calls[0]["tasks"]
+        == submitter.calls[1]["tasks"]
+        == [
+            "shard-a",
+            "shard-b",
+        ]
+    )
 
 
 def test_runtime_launch_dependency_refresh_failure_prevents_submit(
@@ -1074,9 +1081,9 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     }
     assert len(first_attempt_ids) == len(second_attempt_ids) == 1
     assert first_attempt_ids.isdisjoint(second_attempt_ids)
-    assert {
-        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]
-    } == {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]}
+    assert {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]} == {
+        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]
+    }
 
 
 def test_launch_transaction_cannot_overwrite_the_scheduler_publication_fence() -> None:
@@ -1370,7 +1377,9 @@ def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
     assert [call["tasks"] for call in submitter.calls] == [["join"]]
     assert submitter.calls[0]["job_name"].endswith("-a2")
     assert [wave["replayed"] for wave in report.waves[:2]] == [True, True]
-    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][1]
+    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][
+        1
+    ]
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] == "3"
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "2"
     retried = next(wave for wave in report.waves if wave["states"] == ["join"])
@@ -1443,9 +1452,7 @@ def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -
 
 def _canonical_sim2real_1x1():
     root = Path(__file__).resolve().parents[4]
-    spec = load_spec(
-        root / "workflows" / "main" / "sim2real.yaml"
-    )
+    spec = load_spec(root / "workflows" / "main" / "sim2real.yaml")
     image = "cr.example/npa/runtime@sha256:" + "b" * 64
     spec.config.update(
         {
@@ -1881,7 +1888,8 @@ def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(
 
 @pytest.mark.parametrize("capacity_blocked", [False, True])
 def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
-    tmp_path: Path, capacity_blocked: bool,
+    tmp_path: Path,
+    capacity_blocked: bool,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
@@ -1922,8 +1930,11 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
 
     second_submitter = FakeSubmitter()
     resume_options = RuntimeOptions(
-        poll_seconds=0, max_wait_seconds=60, resume=True,
-        pre_submit_hook=check_capacity, preflight_evidence=_supervisor_preflight(),
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        pre_submit_hook=check_capacity,
+        preflight_evidence=_supervisor_preflight(),
     )
     second = _executor(
         spec,
@@ -1939,7 +1950,9 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     adopted = [wave for wave in second_report.waves if wave.get("adopted")]
     assert adopted and adopted[0]["job_id"] == "1"
     assert adopted[0]["key"] == key
-    proof = second._attempt_preflight(next(attempt for attempt in second.attempts if attempt.adopted))
+    proof = second._attempt_preflight(
+        next(attempt for attempt in second.attempts if attempt.adopted)
+    )
     assert proof.checks["gang_capacity"] == "unknown"
     assert proof.observed_at == "" and proof.scope == {}
     if capacity_blocked:
@@ -2000,7 +2013,11 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
 
     assert report.status == "succeeded"
     assert cancellations == [
-        {"job_id": "125", "run_id": "rt-phantom-01-shards", "cluster": "rt-phantom-01-shards"}
+        {
+            "job_id": "125",
+            "run_id": "rt-phantom-01-shards",
+            "cluster": "rt-phantom-01-shards",
+        }
     ]
     assert submitter.calls[0]["job_name"].endswith("-a2")
     attempts = [
@@ -2010,8 +2027,7 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
     ]
     assert [item["attempt"] for item in attempts[:2]] == [1, 2]
     assert (
-        attempts[0]["recovery_decision"]
-        == "phantom_record_cancelled_verified_relaunch"
+        attempts[0]["recovery_decision"] == "phantom_record_cancelled_verified_relaunch"
     )
     assert attempts[0]["cancellation"]["state"] == "verified"
 
@@ -2383,11 +2399,10 @@ def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
     adopted = next(item for item in report.waves if item["job_id"] == "77")
     assert adopted["status"] == "succeeded"
     assert adopted["adopted"] is True
-    assert (
-        adopted["recovery_decision"]
-        == "operator_authorized_absent_output_adoption"
+    assert adopted["recovery_decision"] == "operator_authorized_absent_output_adoption"
+    assert all(
+        call["job_name"] != "rt-output-adopt-01-shards-a2" for call in submitter.calls
     )
-    assert all(call["job_name"] != "rt-output-adopt-01-shards-a2" for call in submitter.calls)
 
 
 def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt(
@@ -2460,10 +2475,7 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
     assert adopted["status"] == "succeeded"
     assert adopted["adopted"] is True
     assert adopted["replayed"] is True
-    assert (
-        adopted["recovery_decision"]
-        == "operator_authorized_absent_output_adoption"
-    )
+    assert adopted["recovery_decision"] == "operator_authorized_absent_output_adoption"
     assert all(
         call["job_name"] != "rt-output-interrupted-01-shards-a2"
         for call in submitter.calls
@@ -2529,8 +2541,9 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
         submitter=submitter,
         options=options,
         store=store,
-        output_checker=lambda uri: uri.endswith("/shared.json")
-        or bool(submitter.calls),
+        output_checker=lambda uri: (
+            uri.endswith("/shared.json") or bool(submitter.calls)
+        ),
         reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
     )
 
@@ -2819,7 +2832,9 @@ def test_corrupt_decision_artifact_fails_the_run(tmp_path: Path) -> None:
 def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> None:
     spec_path = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "main" / "paidf-cosmos3.yaml"
+        / "workflows"
+        / "main"
+        / "paidf-cosmos3.yaml"
     )
     spec = load_spec(spec_path)
     submitter = FakeSubmitter()
@@ -3357,28 +3372,38 @@ def runtime_sdk_submission(tmp_path: Path, mocker):
     """Keep the real SDK gate and submit ordering; fake its external boundaries."""
     from npa.orchestration.skypilot import workflow as sdk
     from npa.orchestration.skypilot.launch_transaction import (
-        LaunchState, LaunchTransactionResult,
+        LaunchState,
+        LaunchTransactionResult,
     )
 
     config = SimpleNamespace(
-        sky_bin=tmp_path / "sky", global_config_path=None,
+        sky_bin=tmp_path / "sky",
+        global_config_path=None,
         isolated_config_dir=tmp_path / "sdk-state",
     )
     mocker.patch.object(sdk, "resolve_config", return_value=config)
     mocker.patch.object(sdk, "ensure_skypilot_version", return_value=config.sky_bin)
     mocker.patch.object(sdk, "sky_environment", return_value={})
     mocker.patch.object(sdk, "_selected_kube_context", return_value="unit-context")
-    preflight = mocker.patch.object(sdk, "_execution_preflight", return_value=(None, {}, {}))
+    preflight = mocker.patch.object(
+        sdk, "_execution_preflight", return_value=(None, {}, {})
+    )
     health = SimpleNamespace(to_dict=lambda: {})
-    api = mocker.patch.object(sdk, "_ensure_local_api_daemon_cwd_locked", return_value=health)
-    controller = mocker.patch.object(sdk, "_wait_for_healthy_jobs_controller", return_value=health)
+    api = mocker.patch.object(
+        sdk, "_ensure_local_api_daemon_cwd_locked", return_value=health
+    )
+    controller = mocker.patch.object(
+        sdk, "_wait_for_healthy_jobs_controller", return_value=health
+    )
     transactions = []
 
     def launch(**kwargs):
         transactions.append(kwargs["logical_id"])
         return LaunchTransactionResult(
-            LaunchState.SUBMITTED, kwargs["logical_id"],
-            job_id=str(len(transactions)), launch_sequence=1,
+            LaunchState.SUBMITTED,
+            kwargs["logical_id"],
+            job_id=str(len(transactions)),
+            launch_sequence=1,
         )
 
     job = mocker.patch.object(sdk, "run_launch_transaction", side_effect=launch)
@@ -3386,53 +3411,94 @@ def runtime_sdk_submission(tmp_path: Path, mocker):
 
 
 def test_runtime_default_sdk_records_wave_proof_without_poll_time_refresh(
-    tmp_path: Path, mocker, runtime_sdk_submission,
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
-    gate = next(step for step in build_plan(spec, run_id="rt-proof").steps if step.state == "gate")
-    now = mocker.patch("npa.orchestration.npa_workflow.runtime.utc_now", return_value="2026-08-30T01:00:00Z")
+    gate = next(
+        step
+        for step in build_plan(spec, run_id="rt-proof").steps
+        if step.state == "gate"
+    )
+    now = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.utc_now",
+        return_value="2026-08-30T01:00:00Z",
+    )
     options = RuntimeOptions(poll_seconds=0, preflight_evidence=_supervisor_preflight())
-    executor = _executor(spec, run_id="rt-proof", options=options, store=MemoryStore(),
-                         status_fn=FakeStatus(["PENDING", "SUCCEEDED"]))
+    executor = _executor(
+        spec,
+        run_id="rt-proof",
+        options=options,
+        store=MemoryStore(),
+        status_fn=FakeStatus(["PENDING", "SUCCEEDED"]),
+    )
     executor._submitter = None
     wave_hashes = []
-    options.pre_submit_hook = lambda path: wave_hashes.append(hashlib.sha256(path.read_bytes()).hexdigest())
+    options.pre_submit_hook = lambda path: wave_hashes.append(
+        hashlib.sha256(path.read_bytes()).hexdigest()
+    )
 
     def observe(**kwargs):
         now.return_value = "2026-08-30T02:00:00Z"
         return JobBlockerReport(job_id=kwargs["job_id"])
 
-    mocker.patch("npa.orchestration.skypilot.job_blockers.inspect_job_blockers", side_effect=observe)
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        side_effect=observe,
+    )
     executor.execute(gate)
 
-    proof = next(event["preflight"] for event in SupervisorLedger(executor.ledger.store).events()
-                 if event.get("phase") == "decision")
+    proof = next(
+        event["preflight"]
+        for event in SupervisorLedger(executor.ledger.store).events()
+        if event.get("phase") == "decision"
+    )
     assert proof["checks"]["gang_capacity"] == "pass"
     assert proof["observed_at"] == "2026-08-30T01:00:00Z"
     assert proof["scope"] == {
-        "source": "default_sdk_submit", "run_id": "rt-proof",
-        "wave_key": executor.attempts[0].key, "attempt": 1,
+        "source": "default_sdk_submit",
+        "run_id": "rt-proof",
+        "wave_key": executor.attempts[0].key,
+        "attempt": 1,
         "rendered_wave_sha256": wave_hashes[0],
     }
     runtime_sdk_submission.preflight.assert_called_once()
-    assert [doc["name"] for doc in runtime_sdk_submission.preflight.call_args.args[0]][1:] == ["gate"]
+    assert [doc["name"] for doc in runtime_sdk_submission.preflight.call_args.args[0]][
+        1:
+    ] == ["gate"]
     assert now.return_value == "2026-08-30T02:00:00Z"
 
 
 @pytest.mark.parametrize("denied_attempt", [1, 2])
 def test_runtime_sdk_capacity_denial_blocks_initial_launch_and_explicit_retry(
-    tmp_path: Path, runtime_sdk_submission, denied_attempt: int,
+    tmp_path: Path,
+    runtime_sdk_submission,
+    denied_attempt: int,
 ) -> None:
     from npa.execution_preflight import ExecutionPreflightError
 
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
-    gate = next(step for step in build_plan(spec, run_id="rt-denied").steps if step.state == "gate")
-    options = RuntimeOptions(poll_seconds=0, retries=1, retry_backoff_seconds=0,
-                             preflight_evidence=_supervisor_preflight())
-    executor = _executor(spec, run_id="rt-denied", options=options,
-                         status_fn=FakeStatus(["FAILED"]), store=MemoryStore())
+    gate = next(
+        step
+        for step in build_plan(spec, run_id="rt-denied").steps
+        if step.state == "gate"
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=1,
+        retry_backoff_seconds=0,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-denied",
+        options=options,
+        status_fn=FakeStatus(["FAILED"]),
+        store=MemoryStore(),
+    )
     executor._submitter = None
     observed = []
 
@@ -3456,10 +3522,15 @@ def test_runtime_sdk_capacity_denial_blocks_initial_launch_and_explicit_retry(
     assert runtime_sdk_submission.controller.call_count == denied_attempt - 1
     assert runtime_sdk_submission.job.call_count == denied_attempt - 1
     if denied_attempt == 2:
-        assert executor._attempt_preflight(executor.attempts[0]).checks["gang_capacity"] == "pass"
+        assert (
+            executor._attempt_preflight(executor.attempts[0]).checks["gang_capacity"]
+            == "pass"
+        )
 
 
-def test_runtime_custom_submitter_does_not_invent_capacity_proof(tmp_path: Path) -> None:
+def test_runtime_custom_submitter_does_not_invent_capacity_proof(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     options = RuntimeOptions(preflight_evidence=_supervisor_preflight(), resume=True)
     submitter = FakeSubmitter()
@@ -3476,10 +3547,13 @@ def test_runtime_custom_submitter_does_not_invent_capacity_proof(tmp_path: Path)
 
 
 def test_runtime_refresh_failure_invalidates_prior_submit_proof(
-    tmp_path: Path, runtime_sdk_submission,
+    tmp_path: Path,
+    runtime_sdk_submission,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
-    executor = _executor(spec, options=RuntimeOptions(preflight_evidence=_supervisor_preflight()))
+    executor = _executor(
+        spec, options=RuntimeOptions(preflight_evidence=_supervisor_preflight())
+    )
     executor._submitter = None
     attempt = WaveAttempt(key="001|serial|work", states=["work"], kind="serial")
     wave = tmp_path / "wave.yaml"
@@ -3551,14 +3625,20 @@ def test_runtime_supervisor_stops_configuration_retry_immediately(
 
     assert len(submitter.calls) == 1, "configuration failures must ignore --retries"
     assert cancels == [
-        {"job_id": "1", "run_id": "rt-config-stall-01-gate", "cluster": "rt-config-stall-01-gate"}
+        {
+            "job_id": "1",
+            "run_id": "rt-config-stall-01-gate",
+            "cluster": "rt-config-stall-01-gate",
+        }
     ]
     assert executor.attempts[0].error_category == "actionable_configuration"
     assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
 
 
 def test_runtime_supervisor_recovers_transient_once_without_duplicate(
-    tmp_path: Path, mocker, runtime_sdk_submission,
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 
@@ -3683,7 +3763,9 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
 
 
 def test_runtime_persistent_transient_exhausts_finite_policy(
-    tmp_path: Path, mocker, runtime_sdk_submission,
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 

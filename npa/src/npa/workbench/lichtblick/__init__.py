@@ -50,7 +50,16 @@ NATIVE_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 # Additional PIL-readable camera-frame types that browsers cannot decode as a
 # CompressedImage (e.g. the Sim2Real rollout raw ``.ppm`` dumps). The exporter
 # transcodes these to PNG bytes before packing so genuine rollout cameras render.
-CONVERTIBLE_IMAGE_SUFFIXES = (".ppm", ".pgm", ".pnm", ".bmp", ".webp", ".tif", ".tiff", ".gif")
+CONVERTIBLE_IMAGE_SUFFIXES = (
+    ".ppm",
+    ".pgm",
+    ".pnm",
+    ".bmp",
+    ".webp",
+    ".tif",
+    ".tiff",
+    ".gif",
+)
 # Camera-frame image types the frames->MCAP exporter accepts.
 IMAGE_SUFFIXES = NATIVE_IMAGE_SUFFIXES + CONVERTIBLE_IMAGE_SUFFIXES
 DEFAULT_CAMERA_TOPIC = "/camera"
@@ -107,7 +116,10 @@ def compressed_image_message(
     import base64
 
     return {
-        "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+        "timestamp": {
+            "sec": stamp_ns // 1_000_000_000,
+            "nsec": stamp_ns % 1_000_000_000,
+        },
         "frame_id": frame_id,
         "data": base64.b64encode(payload).decode("ascii"),
         "format": fmt,
@@ -218,7 +230,10 @@ def pointcloud_message(
 
     payload = pack_pointcloud_bytes(points, colors)
     return {
-        "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+        "timestamp": {
+            "sec": stamp_ns // 1_000_000_000,
+            "nsec": stamp_ns % 1_000_000_000,
+        },
         "frame_id": frame_id,
         "pose": {
             "position": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -279,7 +294,10 @@ def frame_transform_message(
     tx, ty, tz = translation
     rx, ry, rz, rw = rotation
     return {
-        "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+        "timestamp": {
+            "sec": stamp_ns // 1_000_000_000,
+            "nsec": stamp_ns % 1_000_000_000,
+        },
         "parent_frame_id": parent_frame_id,
         "child_frame_id": child_frame_id,
         "translation": {"x": float(tx), "y": float(ty), "z": float(tz)},
@@ -399,7 +417,9 @@ def _default_s3_client() -> Any:
 
     import boto3
 
-    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or ""
+    endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or ""
+    )
     access_key = ""
     secret_key = ""
     try:
@@ -411,7 +431,9 @@ def _default_s3_client() -> Any:
         secret_key = storage.aws_secret_access_key or ""
     except Exception:
         # Best-effort: fall back to boto3's ambient credential chain / env.
-        logging.getLogger(__name__).debug("npa storage config unavailable", exc_info=True)
+        logging.getLogger(__name__).debug(
+            "npa storage config unavailable", exc_info=True
+        )
 
     kwargs: dict[str, Any] = {}
     if endpoint:
@@ -480,18 +502,26 @@ def stage_input_to_mcap(
             client = s3_client or _default_s3_client()
             frame_refs = _list_frame_keys(value, s3_client=client)
             if not frame_refs:
-                raise LichtblickError(f"no camera frames ({', '.join(IMAGE_SUFFIXES)}) under {value}")
+                raise LichtblickError(
+                    f"no camera frames ({', '.join(IMAGE_SUFFIXES)}) under {value}"
+                )
             local_frames: list[str] = []
             for index, (bucket, key) in enumerate(frame_refs):
-                dest = os.path.join(frames_dir, f"{index:06d}{PurePosixPath(key).suffix.lower()}")
+                dest = os.path.join(
+                    frames_dir, f"{index:06d}{PurePosixPath(key).suffix.lower()}"
+                )
                 client.download_file(bucket, key, dest)
                 local_frames.append(dest)
         else:
             if not os.path.isdir(value):
-                raise LichtblickError(f"--from-frames expects a directory or s3 prefix, got {value!r}")
+                raise LichtblickError(
+                    f"--from-frames expects a directory or s3 prefix, got {value!r}"
+                )
             local_frames = _collect_local_frames(value)
             if not local_frames:
-                raise LichtblickError(f"no camera frames ({', '.join(IMAGE_SUFFIXES)}) in {value}")
+                raise LichtblickError(
+                    f"no camera frames ({', '.join(IMAGE_SUFFIXES)}) in {value}"
+                )
         out = os.path.join(workdir, "camera.mcap")
         info = build_mcap_from_frames(local_frames, out, topic=topic, fps=fps)
         return out, int(info["message_count"])
@@ -514,7 +544,9 @@ def _validate_artifact(input_path: str) -> str:
 
     value = (input_path or "").strip()
     if not value:
-        raise LichtblickError("--input-path is required (S3 or local MCAP/bag artifact).")
+        raise LichtblickError(
+            "--input-path is required (S3 or local MCAP/bag artifact)."
+        )
     if "://" in value and not value.startswith("s3://"):
         scheme = value.split("://", 1)[0]
         raise LichtblickError(
@@ -576,7 +608,9 @@ def build_launch_plan(
     # A wildcard bind (0.0.0.0/::) is not a navigable browser host, so the deep
     # link uses a loopback connect host while the container still binds the
     # wildcard for reachability.
-    connect_host = "127.0.0.1" if resolved_host in ("0.0.0.0", "::", "*") else resolved_host
+    connect_host = (
+        "127.0.0.1" if resolved_host in ("0.0.0.0", "::", "*") else resolved_host
+    )
     served_url = f"http://{connect_host}:{port}/data/{name}"
     viewer_url = (
         f"http://{connect_host}:{port}/?ds=remote-file"
@@ -630,7 +664,9 @@ def launch_viewer(
         ]
     )
     runner(argv)
-    return LichtblickLaunchPlan(**{**plan.to_dict(), "status": "launched", "staged": True})
+    return LichtblickLaunchPlan(
+        **{**plan.to_dict(), "status": "launched", "staged": True}
+    )
 
 
 def serve_viewer(
@@ -729,9 +765,13 @@ def _import_rerun_sdk() -> Any:
 
 def _rr_set_time(rr: Any, recording: Any, seconds: float) -> None:
     for attempt in (
-        lambda: rr.set_time(_MCAP_RERUN_TIMELINE, timestamp=seconds, recording=recording),
+        lambda: rr.set_time(
+            _MCAP_RERUN_TIMELINE, timestamp=seconds, recording=recording
+        ),
         lambda: rr.set_time_seconds(_MCAP_RERUN_TIMELINE, seconds, recording=recording),
-        lambda: rr.set_time(_MCAP_RERUN_TIMELINE, duration=seconds, recording=recording),
+        lambda: rr.set_time(
+            _MCAP_RERUN_TIMELINE, duration=seconds, recording=recording
+        ),
     ):
         try:
             attempt()
@@ -785,7 +825,9 @@ def build_rerun_rrd_from_mcap(
     recording = None
     if hasattr(rr, "RecordingStream"):
         try:
-            recording = rr.RecordingStream(application_id, recording_id=recording_id or None)
+            recording = rr.RecordingStream(
+                application_id, recording_id=recording_id or None
+            )
         except TypeError:  # compatibility with older SDKs and injected test doubles
             recording = rr.RecordingStream(application_id)
     rr.save(output_rrd, recording=recording)
@@ -806,13 +848,25 @@ def build_rerun_rrd_from_mcap(
                 raw = base64.b64decode(str(payload.get("data", "")) or "")
                 fmt = str(payload.get("format", "png")).lower()
                 media_type = "image/jpeg" if fmt in ("jpeg", "jpg") else "image/png"
-                rr.log(topic, rr.EncodedImage(contents=raw, media_type=media_type), recording=recording)
+                rr.log(
+                    topic,
+                    rr.EncodedImage(contents=raw, media_type=media_type),
+                    recording=recording,
+                )
                 counts["images"] += 1
             elif schema_name == "foxglove.Log":
-                rr.log(topic, rr.TextLog(str(payload.get("message", ""))), recording=recording)
+                rr.log(
+                    topic,
+                    rr.TextLog(str(payload.get("message", ""))),
+                    recording=recording,
+                )
                 counts["logs"] += 1
-            elif isinstance(payload, dict) and isinstance(payload.get("value"), (int, float)):
-                rr.log(topic, _rr_scalar(rr, float(payload["value"])), recording=recording)
+            elif isinstance(payload, dict) and isinstance(
+                payload.get("value"), (int, float)
+            ):
+                rr.log(
+                    topic, _rr_scalar(rr, float(payload["value"])), recording=recording
+                )
                 counts["scalars"] += 1
             else:
                 rr.log(

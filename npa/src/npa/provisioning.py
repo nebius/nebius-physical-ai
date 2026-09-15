@@ -172,9 +172,7 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
-            capacity_block_group=str(
-                bound.arguments.get("capacity_block_group") or ""
-            ),
+            capacity_block_group=str(bound.arguments.get("capacity_block_group") or ""),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan

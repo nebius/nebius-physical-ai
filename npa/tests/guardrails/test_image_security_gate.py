@@ -26,14 +26,25 @@ def test_required_security_workflow_calls_image_scans_on_every_candidate():
         AssertionError: Image scans can be filtered, skipped or made advisory.
     """
     workflow = _workflow("security-regression.yml")
-    assert workflow["on"] == {"pull_request": None, "merge_group": None, "push": {"branches": ["main"]}}
-    calls = [name for name, job in workflow["jobs"].items()
-             if job.get("uses") == "./.github/workflows/image-security-scan.yml"]
+    assert workflow["on"] == {
+        "pull_request": None,
+        "merge_group": None,
+        "push": {"branches": ["main"]},
+    }
+    calls = [
+        name
+        for name, job in workflow["jobs"].items()
+        if job.get("uses") == "./.github/workflows/image-security-scan.yml"
+    ]
     assert calls == ["image-security"]
     image_job = workflow["jobs"]["image-security"]
     assert image_job == {
         "uses": "./.github/workflows/image-security-scan.yml",
-        "permissions": {"contents": "read", "packages": "read", "security-events": "write"},
+        "permissions": {
+            "contents": "read",
+            "packages": "read",
+            "security-events": "write",
+        },
     }
     required = workflow["jobs"]["security-regression"]
     assert "image-security" in required["needs"]
@@ -74,12 +85,17 @@ def test_sarif_uploads_preserve_existing_alert_configuration():
         AssertionError: The existing scan configuration changes when called through the required gate.
     """
     jobs = _workflow("image-security-scan.yml")["jobs"]
-    for name, category in [("base-image-cve-scan", "trivy-image-${{ matrix.name }}"),
-                           ("dockerfile-static-scan", "trivy-config")]:
+    for name, category in [
+        ("base-image-cve-scan", "trivy-image-${{ matrix.name }}"),
+        ("dockerfile-static-scan", "trivy-config"),
+    ]:
         steps = jobs[name]["steps"]
         upload = next(step for step in steps if "upload-sarif" in step.get("uses", ""))
         assert upload["if"] == "always() && github.event_name != 'pull_request'"
         assert upload["with"]["category"] == category
-        assert upload["env"]["CODEQL_ACTION_ANALYSIS_KEY"] == f".github/workflows/image-security-scan.yml:{name}"
+        assert (
+            upload["env"]["CODEQL_ACTION_ANALYSIS_KEY"]
+            == f".github/workflows/image-security-scan.yml:{name}"
+        )
 
         assert "matrix" not in upload["with"]

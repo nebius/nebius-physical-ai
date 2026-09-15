@@ -579,10 +579,7 @@ def up_cmd(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
             ),
             filesystem_csi_chart_repository=str(
-                _tfvar_value(
-                    tfvars, env, "filesystem_csi_chart_repository", ""
-                )
-                or ""
+                _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
             ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
@@ -4196,7 +4193,9 @@ def _wait_for_sky_down(
             )
         names = [row["name"] for row in rows]
         if len(set(names)) != len(names):
-            raise typer.BadParameter("SkyPilot cleanup status contains ambiguous identities")
+            raise typer.BadParameter(
+                "SkyPilot cleanup status contains ambiguous identities"
+            )
         if cluster_name not in names:
             return
         time.sleep(10)

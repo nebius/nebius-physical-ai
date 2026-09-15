@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import typer
 
-from npa.cli.workbench.robocasa import deploy, list as list_mod, run, status, system_info
+from npa.cli.workbench.robocasa import (
+    deploy,
+    list as list_mod,
+    run,
+    status,
+    system_info,
+)
 
 app = typer.Typer(
     name="robocasa",

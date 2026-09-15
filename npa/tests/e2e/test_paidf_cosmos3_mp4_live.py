@@ -52,8 +52,11 @@ def test_completed_fresh_local_mp4_pipeline() -> None:
     _assert_public_mp4_input(client, parsed.netloc, run_id, read)
     _assert_fresh_objects(client, parsed.netloc, run_id)
     _assert_paidf_live_artifacts(
-        spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=parsed.netloc,
-        run_id=run_id, e2e_project=project,
+        spec="paidf-cosmos3.yaml",
+        waves=runtime["waves"],
+        bucket=parsed.netloc,
+        run_id=run_id,
+        e2e_project=project,
     )
     _assert_recording_identity(client, parsed.netloc, prefix, run_id)
 
@@ -88,7 +91,9 @@ def _assert_fresh_objects(client, bucket, run_id) -> None:
         count = 0
         for page in paginator.paginate(Bucket=bucket, Prefix=f"{root}/{run_id}/"):
             for item in page.get("Contents", []):
-                assert item["LastModified"] >= fresh_after, "Object predates this submission"
+                assert item["LastModified"] >= fresh_after, (
+                    "Object predates this submission"
+                )
                 count += 1
         assert count > 0, f"Missing {root} artifacts"
 

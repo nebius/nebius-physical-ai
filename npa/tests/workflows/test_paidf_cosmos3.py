@@ -102,7 +102,9 @@ def test_prepare_input_selects_generic_lerobot_v2_and_v3(
             episodes / "file-000.parquet",
         )
     else:
-        source = dataset / "videos" / "chunk-000" / camera / f"episode_{episode:06d}.mp4"
+        source = (
+            dataset / "videos" / "chunk-000" / camera / f"episode_{episode:06d}.mp4"
+        )
     _tiny_video(source)
 
     result = c3.prepare_input(
@@ -211,7 +213,8 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 @requires_ffmpeg
 @pytest.mark.parametrize("prior_status", ["completed", "degraded"])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
-    tmp_path: Path, prior_status: str,
+    tmp_path: Path,
+    prior_status: str,
 ) -> None:
     paths = _generation_inputs(tmp_path)
     storage = _MemoryStorage()
@@ -277,7 +280,10 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert generated_bytes != paths["source"].read_bytes()
     for variant in first["variants"]:
         assert storage.objects[variant["augmented_video_uri"]] == generated_bytes
-    assert metadata["published_video_sha256"] == hashlib.sha256(generated_bytes).hexdigest()
+    assert (
+        metadata["published_video_sha256"]
+        == hashlib.sha256(generated_bytes).hexdigest()
+    )
 
     (paths["scores"] / "cosmos_evaluator.json").write_text(
         json.dumps({"status": prior_status, "passed": False, "score": 0.4}),
@@ -449,9 +455,12 @@ def test_extract_frames_reports_missing_ffmpeg_as_domain_error(
         c3._extract_frames(tmp_path / "video.mp4", tmp_path / "frames")
 
 
-@pytest.mark.parametrize("source_weight", [-0.1, 0.2, 0.8, 1.0, 1.1, float("nan"), float("inf")])
+@pytest.mark.parametrize(
+    "source_weight", [-0.1, 0.2, 0.8, 1.0, 1.1, float("nan"), float("inf")]
+)
 def test_generate_variants_rejects_blending_before_storage_or_gpu(
-    monkeypatch: pytest.MonkeyPatch, source_weight: float,
+    monkeypatch: pytest.MonkeyPatch,
+    source_weight: float,
 ) -> None:
     def unexpected_work(*_args, **_kwargs):
         pytest.fail("invalid blend setting reached storage or GPU work")
@@ -460,10 +469,28 @@ def test_generate_variants_rejects_blending_before_storage_or_gpu(
     monkeypatch.setattr(c3, "_visible_gpu_ids", unexpected_work)
     with pytest.raises(c3.PaidfCosmos3Error, match="source_motion_weight must be 0"):
         c3.generate_variants(
-            "missing.mp4", "provenance.json", "captions/", "configs/",
-            "s3://example-bucket/out/", "scores/", "attempt.json",
-            "video2video", "Cosmos3-Nano", "prompt", "",
-            1, 5.0, 24, 1, 1, 1000, -0.5, 4, "latency", True, "test-run",
+            "missing.mp4",
+            "provenance.json",
+            "captions/",
+            "configs/",
+            "s3://example-bucket/out/",
+            "scores/",
+            "attempt.json",
+            "video2video",
+            "Cosmos3-Nano",
+            "prompt",
+            "",
+            1,
+            5.0,
+            24,
+            1,
+            1,
+            1000,
+            -0.5,
+            4,
+            "latency",
+            True,
+            "test-run",
             source_motion_weight=source_weight,
             generator=unexpected_work,
         )
@@ -663,9 +690,7 @@ def test_quality_route_fails_closed_on_malformed_disposition(
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:
     root = tmp_path / "run"
     (root / "cosmos_augmented").mkdir(parents=True)
-    (root / "cosmos_augmented" / "manifest.json").write_text(
-        "[]", encoding="utf-8"
-    )
+    (root / "cosmos_augmented" / "manifest.json").write_text("[]", encoding="utf-8")
 
     with pytest.raises(c3.PaidfCosmos3Error, match="not a JSON object"):
         c3.finalize(str(root), str(root / "reports" / "final.json"))

@@ -9,7 +9,12 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_DIM, G1_STATE_NAMES_43, convert
+from npa.adapter.isaac_lab_lerobot import (
+    G1_BONE_PAIRS,
+    G1_STATE_DIM,
+    G1_STATE_NAMES_43,
+    convert,
+)
 from npa.viz.adapters.groot_predictions_to_rerun import groot_predictions_to_rerun
 from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, RerunAdapterError
 from npa.viz.lerobot import g1_state_vectors_to_skeleton
@@ -30,7 +35,9 @@ def _synthetic_dataset(root: Path, frames: int) -> tuple[Path, np.ndarray]:
     episode.mkdir(parents=True)
     np.save(episode / "state.npy", states)
     np.save(episode / "actions.npy", states)
-    dataset = convert(episode.parent, root / "lerobot", fps=10, task="Synthetic overlay alignment")
+    dataset = convert(
+        episode.parent, root / "lerobot", fps=10, task="Synthetic overlay alignment"
+    )
     return dataset, states
 
 
@@ -60,9 +67,13 @@ def _decoded_rows(chunks, entity: str, component: str) -> tuple[np.ndarray, np.n
         pytest.param(100, 100, None, _DEFAULT_INDICES, id="full-horizon-default-cap"),
         pytest.param(100, 4, None, _DEFAULT_INDICES, id="short-prefix"),
         pytest.param(100, 49, None, _DEFAULT_INDICES, id="prefix-below-display-count"),
-        pytest.param(100, 51, None, _DEFAULT_INDICES, id="prefix-longer-than-display-count"),
+        pytest.param(
+            100, 51, None, _DEFAULT_INDICES, id="prefix-longer-than-display-count"
+        ),
         pytest.param(100, 100, 2.0, _TWO_SECOND_INDICES, id="custom-duration"),
-        pytest.param(100, 4, 2.0, _TWO_SECOND_INDICES, id="custom-duration-short-prefix"),
+        pytest.param(
+            100, 4, 2.0, _TWO_SECOND_INDICES, id="custom-duration-short-prefix"
+        ),
         pytest.param(100, 100, 8.0, _DEFAULT_INDICES, id="duration-above-default-cap"),
         pytest.param(100, 100, 0.01, [0], id="sub-frame-duration"),
         pytest.param(10, 10, None, list(range(10)), id="short-episode-full-horizon"),
@@ -71,7 +82,11 @@ def _decoded_rows(chunks, entity: str, component: str) -> tuple[np.ndarray, np.n
     ],
 )
 def test_overlay_uses_matching_source_frames_and_times(
-    tmp_path: Path, frames: int, horizon: int, duration: float | None, source_indices: list[int]
+    tmp_path: Path,
+    frames: int,
+    horizon: int,
+    duration: float | None,
+    source_indices: list[int],
 ) -> None:
     from rerun.recording import load_recording
 
@@ -96,22 +111,36 @@ def test_overlay_uses_matching_source_frames_and_times(
         np.testing.assert_allclose(positions, skeleton[indices])
         times, bones = _decoded_rows(chunks, f"{root}/bones", "LineStrips3D:strips")
         np.testing.assert_array_equal(times, expected_times)
-        np.testing.assert_allclose(bones, skeleton[indices][:, np.asarray(G1_BONE_PAIRS)])
+        np.testing.assert_allclose(
+            bones, skeleton[indices][:, np.asarray(G1_BONE_PAIRS)]
+        )
         for joint in REPRESENTATIVE_JOINTS:
-            times, angles = _decoded_rows(chunks, f"{root}/angles/{joint}", "Scalars:scalars")
+            times, angles = _decoded_rows(
+                chunks, f"{root}/angles/{joint}", "Scalars:scalars"
+            )
             np.testing.assert_array_equal(times, expected_times)
-            np.testing.assert_allclose(angles[:, 0], states[indices, G1_STATE_NAMES_43.index(joint)])
+            np.testing.assert_allclose(
+                angles[:, 0], states[indices, G1_STATE_NAMES_43.index(joint)]
+            )
 
 
 @pytest.mark.parametrize(
     ("shape", "message"),
     [
-        ((101, G1_STATE_DIM), "Prediction frame count cannot exceed input frame count.*101 > 100"),
+        (
+            (101, G1_STATE_DIM),
+            "Prediction frame count cannot exceed input frame count.*101 > 100",
+        ),
         ((100, G1_STATE_DIM - 1), "Predictions must be either G1 state vectors"),
-        ((100, G1_STATE_DIM - 1, 3), "Prediction joint count must match input joint count"),
+        (
+            (100, G1_STATE_DIM - 1, 3),
+            "Prediction joint count must match input joint count",
+        ),
     ],
 )
-def test_overlay_rejects_invalid_raw_predictions(tmp_path: Path, shape: tuple[int, ...], message: str) -> None:
+def test_overlay_rejects_invalid_raw_predictions(
+    tmp_path: Path, shape: tuple[int, ...], message: str
+) -> None:
     dataset, _states = _synthetic_dataset(tmp_path, 100)
     predictions = _predictions(tmp_path, np.zeros(shape, dtype=np.float32))
     output = tmp_path / "invalid.rrd"
@@ -128,4 +157,6 @@ def test_overlay_rejects_nonpositive_duration(tmp_path: Path, duration: float) -
     predictions = _predictions(tmp_path, states)
 
     with pytest.raises(RerunAdapterError, match="duration_s must be positive"):
-        groot_predictions_to_rerun(predictions, dataset, tmp_path / "invalid.rrd", duration_s=duration)
+        groot_predictions_to_rerun(
+            predictions, dataset, tmp_path / "invalid.rrd", duration_s=duration
+        )

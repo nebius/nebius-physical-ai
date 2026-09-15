@@ -95,6 +95,7 @@ class JsonFileStore:
 
 def _fallback_compare(run_a: Any, run_b: Any) -> dict[str, Any]:
     """Minimal success_rate delta when no richer comparator is injected."""
+
     def _sr(entry: Any) -> float | None:
         if isinstance(entry, dict):
             value = entry.get("success_rate")
@@ -113,13 +114,24 @@ def _fallback_compare(run_a: Any, run_b: Any) -> dict[str, Any]:
         "delta_success_rate": delta,
         "regressed": regressed,
         "improved": bool(delta is not None and delta > 0),
-        "verdict": "regression" if regressed else ("improvement" if (delta or 0) > 0 else "no_change"),
+        "verdict": "regression"
+        if regressed
+        else ("improvement" if (delta or 0) > 0 else "no_change"),
         "notes": [],
     }
 
 
 _OUTCOME_HIGHER = frozenset(
-    {"accuracy", "f1", "precision", "recall", "reward", "return", "score", "success_rate"}
+    {
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "reward",
+        "return",
+        "score",
+        "success_rate",
+    }
 )
 _OUTCOME_LOWER = frozenset(
     {
@@ -199,17 +211,34 @@ def _metric_taxonomy(field: str) -> tuple[str, str]:
     """Return ``(category, direction)`` from an explicit normalized taxonomy."""
     name = _normalized_metric_name(field)
     if name in _OUTCOME_HIGHER or name.endswith(
-        ("_accuracy", "_precision", "_recall", "_reward", "_return", "_score", "_success_rate")
+        (
+            "_accuracy",
+            "_precision",
+            "_recall",
+            "_reward",
+            "_return",
+            "_score",
+            "_success_rate",
+        )
     ):
         return "outcome", "higher_is_better"
-    if name in _OUTCOME_LOWER or name.endswith(("_loss", "_error_rate", "_failure_rate")):
+    if name in _OUTCOME_LOWER or name.endswith(
+        ("_loss", "_error_rate", "_failure_rate")
+    ):
         return "outcome", "lower_is_better"
     if name in _EFFICIENCY_HIGHER or name.endswith(
         ("_throughput", "_per_second", "_per_sec", "_per_s")
     ):
         return "efficiency", "higher_is_better"
     if name in _EFFICIENCY_LOWER or name.endswith(
-        ("_cost_usd", "_duration", "_duration_s", "_duration_seconds", "_latency", "_latency_ms")
+        (
+            "_cost_usd",
+            "_duration",
+            "_duration_s",
+            "_duration_seconds",
+            "_latency",
+            "_latency_ms",
+        )
     ):
         return "efficiency", "lower_is_better"
     if name in _METRIC_ALIASES.values() or any(
@@ -253,7 +282,9 @@ def _metric_field_preference(field: str) -> tuple[int, str]:
     return 3, normalized
 
 
-def _normalized_numeric_metrics(record: Mapping[str, Any]) -> dict[str, tuple[str, float | int]]:
+def _normalized_numeric_metrics(
+    record: Mapping[str, Any],
+) -> dict[str, tuple[str, float | int]]:
     """Deduplicate aliases while preferring authoritative metric containers."""
     selected: dict[str, tuple[str, float | int]] = {}
     for field, value in _flatten_numeric(record).items():
@@ -261,9 +292,9 @@ def _normalized_numeric_metrics(record: Mapping[str, Any]) -> dict[str, tuple[st
             continue
         identity = _normalized_metric_name(field)
         current = selected.get(identity)
-        if current is None or _metric_field_preference(field) < _metric_field_preference(
-            current[0]
-        ):
+        if current is None or _metric_field_preference(
+            field
+        ) < _metric_field_preference(current[0]):
             selected[identity] = (field, value)
     return selected
 
@@ -282,7 +313,8 @@ class RunMemory:
         self,
         store: Any,
         *,
-        comparator: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+        comparator: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+        | None = None,
     ) -> None:
         self._store = store
         self._comparator = comparator or _fallback_compare
@@ -355,8 +387,13 @@ class RunMemory:
         rec_a = self.get_run(run_a)
         rec_b = self.get_run(run_b)
         if rec_a is None or rec_b is None:
-            missing = [rid for rid, rec in ((run_a, rec_a), (run_b, rec_b)) if rec is None]
-            return {"ok": False, "error": f"missing run metadata for: {', '.join(missing)}"}
+            missing = [
+                rid for rid, rec in ((run_a, rec_a), (run_b, rec_b)) if rec is None
+            ]
+            return {
+                "ok": False,
+                "error": f"missing run metadata for: {', '.join(missing)}",
+            }
         comparison = self._comparator(rec_a, rec_b)
         comparison["ok"] = True
         comparison["run_a"] = str(run_a)

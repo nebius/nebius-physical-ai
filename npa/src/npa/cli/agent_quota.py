@@ -58,9 +58,7 @@ def _exact_owned_cluster_name(project_id: str, fallback: str) -> str:
     return matches[0] if len(matches) == 1 else fallback
 
 
-def _project_quota_observations(
-    project_id: str, region: str, names: tuple[str, ...]
-):
+def _project_quota_observations(project_id: str, region: str, names: tuple[str, ...]):
     """Read project-local quota constraints after a tenant RBAC denial.
 
     Project quota allowances only subdivide the tenant allowance. Missing or
@@ -82,9 +80,7 @@ def _project_quota_observations(
                 raise ValueError("project quota response contains a non-mapping item")
             metadata = item.get("metadata")
             if not isinstance(metadata, dict):
-                raise ValueError(
-                    "project quota response contains malformed metadata"
-                )
+                raise ValueError("project quota response contains malformed metadata")
             if str(metadata.get("name") or "") not in names:
                 continue
             spec = item.get("spec")

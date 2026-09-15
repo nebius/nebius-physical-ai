@@ -85,7 +85,9 @@ def isolate_terraform_providers(workdir: Path, env: dict[str, str]) -> None:
     providers = data_dir / "providers"
     if not providers.is_dir() or not any(p.is_symlink() for p in providers.rglob("*")):
         return
-    with tempfile.TemporaryDirectory(prefix=".npa-providers-", dir=data_dir) as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".npa-providers-", dir=data_dir
+    ) as temporary:
         staging = Path(temporary)
         snapshot = staging / "snapshot"
         shutil.copytree(providers, snapshot, symlinks=False)

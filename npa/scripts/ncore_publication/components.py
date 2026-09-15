@@ -24,11 +24,16 @@ def verify(directory, digest, graph, source_sha):
 
     path = directory / "rootfs.tar"
     return scan_archive(
-        path, directory / "components",
-        base_lock=(ROOT / "npa/docker/workbench/ncore/base-source-lock.json").read_bytes(),
+        path,
+        directory / "components",
+        base_lock=(
+            ROOT / "npa/docker/workbench/ncore/base-source-lock.json"
+        ).read_bytes(),
         source_lock=(ROOT / "npa/docker/workbench/ncore/source-lock.json").read_bytes(),
-        source_sha=source_sha, committed_files=_committed_files(path, source_sha),
-        image_digest=digest, platform_digest=graph["image_manifest_digest"],
+        source_sha=source_sha,
+        committed_files=_committed_files(path, source_sha),
+        image_digest=digest,
+        platform_digest=graph["image_manifest_digest"],
         config_digest=graph["image_config_digest"],
     )
 
@@ -48,8 +53,10 @@ def _committed_files(path, source_sha):
             if expected is None:
                 continue
             W.require(member.isfile(), "component_source_must_be_regular")
-            W.require(W.sha(archive.extractfile(member).read()) == expected,
-                      "component_source_changed")
+            W.require(
+                W.sha(archive.extractfile(member).read()) == expected,
+                "component_source_changed",
+            )
             result[name] = expected
     return result
 
@@ -58,7 +65,9 @@ def _expected_digest(name, sha, archive, members):
     source = provenance._source_path(name)
     notices = "usr/share/doc/npa-ncore/notices/"
     if name.startswith(notices):
-        source = ROOT / "npa/docker/workbench/ncore/notices" / name.removeprefix(notices)
+        source = (
+            ROOT / "npa/docker/workbench/ncore/notices" / name.removeprefix(notices)
+        )
     if source is not None:
         return provenance._committed_digest(source, sha)
     if name == "usr/share/doc/npa-ncore/npa-source-sha":
@@ -69,6 +78,9 @@ def _expected_digest(name, sha, archive, members):
         # This duplicate is copied from the staged, hash-verified NCore source.
         # Its upstream archive/patch authentication remains a separate gate.
         member = members.get("opt/ncore/src/ncore/LICENSE")
-        W.require(member is not None and member.isfile(), "upstream_license_copy_source_required")
+        W.require(
+            member is not None and member.isfile(),
+            "upstream_license_copy_source_required",
+        )
         return W.sha(archive.extractfile(member).read())
     return None

@@ -29,8 +29,7 @@ from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
+    REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -237,7 +236,9 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
@@ -466,7 +467,9 @@ def test_submit_isolated_state_skips_shared_owner_verification(
     )
 
 
-def test_submit_isolated_state_refuses_shared_controller_binding(tmp_path: Path) -> None:
+def test_submit_isolated_state_refuses_shared_controller_binding(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError, match="cannot be combined"):
         workflow_cli._verify_submit_controller_owner(
             project="project-alias",
@@ -759,7 +762,10 @@ states:
     def check(images, **kwargs):
         observed["images"] = list(images)
         observed["pull_secrets_by_image"] = kwargs["pull_secrets_by_image"]
-        return [ImagePullCheck(image=image, status="ok", http_status=200) for image in images]
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",

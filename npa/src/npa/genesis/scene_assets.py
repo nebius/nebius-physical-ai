@@ -285,7 +285,9 @@ def _object_from_dict(raw: dict[str, Any], index: int) -> ObjectSpec:
     elif asset_source == ASSET_SOURCE_ISAAC_STOCK:
         # Optional reference to the stock Isaac asset (e.g. a task id or a
         # built-in USD key); no download, materialized inside the Isaac image.
-        obj.builtin_path = str(raw.get("builtin_path") or raw.get("stock_asset") or "").strip()
+        obj.builtin_path = str(
+            raw.get("builtin_path") or raw.get("stock_asset") or ""
+        ).strip()
     else:  # primitive
         primitive = str(raw.get("primitive") or PRIMITIVE_BOX).strip()
         if primitive not in PRIMITIVES:
@@ -412,7 +414,9 @@ def parse_cameras_doc(doc: dict[str, Any]) -> dict[str, CameraSpec]:
     """Parse cameras from SceneSpec JSON or standalone cameras.json."""
 
     if not isinstance(doc, dict):
-        raise SceneSpecError(f"cameras document must be a JSON object, got {type(doc)!r}")
+        raise SceneSpecError(
+            f"cameras document must be a JSON object, got {type(doc)!r}"
+        )
     raw = doc.get("cameras", doc)
     if not isinstance(raw, dict):
         raise SceneSpecError("cameras must be a JSON object")
@@ -652,7 +656,9 @@ def resolve_scene_assets(
             obj.sha256 = sha256_file(local)
         elif obj.asset_source == ASSET_SOURCE_GENESIS_BUILTIN:
             local = builtin_resolver(obj.builtin_path)
-            _validate_local_asset(Path(local), what=f"genesis_builtin {obj.builtin_path}")
+            _validate_local_asset(
+                Path(local), what=f"genesis_builtin {obj.builtin_path}"
+            )
             obj.local_path = str(local)
             obj.sha256 = sha256_file(local)
         # primitives: nothing to download; local_path/sha256 stay empty.

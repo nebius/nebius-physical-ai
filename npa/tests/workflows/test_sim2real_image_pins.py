@@ -78,10 +78,7 @@ def test_sim2real_constant_matches_supported_tool_version(
 def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     """The standard workflow must not supply mutable image-tag fallbacks."""
 
-    path = (
-        Path(__file__).resolve().parents[3]
-        / "workflows" / "main" / "sim2real.yaml"
-    )
+    path = Path(__file__).resolve().parents[3] / "workflows" / "main" / "sim2real.yaml"
     runbook = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = runbook["config"]
     image_inputs = (
@@ -132,8 +129,7 @@ def test_isaac_exact_source_image_imports_the_runtime_stage() -> None:
     assert (
         "import boto3, kubernetes, mcap, "
         "npa.workflows.sim2real.runtime_attestation, "
-        "npa.workflows.sim2real.workflow_stage"
-        in (dockerfile)
+        "npa.workflows.sim2real.workflow_stage" in (dockerfile)
     )
 
 
@@ -149,7 +145,10 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "sim2real-controller-requirements.txt" in dockerfile
     assert "sim2real-control-requirements.txt" in dockerfile
     assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
-    assert "from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm" in dockerfile
+    assert (
+        "from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm"
+        in dockerfile
+    )
     assert "from npa.workflows.sim2real.stage8_cosmos3 import run" in dockerfile
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile

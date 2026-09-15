@@ -11,12 +11,16 @@ from botocore.exceptions import ClientError
 from npa.clients.storage import StorageClient, StorageError, safe_s3_download_target
 
 
-@pytest.mark.parametrize("relative", ["../escape", "nested/../../escape", "/escape", "nested\\escape"])
+@pytest.mark.parametrize(
+    "relative", ["../escape", "nested/../../escape", "/escape", "nested\\escape"]
+)
 @pytest.mark.parametrize("method", ["download_directory", "download_path"])
 def test_tree_download_rejects_remote_traversal(tmp_path, relative, method):
     client = StorageClient.__new__(StorageClient)
     client._s3 = Mock()
-    client._s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+    client._s3.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404"}}, "HeadObject"
+    )
     client._s3.get_paginator.return_value.paginate.return_value = [
         {"Contents": [{"Key": "models/" + relative}]}
     ]
@@ -54,7 +58,9 @@ def test_tree_download_preserves_nested_file_bytes(tmp_path, method, prefix):
     client._s3.get_paginator.return_value.paginate.return_value = [
         {"Contents": [{"Key": prefix + "nested/weights.bin"}]}
     ]
-    client._s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"tensor-data")
+    client._s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(
+        b"tensor-data"
+    )
 
     getattr(client, method)("s3://bucket/" + prefix, str(tmp_path / "cache"))
 

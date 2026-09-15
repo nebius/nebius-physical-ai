@@ -94,7 +94,10 @@ def live_byof_built_image(e2e_project: str | None) -> str:
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_CONTAINER_RUN_ID") or f"byof-container-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_CONTAINER_RUN_ID")
+        or f"byof-container-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -150,7 +153,9 @@ def test_live_isaac_byof_workflow_validate_and_plan(
 ) -> None:
     bucket = live_bucket(e2e_project)
     path = _materialize_byof_spec(tmp_path, bucket=bucket)
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
     assert payload["name"] == "byof"
@@ -171,7 +176,11 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     plan_payload = parse_json_payload(plan, forbidden_markers)
     steps = plan_payload.get("steps", [])
     assert steps
-    tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
+    tool_refs = {
+        step.get("tool_ref") or step.get("toolRef")
+        for step in steps
+        if isinstance(step, dict)
+    }
     assert "workbench.byof.repo" in tool_refs
 
 
@@ -185,7 +194,9 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     spec = load_spec(path)
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
-    assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers
+    )
     assert any(step.tool_ref == "workbench.byof.repo" for step in plan.steps)
 
 
@@ -232,7 +243,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert "<repo-url>" in workflow_yaml
     assert "<workload>" in workflow_yaml
 
-    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
+    validate = ctx.post(
+        "/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0
+    )
     validate.raise_for_status()
     validate_payload = validate.json()
     assert validate_payload.get("ok") is True
@@ -244,7 +257,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    assert (
+        "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    )
 
 
 @pytest.mark.skipif(
@@ -391,11 +406,15 @@ def test_live_byof_runner_submit_smoke(
 @pytest.fixture(scope="module")
 def live_byof_ubuntu_built_image(e2e_project: str | None) -> str:
     if os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1":
-        pytest.skip("Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.")
+        pytest.skip(
+            "Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push."
+        )
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_ubuntu_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -448,7 +467,9 @@ def test_live_agent_oss_repo_onboard_solution_chat() -> None:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.",
 )
-def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_build_push(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     assert live_byof_ubuntu_built_image
     assert "npa-byof" in live_byof_ubuntu_built_image
 
@@ -457,7 +478,9 @@ def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container metadata inspect.",
 )
-def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_metadata(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     repo_url, repo_ref = byof_ubuntu_validation_repo()
     meta_proc = subprocess.run(
         [
@@ -481,7 +504,8 @@ def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: s
 
 
 @pytest.mark.skipif(
-    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1" or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1"
+    or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 and NPA_BYOF_LIVE_GPU=1 for Ubuntu container-verify SkyPilot smoke.",
 )
 def test_live_byof_ubuntu_oss_container_verify_submit(
@@ -489,7 +513,9 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     live_byof_ubuntu_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
+    yaml_override = resolve_byof_resource_yaml(
+        e2e_project, smoke=True, workload="container-verify"
+    )
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
