@@ -271,41 +271,83 @@ workflow identity; retain the artifact storage for reproduction.
 
 ## Parts and hosted judge validation
 
-The parts and visual-evaluation implementation at commit `45622059` passed
-85 focused tests, including OpenUSD parsing and support geometry of all four assets, paired capture
-coverage, delayed applied actions, and rejection of unsupported visual claims.
-The Linux unit suite passed **21,429 tests**, with 116 skipped and one existing
-unexpected pass. The required security regressions passed **736 tests** with
-CPU `torch==2.13.0`; lint, 3,507 guardrails, 114 CLI smoke tests, and five-stage
-workflow validation also passed.
-
-The standard runtime completed `prepare`, and an independent S3 readback
-verified all five published files: the recipe and four USD assets. A real
-Token Factory contract check judged 15 timestamped frames from a retained
-cube-baseline capture with the exact MiniMax-M3 model and validated its
-frame-cited structured response. That check validates the hosted request path;
-it does not validate the new parts scene or the 32-episode visual audit.
-
-The corrected parts run completed **1,500 PPO updates and 147,456,000 transitions**
-on one RTX PRO 6000. Learning and final checkpoint export took 24.8 minutes,
-excluding installation and simulator startup. All 14 published training files
-passed independent S3 readback and local checksum verification. The actual
-physics setting matches the sealed 2,097,152 aggregate-pair capacity; the full
-native log contains no PhysX errors or missed-interaction messages.
-
-A separate CPU decoder verified all nine actor tensors are finite and measured
-an actor parameter change of 38.9880 in L2 norm, matching the native report.
-The saved optimizer records 30,000 updates per parameter. These checks establish
-real learning and preserved checkpoints; they do not establish held-out success.
+The spool experiment completed **1,500 PPO updates and 147,456,000 transitions**
+on one RTX PRO 6000. Learning and final checkpoint export took **24.8 minutes**,
+excluding installation and simulator startup. Independent S3 and local checks
+verified all 14 training files. Nine actor tensors are finite; their independently
+decoded parameter change is 38.9880 in L2 norm, and the optimizer records 30,000
+updates per parameter. All eleven native training/evaluation logs are free of
+recorded PhysX errors and missed-interaction messages.
 
 ![Native Franka spool training reward](../evidence/franka-parts-rtx-training.png)
 
-The workflow driver lost scheduler access before evaluation. Paired GPU tests,
-new parts videos, and the complete hosted audit remain **unverified**. The
-readiness sidecar keeps that boundary explicit. Historical cube measurements
-below retain their original scope.
-The [validation record](../evidence/franka-parts-validation.json) retains the
-asset and test-log hashes alongside these measured boundaries.
+Five checkpoints were compared on 640 validation trials before selecting
+`model_1499.pt`. All five had zero strict validation successes; closest goal
+distance narrowed the tie, and the earlier-iteration rule selected iteration
+1499 over the identical final actor. The selected actor equals the final actor tensor for
+tensor. All **1,024 held-out trials** passed checkpoint-lineage and exact
+physical-reset pairing checks. The initial policy had zero lifts and zero
+strict successes. The trained policy produced:
+
+| Held-out condition | Spool lifts | Strict successes |
+| --- | ---: | ---: |
+| Nominal | 128/128 | 0/128 (0.0%) |
+| Heavy | 128/128 | 2/128 (1.6%) |
+| Slippery | 126/128 | 0/128 (0.0%) |
+| Delay | 126/128 | 0/128 (0.0%) |
+
+That is **508/512 lifts but only 2/512 strict successes**. The mean strict
+improvement is 0.39 percentage points; the paired 95% bootstrap interval is
+0.00–0.98 points. This policy **does not qualify** under the sealed 70%-per-condition
+threshold. For example, the first nominal trained capture ends within 1.01 cm
+of its goal, but the simulator reports 16.1 cm/s object speed against a 3 cm/s
+limit. Visual retention alone cannot establish the required stable hold.
+
+Token Factory evaluated **all 32 paired captures across four reset seeds** using the sealed
+MiniMax-M3 model, rubric, and sampled frames. The first audit stopped after 21
+valid responses when another response claimed no lift but a successful final
+hold. Recovery preserved all 22 raw responses, including that rejected response,
+and requested only the ten missing episodes. No response was replaced to obtain
+a passing result. The completed audit contains **2 invalid responses**;
+its balanced lift agreement against the sampled-height proxy is
+**93.8%**. Invalid responses remain in denominators
+and close the audit gate. The judge also flags scene disturbance in the delayed
+drop episode, although its explanation describes the target falling rather than
+fixture contact or distractor movement. That interpretation is an uncalibrated
+judgment, not verified fixture contact. Both the physical and visual audit gates
+remain closed.
+Human-label calibration and physical Franka execution remain untested.
+
+The original GPU stages used source `45622059`. The separate CPU audit/report
+recovery used `d5a096fc` and immutable original evaluation
+and failure artifacts. Their source hashes, first-response lineage, and actual
+worker modules were verified separately. The original run's failed visual stage
+is preserved; it is not relabeled as a successful uninterrupted five-stage run.
+
+All 32 MP4s decode at 640×480 and 50 fps, with **7,891 real simulator frames**.
+Decoded samples match their original RGB arrays. The LeRobot export contains
+7,891 synchronized state/action rows; the Rerun recording's frame/time timelines
+and camera, joint, and action channels were decoded and checked. The paired demo
+uses the first capture reset in each condition, with both policies at real speed.
+The delayed trained rollout ends after 141 frames following a drop; the remaining
+31 clips contain 250 frames each. Its paired demo uses an explicit episode-ended
+slate instead of freezing or inventing motion.
+
+![Actual trained spool capture at two seconds](../evidence/franka-parts-rtx-preview.png)
+
+The updated implementation passed **21,441 Linux tests** (116 skipped and one
+existing unexpected pass), **736 security regressions** with CPU Torch 2.13.0,
+and **3,507 guardrails**. Recovery-focused tests passed 81 cases locally with six
+Warp-dependent skips; the Linux run covers those dependencies. The earlier 114
+CLI smoke cases passed. One additional real Token Factory parts test passed;
+its call is separate from the 32-capture audit accounting.
+
+The [measured result](../evidence/franka-parts-rtx.json),
+[every held-out trial](../evidence/franka-parts-rtx-trials.csv), and
+[validation record](../evidence/franka-parts-validation.json) retain the
+measurements and cryptographic evidence. These results cover a spool target
+with nut/bottle distractors and a tray fixture, not cross-object policy
+generalization or physical deployment.
 
 ## Historical cube baseline on RTX PRO 6000
 

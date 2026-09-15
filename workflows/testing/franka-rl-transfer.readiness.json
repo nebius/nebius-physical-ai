@@ -49,8 +49,8 @@
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Parts training completed, all 14 published training files passed checksum readback, and actual optimizer state was decoded. The driver lost scheduler access before evaluation; paired tests, new videos, and the complete 32-capture hosted audit remain unverified.",
+      "status": "verified",
+      "reason": "Native PPO and 1024 paired tests completed; a separate CPU recovery preserved 22 first responses, requested 10 missing judgments, and exported 32 verified videos plus LeRobot/Rerun. Original failed audit and both source revisions remain recorded. Execution coverage is verified; policy qualification is false.",
       "evidence": [
         "docs/workbench/evidence/franka-parts-validation.json"
       ]
