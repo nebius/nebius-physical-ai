@@ -75,10 +75,10 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
         "initial": _png_record(tmp_path / "initial.png", _frame(17), 0),
         "terminals": [_png_record(tmp_path / "terminal.png", frames[-1], 20)],
         "rendering": {
-            "mode": "PathTracing",
-            "denoiser": "OptiX",
-            "samples_per_pixel_per_render": 32,
-            "accumulation_renders_per_frame": 4,
+            "mode": "RaytracedLighting",
+            "antialiasing": "FXAA",
+            "stochastic_accumulation": False,
+            "accumulation_renders_per_frame": 0,
             "settings": dict(_RENDER_SETTINGS),
         },
         "physics_freeze_checks": [
@@ -92,8 +92,8 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
                 "native_physics_step_after": step,
                 "state_sha256_before": hashlib.sha256(str(step).encode()).hexdigest(),
                 "state_sha256_after": hashlib.sha256(str(step).encode()).hexdigest(),
-                "render_calls": 5,
-                "accumulation_render_calls": 4,
+                "render_calls": 1,
+                "accumulation_render_calls": 0,
                 "stage_streaming_idle": True,
                 "stage_assets_loaded": True,
                 "nonblack_rgb": True,
@@ -226,8 +226,8 @@ def test_capture_after_reset_is_an_invalid_evidence_phase(capture) -> None:
         ("stage_streaming_idle", False),
         ("stage_assets_loaded", False),
         ("nonblack_rgb", False),
-        ("render_calls", 1),
-        ("accumulation_render_calls", 0),
+        ("render_calls", 0),
+        ("accumulation_render_calls", 4),
         ("action_step", True),
     ],
 )
@@ -268,9 +268,9 @@ def test_allblack_initial_png_cannot_qualify_with_consistent_hashes(capture):
         verify_capture_evidence(video.parent, video, task_motion=motion)
 
 
-def test_renderer_readback_must_confirm_independent_denoising(capture):
+def test_renderer_readback_must_confirm_stable_spatial_antialiasing(capture):
     video, payload, motion, _ = capture
-    payload["rendering"]["settings"]["/rtx/pathtracing/optixDenoiser/enabled"] = False
+    payload["rendering"]["settings"]["/rtx/post/aa/op"] = 1
     _write_sidecar(video.parent, payload)
     with pytest.raises(IsaacArenaError, match="renderer readback"):
         verify_capture_evidence(video.parent, video, task_motion=motion)

@@ -36,17 +36,24 @@ def _proof(length: int = 20) -> dict:
         "task_success": True,
         "visual_progress_qualified": True,
         "progress_interval": interval,
+        "video_capture": {
+            "initial_action_step": 0,
+            "action_steps": list(range(1, length + 1)),
+            "terminal_action_step": length,
+        },
     }
     return {
         "environment": "gr1_open_microwave",
         "policy_type": "replay",
         "evidence": {
+            "sha256": "5" * 64,
             "trajectory": {"nonzero_actions": True},
             "execution": {
                 "strategy": "actions_initial_state_exact_replay",
                 "source_steps": length,
                 "prepared_steps": length,
                 "action_padding_steps": 0,
+                "prepared_sha256": "6" * 64,
             },
         },
         "summary": {
@@ -58,17 +65,47 @@ def _proof(length: int = 20) -> dict:
         "ground_truth": {
             "successes": 1,
             "episodes": [episode],
+            "files": [{"sha256": "7" * 64}],
             "task_progress_adapter": motion["adapter"],
             "task_motion": motion,
         },
         "capture": {
             "captured_action_steps": length,
-            "terminal": {"action_step": length},
-            "terminal_frame_comparison": {"matched": True},
+            "initial": {"action_step": 0, "sha256": "b" * 64},
+            "terminal": {"action_step": length, "sha256": "c" * 64},
+            "sidecar": {"sha256": "d" * 64},
+            "physics_freeze": {
+                "verified_capture_count": length + 1,
+                "simulation_advanced_during_render": False,
+                "physics_state_changed_during_render": False,
+                "rendering": {
+                    "mode": "RaytracedLighting",
+                    "antialiasing": "FXAA",
+                    "stochastic_accumulation": False,
+                    "accumulation_renders_per_frame": 0,
+                },
+            },
+            "terminal_frame_comparison": {"source_frame_index": length - 1},
             "source_mp4_sha256": "a" * 64,
         },
         "video": {
             "frame_count": length,
+            "sha256": "e" * 64,
+            "derivation": {
+                "source_sha256": "a" * 64,
+                "changes_simulator_outcome": False,
+            },
+            "binding": {
+                "run_id": "arena-proof-run",
+                "upstream_run_directory": "arena-proof-run",
+                "environment": "gr1_open_microwave",
+                "policy_type": "replay",
+                "episode": "demo_0",
+                "action_steps": length,
+                "input_sha256": "5" * 64,
+                "execution_input_sha256": "6" * 64,
+                "simulator_ground_truth_sha256": ["7" * 64],
+            },
             "motion": {
                 "meaningful": True,
                 "analysis_interval": {
@@ -80,7 +117,22 @@ def _proof(length: int = 20) -> dict:
                     },
                 },
             },
-            "frame_evidence": {"samples": {"first": {}, "last": {}}},
+            "frame_evidence": {
+                "samples": {
+                    role: {"decoded_luma_sha256": character * 64}
+                    for role, character in zip(
+                        (
+                            "first",
+                            "last",
+                            "motion_previous",
+                            "motion_current",
+                            "motion_continuation",
+                        ),
+                        "f1234",
+                        strict=True,
+                    )
+                }
+            },
         },
     }
 
@@ -122,16 +174,76 @@ def test_shared_contract_binds_all_evidence_to_one_episode() -> None:
         ("summary.metrics.success_rate", 0.0, "successful native scored episode"),
         ("ground_truth.successes", 0, "successful native scored episode"),
         ("ground_truth.episodes.0.success", False, "successful native scored episode"),
-        ("ground_truth.episodes.0.episode", "demo_1", "registered native task progress"),
+        (
+            "ground_truth.episodes.0.episode",
+            "demo_1",
+            "registered native task progress",
+        ),
         ("ground_truth.task_progress_adapter", None, "registered native task progress"),
-        ("ground_truth.task_motion.environment", "other", "registered native task progress"),
-        ("ground_truth.task_motion.visual_progress_qualified", False, "registered native task progress"),
-        ("ground_truth.task_motion.progress_interval.total_action_steps", 19, "span the scored episode"),
+        (
+            "ground_truth.task_motion.environment",
+            "other",
+            "registered native task progress",
+        ),
+        (
+            "ground_truth.task_motion.visual_progress_qualified",
+            False,
+            "registered native task progress",
+        ),
+        (
+            "ground_truth.task_motion.video_capture.terminal_action_step",
+            19,
+            "registered native task progress",
+        ),
+        (
+            "ground_truth.task_motion.progress_interval.total_action_steps",
+            19,
+            "span the scored episode",
+        ),
         ("capture.captured_action_steps", 19, "span the scored episode"),
         ("capture.terminal.action_step", 19, "span the scored episode"),
+        (
+            "capture.physics_freeze.verified_capture_count",
+            20,
+            "span the scored episode",
+        ),
+        (
+            "capture.physics_freeze.rendering.stochastic_accumulation",
+            True,
+            "span the scored episode",
+        ),
+        (
+            "capture.physics_freeze.rendering.accumulation_renders_per_frame",
+            1,
+            "span the scored episode",
+        ),
+        ("capture.source_mp4_sha256", "invalid", "span the scored episode"),
         ("video.frame_count", 19, "bound to native task progress"),
+        ("video.derivation.source_sha256", "f" * 64, "bound to native task progress"),
+        ("video.binding.episode", "demo_1", "bound to native task progress"),
+        ("video.binding.input_sha256", "8" * 64, "bound to native task progress"),
+        (
+            "video.binding.execution_input_sha256",
+            "8" * 64,
+            "bound to native task progress",
+        ),
+        (
+            "video.binding.simulator_ground_truth_sha256",
+            ["8" * 64],
+            "bound to native task progress",
+        ),
+        ("video.sha256", "invalid", "bound to native task progress"),
+        (
+            "video.frame_evidence.samples.last.decoded_luma_sha256",
+            "",
+            "bound to native task progress",
+        ),
         ("video.motion.meaningful", False, "bound to native task progress"),
-        ("video.motion.analysis_interval.action_steps.total", 19, "bound to native task progress"),
+        (
+            "video.motion.analysis_interval.action_steps.total",
+            19,
+            "bound to native task progress",
+        ),
     ],
 )
 def test_partial_or_mismatched_proofs_cannot_qualify(path, value, reason) -> None:
@@ -141,10 +253,20 @@ def test_partial_or_mismatched_proofs_cannot_qualify(path, value, reason) -> Non
         qualify_visual_acceptance(**proof)
 
 
+def test_malformed_extra_ground_truth_file_cannot_be_omitted_from_binding() -> None:
+    proof = _proof()
+    proof["ground_truth"]["files"].append("not-a-file-record")
+    with pytest.raises(IsaacArenaError, match="bound to native task progress"):
+        qualify_visual_acceptance(**proof)
+
+
 def test_native_policy_actions_use_the_same_scored_horizon() -> None:
     proof = _proof()
     proof["policy_type"] = "rsl_rl"
     proof["evidence"] = None
+    proof["video"]["binding"]["policy_type"] = "rsl_rl"
+    proof["video"]["binding"]["input_sha256"] = ""
+    proof["video"]["binding"]["execution_input_sha256"] = ""
     result = qualify_visual_acceptance(**proof)
     assert result["actions"] == {
         "source": "native_policy_actions",

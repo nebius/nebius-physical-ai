@@ -620,9 +620,9 @@ def _freeze_row_valid(row: Any, step: int) -> bool:
         return False
     return (
         type(row.get("render_calls")) is int
-        and row["render_calls"] >= 5
+        and row["render_calls"] >= 1
         and type(row.get("accumulation_render_calls")) is int
-        and row["accumulation_render_calls"] == 4
+        and row["accumulation_render_calls"] == 0
         and all(
             row.get(field) is True
             for field in ("stage_streaming_idle", "stage_assets_loaded", "nonblack_rgb")
@@ -633,10 +633,10 @@ def _freeze_row_valid(row: Any, step: int) -> bool:
 def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
     rendering = capture.get("rendering")
     expected = {
-        "mode": "PathTracing",
-        "denoiser": "OptiX",
-        "samples_per_pixel_per_render": 32,
-        "accumulation_renders_per_frame": 4,
+        "mode": "RaytracedLighting",
+        "antialiasing": "FXAA",
+        "stochastic_accumulation": False,
+        "accumulation_renders_per_frame": 0,
     }
     if not isinstance(rendering, dict) or any(
         type(rendering.get(key)) is not type(value) or rendering[key] != value

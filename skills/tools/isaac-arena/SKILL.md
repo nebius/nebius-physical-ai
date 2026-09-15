@@ -185,16 +185,18 @@ nonzero-policy video qualification remains unsupported until explicitly register
 Capture actual initial and terminal PNGs before automatic reset. Verify
 `simulator-video-evidence.json` against their file and decoded-RGB hashes,
 contiguous HDF5 action steps, and the matching decoded terminal MP4 frame within
-encoding tolerances. Require the version-2 sidecar's initial-plus-every-action
+encoding tolerances. The shared acceptance record must bind the sidecar, PNG,
+raw-MP4, and evidence-MP4 hashes to the same native episode and exact action
+horizon. Require the version-2 sidecar's initial-plus-every-action
 physics checks: native PhysX step-event counts and elapsed event time, the Lab
 physics counter, and uncached robot/object state must remain unchanged during
 rendering. The native subscription must also observe progress between real
 actions; elapsed event time starts at capture setup, not an absolute clock.
-Verify asset/texture readiness
-and the path-tracing/OptiX settings readback: request 32 samples per pixel on each
-of four frozen render updates without NGX. These are configured samples and
-observed update calls, not measured accumulated samples. Rendering must not add physics steps or
-video frames. An unfinished recorder buffer belongs only in the separate
+Verify asset/texture readiness and the exact RTX Real-Time
+`RaytracedLighting` plus spatial-FXAA settings readback. Do not use stochastic
+path-tracing or temporal accumulation for acceptance footage. The separate
+temporal-median and coherent-motion verifier remains mandatory. Rendering must
+not add physics steps or video frames. An unfinished recorder buffer belongs only in the separate
 unscored diagnostic and cannot create upstream success or completed episodes.
 When emitted, `simulator-phases-rank*.jsonl` contains fixed phase/event labels,
 monotonic timestamps, rank, action/render counters, and readiness booleans for

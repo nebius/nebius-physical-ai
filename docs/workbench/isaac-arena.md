@@ -191,8 +191,10 @@ PNG's file and decoded-RGB SHA-256 to its action step; contiguous capture indice
 must match the simulator HDF5. The terminal PNG must also match the corresponding
 decoded source-MP4 frame within encoding tolerances. The result records these
 bindings, initial/final state, measured changes, thresholds, source and derivative
-hashes, run identity, and input hashes. A static scene with rendering noise fails
-the gate. A zero-action baseline is never task-qualified, even if it passes the
+hashes, run identity, and input hashes. The shared acceptance record verifies a
+single hash chain from capture sidecar and PNGs through the raw MP4 to its
+denoised evidence derivative, all on the same native episode and action horizon.
+A static scene with rendering noise fails the gate. A zero-action baseline is never task-qualified, even if it passes the
 capture and coherent-motion checks. Failed qualification retains diagnostic
 artifacts. State-only evaluation reports scored outcomes, including zero success,
 without requiring successful visual qualification.
@@ -208,10 +210,11 @@ sidecar must contain one matching check for the initial frame and every action.
 The retained native subscription must observe progress between real actions;
 an inactive observer cannot provide a freeze proof. Its elapsed time starts at
 capture setup and is not an absolute simulation clock.
-Texture streaming and asset loading must finish before capture requests 32
-samples per pixel on each of four frozen path-tracing updates with the
-NGX-independent OptiX denoiser. The proof records settings and update counts;
-it does not measure the renderer's actual accumulated sample count.
+Texture streaming and asset loading must finish before capture accepts a frame.
+Capture requires RTX Real-Time (`RaytracedLighting`) with spatial FXAA and no
+stochastic or temporal accumulation. This removes path-tracing grain from the
+source evidence; the independent temporal-median and coherent block-tracking
+gate still rejects static scenes and incoherent flicker.
 The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
 are read back and verified. The patch preserves early Kit

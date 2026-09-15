@@ -36,7 +36,11 @@ from .identity import (
     SUPPORTED_ENVIRONMENTS,
 )
 from .viewport_graphics import _prepare_viewport_graphics
-from .replay_input import _prepare_replay_execution_input, _input_evidence, _checkpoint_input
+from .replay_input import (
+    _prepare_replay_execution_input,
+    _input_evidence,
+    _checkpoint_input,
+)
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
 from .video_evidence import probe_mp4 as _probe_mp4, denoise_mp4 as _denoise_mp4
@@ -118,10 +122,14 @@ def _validate(request: IsaacArenaRequest) -> None:
     if request.num_episodes < 1 or request.num_envs < 1:
         raise IsaacArenaError("num_episodes and num_envs must be positive")
     if request.record_video and (request.num_envs != 1 or request.num_episodes != 1):
-        raise IsaacArenaError("video qualification requires exactly one environment and one episode")
+        raise IsaacArenaError(
+            "video qualification requires exactly one environment and one episode"
+        )
     if request.num_envs > request.num_episodes:
         raise IsaacArenaError("num_envs cannot exceed num_episodes")
-    if request.policy_type == "replay" and (request.num_envs != 1 or request.num_episodes != 1):
+    if request.policy_type == "replay" and (
+        request.num_envs != 1 or request.num_episodes != 1
+    ):
         raise IsaacArenaError("replay requires exactly one environment and one episode")
     if request.policy_type == "zero_action" and request.input_path:
         raise IsaacArenaError("zero_action does not accept input_path")
@@ -166,8 +174,8 @@ def build_evaluation_argv(
 
     argv = _runner_options(request, output_dir)
     if request.record_video:
-        # Keep the launcher preset explicit. Capture configures the required
-        # PathTracing/OptiX settings and checks their readback before frames.
+        # Keep the launcher preset explicit. Capture overrides it with the
+        # required real-time spatial-AA settings and checks their readback.
         argv.extend(["--rendering_mode", "balanced", "--record_viewport_video"])
     argv.extend(_policy_input_argv(request, local_input))
     # Upstream's subparsers require global and policy flags before the environment.
@@ -199,9 +207,15 @@ def _runner_options(request: IsaacArenaRequest, output_dir: Path) -> list[str]:
     ]
 
 
-def _policy_input_argv(request: IsaacArenaRequest, local_input: Path | None) -> list[str]:
+def _policy_input_argv(
+    request: IsaacArenaRequest, local_input: Path | None
+) -> list[str]:
     if request.dry_run and request.policy_type in {"replay", "rsl_rl"}:
-        flag = "--replay_file_path" if request.policy_type == "replay" else "--checkpoint_path"
+        flag = (
+            "--replay_file_path"
+            if request.policy_type == "replay"
+            else "--checkpoint_path"
+        )
         return [flag, "<operator-input>"]
     if request.policy_type == "replay":
         if local_input is None or not local_input.is_file():
@@ -230,10 +244,17 @@ def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
             "NGC_API_KEY",
             "NEBIUS_IAM_TOKEN",
             "NEBIUS_TOKEN_FACTORY_KEY",
-        } or upper.endswith((
-            "_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD",
-            "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_SECRET_KEY",
-        )):
+        } or upper.endswith(
+            (
+                "_API_KEY",
+                "_SECRET",
+                "_TOKEN",
+                "_PASSWORD",
+                "_ACCESS_KEY_ID",
+                "_SECRET_ACCESS_KEY",
+                "_SECRET_KEY",
+            )
+        ):
             env.pop(key, None)
     env.setdefault("ACCEPT_EULA", "Y")
     env.pop("NPA_ISAAC_ARENA_VIEWPORT_ONLY", None)
@@ -361,7 +382,9 @@ def _publish(local_dir: Path, output_path: str) -> str:
     return str(target)
 
 
-def _prepare_inputs(request: IsaacArenaRequest, private_dir: Path) -> tuple[Path | None, dict | None]:
+def _prepare_inputs(
+    request: IsaacArenaRequest, private_dir: Path
+) -> tuple[Path | None, dict | None]:
     if request.dry_run:
         return None, None
     local_input = _local_input(request, private_dir)
@@ -370,10 +393,14 @@ def _prepare_inputs(request: IsaacArenaRequest, private_dir: Path) -> tuple[Path
         return local_input, evidence
     assert local_input is not None and evidence is not None
     environment = next(
-        item for item in capabilities()["environments"] if item["name"] == request.environment
+        item
+        for item in capabilities()["environments"]
+        if item["name"] == request.environment
     )
     execution, execution_evidence = _prepare_replay_execution_input(
-        local_input, private_dir, source_evidence=evidence,
+        local_input,
+        private_dir,
+        source_evidence=evidence,
         embodiment=request.embodiment or environment["default_embodiment"],
     )
     evidence["execution"] = execution_evidence
@@ -391,17 +418,24 @@ def _runtime_metadata(request: IsaacArenaRequest) -> dict[str, Any]:
         },
         "isaac_runtime_fetch": True,
         "lightwheel_sdk": {
-            "version": LIGHTWHEEL_SDK_VERSION, "baked": True, "license": "Apache-2.0",
+            "version": LIGHTWHEEL_SDK_VERSION,
+            "baked": True,
+            "license": "Apache-2.0",
         },
         "lightwheel_registry_assets": {
             "baked": False,
-            "runtime_fetch": request.environment in {
-                "franka_put_and_close_door", "gr1_open_microwave", "press_button",
+            "runtime_fetch": request.environment
+            in {
+                "franka_put_and_close_door",
+                "gr1_open_microwave",
+                "press_button",
                 "put_item_in_fridge_and_close_door",
             },
-            "license": "upstream-provider-controlled", "redistribution": False,
+            "license": "upstream-provider-controlled",
+            "redistribution": False,
         },
-        "model_baked": False, "dataset_baked": False,
+        "model_baked": False,
+        "dataset_baked": False,
         "input_payload_scope": "Arena policy weights and evaluation datasets",
         "inherited_dependency_fixtures": "Public dependency test fixtures are described separately in the image's third-party notices.",
     }
@@ -409,9 +443,11 @@ def _runtime_metadata(request: IsaacArenaRequest) -> dict[str, Any]:
 
 def _public_argv(argv: list[str]) -> list[str]:
     public = list(argv)
-    for flag, replacement in (("--replay_file_path", "<operator-input>"),
-                              ("--checkpoint_path", "<operator-input>"),
-                              ("--output_base_dir", "<run-output>")):
+    for flag, replacement in (
+        ("--replay_file_path", "<operator-input>"),
+        ("--checkpoint_path", "<operator-input>"),
+        ("--output_base_dir", "<run-output>"),
+    ):
         if flag in public:
             public[public.index(flag) + 1] = replacement
     return public
@@ -424,16 +460,22 @@ def _private_input_log(log_text: str, argv: list[str]) -> str:
         path = argv[argv.index(flag) + 1]
         log_text = log_text.replace(path, "<operator-input>")
         if flag == "--checkpoint_path" and Path(path).parent != Path("/"):
-            log_text = log_text.replace(str(Path(path).parent), "<operator-input-directory>")
+            log_text = log_text.replace(
+                str(Path(path).parent), "<operator-input-directory>"
+            )
     return log_text
 
 
-def _prepare_evaluation(request: IsaacArenaRequest, root: Path) -> tuple[Path, Path, dict, list[str]]:
+def _prepare_evaluation(
+    request: IsaacArenaRequest, root: Path
+) -> tuple[Path, Path, dict, list[str]]:
     artifact_root, private_dir = root / "artifacts", root / "private"
     output_root = artifact_root / "upstream"
     output_root.mkdir(parents=True)
     execution_input, evidence = _prepare_inputs(request, private_dir)
-    argv = build_evaluation_argv(request, output_dir=output_root, local_input=execution_input)
+    argv = build_evaluation_argv(
+        request, output_dir=output_root, local_input=execution_input
+    )
     public_request = asdict(request)
     public_request["output_path"] = "<operator-output>"
     if public_request["input_path"]:
@@ -442,67 +484,106 @@ def _prepare_evaluation(request: IsaacArenaRequest, root: Path) -> tuple[Path, P
         "schema": ARTIFACT_SCHEMA,
         "upstream": {
             "repository": "https://github.com/isaac-sim/IsaacLab-Arena",
-            "version": ISAAC_ARENA_VERSION, "revision": ISAAC_ARENA_REVISION,
+            "version": ISAAC_ARENA_VERSION,
+            "revision": ISAAC_ARENA_REVISION,
         },
-        "request": public_request, "runtime": _runtime_metadata(request),
-        "input": evidence, "argv": _public_argv(argv),
+        "request": public_request,
+        "runtime": _runtime_metadata(request),
+        "input": evidence,
+        "argv": _public_argv(argv),
     }
     return artifact_root, private_dir, base, argv
 
 
 def _require_optix_runtime(log_text: str) -> None:
     for line in log_text.lower().splitlines():
-        if ("unable to load denoiser weights" in line
-                or "optix error: optix_error_" in line
-                or ("[error]" in line and "[rtx.optixdenoising.plugin]" in line)
-                or ("optixdenoisercreate(" in line and "failed" in line)):
+        if (
+            "unable to load denoiser weights" in line
+            or "optix error: optix_error_" in line
+            or ("[error]" in line and "[rtx.optixdenoising.plugin]" in line)
+            or ("optixdenoisercreate(" in line and "failed" in line)
+        ):
             raise IsaacArenaError(
                 "Arena viewport reported an OptiX runtime failure; "
                 "renderer settings alone do not prove denoising"
             )
 
 
-def _execute_upstream(request, artifact_root, private_dir, base, runner, graphics_preparer, argv):
+def _execute_upstream(
+    request, artifact_root, private_dir, base, runner, graphics_preparer, argv
+):
     sim_env = _subprocess_env(viewport_only=request.record_video)
     if request.record_video:
         base["runtime"]["viewport_graphics"] = graphics_preparer(
-            private_dir / "viewport-graphics", sim_env,
+            private_dir / "viewport-graphics",
+            sim_env,
         )
     completed = runner(
-        argv, cwd=ISAAC_ARENA_ROOT, env=sim_env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        argv,
+        cwd=ISAAC_ARENA_ROOT,
+        env=sim_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
     )
     log_text = _private_input_log(completed.stdout or "", argv)
     (artifact_root / "evaluation.log").write_text(log_text, encoding="utf-8")
     if completed.returncode != 0:
         tail = "\n".join(log_text.splitlines()[-40:])
-        raise IsaacArenaError(f"upstream policy_runner failed ({completed.returncode}):\n{tail}")
+        raise IsaacArenaError(
+            f"upstream policy_runner failed ({completed.returncode}):\n{tail}"
+        )
     if request.record_video:
         _require_optix_runtime(log_text)
-    run_dirs = sorted(path for path in (artifact_root / "upstream").iterdir() if path.is_dir())
+    run_dirs = sorted(
+        path for path in (artifact_root / "upstream").iterdir() if path.is_dir()
+    )
     if len(run_dirs) != 1:
-        raise IsaacArenaError("upstream evaluation did not create exactly one run directory")
+        raise IsaacArenaError(
+            "upstream evaluation did not create exactly one run directory"
+        )
     return run_dirs[0], log_text
 
 
-def _validated_summary(request: IsaacArenaRequest, run_dir: Path, log_text: str, evidence: dict | None) -> dict:
+def _validated_summary(
+    request: IsaacArenaRequest, run_dir: Path, log_text: str, evidence: dict | None
+) -> dict:
     summary, _ = _summarize(run_dir)
     if summary["episodes"] < request.num_episodes:
-        raise IsaacArenaError("upstream evaluation completed fewer episodes than requested")
-    if (request.record_video or request.policy_type == "replay") and summary["episodes"] != 1:
-        raise IsaacArenaError("replay and video qualification require exactly one completed episode")
+        raise IsaacArenaError(
+            "upstream evaluation completed fewer episodes than requested"
+        )
+    if (request.record_video or request.policy_type == "replay") and summary[
+        "episodes"
+    ] != 1:
+        raise IsaacArenaError(
+            "replay and video qualification require exactly one completed episode"
+        )
     if request.record_video and request.policy_type == "replay":
-        if ((evidence or {}).get("trajectory") or {}).get("nonzero_actions") is not True:
-            raise IsaacArenaError("replay visual qualification requires measured nonzero source actions")
+        if ((evidence or {}).get("trajectory") or {}).get(
+            "nonzero_actions"
+        ) is not True:
+            raise IsaacArenaError(
+                "replay visual qualification requires measured nonzero source actions"
+            )
     summary["metrics"] = _numeric_metrics(log_text)
     success_rate = summary["metrics"].get("success_rate")
-    if success_rate is None or not math.isclose(success_rate, summary["success_rate"], abs_tol=1e-9, rel_tol=0.0):
-        raise IsaacArenaError("upstream numeric success metric disagrees with episode JSONL")
+    if success_rate is None or not math.isclose(
+        success_rate, summary["success_rate"], abs_tol=1e-9, rel_tol=0.0
+    ):
+        raise IsaacArenaError(
+            "upstream numeric success metric disagrees with episode JSONL"
+        )
     steps = ((evidence or {}).get("execution") or {}).get("prepared_steps")
     summary["simulator_ground_truth"] = _simulator_ground_truth(
-        run_dir, environment=request.environment, expected_episodes=summary["episodes"],
-        expected_successes=summary["successes"], expected_action_steps=steps,
-        require_task_success=request.record_video and request.policy_type != "zero_action",
+        run_dir,
+        environment=request.environment,
+        expected_episodes=summary["episodes"],
+        expected_successes=summary["successes"],
+        expected_action_steps=steps,
+        require_task_success=request.record_video
+        and request.policy_type != "zero_action",
     )
     return summary
 
@@ -510,28 +591,49 @@ def _validated_summary(request: IsaacArenaRequest, run_dir: Path, log_text: str,
 def _behavior_evidence(request: IsaacArenaRequest, summary: dict) -> dict:
     ground_truth = summary["simulator_ground_truth"]
     task_success = summary["successes"] > 0 and summary["metrics"]["success_rate"] > 0
-    progress = bool(summary["max_progress_score"] > 0 or summary["progress_event_count"]
-                    or (ground_truth.get("task_motion") or {}).get("task_success"))
+    progress = bool(
+        summary["max_progress_score"] > 0
+        or summary["progress_event_count"]
+        or (ground_truth.get("task_motion") or {}).get("task_success")
+    )
     observed = task_success or progress
     if request.record_video and request.policy_type != "zero_action" and not observed:
-        raise IsaacArenaError("nonzero policy produced no task success or upstream progress evidence")
+        raise IsaacArenaError(
+            "nonzero policy produced no task success or upstream progress evidence"
+        )
     return {
         "policy_is_nonzero_adapter": request.policy_type != "zero_action",
-        "output_behavior_observed": observed, "task_success": task_success,
+        "output_behavior_observed": observed,
+        "task_success": task_success,
         "task_progress": progress,
-        "positive_metrics": {key: value for key, value in summary["metrics"].items() if value > 0},
+        "positive_metrics": {
+            key: value for key, value in summary["metrics"].items() if value > 0
+        },
         "movement_metrics_are_outcome_claims": False,
         "meaningful": request.policy_type != "zero_action" and observed,
     }
 
 
-def _video_binding(request: IsaacArenaRequest, run_dir: Path, evidence: dict | None, ground_truth: dict) -> dict:
+def _video_binding(
+    request: IsaacArenaRequest, run_dir: Path, evidence: dict | None, ground_truth: dict
+) -> dict:
     source_hash = str((evidence or {}).get("sha256") or "")
+    motion = ground_truth.get("task_motion") or {}
     return {
-        "run_id": request.run_id or run_dir.name, "upstream_run_directory": run_dir.name,
-        "policy_type": request.policy_type, "input_sha256": source_hash,
-        "execution_input_sha256": str(((evidence or {}).get("execution") or {}).get("prepared_sha256") or source_hash),
-        "simulator_ground_truth_sha256": [item["sha256"] for item in ground_truth["files"]],
+        "run_id": request.run_id or run_dir.name,
+        "upstream_run_directory": run_dir.name,
+        "environment": request.environment,
+        "policy_type": request.policy_type,
+        "episode": motion.get("episode"),
+        "action_steps": motion.get("episode_length"),
+        "input_sha256": source_hash,
+        "execution_input_sha256": str(
+            ((evidence or {}).get("execution") or {}).get("prepared_sha256")
+            or source_hash
+        ),
+        "simulator_ground_truth_sha256": [
+            item["sha256"] for item in ground_truth["files"]
+        ],
     }
 
 
@@ -540,30 +642,48 @@ def _capture_context(request: IsaacArenaRequest, ground_truth: dict) -> dict:
     if motion and motion.get("visual_progress_qualified"):
         return motion
     if request.policy_type != "zero_action":
-        raise IsaacArenaError("visual task qualification requires a supported simulator task-progress binding")
+        raise IsaacArenaError(
+            "visual task qualification requires a supported simulator task-progress binding"
+        )
     capture = ground_truth["episodes"][0].get("video_capture")
     if not capture:
         raise IsaacArenaError("viewport capture has no simulator action-step binding")
     terminal = capture["terminal_action_step"]
-    return {"video_capture": capture, "progress_interval": {
-        "start_action_step": 0, "end_action_step": terminal, "total_action_steps": terminal,
-    }}
+    return {
+        "video_capture": capture,
+        "progress_interval": {
+            "start_action_step": 0,
+            "end_action_step": terminal,
+            "total_action_steps": terminal,
+        },
+    }
 
 
-def _video_artifacts(request, run_dir, evidence, summary, video_preparer) -> dict[Path, dict]:
+def _video_artifacts(
+    request, run_dir, evidence, summary, video_preparer
+) -> dict[Path, dict]:
     ground_truth = summary["simulator_ground_truth"]
     videos = sorted(run_dir.rglob("*.mp4"))
-    if request.record_video and (not videos or any(path.stat().st_size == 0 for path in videos)):
-        raise IsaacArenaError("video recording was requested but no non-empty MP4 was written")
+    if request.record_video and (
+        not videos or any(path.stat().st_size == 0 for path in videos)
+    ):
+        raise IsaacArenaError(
+            "video recording was requested but no non-empty MP4 was written"
+        )
     result = {}
     interval = (ground_truth.get("task_motion") or {}).get("progress_interval")
     for source in videos:
         capture = _verify_capture_evidence(
-            run_dir, source, task_motion=_capture_context(request, ground_truth),
-            expected_steps=((evidence or {}).get("execution") or {}).get("prepared_steps"),
+            run_dir,
+            source,
+            task_motion=_capture_context(request, ground_truth),
+            expected_steps=((evidence or {}).get("execution") or {}).get(
+                "prepared_steps"
+            ),
         )
         video, derivation = video_preparer(source)
         metadata = _probe_mp4(video, evidence_interval=interval)
+        metadata["sha256"] = _sha256(video)
         metadata["derivation"] = derivation
         metadata["binding"] = _video_binding(request, run_dir, evidence, ground_truth)
         metadata["simulator_capture"] = capture
@@ -581,56 +701,78 @@ def _video_artifacts(request, run_dir, evidence, summary, video_preparer) -> dic
         metadata["acceptance"] = acceptance
         metadata["task_qualified"] = bool(acceptance and acceptance["qualified"])
         result[video] = {"video": metadata}
-        result[source] = {"visual_source": {
-            "role": "raw_upstream_source", "evidence_derivative": video.name,
-            "sha256": derivation["source_sha256"],
-        }}
+        result[source] = {
+            "visual_source": {
+                "role": "raw_upstream_source",
+                "evidence_derivative": video.name,
+                "sha256": derivation["source_sha256"],
+            }
+        }
     return result
 
 
 def _artifact_entries(artifact_root: Path, metadata: dict[Path, dict]) -> list[dict]:
     return [
-        {"path": str(path.relative_to(artifact_root)), "bytes": path.stat().st_size,
-         "sha256": _sha256(path), **metadata.get(path, {})}
-        for path in sorted(artifact_root.rglob("*")) if path.is_file()
+        {
+            "path": str(path.relative_to(artifact_root)),
+            "bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+            **metadata.get(path, {}),
+        }
+        for path in sorted(artifact_root.rglob("*"))
+        if path.is_file()
     ]
 
 
-def _evaluation_result(request, artifact_root, run_dir, log_text, base, video_preparer) -> dict:
+def _evaluation_result(
+    request, artifact_root, run_dir, log_text, base, video_preparer
+) -> dict:
     summary = _validated_summary(request, run_dir, log_text, base["input"])
     behavior = _behavior_evidence(request, summary)
     report = run_dir / "index.html"
     if not report.is_file() or report.stat().st_size == 0:
         raise IsaacArenaError("upstream evaluation report is missing")
-    videos = _video_artifacts(
-        request, run_dir, base["input"], summary, video_preparer
-    )
+    videos = _video_artifacts(request, run_dir, base["input"], summary, video_preparer)
     gpu = _gpu_info()
     if not gpu["available"]:
         raise IsaacArenaError("Arena evaluation returned without a CUDA device")
     return {
-        **base, "status": "ok", "run_id": request.run_id or run_dir.name,
-        "upstream_run_directory": run_dir.name, "summary": summary, "behavior": behavior,
-        "gpu": gpu, "artifacts": _artifact_entries(artifact_root, videos),
+        **base,
+        "status": "ok",
+        "run_id": request.run_id or run_dir.name,
+        "upstream_run_directory": run_dir.name,
+        "summary": summary,
+        "behavior": behavior,
+        "gpu": gpu,
+        "artifacts": _artifact_entries(artifact_root, videos),
     }
 
 
-def _save_result(request: IsaacArenaRequest, artifact_root: Path, manifest: dict) -> dict:
-    (artifact_root / "result.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def _save_result(
+    request: IsaacArenaRequest, artifact_root: Path, manifest: dict
+) -> dict:
+    (artifact_root / "result.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     try:
         destination = _publish(artifact_root, request.output_path)
     except Exception as exc:
         retained = Path(tempfile.mkdtemp(prefix="npa-isaac-arena-unpublished-"))
         retained.chmod(0o700)
         shutil.copytree(artifact_root, retained / "artifacts")
-        raise IsaacArenaError(f"artifact publication failed; evidence retained privately at {retained}") from exc
+        raise IsaacArenaError(
+            f"artifact publication failed; evidence retained privately at {retained}"
+        ) from exc
     return {**manifest, "published_to": destination}
 
 
 def evaluate(
-    request: IsaacArenaRequest, *,
+    request: IsaacArenaRequest,
+    *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    graphics_preparer: Callable[[Path, dict[str, str]], dict[str, Any]] = _prepare_viewport_graphics,
+    graphics_preparer: Callable[
+        [Path, dict[str, str]], dict[str, Any]
+    ] = _prepare_viewport_graphics,
     video_preparer: Callable[[Path], tuple[Path, dict[str, Any]]] = _denoise_mp4,
 ) -> dict[str, Any]:
     """Execute real Arena evaluation and retain truthful scored or failed evidence.
@@ -647,15 +789,32 @@ def evaluate(
     """
     _validate(request)
     with tempfile.TemporaryDirectory(prefix="npa-isaac-arena-") as scratch:
-        artifact_root, private_dir, base, argv = _prepare_evaluation(request, Path(scratch))
+        artifact_root, private_dir, base, argv = _prepare_evaluation(
+            request, Path(scratch)
+        )
         if request.dry_run:
             return {**base, "status": "dry_run", "artifacts": {}}
         try:
-            run_dir, log_text = _execute_upstream(request, artifact_root, private_dir, base, runner, graphics_preparer, argv)
-            manifest = _evaluation_result(request, artifact_root, run_dir, log_text, base, video_preparer)
+            run_dir, log_text = _execute_upstream(
+                request,
+                artifact_root,
+                private_dir,
+                base,
+                runner,
+                graphics_preparer,
+                argv,
+            )
+            manifest = _evaluation_result(
+                request, artifact_root, run_dir, log_text, base, video_preparer
+            )
         except IsaacArenaError as exc:
-            failure = {**base, "status": "failed", "run_id": request.run_id,
-                       "error": str(exc), "artifacts": _artifact_entries(artifact_root, {})}
+            failure = {
+                **base,
+                "status": "failed",
+                "run_id": request.run_id,
+                "error": str(exc),
+                "artifacts": _artifact_entries(artifact_root, {}),
+            }
             _save_result(request, artifact_root, failure)
             raise
         return _save_result(request, artifact_root, manifest)

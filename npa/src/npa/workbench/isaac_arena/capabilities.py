@@ -355,37 +355,49 @@ _CAPABILITY_MANIFEST = {
                 "isaaclab_arena/evaluation/experiment_runner.py",
                 "osmo/submit_arena_experiment.py",
             ],
-            "required_inputs": ["experiment configuration, compatible policies, and task assets"],
+            "required_inputs": [
+                "experiment configuration, compatible policies, and task assets"
+            ],
             "limitation": "NPA's SkyPilot evaluation workflows do not expose upstream experiment orchestration or its OSMO backend.",
         },
         "sensitivity_analysis": {
             "npa_status": ["unsupported", "input_required", "upstream_alpha"],
-            "upstream_entrypoints": ["isaaclab_arena/analysis/sensitivity/generate_report.py"],
+            "upstream_entrypoints": [
+                "isaaclab_arena/analysis/sensitivity/generate_report.py"
+            ],
             "required_inputs": ["episode outcomes with recorded variation factors"],
             "limitation": "NPA retains ordinary evaluation metrics but does not invoke upstream posterior estimation or sensitivity reports.",
         },
         "teleoperation": {
             "npa_status": ["unsupported", "input_required", "upstream_alpha"],
             "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_2_teleoperation.rst",
-            "required_inputs": ["registered task, compatible teleoperation device, and runtime assets"],
+            "required_inputs": [
+                "registered task, compatible teleoperation device, and runtime assets"
+            ],
             "limitation": "Upstream records demonstrations through Isaac Lab; the Arena workbench exposes no teleoperation or demonstration-recording command.",
         },
         "data_generation": {
             "npa_status": ["unsupported", "input_required", "upstream_alpha"],
             "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_3_data_generation.rst",
-            "required_inputs": ["source demonstrations, task annotations, and compatible Isaac Lab Mimic configuration"],
+            "required_inputs": [
+                "source demonstrations, task annotations, and compatible Isaac Lab Mimic configuration"
+            ],
             "limitation": "Evaluation replay does not implement upstream demonstration annotation or Mimic dataset generation.",
         },
         "imitation_learning": {
             "npa_status": ["unsupported", "input_required", "upstream_alpha"],
             "upstream_documentation": "docs/pages/example_workflows/static_manipulation/step_4_policy_training.rst",
-            "required_inputs": ["demonstration dataset, compatible training configuration, and authorized model access"],
+            "required_inputs": [
+                "demonstration dataset, compatible training configuration, and authorized model access"
+            ],
             "limitation": "The upstream GR00T conversion and fine-tuning workflow requires its separate training environment; NPA Arena does not invoke it.",
         },
         "reinforcement_learning": {
             "npa_status": ["unsupported", "input_required", "upstream_alpha"],
             "upstream_documentation": "docs/pages/example_workflows/reinforcement_learning/step_2_policy_training.rst",
-            "required_inputs": ["registered Arena task and compatible Isaac Lab training configuration"],
+            "required_inputs": [
+                "registered Arena task and compatible Isaac Lab training configuration"
+            ],
             "limitation": "NPA Arena can evaluate a supplied RSL-RL checkpoint but does not invoke upstream policy training.",
         },
     },
@@ -507,6 +519,12 @@ _CAPABILITY_MANIFEST = {
             "npa_status": ["implemented", "upstream_alpha"],
             "request_constraints": {"num_envs": 1, "num_episodes": 1},
             "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
+            "renderer": {
+                "mode": "RaytracedLighting",
+                "antialiasing": "FXAA",
+                "stochastic_accumulation": False,
+                "reason": "Stable RTX Real-Time frames avoid path-tracing grain; task-bound temporal median and coherent tracking remain independent acceptance checks.",
+            },
             "graphics_userspace": (
                 "Native NVIDIA EGL/Vulkan, libnvoptix.so.1 and readable nonempty OptiX weights are preferred. "
                 "Missing dependencies require the exact loaded-driver package from Ubuntu's signed archive. "
@@ -532,7 +550,7 @@ _CAPABILITY_MANIFEST = {
             "policy_adapters": ["replay", "rsl_rl"],
             "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; replay source actions are measurably nonzero.",
             "visual_interval": "Coherent denoised motion is measured from the first door progress through its first crossing of the upstream success threshold, excluding subsequent reset or idle frames.",
-            "shared_contract": "Actions without padding, one native successful scored episode, registered environment progress, exact simulator capture steps, and noise-resistant video motion must all bind to the same episode horizon.",
+            "shared_contract": "Actions without padding, one native successful scored episode, registered environment progress, exact simulator capture steps, capture/PNG/raw/evidence hash chain, and noise-resistant video motion must all bind to the same episode horizon.",
             "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification requires an explicitly registered task-progress adapter and is otherwise unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",
             "live_validation": "Consult the external readiness record for the exact image digest, target hardware, execution device, and task. The baked implementation status does not establish a physical-GPU result.",

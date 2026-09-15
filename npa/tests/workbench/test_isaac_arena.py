@@ -109,6 +109,7 @@ def test_capabilities_are_complete_and_honest() -> None:
         }
     ]
     assert "without padding" in visual["shared_contract"]
+    assert "hash chain" in visual["shared_contract"]
     viewport_graphics = next(
         item
         for item in payload["runtime_dependencies"]
@@ -118,6 +119,15 @@ def test_capabilities_are_complete_and_honest() -> None:
     assert viewport_graphics["installed_on_node"] is False
     assert viewport_graphics["redistribution"] is False
     assert "EGL ICD" in viewport_graphics["headless_icd"]
+    assert payload["rendering"]["viewport_video"]["renderer"] == {
+        "mode": "RaytracedLighting",
+        "antialiasing": "FXAA",
+        "stochastic_accumulation": False,
+        "reason": (
+            "Stable RTX Real-Time frames avoid path-tracing grain; task-bound "
+            "temporal median and coherent tracking remain independent acceptance checks."
+        ),
+    }
     assert payload["outputs"]["rerun_rrd"] is False
 
     cli = CliRunner().invoke(app, ["workbench", "isaac-arena", "capabilities"])
@@ -211,13 +221,22 @@ def test_policy_specific_inputs_are_fail_closed(tmp_path: Path) -> None:
         raise AssertionError("RSL-RL evaluation accepted an incomplete checkpoint")
 
 
-@pytest.mark.parametrize("policy,flag", [("replay", "--replay_file_path"), ("rsl_rl", "--checkpoint_path")])
-def test_policy_dry_run_requires_no_input_download_or_local_file(tmp_path, policy, flag):
+@pytest.mark.parametrize(
+    "policy,flag", [("replay", "--replay_file_path"), ("rsl_rl", "--checkpoint_path")]
+)
+def test_policy_dry_run_requires_no_input_download_or_local_file(
+    tmp_path, policy, flag
+):
     request = IsaacArenaRequest(
-        output_path=str(tmp_path / "out"), policy_type=policy,
-        input_path=str(tmp_path / "absent-input"), dry_run=True,
+        output_path=str(tmp_path / "out"),
+        policy_type=policy,
+        input_path=str(tmp_path / "absent-input"),
+        dry_run=True,
     )
-    with patch("npa.workbench.isaac_arena.runtime._local_input", side_effect=AssertionError("must not load")):
+    with patch(
+        "npa.workbench.isaac_arena.runtime._local_input",
+        side_effect=AssertionError("must not load"),
+    ):
         result = evaluate(request)
     assert result["status"] == "dry_run"
     assert result["argv"][result["argv"].index(flag) + 1] == "<operator-input>"
@@ -304,7 +323,7 @@ def _fake_video_preparer(source: Path) -> tuple[Path, dict[str, object]]:
         "kind": "test_spatiotemporal_denoise",
         "filter": "test",
         "source_path": source.name,
-        "source_sha256": "b" * 64,
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "changes_simulator_outcome": False,
     }
 
@@ -319,7 +338,9 @@ def _write_ground_truth(run: Path, *, success: bool, microwave: bool = False) ->
         episode.create_dataset("success", data=np.array([success], dtype=bool))
         steps = 4 if microwave else 300
         episode.create_dataset("npa_video/initial_action_step", data=[[0]])
-        episode.create_dataset("npa_video/action_step", data=np.arange(1, steps + 1).reshape(-1, 1))
+        episode.create_dataset(
+            "npa_video/action_step", data=np.arange(1, steps + 1).reshape(-1, 1)
+        )
         episode.create_dataset("npa_video/terminal_action_step", data=[[steps]])
         if microwave:
             trace = [0.2, 0.21, 0.36, 0.63, 0.81] if success else [0.2, 0.25, 0.1]
@@ -437,7 +458,9 @@ def _isolated_optix_weights(tmp_path: Path, monkeypatch) -> Path:
     return target
 
 
-def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path, monkeypatch) -> None:
+def test_viewport_graphics_prefers_valid_native_stack(
+    tmp_path: Path, monkeypatch
+) -> None:
     target = _isolated_optix_weights(tmp_path, monkeypatch)
     target.write_bytes(b"native-weights")
     calls: list[list[str]] = []
@@ -459,10 +482,14 @@ def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path, monkeypatc
         "baked": False,
         "redistribution": False,
         "optix_weights": {
-            "required_path": str(target), "placement": "native_runtime",
+            "required_path": str(target),
+            "placement": "native_runtime",
             "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-            "bytes": target.stat().st_size, "installed_in_container": False,
-            "installed_on_node": False, "baked": False, "published": False,
+            "bytes": target.stat().st_size,
+            "installed_in_container": False,
+            "installed_on_node": False,
+            "baked": False,
+            "published": False,
         },
     }
     assert len(calls) == 2
@@ -472,7 +499,8 @@ def test_viewport_graphics_prefers_valid_native_stack(tmp_path: Path, monkeypatc
 
 
 def test_viewport_graphics_extracts_exact_driver_match_privately(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     target = _isolated_optix_weights(tmp_path, monkeypatch)
     driver_version = "580.173.02"
@@ -521,7 +549,9 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
             (library_dir / "libGLX_nvidia.so.0").write_bytes(b"glx")
             (library_dir / "libEGL_nvidia.so.0").write_bytes(b"egl")
             (library_dir / f"libnvoptix.so.{driver_version}").write_bytes(b"optix")
-            (library_dir / "libnvoptix.so.1").symlink_to(f"libnvoptix.so.{driver_version}")
+            (library_dir / "libnvoptix.so.1").symlink_to(
+                f"libnvoptix.so.{driver_version}"
+            )
             weights = extracted / "usr/share/nvidia/nvoptix.bin"
             weights.parent.mkdir(parents=True)
             weights.write_bytes(b"signed-weights")
@@ -584,14 +614,19 @@ def test_viewport_graphics_extracts_exact_driver_match_privately(
     assert not any("install" in command for command in commands)
 
 
-def test_native_graphics_without_weights_cannot_skip_matching_package(tmp_path, monkeypatch):
+def test_native_graphics_without_weights_cannot_skip_matching_package(
+    tmp_path, monkeypatch
+):
     _isolated_optix_weights(tmp_path, monkeypatch)
     commands = []
 
     def fake_runner(argv, **kwargs):
         commands.append(argv)
-        output = {"vulkaninfo": "GPU0: NVIDIA", "nvidia-smi": "580.173.02",
-                  "apt-cache": "Candidate: 580.999.01-0ubuntu1"}.get(argv[0], "")
+        output = {
+            "vulkaninfo": "GPU0: NVIDIA",
+            "nvidia-smi": "580.173.02",
+            "apt-cache": "Candidate: 580.999.01-0ubuntu1",
+        }.get(argv[0], "")
         return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
 
     with pytest.raises(IsaacArenaError, match="exact loaded driver version"):
@@ -704,7 +739,10 @@ def test_viewport_graphics_rejects_nonmatching_archive_version(
         "compute_capability": [10, 0],
     },
 )
-@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
+@patch(
+    "npa.workbench.isaac_arena.runtime._verify_capture_evidence",
+    return_value={"verified": True},
+)
 def test_execution_requires_scored_episode_report_and_requested_video(
     _capture: object, _gpu: object, _probe: object, tmp_path: Path
 ) -> None:
@@ -738,13 +776,9 @@ def test_execution_requires_scored_episode_report_and_requested_video(
     assert "upstream/2026-09-12_01-02-03/report/job_cube.html" in paths
     assert "upstream/2026-09-12_01-02-03/viewport-episode-0.mp4" in paths
     assert (
-        "upstream/2026-09-12_01-02-03/viewport-episode-0-evidence-denoised.mp4"
-        in paths
+        "upstream/2026-09-12_01-02-03/viewport-episode-0-evidence-denoised.mp4" in paths
     )
-    assert (
-        "upstream/2026-09-12_01-02-03/simulator_ground_truth_rank0.hdf5"
-        in paths
-    )
+    assert "upstream/2026-09-12_01-02-03/simulator_ground_truth_rank0.hdf5" in paths
     assert all(
         len(entry["sha256"]) == 64 and entry["bytes"] > 0
         for entry in manifest["artifacts"]
@@ -753,7 +787,10 @@ def test_execution_requires_scored_episode_report_and_requested_video(
     assert video["video"]["binding"] == {
         "run_id": "2026-09-12_01-02-03",
         "upstream_run_directory": "2026-09-12_01-02-03",
+        "environment": "cube_goal_pose",
         "policy_type": "zero_action",
+        "episode": None,
+        "action_steps": None,
         "input_sha256": "",
         "execution_input_sha256": "",
         "simulator_ground_truth_sha256": [ground_truth["files"][0]["sha256"]],
@@ -766,13 +803,26 @@ def test_execution_requires_scored_episode_report_and_requested_video(
     assert video["video"]["task_qualified"] is False
 
 
-@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
-@patch("npa.workbench.isaac_arena.runtime._probe_mp4", return_value={"motion": {"meaningful": True}})
+@patch(
+    "npa.workbench.isaac_arena.runtime._verify_capture_evidence",
+    return_value={"verified": True},
+)
+@patch(
+    "npa.workbench.isaac_arena.runtime._probe_mp4",
+    return_value={"motion": {"meaningful": True}},
+)
 @patch("npa.workbench.isaac_arena.runtime._gpu_info", return_value={"available": True})
-def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _capture, tmp_path):
+def test_passive_baseline_success_is_never_task_qualified_video(
+    _gpu, _probe, _capture, tmp_path
+):
     result = evaluate(
-        IsaacArenaRequest(output_path=str(tmp_path / "out"), environment="gr1_open_microwave", record_video=True),
-        runner=_fake_moving_upstream, graphics_preparer=_fake_viewport_graphics,
+        IsaacArenaRequest(
+            output_path=str(tmp_path / "out"),
+            environment="gr1_open_microwave",
+            record_video=True,
+        ),
+        runner=_fake_moving_upstream,
+        graphics_preparer=_fake_viewport_graphics,
         video_preparer=_fake_video_preparer,
     )
     assert result["summary"]["success_rate"] == 1.0
@@ -809,6 +859,22 @@ def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _c
                 "action_steps": {"start": 1, "end": 4, "total": 4},
             },
         },
+        "frame_evidence": {
+            "samples": {
+                role: {"decoded_luma_sha256": character * 64}
+                for role, character in zip(
+                    (
+                        "first",
+                        "last",
+                        "motion_previous",
+                        "motion_current",
+                        "motion_continuation",
+                    ),
+                    "12345",
+                    strict=True,
+                )
+            }
+        },
     },
 )
 @patch(
@@ -823,9 +889,22 @@ def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _c
     "npa.workbench.isaac_arena.runtime._verify_capture_evidence",
     return_value={
         "captured_action_steps": 4,
-        "terminal": {"action_step": 4},
-        "terminal_frame_comparison": {"matched": True},
-        "source_mp4_sha256": "c" * 64,
+        "initial": {"action_step": 0, "sha256": "a" * 64},
+        "terminal": {"action_step": 4, "sha256": "b" * 64},
+        "sidecar": {"sha256": "c" * 64},
+        "physics_freeze": {
+            "verified_capture_count": 5,
+            "simulation_advanced_during_render": False,
+            "physics_state_changed_during_render": False,
+            "rendering": {
+                "mode": "RaytracedLighting",
+                "antialiasing": "FXAA",
+                "stochastic_accumulation": False,
+                "accumulation_renders_per_frame": 0,
+            },
+        },
+        "terminal_frame_comparison": {"source_frame_index": 3},
+        "source_mp4_sha256": hashlib.sha256(b"real-video-fixture").hexdigest(),
     },
 )
 def test_replay_binds_nonzero_input_behavior_and_video_to_run(
@@ -921,8 +1000,12 @@ def test_nonzero_policy_rejects_movement_without_task_success(
     replay = tmp_path / "episode.hdf5"
     _make_replay(replay, pink=True)
     result = evaluate(
-        IsaacArenaRequest(output_path=str(tmp_path / "scored"), environment="gr1_open_microwave",
-                          policy_type="replay", input_path=str(replay)),
+        IsaacArenaRequest(
+            output_path=str(tmp_path / "scored"),
+            environment="gr1_open_microwave",
+            policy_type="replay",
+            input_path=str(replay),
+        ),
         runner=_fake_upstream,
     )
     assert result["summary"]["success_rate"] == 0.0

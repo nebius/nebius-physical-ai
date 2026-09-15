@@ -226,7 +226,7 @@ def _assert_freeze_trace(evidence, expected_steps):
         assert check["physics_time_before"] == check["physics_time_after"]
         assert check["physics_step_before"] == check["physics_step_after"]
         assert check["native_physics_step_before"] == check["native_physics_step_after"]
-        assert check["render_calls"] == 5
+        assert check["render_calls"] == 1
 
 
 def test_phase_journal_distinguishes_capture_from_remaining_environment_step(
@@ -241,7 +241,9 @@ def test_phase_journal_distinguishes_capture_from_remaining_environment_step(
         rows = [json.loads(line) for line in journal.read_text().splitlines()]
         assert rows[-1]["phase"] == "capture" and rows[-1]["event"] == "end"
         assert rows[-1]["action_step"] == 1
-        assert not any(row["phase"] == "env_step" and row["event"] == "end" for row in rows)
+        assert not any(
+            row["phase"] == "env_step" and row["event"] == "end" for row in rows
+        )
     rows = [json.loads(line) for line in journal.read_text().splitlines()]
     assert rows[-1]["phase"] == "env_step" and rows[-1]["event"] == "end"
     readiness = [row for row in rows if row["phase"] == "capture_readiness"]
@@ -261,7 +263,12 @@ def test_render_failure_retains_begin_and_preserves_native_exception(
     error = RuntimeError("private renderer context")
 
     def fail_render():
-        rows = [json.loads(line) for line in (tmp_path / "simulator-phases-rank0.jsonl").read_text().splitlines()]
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "simulator-phases-rank0.jsonl")
+            .read_text()
+            .splitlines()
+        ]
         assert rows[-1]["phase"] == "render_call" and rows[-1]["event"] == "begin"
         raise error
 
@@ -273,7 +280,8 @@ def test_render_failure_retains_begin_and_preserves_native_exception(
     assert "private renderer" not in text
     rows = [json.loads(line) for line in text.splitlines()]
     assert [(row["phase"], row["event"]) for row in rows[-2:]] == [
-        ("render_call", "failed"), ("capture", "failed")
+        ("render_call", "failed"),
+        ("capture", "failed"),
     ]
     assert env.runtime.settings.get(simulator_video._PLAY_SIMULATIONS) is True
     assert env.physics_steps == 0 and env.state == 0
@@ -292,7 +300,7 @@ def test_video_records_terminal_frame_before_autoreset(
     assert env.state == 0
     assert [int(frame[0, 0, 0]) for frame in frames] == [80, 120, 160]
     assert env.action_steps == [1, 2, 3]
-    assert env.renders == 20
+    assert env.renders == 4
     assert env.env_renders == 0
     assert env.physics_time == 0.06
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
@@ -318,7 +326,7 @@ def test_initial_renderer_warmup_adds_no_action_or_video_frames(
     env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=3)
     wrapper = simulator_video.cached_frame_env(env)
     env.reset()
-    assert env.renders == 7
+    assert env.renders == 3
     assert env.physics_time == 0.0
     assert env.state == 0
     assert env.action_steps == []
@@ -343,7 +351,7 @@ def test_outer_video_reads_copy_without_rerendering(
     rendered = wrapper.render()
     rendered[:] = 0
     assert int(wrapper.render()[0, 0, 0]) == 80
-    assert env.renders == 10
+    assert env.renders == 2
 
 
 def test_capture_requires_real_renderer_frame(
@@ -373,7 +381,12 @@ def test_capture_setup_preserves_existing_metric_configuration(
     simulator_video.configure_video_capture(cfg)
     assert cfg.recorders.success is success_recorder
     assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
-    assert cfg.sim.render.carb_settings["/rtx/rendermode"] == "PathTracing"
+    assert cfg.sim.render.carb_settings == {
+        "/rtx/rendermode": "RaytracedLighting",
+        "/rtx/post/aa/op": 2,
+        "/rtx/sceneDb/ambientLightIntensity": 0.0,
+    }
+    assert cfg.sim.render.antialiasing_mode is None
     assert (
         cfg.recorders.npa_video.class_type.__mro__[1]
         is simulator_video._VideoCaptureMethods
@@ -382,22 +395,22 @@ def test_capture_setup_preserves_existing_metric_configuration(
         simulator_video.configure_video_capture(SimpleNamespace(recorders=None))
 
 
-def test_texture_streaming_and_asset_loading_finish_before_accumulation(
+def test_texture_streaming_and_asset_loading_finish_before_capture(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=3)
     env.loading_renders = 5
     env.streaming_renders = 7
     env.reset()
-    assert env.renders == 11
-    assert simulator_modules.resets == 1
+    assert env.renders == 7
+    assert simulator_modules.resets == 0
     assert env.state == 0
     assert env.physics_time == 0.0
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
     check = evidence["physics_freeze_checks"][0]
     assert check["stage_streaming_idle"] is True
     assert check["stage_assets_loaded"] is True
-    assert check["accumulation_render_calls"] == 4
+    assert check["accumulation_render_calls"] == 0
 
 
 @pytest.mark.parametrize("previous", [True, False])
@@ -471,7 +484,7 @@ def test_zero_duration_native_step_during_render_fails_freeze_check(
     with pytest.raises(RuntimeError, match="advanced physics time, steps, or state"):
         env.reset()
     assert env._npa_video_physics_clock.elapsed == 0.0
-    assert env._npa_video_physics_clock.steps == 5
+    assert env._npa_video_physics_clock.steps == 1
     assert not (tmp_path / "simulator-initial.png").exists()
 
 
@@ -538,11 +551,17 @@ def test_nonempty_black_annotator_does_not_become_evidence(
     assert not (tmp_path / "simulator-initial.png").exists()
 
 
-def test_capture_refuses_realtime_or_disabled_optix_readback(
+def test_capture_refuses_path_tracing_or_temporal_aa_readback(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
-    simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
+    simulator_modules.settings.set("/rtx/rendermode", "PathTracing")
+    with pytest.raises(RuntimeError, match="required capture settings"):
+        env.reset()
+    assert env.renders == 0
+
+    simulator_modules.settings.set("/rtx/rendermode", "RaytracedLighting")
+    simulator_modules.settings.set("/rtx/post/aa/op", 1)
     with pytest.raises(RuntimeError, match="required capture settings"):
         env.reset()
     assert env.renders == 0

@@ -12,19 +12,14 @@ import numpy as np
 from .simulator_phases import phase_scope, record_readiness
 
 
-_ACCUMULATION_RENDERS = 4
 _PLAY_SIMULATIONS = "/app/player/playSimulations"
 _PHYSICS_CLOCK = "native_physx_step_events_since_capture_setup"
 _RENDER_SETTINGS = {
-    "/rtx/rendermode": "PathTracing",
-    "/rtx/pathtracing/spp": 32,
-    "/rtx/pathtracing/totalSpp": 0,
-    "/rtx/pathtracing/adaptiveSampling/enabled": False,
-    "/rtx/pathtracing/optixDenoiser/enabled": True,
-    "/rtx/pathtracing/optixDenoiser/blendFactor": 0.0,
-    "/rtx/pathtracing/optixDenoiser/temporalMode/enabled": False,
-    "/rtx-transient/dldenoiser/enabled": False,
-    "/rtx-transient/dlssg/enabled": False,
+    "/rtx/rendermode": "RaytracedLighting",
+    # Spatial FXAA has no stochastic path-tracing grain or temporal history.
+    # The separate video verifier still applies a temporal median before
+    # requiring persistent, spatially coherent motion inside task progress.
+    "/rtx/post/aa/op": 2,
 }
 
 
@@ -144,10 +139,10 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
             "Arena video renderer does not match its required capture settings"
         )
     return {
-        "mode": "PathTracing",
-        "denoiser": "OptiX",
-        "samples_per_pixel_per_render": 32,
-        "accumulation_renders_per_frame": _ACCUMULATION_RENDERS,
+        "mode": "RaytracedLighting",
+        "antialiasing": "FXAA",
+        "stochastic_accumulation": False,
+        "accumulation_renders_per_frame": 0,
         "settings": actual,
     }
 
@@ -175,7 +170,9 @@ def _render_frame(env: Any) -> np.ndarray:
     # KitVisualizer restore playSimulations=True before that native update.
     env._npa_capture_render_call += 1
     with phase_scope(
-        env, "render_call", env._npa_video_capture_recorder._step,
+        env,
+        "render_call",
+        env._npa_video_capture_recorder._step,
         render_call=env._npa_capture_render_call,
     ):
         frame = np.asarray(env.video_recorder.render_rgb_array())
@@ -189,25 +186,20 @@ def _ready_frame(env: Any, context: Any, frame: np.ndarray) -> bool:
     annotator_ready = _annotator_ready(env) if stage_ready else None
     nonblack_rgb = bool(np.any(frame)) if annotator_ready else None
     record_readiness(
-        env, env._npa_capture_render_call, stage_ready=stage_ready,
-        annotator_ready=annotator_ready, nonblack_rgb=nonblack_rgb,
+        env,
+        env._npa_capture_render_call,
+        stage_ready=stage_ready,
+        annotator_ready=annotator_ready,
+        nonblack_rgb=nonblack_rgb,
     )
     return stage_ready and bool(annotator_ready) and bool(nonblack_rgb)
 
 
-def _accumulate_frame(env: Any, context: Any) -> tuple[np.ndarray, int]:
+def _ready_capture_frame(env: Any, context: Any) -> tuple[np.ndarray, int]:
     renders = 0
     while True:
         frame = _render_frame(env)
         renders += 1
-        if not _ready_frame(env, context, frame):
-            continue
-        # Accumulate only the current pose, after textures and the RGB product
-        # are ready. These are real render samples, never added video frames.
-        context.reset_renderer_accumulation()
-        for _ in range(_ACCUMULATION_RENDERS):
-            frame = _render_frame(env)
-            renders += 1
         if _ready_frame(env, context, frame):
             return frame.copy(), renders
 
@@ -223,7 +215,7 @@ def _freeze_evidence(before: dict, after: dict, renders: int) -> dict[str, Any]:
         "state_sha256_before": _state_hash(before),
         "state_sha256_after": _state_hash(after),
         "render_calls": renders,
-        "accumulation_render_calls": _ACCUMULATION_RENDERS,
+        "accumulation_render_calls": 0,
         "stage_streaming_idle": True,
         "stage_assets_loaded": True,
         "nonblack_rgb": True,
@@ -244,7 +236,7 @@ def _capture_verified_frame(env: Any) -> np.ndarray:
     try:
         settings.set(_PLAY_SIMULATIONS, False)
         env.sim.physics_manager.forward()
-        frame, renders = _accumulate_frame(env, context)
+        frame, renders = _ready_capture_frame(env, context)
     finally:
         settings.set(_PLAY_SIMULATIONS, previous)
         after = _physics_snapshot(env)
@@ -408,8 +400,8 @@ def configure_video_capture(env_cfg: Any) -> None:
     if env_cfg.recorders is None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
     env_cfg.sim.render.carb_settings.update(_RENDER_SETTINGS)
-    # Isaac Lab applies this field after carb_settings through the realtime-only
-    # Replicator API, which would switch the renderer back away from PathTracing.
+    # The exact spatial-AA mode is set in carb_settings and read back at capture.
+    # Prevent Replicator from replacing it with a temporal or AI AA mode.
     env_cfg.sim.render.antialiasing_mode = None
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())
 
