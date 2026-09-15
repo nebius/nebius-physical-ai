@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
-from urllib.error import URLError
-from urllib.request import urlopen
 import zipfile
 
 from npa.workflows.byof.openpi import require_openpi_terms
@@ -91,11 +90,14 @@ def _policy_command(args: argparse.Namespace) -> list[str]:
 
 
 def _healthy(port: int) -> bool:
+    connection = HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as response:
-            return response.status == 200
-    except (OSError, URLError):
+        connection.request("GET", "/healthz")
+        return connection.getresponse().status == 200
+    except (OSError, HTTPException):
         return False
+    finally:
+        connection.close()
 
 
 def _wait_for_policy(process: subprocess.Popen, port: int) -> None:

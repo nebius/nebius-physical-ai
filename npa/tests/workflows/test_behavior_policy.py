@@ -1,14 +1,44 @@
 """Verify checkpoint identity and lifecycle of the managed BEHAVIOR policy."""
 
 import argparse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import subprocess
+import threading
 from unittest.mock import Mock
 import zipfile
 
 import pytest
 
 from npa.workflows.behavior_challenge import policy, protocol
+
+
+@pytest.mark.parametrize("status", [200, 302, 503])
+def test_readiness_requires_direct_loopback_health_response(status, monkeypatch):
+    paths = []
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(status if self.path == "/healthz" else 200)
+            self.send_header("Location", "/redirected")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.invalid:1")
+    with HTTPServer(("127.0.0.1", 0), HealthHandler) as server:
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}
+        )
+        thread.start()
+        try:
+            assert policy._healthy(server.server_port) is (status == 200)
+            assert paths == ["/healthz"]
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 @pytest.fixture
