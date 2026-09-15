@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -103,6 +104,19 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         in text
     )
     assert "customer-authorization-public-key.b64" in text
+    assert (
+        "base64 -d /opt/npa/libero/customer-authorization-public-key.b64"
+        " \\\n      > /tmp/npa-libero-customer-authorization-public-key.raw"
+        in text
+    )
+    assert (
+        "wc -c < /tmp/npa-libero-customer-authorization-public-key.raw" in text
+    )
+    assert (
+        "base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw"
+        in text
+    )
+    assert "base64 -d /opt/npa/libero/customer-authorization-public-key.b64 |" not in text
     assert "chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64" in text
     for forbidden in (
         "nvidia/cuda:",
@@ -113,6 +127,38 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         "ACCEPT_LIBERO",
     ):
         assert forbidden not in text
+
+
+def test_customer_authorization_trust_root_decode_rejects_trailing_garbage(
+    tmp_path: Path,
+) -> None:
+    encoded = tmp_path / "customer-authorization-public-key.b64"
+    decoded = tmp_path / "customer-authorization-public-key.raw"
+    canonical = base64.b64encode(bytes(range(32)))
+    script = """
+set -eu
+base64 -d "$1" > "$2"
+test "$(wc -c < "$2")" = 32
+test "$(base64 -w 0 < "$2")" = "$(cat "$1")"
+"""
+
+    encoded.write_bytes(canonical)
+    accepted = subprocess.run(
+        ["sh", "-c", script, "sh", str(encoded), str(decoded)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    encoded.write_bytes(canonical + b"!")
+    rejected = subprocess.run(
+        ["sh", "-c", script, "sh", str(encoded), str(decoded)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
 
 
 def test_smoke_writes_runtime_configuration_only_under_output_boundary() -> None:
@@ -429,11 +475,8 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "Private destination is genuinely empty" in text
     assert "exactly the qualified untagged OCI graph" in text
     assert "tagged_count=" in text
-    assert "public-image-${{ inputs.target" in text
-    assert (
-        "(inputs.release_tag || inputs.development_sha) && "
-        "'registry-mutation' || 'registry-mutation'"
-    ) in text
+    assert "group: public-image-registry-mutation" in text
+    assert "group: public-image-${{" not in text
     assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
     assert re.search(
         r"^\s*uses:\s*[^#\n]+@v[0-9]+\s*$", text, re.MULTILINE

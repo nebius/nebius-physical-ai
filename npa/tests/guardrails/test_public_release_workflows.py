@@ -362,7 +362,8 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
     inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
     assert inputs["release_tag"]["default"] == ""
     assert inputs["expected_source_digest"]["default"] == ""
-    assert "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
+    assert spec["concurrency"]["group"] == "public-image-registry-mutation"
+    assert "inputs." not in spec["concurrency"]["group"]
     assert spec["concurrency"]["cancel-in-progress"] is False
     assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
     resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")

@@ -59,12 +59,9 @@ permissions:
   id-token: write
 
 concurrency:
-  # Serialize every mutation of one registry namespace. A failed first publish
-  # must finish removing its private package and referrers before any retry.
-  # The final expression deliberately evaluates to the same literal on both
-  # selector branches. This retains the landed release-input compatibility
-  # marker without letting a tag or SHA split the registry mutation lock.
-  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ (inputs.release_tag || inputs.development_sha) && 'registry-mutation' || 'registry-mutation' }}
+  # Serialize every public-registry mutation under one canonical lock. Raw
+  # caller spelling must not split the lock before target normalization.
+  group: public-image-registry-mutation
   cancel-in-progress: false
 
 jobs:

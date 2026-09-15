@@ -79,7 +79,12 @@ RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,requ
     tr -d '\r\n' \
       < /run/secrets/npa_libero_customer_authorization_public_key_b64 \
       > /opt/npa/libero/customer-authorization-public-key.b64; \
-    test "$(base64 -d /opt/npa/libero/customer-authorization-public-key.b64 | wc -c)" = 32; \
+    base64 -d /opt/npa/libero/customer-authorization-public-key.b64 \
+      > /tmp/npa-libero-customer-authorization-public-key.raw; \
+    test "$(wc -c < /tmp/npa-libero-customer-authorization-public-key.raw)" = 32; \
+    test "$(base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw)" = \
+      "$(cat /opt/npa/libero/customer-authorization-public-key.b64)"; \
+    rm -f /tmp/npa-libero-customer-authorization-public-key.raw; \
     chown root:root /opt/npa/libero/customer-authorization-public-key.b64; \
     chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64
 
