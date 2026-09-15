@@ -39,6 +39,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
     # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
     "workbench.cosmos3.generate": "cosmos3",
+    "workbench.cosmos3.policy_train": "cosmos3",
+    "workbench.cosmos3.policy_eval": "cosmos3",
+    "workbench.cosmos3.policy_feedback": "cosmos3",
+    "workbench.cosmos3.failure_candidates": "cosmos3",
     "workbench.cosmos3.generate_variants": "cosmos3",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",

@@ -26,6 +26,12 @@ from npa.workbench.cosmos.super_benchmark import (
 )
 from npa.workflows.cosmos_split import Cosmos3ReasonConfig, build_cosmos3_reason_manifest
 
+# These functions are the shared implementation used by CLI, SDK, and toolRefs.
+from npa.workbench.cosmos.policy_train import train_policy as policy_train
+from npa.workbench.cosmos.policy_eval import evaluate_policy as policy_eval
+from npa.workbench.cosmos.policy_feedback import generate_failure_candidates as failure_candidates
+from npa.workbench.cosmos.policy_feedback import policy_feedback
+
 
 def nano_video_augment(
     *, input_path: str, output_path: str, prompt: str, seed: int = 0,
@@ -190,6 +196,10 @@ def super_benchmark(
 
 
 __all__ = [
+    "policy_train",
+    "policy_eval",
+    "policy_feedback",
+    "failure_candidates",
     "Cosmos3GenerateError",
     "Cosmos3RayServeError",
     "Cosmos3SuperBenchmarkError",

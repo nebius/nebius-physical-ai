@@ -5,6 +5,12 @@
 **Assessment: 2026-09-14. Status: factory integration proposed.**
 Repository baseline: `d743f1853` on `origin/main`.
 
+**2026-09-15 implementation follow-on:** the experimental
+[LIBERO policy model-factory workflow](../workbench/cosmos3-policy-model-factory.md)
+adds native training, matching simulator evaluation, and failure-targeted
+generation. Its readiness record tracks GPU qualification separately. The
+baseline assessment below explains the wider factory work still required.
+
 ## Recommendation
 
 Build on the existing Nebius Managed Kubernetes, SkyPilot, Cosmos 3 generation,
@@ -29,9 +35,9 @@ The critical work is the training runtime, trustworthy training datasets,
 checkpoint-to-simulator handoff, and recovery measurement. A new orchestrator
 or a workflow made from unimplemented stages would not close those gaps.
 
-## What exists and what is missing
+## Baseline assessment
 
-“Implemented” below describes inspected repository code. Historical execution
+"Implemented" below describes inspected repository code. Historical execution
 evidence is identified separately; it does not qualify a new image or workload.
 
 | Capability | Evidence in the current workbench | Work needed for the factory |
@@ -264,10 +270,13 @@ the shipped quality criteria. The retry improved appearance checks while one
 required hallucination score worsened. This is evidence for the generation and
 rejection path; it does not qualify a training corpus or the policy-learning loop.
 
-This proposal supplies the implementation plan for training and policy evaluation.
-It introduces no training command or container.
-Complete the qualification slices above before publishing a runnable model
-factory guide. Preserve durable outputs, cancel exact owned jobs, and verify
+The follow-on [native policy workflow](../workbench/cosmos3-policy-model-factory.md)
+now implements LIBERO-10 action-policy SFT, matching closed-loop evaluation,
+failure feedback, and guarded video candidates. It is experimental and requires
+its own GPU qualification; the earlier video exercise does not validate it.
+It completes one learning round through candidate generation, with action-label
+validation and automatic subsequent rounds still outstanding.
+Preserve durable outputs, cancel exact owned jobs, and verify
 their terminal state before removing compute as described in
 [teardown](../teardown.md).
 
