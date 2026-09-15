@@ -95,6 +95,20 @@ def test_capabilities_are_complete_and_honest() -> None:
     )
     assert lightwheel_assets["baked"] is False
     assert lightwheel_assets["redistribution"] is False
+    visual = payload["rendering"]["visual_task_qualification"]
+    assert visual["environments"] == ["gr1_open_microwave"]
+    assert visual["progress_adapters"] == [
+        {
+            "name": "arena.open-door.revolute-joint.v1",
+            "environment": "gr1_open_microwave",
+            "signal_names": ["revolute_joint_state"],
+            "thresholds": {
+                "final_openness_greater_than": 0.8,
+                "minimum_peak_minus_initial_openness": 0.5,
+            },
+        }
+    ]
+    assert "without padding" in visual["shared_contract"]
     viewport_graphics = next(
         item
         for item in payload["runtime_dependencies"]
@@ -787,7 +801,14 @@ def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _c
         "width": 640,
         "height": 480,
         "duration_seconds": 2.0,
-        "motion": {"meaningful": True},
+        "frame_count": 4,
+        "motion": {
+            "meaningful": True,
+            "analysis_interval": {
+                "source": "simulator_ground_truth",
+                "action_steps": {"start": 1, "end": 4, "total": 4},
+            },
+        },
     },
 )
 @patch(
@@ -798,7 +819,15 @@ def test_passive_baseline_success_is_never_task_qualified_video(_gpu, _probe, _c
         "compute_capability": [12, 0],
     },
 )
-@patch("npa.workbench.isaac_arena.runtime._verify_capture_evidence", return_value={"verified": True})
+@patch(
+    "npa.workbench.isaac_arena.runtime._verify_capture_evidence",
+    return_value={
+        "captured_action_steps": 4,
+        "terminal": {"action_step": 4},
+        "terminal_frame_comparison": {"matched": True},
+        "source_mp4_sha256": "c" * 64,
+    },
+)
 def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     _capture: object, _gpu: object, _probe: object, _input: object, tmp_path: Path
 ) -> None:
@@ -837,8 +866,15 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     assert result["summary"]["metrics"]["revolute_joint_moved_rate"] == 1.0
     video = next(entry for entry in result["artifacts"] if "video" in entry)
     assert video["video"]["binding"]["run_id"] == "arena-moving-run"
-    assert video["video"]["simulator_capture"] == {"verified": True}
+    assert video["video"]["simulator_capture"]["captured_action_steps"] == 4
     assert video["video"]["task_qualified"] is True
+    acceptance = video["video"]["acceptance"]
+    assert acceptance["qualified"] is True
+    assert acceptance["actions"]["padding_steps"] == 0
+    assert acceptance["episode"]["native_success"] is True
+    assert acceptance["task_progress"]["adapter"] == (
+        "arena.open-door.revolute-joint.v1"
+    )
     assert video["video"]["binding"]["input_sha256"] == "a" * 64
     assert len(video["video"]["binding"]["execution_input_sha256"]) == 64
     assert video["video"]["binding"]["simulator_ground_truth_sha256"] == [

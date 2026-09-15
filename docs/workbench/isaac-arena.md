@@ -170,14 +170,20 @@ state-only replay. NPA selects the first sorted episode in the input HDF5.
 320×240 and one second long. The untouched source MP4 is retained beside a
 labeled FFmpeg-denoised derivative. Acceptance checks temporal-median samples
 for coherent spatial change and binds that interval to the same run's simulator
-metric trace. Task-qualified video currently supports only
-`gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
+metric trace. A shared fail-closed contract requires one horizon across executed
+actions, the native scored episode, task progress, simulator capture, and video;
+replay steps must be nonzero and must not be padded or held. Environment-specific
+progress semantics are explicit registry entries rather than generic motion
+thresholds. The sole current entry supports `gr1_open_microwave` with `replay`
+or `rsl_rl`: the upstream JSONL, numeric
 `success_rate > 0`, and HDF5 success flag must agree, the final door openness
 must exceed the upstream threshold of `0.8`, and maximum openness must increase
 at least `0.5` from the initial state. The acceptance interval runs from the
 first measured door progress to the first threshold crossing, excluding idle
-and reset frames. Other registered scored environments remain available for
-ordinary evaluation; their nonzero-policy video qualification is unsupported.
+and reset frames. The result records the named progress adapter and a
+`npa.isaac-arena.visual-acceptance.v1` binding. Other registered scored
+environments remain available for ordinary evaluation; their nonzero-policy
+video qualification is unsupported until a task-specific adapter is registered.
 
 Successful video qualification retains `simulator-video-evidence.json`, an actual
 initial PNG, and an actual terminal PNG captured before automatic reset. The sidecar binds each

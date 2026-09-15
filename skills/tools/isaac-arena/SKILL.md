@@ -166,14 +166,21 @@ failed task results and distinguish completed evaluation from successful task
 execution. The B200 zero-action qualification is a baseline: its capability gate
 is factual execution and artifact integrity, with no visual claim.
 
-Task-qualified video currently supports only `gr1_open_microwave` with `replay`
-or `rsl_rl`. Require matching current-run JSONL/HDF5 success, numeric
+Task-qualified video uses a shared fail-closed contract that binds one action
+horizon across executed actions, the native scored episode, native task progress,
+simulator capture, and noise-resistant video. Replay actions must be nonzero and
+must not be padded or held. Environment-specific progress semantics belong in
+the explicit task-progress adapter registry; never embed one task's thresholds
+as generic runtime assumptions. The sole current registration supports
+`gr1_open_microwave` with `replay` or `rsl_rl`. Require matching current-run
+JSONL/HDF5 success, numeric
 `success_rate > 0`, final door openness above the upstream threshold `0.8`, and
 maximum openness at least `0.5` above the initial state. Retain initial/final
 openness and the full metric trace. Restrict visual acceptance to first measured
 door progress through the first threshold crossing, excluding idle/reset frames.
+Record the adapter identity and `npa.isaac-arena.visual-acceptance.v1` result.
 Other registered scored environments retain ordinary evaluation support; their
-nonzero-policy video qualification remains unsupported.
+nonzero-policy video qualification remains unsupported until explicitly registered.
 
 Capture actual initial and terminal PNGs before automatic reset. Verify
 `simulator-video-evidence.json` against their file and decoded-RGB hashes,

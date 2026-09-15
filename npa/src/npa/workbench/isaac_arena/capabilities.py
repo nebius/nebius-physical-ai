@@ -9,8 +9,10 @@ from .identity import (
     LIGHTWHEEL_SDK_VERSION,
     CAPABILITIES_SCHEMA,
 )
-from .ground_truth import MICROWAVE_MINIMUM_OPENNESS_DELTA, MICROWAVE_SUCCESS_THRESHOLD
+from .task_progress import task_progress_capabilities
 from .video_evidence import video_acceptance_thresholds
+
+_TASK_PROGRESS_CAPABILITIES = task_progress_capabilities()
 
 _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
     {
@@ -523,13 +525,15 @@ _CAPABILITY_MANIFEST = {
         },
         "visual_task_qualification": {
             "npa_status": ["implemented", "upstream_alpha"],
-            "environments": ["gr1_open_microwave"],
+            "environments": [
+                item["environment"] for item in _TASK_PROGRESS_CAPABILITIES
+            ],
+            "progress_adapters": _TASK_PROGRESS_CAPABILITIES,
             "policy_adapters": ["replay", "rsl_rl"],
             "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; replay source actions are measurably nonzero.",
-            "microwave_final_openness_greater_than": MICROWAVE_SUCCESS_THRESHOLD,
-            "microwave_minimum_peak_minus_initial_openness": MICROWAVE_MINIMUM_OPENNESS_DELTA,
             "visual_interval": "Coherent denoised motion is measured from the first door progress through its first crossing of the upstream success threshold, excluding subsequent reset or idle frames.",
-            "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification has no task-specific binding and is unsupported.",
+            "shared_contract": "Actions without padding, one native successful scored episode, registered environment progress, exact simulator capture steps, and noise-resistant video motion must all bind to the same episode horizon.",
+            "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification requires an explicitly registered task-progress adapter and is otherwise unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",
             "live_validation": "Consult the external readiness record for the exact image digest, target hardware, execution device, and task. The baked implementation status does not establish a physical-GPU result.",
         },

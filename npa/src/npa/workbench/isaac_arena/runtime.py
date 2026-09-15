@@ -42,6 +42,7 @@ from .hashing import file_sha256 as _sha256
 from .video_evidence import probe_mp4 as _probe_mp4, denoise_mp4 as _denoise_mp4
 from .video_evidence import verify_capture_evidence as _verify_capture_evidence
 from .ground_truth import simulator_ground_truth as _simulator_ground_truth
+from .acceptance import qualify_visual_acceptance as _qualify_visual_acceptance
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -549,7 +550,8 @@ def _capture_context(request: IsaacArenaRequest, ground_truth: dict) -> dict:
     }}
 
 
-def _video_artifacts(request, run_dir, evidence, ground_truth, video_preparer) -> dict[Path, dict]:
+def _video_artifacts(request, run_dir, evidence, summary, video_preparer) -> dict[Path, dict]:
+    ground_truth = summary["simulator_ground_truth"]
     videos = sorted(run_dir.rglob("*.mp4"))
     if request.record_video and (not videos or any(path.stat().st_size == 0 for path in videos)):
         raise IsaacArenaError("video recording was requested but no non-empty MP4 was written")
@@ -565,9 +567,19 @@ def _video_artifacts(request, run_dir, evidence, ground_truth, video_preparer) -
         metadata["derivation"] = derivation
         metadata["binding"] = _video_binding(request, run_dir, evidence, ground_truth)
         metadata["simulator_capture"] = capture
-        metadata["task_qualified"] = request.policy_type != "zero_action" and bool(
-            (ground_truth.get("task_motion") or {}).get("visual_progress_qualified")
-        )
+        acceptance = None
+        if request.policy_type != "zero_action":
+            acceptance = _qualify_visual_acceptance(
+                environment=request.environment,
+                policy_type=request.policy_type,
+                evidence=evidence,
+                summary=summary,
+                ground_truth=ground_truth,
+                capture=capture,
+                video=metadata,
+            )
+        metadata["acceptance"] = acceptance
+        metadata["task_qualified"] = bool(acceptance and acceptance["qualified"])
         result[video] = {"video": metadata}
         result[source] = {"visual_source": {
             "role": "raw_upstream_source", "evidence_derivative": video.name,
@@ -590,7 +602,9 @@ def _evaluation_result(request, artifact_root, run_dir, log_text, base, video_pr
     report = run_dir / "index.html"
     if not report.is_file() or report.stat().st_size == 0:
         raise IsaacArenaError("upstream evaluation report is missing")
-    videos = _video_artifacts(request, run_dir, base["input"], summary["simulator_ground_truth"], video_preparer)
+    videos = _video_artifacts(
+        request, run_dir, base["input"], summary, video_preparer
+    )
     gpu = _gpu_info()
     if not gpu["available"]:
         raise IsaacArenaError("Arena evaluation returned without a CUDA device")

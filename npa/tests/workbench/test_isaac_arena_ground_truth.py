@@ -31,6 +31,9 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
     _write_episode(tmp_path, trace=[0.2, 0.2, 0.3, 0.55, 0.81])
     result = _validate(tmp_path)
     motion = result["task_motion"]
+    assert result["task_progress_adapter"] == "arena.open-door.revolute-joint.v1"
+    assert motion["adapter"] == result["task_progress_adapter"]
+    assert motion["environment"] == "gr1_open_microwave"
     assert motion["initial_openness"] == 0.2
     assert motion["final_openness"] == 0.81
     assert motion["openness_delta"] == pytest.approx(0.61)
@@ -111,3 +114,16 @@ def test_video_step_trace_rejects_repeated_skipped_or_shifted_actions(tmp_path, 
         episode.create_dataset("npa_video/terminal_action_step", data=[[steps[-1]]])
     with pytest.raises(IsaacArenaError, match="action steps are not contiguous"):
         _validate(tmp_path)
+
+
+def test_unregistered_environment_cannot_inherit_microwave_semantics(tmp_path):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81])
+    with pytest.raises(IsaacArenaError, match="no registered progress adapter"):
+        simulator_ground_truth(
+            tmp_path,
+            environment="gr1_turn_stand_mixer_knob",
+            expected_episodes=1,
+            expected_successes=1,
+            expected_action_steps=2,
+            require_task_success=True,
+        )
