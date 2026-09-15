@@ -7,7 +7,7 @@ import importlib.metadata
 from pathlib import Path
 import tempfile
 
-from npa.solutions.video_generation import cuda_inventory, validate_video
+from npa.solutions.video_generation import _decoded_frames, cuda_inventory, validate_video
 
 
 DEPTH_MODEL = "depth-anything/Depth-Anything-V2-Small-hf"
@@ -126,6 +126,7 @@ def run_perception(kind: str, video: Path, output: Path, box: list[float] | None
     runtime = cuda_inventory()
     import numpy as np
     from diffusers.utils import export_to_video
+    from PIL import Image
 
     frames, fps = _frames(video)
     values = _depth(frames) if kind == "depth" else _masks(frames, box)
@@ -134,9 +135,32 @@ def run_perception(kind: str, video: Path, output: Path, box: list[float] | None
     output.mkdir(parents=True, exist_ok=True)
     array = output / "predictions.npz"
     np.savez_compressed(array, predictions=values)
-    export_to_video(list(_overlays(frames, values, kind)), str(output / "video.mp4"),
+    # Diffusers treats ndarray frames as floats in [0, 1]. PIL preserves our
+    # already encoded uint8 RGB colors instead of multiplying them by 255 again.
+    overlays = [Image.fromarray(frame) for frame in _overlays(frames, values, kind)]
+    export_to_video(overlays, str(output / "video.mp4"),
                     fps=fps, macro_block_size=1)
-    return _evidence(kind, video, output, array, values, fps, runtime, box)
+    color_error = _reference_color_error(frames, values, kind, output / "video.mp4")
+    evidence = _evidence(kind, video, output, array, values, fps, runtime, box)
+    evidence["unmodified_region_mean_absolute_error"] = color_error
+    return evidence
+
+
+def _reference_color_error(frames, values, kind, video):
+    import numpy as np
+
+    differences = []
+    for decoded, original, value in zip(_decoded_frames(video), frames, values, strict=True):
+        if kind == "depth":
+            # Exclude chroma-subsampling bleed at the visualization boundary.
+            actual, expected = decoded[:, :230, ::-1], original[:, :230]
+        else:
+            actual, expected = decoded[:, :, ::-1][~value], original[~value]
+        differences.append(float(np.abs(actual.astype(np.float32) - expected).mean()))
+    error = float(np.mean(differences))
+    if not np.isfinite(error) or error > 12:
+        raise RuntimeError(f"Encoded perception video changed reference colors: MAE={error}")
+    return error
 
 
 def _validate_box(box):

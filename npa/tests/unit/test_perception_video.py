@@ -24,3 +24,18 @@ def test_valid_box_matches_declared_viewport():
 def test_unknown_perception_kind_fails_before_cuda():
     with pytest.raises(ValueError, match="kind"):
         run_perception("unknown", Path("missing.mp4"), Path("missing-output"))
+
+
+@pytest.mark.parametrize("kind", ["depth", "sam"])
+def test_encoded_reference_rejects_uint8_rescaling(monkeypatch, kind):
+    import numpy as np
+    from npa.solutions import perception_video as module
+
+    original = np.full((8, 240, 3), [25, 125, 235], dtype=np.uint8)
+    values = [np.zeros((8, 240), dtype=bool)]
+    monkeypatch.setattr(module, "_decoded_frames", lambda _: iter([original[:, :, ::-1]]))
+    assert module._reference_color_error([original], values, kind, Path("unused")) == 0
+    corrupted = (original * 255).astype(np.uint8)
+    monkeypatch.setattr(module, "_decoded_frames", lambda _: iter([corrupted[:, :, ::-1]]))
+    with pytest.raises(RuntimeError, match="reference colors"):
+        module._reference_color_error([original], values, kind, Path("unused"))
