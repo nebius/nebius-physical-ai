@@ -462,6 +462,11 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "Deleted only the exact qualified failed public LIBERO OCI versions" in text
     assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" in text
+    assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
+    assert "customer_authorization_public_key_sha256" in text
+    assert (
+        'base64 -d "$key_file" | sha256sum | cut -d\' \' -f1' in text
+    )
     assert (
         "--secret id=npa_libero_customer_authorization_public_key_b64,"
         "env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64"

@@ -21,6 +21,7 @@ from typing import Any
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
+    LiberoCustomerAuthorizationDenied,
     container_image_for_tool,
     libero_customer_acceptance_notification,
     libero_image_manifest,
@@ -160,7 +161,7 @@ def _libero_qualified_candidate(value: str, qualification: dict[str, Any]) -> st
 
 def _libero_customer_authorization(
     args: argparse.Namespace, image_manifest: dict[str, Any]
-) -> tuple[Path, bytes, str]:
+) -> tuple[Path, bytes, str, str]:
     path_value = str(args.libero_customer_runtime_authorization_file or "").strip()
     if not path_value:
         raise LiberoCustomerAcceptanceRequired(
@@ -169,9 +170,13 @@ def _libero_customer_authorization(
     path = Path(path_value).expanduser()
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    except OSError as exc:
+    except FileNotFoundError as exc:
         raise LiberoCustomerAcceptanceRequired(
             libero_customer_acceptance_notification(image_manifest)
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            "LIBERO customer authorization file is unavailable or invalid"
         ) from exc
     try:
         before = os.fstat(descriptor)
@@ -194,32 +199,25 @@ def _libero_customer_authorization(
             "LIBERO customer authorization must be a stable owner-private regular file"
         )
     try:
-        authorization_status = json.loads(authorization_bytes).get("status")
-    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-        authorization_status = None
-    if authorization_status == "denied":
+        authorization, observed = validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=image_manifest,
+            run_id=args.run_id,
+        )
+    except LiberoCustomerAuthorizationDenied as exc:
         raise LiberoCustomerAcceptanceRequired(
             libero_customer_acceptance_notification(
                 image_manifest, reason="authorization_denied"
             )
-        )
-    customer_identity_sha256 = os.environ.get(
-        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", ""
-    ).strip()
-    if re.fullmatch(r"[0-9a-f]{64}", customer_identity_sha256) is None:
-        raise ValueError(
-            "LIBERO requires the authenticated customer identity binding"
-        )
-    try:
-        _, observed = validate_libero_customer_runtime_authorization(
-            authorization_bytes,
-            image_manifest=image_manifest,
-            run_id=args.run_id,
-            customer_identity_sha256=customer_identity_sha256,
-        )
+        ) from exc
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
-    return path, authorization_bytes, observed
+    return (
+        path,
+        authorization_bytes,
+        observed,
+        str(authorization["customer_identity_sha256"]),
+    )
 
 
 def _validate_libero_identity(args: argparse.Namespace) -> None:
@@ -297,14 +295,15 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
     args._libero_image_manifest = image_manifest
     args._libero_qualification = qualification
     _libero_qualified_candidate(args.libero_qualified_candidate_image, qualification)
-    _, authorization_bytes, authorization_sha256 = _libero_customer_authorization(
-        args, image_manifest
-    )
+    (
+        _,
+        authorization_bytes,
+        authorization_sha256,
+        customer_identity_sha256,
+    ) = _libero_customer_authorization(args, image_manifest)
     args._libero_customer_authorization_bytes = authorization_bytes
     args._libero_customer_authorization_sha256 = authorization_sha256
-    args._libero_customer_identity_sha256 = os.environ[
-        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256"
-    ].strip()
+    args._libero_customer_identity_sha256 = customer_identity_sha256
 
 
 def _image_repository_name(image_ref: str) -> str:

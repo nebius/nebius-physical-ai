@@ -605,17 +605,30 @@ def _verify_libero_submission_authorization(
             "qualification",
             "LIBERO image qualification is invalid",
         ) from exc
+    if not process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", "").strip():
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO customer authorization is required",
+            status="needs_customer_acceptance",
+        )
+    from npa.deploy.images import LiberoCustomerAuthorizationDenied
+
     try:
         authorization, authorization_sha256 = _libero_submission_authorization(
             process_env,
             run_id,
             image_manifest=repository_manifest,
         )
+    except LiberoCustomerAuthorizationDenied as exc:
+        raise ExecutionPreflightError(
+            "authorization_denied",
+            "LIBERO customer declined the required runtime terms",
+            status="needs_customer_acceptance",
+        ) from exc
     except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
         raise ExecutionPreflightError(
             "authorization",
-            "LIBERO requires a valid customer/run authorization",
-            status="needs_customer_acceptance",
+            "LIBERO customer/run authorization is invalid",
         ) from exc
     if (
         process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", "")
@@ -626,7 +639,6 @@ def _verify_libero_submission_authorization(
         raise ExecutionPreflightError(
             "authorization",
             "LIBERO customer authorization secret pair differs",
-            status="needs_customer_acceptance",
         )
     candidate_images = {
         str((document.get("resources") or {}).get("image_id") or "").removeprefix(

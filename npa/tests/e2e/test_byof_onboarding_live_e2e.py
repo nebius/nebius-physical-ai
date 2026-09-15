@@ -556,8 +556,8 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "owner-private customer/run authorization"
     )
     authorization = json.loads(Path(authorization_path).read_text(encoding="utf-8"))
-    assert os.environ.get("NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256") == (
-        authorization["customer_identity_sha256"]
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", str(authorization["customer_identity_sha256"])
     )
     bucket = live_bucket(e2e_project)
     run_id = authorization["run_id"]

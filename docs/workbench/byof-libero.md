@@ -20,10 +20,11 @@ qualification binds independently reviewed immutable image and publication
 lineage. A customer authorization is issued only by the authenticated NPA
 customer/control-plane surface after that customer reviews and acknowledges all
 seven exact terms for one run. Its canonical JSON carries an Ed25519 signature
-verified against the owner-private public trust-root file selected by
-`NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE`; symlinks, non-owner files,
-and group/world permissions fail closed. The public key may be baked into a
-qualified neutral image. Signing material, customer identity, credentials,
+verified against an owner-private public trust-root file whose decoded key
+fingerprint is pinned by the independently reviewed image qualification;
+symlinks, non-owner files, group/world permissions, and caller-selected keys
+fail closed. The same public key is baked into the qualified neutral image.
+Signing material, customer identity, credentials,
 acceptance records, terms payloads, and runtime payloads never are.
 
 The authenticated control plane supplies these inputs; they are not customer
@@ -31,10 +32,9 @@ acceptance switches and must not be synthesized locally:
 
 | Input | Boundary |
 | --- | --- |
-| `NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256` | Host-only hash of the authenticated customer identity. The BYOF host validates the signed record against it. |
-| `--libero-customer-runtime-authorization-file` | Owner-private, short-lived signed authorization for this customer and run. Missing or denied input returns the structured terms notification. |
-| `NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE` | Owner-private host trust root used to verify the control-plane signature. A caller-provided key or inline environment key cannot replace it. |
-| `NPA_LIBERO_CUSTOMER_IDENTITY_SHA256` | Verified identity hash forwarded to the isolated runtime only after host validation; customers do not set it directly. |
+| `--libero-customer-runtime-authorization-file` | Owner-private, short-lived signed authorization for this customer and run. The signed customer identity is authoritative; no ambient customer-identity variable is trusted. Missing input or a valid signed denial returns the structured terms notification. |
+| `NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE` | Owner-private host copy of the control-plane public trust root. Its decoded fingerprint must equal the checked-in qualified-image record, so a caller-provided or inline key cannot replace it. |
+| `NPA_LIBERO_CUSTOMER_IDENTITY_SHA256` | Identity hash derived from the verified signed authorization and forwarded to the isolated runtime; customers do not set it directly. |
 
 The authorization file contains no access credential. HF/NGC credentials are
 separate upstream-access inputs and never establish terms acknowledgement.

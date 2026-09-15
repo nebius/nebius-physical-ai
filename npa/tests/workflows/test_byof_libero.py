@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from npa.deploy.images import (
+    LiberoCustomerAuthorizationDenied,
     LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS,
     LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS,
     LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER,
@@ -314,6 +315,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     }
     assert manifest["qualification"]["status"] == "not_qualified"
     assert manifest["qualification"]["candidate_image"] == ""
+    assert manifest["qualification"]["customer_authorization_public_key_sha256"] == ""
     assert manifest["customer_runtime_authorization_required"] is True
     notification = libero_customer_acceptance_notification(manifest)
     assert notification["status"] == "needs_customer_acceptance"
@@ -353,6 +355,14 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "pending_license_artifacts": 0,
         "report_sha256": "2" * 64,
     }
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    key_file = tmp_path / "customer-authorization-public-key.b64"
+    key_file.write_bytes(base64.b64encode(public_key))
+    key_file.chmod(0o600)
     qualification = manifest["qualification"]
     qualification.update(
         {
@@ -394,6 +404,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 libero_publication_enforcement_bundle_sha256(ROOT)
             ),
             "package_writer_repository": "nebius/nebius-physical-ai",
+            "customer_authorization_public_key_sha256": hashlib.sha256(
+                public_key
+            ).hexdigest(),
         }
     )
     qualification["publication_bundle_sha256"] = hashlib.sha256(
@@ -434,6 +447,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 "package_writer_repository": qualification[
                     "package_writer_repository"
                 ],
+                "customer_authorization_public_key_sha256": qualification[
+                    "customer_authorization_public_key_sha256"
+                ],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -448,14 +464,6 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "platform_manifest_digest"
     ]
 
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    key_file = tmp_path / "customer-authorization-public-key.b64"
-    key_file.write_bytes(base64.b64encode(public_key))
-    key_file.chmod(0o600)
     run_id = "libero-customer-run-0001"
     authorization = {
         "schema": "npa.libero.customer-runtime-authorization.v1",
@@ -496,6 +504,23 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     assert validated == authorization
     assert observed_sha256 == hashlib.sha256(authorization_bytes).hexdigest()
 
+    denied = json.loads(authorization_bytes)
+    denied["status"] = "denied"
+    denied["signature"]["signature_b64"] = base64.b64encode(
+        private_key.sign(libero_customer_authorization_signature_payload(denied))
+    ).decode("ascii")
+    with pytest.raises(
+        LiberoCustomerAuthorizationDenied, match="declined the required runtime terms"
+    ):
+        validate_libero_customer_runtime_authorization(
+            json.dumps(denied, sort_keys=True).encode(),
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(key_file),
+            now=now,
+        )
+
     forged = json.loads(authorization_bytes)
     forged["signature"]["signature_b64"] = base64.b64encode(b"\0" * 64).decode()
     with pytest.raises(RuntimeError, match="signature is invalid"):
@@ -522,6 +547,33 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             run_id=run_id,
             customer_identity_sha256="9" * 64,
             public_key_file=str(wrong_key_file),
+            now=now,
+        )
+
+    attacker_private_key = Ed25519PrivateKey.generate()
+    attacker_public_key = attacker_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    attacker_key_file = tmp_path / "attacker-customer-authorization-public-key.b64"
+    attacker_key_file.write_bytes(base64.b64encode(attacker_public_key))
+    attacker_key_file.chmod(0o600)
+    attacker_authorization = json.loads(authorization_bytes)
+    attacker_authorization["signature"]["public_key_sha256"] = hashlib.sha256(
+        attacker_public_key
+    ).hexdigest()
+    attacker_authorization["signature"]["signature_b64"] = base64.b64encode(
+        attacker_private_key.sign(
+            libero_customer_authorization_signature_payload(attacker_authorization)
+        )
+    ).decode("ascii")
+    with pytest.raises(RuntimeError, match="trust root differs"):
+        validate_libero_customer_runtime_authorization(
+            json.dumps(attacker_authorization, sort_keys=True).encode(),
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(attacker_key_file),
             now=now,
         )
 

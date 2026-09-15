@@ -1088,7 +1088,7 @@ def _validate_customer_authorization(
         set(authorization) != expected_keys
         or authorization.get("schema") != CUSTOMER_AUTHORIZATION_SCHEMA
         or authorization.get("solution") != "libero"
-        or authorization.get("status") != "authorized"
+        or authorization.get("status") not in {"authorized", "denied"}
         or re.fullmatch(
             r"[a-z0-9][a-z0-9-]{15,79}",
             str(authorization.get("authorization_id") or ""),
@@ -1121,8 +1121,6 @@ def _validate_customer_authorization(
         )
         is None
     ):
-        if authorization.get("status") == "denied":
-            raise CustomerAcceptanceRequired("authorization_denied")
         raise BootstrapRefusal(
             "customer authorization does not bind the exact customer/run contract"
         )
@@ -1152,6 +1150,8 @@ def _validate_customer_authorization(
     ):
         raise BootstrapRefusal("customer authorization is expired or replayable")
     _verify_customer_authorization_signature(authorization, signature_record)
+    if authorization["status"] == "denied":
+        raise CustomerAcceptanceRequired("authorization_denied")
     return authorization, observed_sha256
 
 

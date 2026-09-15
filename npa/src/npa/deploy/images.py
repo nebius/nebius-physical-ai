@@ -56,6 +56,12 @@ LIBERO_OFFICIAL_CANDIDATE_PREFIX = (
     "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
 )
 LIBERO_UPSTREAM_SOURCE_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+
+
+class LiberoCustomerAuthorizationDenied(RuntimeError):
+    """A valid control-plane signature records the customer's refusal."""
+
+
 LIBERO_BUILD_INPUT_PATHS = (
     "npa/docker/workbench/libero/Dockerfile",
     "npa/docker/workbench/libero/REDISTRIBUTION.md",
@@ -532,7 +538,10 @@ def libero_customer_authorization_signature_payload(
 
 
 def _verify_libero_customer_authorization_signature(
-    payload: dict[str, Any], *, public_key_file: str = ""
+    payload: dict[str, Any],
+    *,
+    expected_public_key_sha256: str,
+    public_key_file: str = "",
 ) -> None:
     signature_record = payload.get("signature")
     if not isinstance(signature_record, dict) or set(signature_record) != {
@@ -590,8 +599,8 @@ def _verify_libero_customer_authorization_signature(
     if (
         len(public_key) != 32
         or len(signature) != 64
-        or hashlib.sha256(public_key).hexdigest()
-        != signature_record.get("public_key_sha256")
+        or hashlib.sha256(public_key).hexdigest() != expected_public_key_sha256
+        or signature_record.get("public_key_sha256") != expected_public_key_sha256
     ):
         raise RuntimeError("LIBERO customer-authorization trust root differs")
     try:
@@ -745,6 +754,7 @@ def libero_publication_lineage_values(
         "base_provenance_sha256",
         "publication_bundle_sha256",
         "package_writer_repository",
+        "customer_authorization_public_key_sha256",
     )
     return {field: qualification[field] for field in fields}
 
@@ -889,6 +899,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
         "package_writer_repository",
+        "customer_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     }
     require(set(qualification) == expected_keys, "closed qualification schema")
@@ -937,6 +948,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "publication_bundle_sha256",
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
+        "customer_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     ):
         require(
@@ -1026,6 +1038,9 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             "publication_enforcement_bundle_sha256"
         ),
         "package_writer_repository": qualification.get("package_writer_repository"),
+        "customer_authorization_public_key_sha256": qualification.get(
+            "customer_authorization_public_key_sha256"
+        ),
     }
     require(
         _canonical_sha256(publication_bundle)
@@ -1084,7 +1099,7 @@ def validate_libero_customer_runtime_authorization(
     *,
     image_manifest: dict[str, Any],
     run_id: str,
-    customer_identity_sha256: str,
+    customer_identity_sha256: str | None = None,
     public_key_file: str = "",
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], str]:
@@ -1113,9 +1128,7 @@ def validate_libero_customer_runtime_authorization(
     }
     if not isinstance(authorization, dict) or set(authorization) != expected_keys:
         raise RuntimeError("LIBERO customer authorization schema is not closed")
-    qualification = image_manifest.get("qualification")
-    if not isinstance(qualification, dict):
-        raise RuntimeError("LIBERO image qualification is unavailable")
+    qualification = validate_libero_qualified_image_manifest(image_manifest)
     expected_terms = [
         {"id": term["id"], "version": term["version"]}
         for term in _libero_customer_terms(image_manifest)
@@ -1123,7 +1136,7 @@ def validate_libero_customer_runtime_authorization(
     if (
         authorization.get("schema") != LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA
         or authorization.get("solution") != "libero"
-        or authorization.get("status") != "authorized"
+        or authorization.get("status") not in {"authorized", "denied"}
         or re.fullmatch(
             r"[a-z0-9][a-z0-9-]{15,79}",
             str(authorization.get("authorization_id") or ""),
@@ -1134,8 +1147,11 @@ def validate_libero_customer_runtime_authorization(
             str(authorization.get("customer_identity_sha256") or ""),
         )
         is None
-        or authorization.get("customer_identity_sha256")
-        != customer_identity_sha256
+        or (
+            customer_identity_sha256 is not None
+            and authorization.get("customer_identity_sha256")
+            != customer_identity_sha256
+        )
         or authorization.get("run_id") != run_id
         or authorization.get("candidate_image")
         != qualification.get("candidate_image")
@@ -1177,8 +1193,16 @@ def validate_libero_customer_runtime_authorization(
     ):
         raise RuntimeError("LIBERO customer authorization is expired or replayable")
     _verify_libero_customer_authorization_signature(
-        authorization, public_key_file=public_key_file
+        authorization,
+        expected_public_key_sha256=qualification[
+            "customer_authorization_public_key_sha256"
+        ],
+        public_key_file=public_key_file,
     )
+    if authorization["status"] == "denied":
+        raise LiberoCustomerAuthorizationDenied(
+            "LIBERO customer declined the required runtime terms"
+        )
     observed_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
     return authorization, observed_sha256
 

@@ -1059,9 +1059,11 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
     ("drift", "expected_check", "expected_status"),
     [
         ("qualification", "qualification", "fail"),
-        ("authorization-bytes", "authorization", "needs_customer_acceptance"),
-        ("authorization-digest", "authorization", "needs_customer_acceptance"),
-        ("customer", "authorization", "needs_customer_acceptance"),
+        ("authorization-missing", "authorization", "needs_customer_acceptance"),
+        ("authorization-denied", "authorization_denied", "needs_customer_acceptance"),
+        ("authorization-bytes", "authorization", "fail"),
+        ("authorization-digest", "authorization", "fail"),
+        ("customer", "authorization", "fail"),
         ("candidate", "submission_identity", "fail"),
         ("run", "submission_identity", "fail"),
         ("backend", "submission_identity", "fail"),
@@ -1098,10 +1100,13 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
             }
         ),
     )
+    def validate_authorization(*_args, **_kwargs):
+        if drift == "authorization-denied":
+            raise images.LiberoCustomerAuthorizationDenied("signed denial")
+        return authorization, authorization_sha256
+
     monkeypatch.setattr(
-        images,
-        "validate_libero_customer_runtime_authorization",
-        lambda *_args, **_kwargs: (authorization, authorization_sha256),
+        images, "validate_libero_customer_runtime_authorization", validate_authorization
     )
     document = libero_task("npa-byof-libero-payload")
     document["envs"]["NPA_BYOF_RUN_ID"] = (
@@ -1109,9 +1114,13 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
     )
     process_env = {
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64": (
-            "self-attested"
-            if drift == "authorization-bytes"
-            else base64.b64encode(authorization_bytes).decode()
+            ""
+            if drift == "authorization-missing"
+            else (
+                "self-attested"
+                if drift == "authorization-bytes"
+                else base64.b64encode(authorization_bytes).decode()
+            )
         ),
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": (
             "b" * 64 if drift == "authorization-digest" else authorization_sha256

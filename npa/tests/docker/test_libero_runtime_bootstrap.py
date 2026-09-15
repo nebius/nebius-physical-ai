@@ -739,6 +739,35 @@ def test_mismatched_customer_authorization_refuses_before_cache_mutation(
     assert not Path(args.cache_root).exists()
 
 
+def test_signed_customer_denial_notifies_before_network_or_cache_mutation(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    authorization = json.loads(
+        Path(args.authorization).read_text(encoding="utf-8")
+    )
+    authorization["status"] = "denied"
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        fixture["customer_private_key"].sign(
+            module._customer_authorization_signature_payload(authorization)
+        )
+    ).decode("ascii")
+    args.authorization_sha256 = _write_json(
+        Path(args.authorization), authorization
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda *_args: pytest.fail("network began after a signed customer denial"),
+    )
+
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization denied"
+    ):
+        module.ensure(args)
+    assert not Path(args.cache_root).exists()
+
+
 def test_terms_resolution_refuses_before_cache_mutation(monkeypatch, tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     monkeypatch.setattr(

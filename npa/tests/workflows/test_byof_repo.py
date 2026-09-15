@@ -163,7 +163,7 @@ def test_libero_missing_customer_authorization_notifies_before_registry(
     }
 
 
-def test_libero_denied_customer_authorization_notifies_without_validation(
+def test_libero_signed_denial_notifies_only_after_validation(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
@@ -196,8 +196,8 @@ def test_libero_denied_customer_authorization_notifies_without_validation(
     monkeypatch.setattr(
         module,
         "validate_libero_customer_runtime_authorization",
-        lambda *_args, **_kwargs: pytest.fail(
-            "a denial must never enter the authorization path"
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            module.LiberoCustomerAuthorizationDenied("signed denial")
         ),
     )
 
@@ -205,6 +205,40 @@ def test_libero_denied_customer_authorization_notifies_without_validation(
     notification = json.loads(capsys.readouterr().out)
     assert notification["status"] == "needs_customer_acceptance"
     assert notification["reason"] == "authorization_denied"
+
+
+def test_libero_symlinked_customer_authorization_is_hard_failure(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, contract = _libero_contract_args(tmp_path)
+    authorization_path = Path(
+        arguments[
+            arguments.index("--libero-customer-runtime-authorization-file") + 1
+        ]
+    )
+    target = authorization_path.with_suffix(".target")
+    authorization_path.rename(target)
+    authorization_path.symlink_to(target)
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: contract["image_manifest"])
+    monkeypatch.setattr(
+        module,
+        "validate_libero_qualified_image_manifest",
+        lambda _value: contract["qualification"],
+    )
+    monkeypatch.setattr(
+        module, "libero_publication_lineage_values", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry must remain untouched"),
+    )
+
+    assert module.main(["--run-id", "libero-managed-route", *arguments]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert "unavailable or invalid" in result["error"]
 
 
 def test_libero_customer_authorization_rejects_descriptor_metadata_race(
@@ -975,9 +1009,6 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             contract["authorization_sha256"],
         ),
     )
-    monkeypatch.setenv(
-        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", "8" * 64
-    )
     seen: dict[str, object] = {}
 
     def validate_lineage(value, repository_root, *, development_sha):
@@ -1050,9 +1081,6 @@ def test_main_refuses_local_libero_enforcement_drift_before_registry(
         module,
         "validate_libero_qualified_image_manifest",
         lambda _value: contract["qualification"],
-    )
-    monkeypatch.setenv(
-        "NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256", "8" * 64
     )
 
     def refuse(*_args, **_kwargs):
