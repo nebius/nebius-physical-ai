@@ -1085,6 +1085,7 @@ def test_first_publication_retry_reconciles_only_a_closed_private_graph(
 
     completed = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
+        cwd=ROOT,
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
