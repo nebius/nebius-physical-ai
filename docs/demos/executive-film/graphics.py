@@ -180,7 +180,21 @@ def _film_base(scene):
             draw.line((0, y, _WIDTH, y), fill=(4, 8, 12, opacity))
     if scene.get("brand", False):
         image.alpha_composite(_logo(), (96, 64))
+    _film_source_label(draw, scene["labels"][0])
     return image
+
+
+def _film_source_label(draw, label):
+    if not label:
+        return
+    size = 26
+    while draw.textlength(label, font=_font(size, 600)) > 1100:
+        size -= 1
+    width = draw.textlength(label, font=_font(size, 600))
+    left = _WIDTH - 96 - width - 40
+    draw.rounded_rectangle((left, 64, _WIDTH - 96, 120), radius=12,
+                           fill=(4, 8, 12, 205))
+    _text(draw, (left + 20, 78), label, size, _WHITE, 600)
 
 
 def _film_headlines(draw, scene):

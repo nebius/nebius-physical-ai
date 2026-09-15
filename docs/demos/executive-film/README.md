@@ -50,14 +50,21 @@ share this workflow; two minutes is an example, not a renderer limit.
 ## Film presentation
 
 Use `layout: "film"` for a full-frame shot with up to two restrained headline
-lines. This layout omits source labels, slide framing, scene counters and the
-progress bar. Keep tool attribution and run evidence in `assets.json`; use the
-other layouts when that evidence belongs on screen.
+lines. This layout omits slide framing, scene counters and the progress bar.
+Its label appears in a compact badge at the top right, so viewers can identify
+the model or tool while the footage fills the screen. Keep full tool attribution
+and run evidence in `assets.json`.
 
 Film scenes accept `title_position: "bottom-left"` (default) or `"center"`, and
 `brand: true` to show the bundled official Nebius logo (default false). An empty
 `title` array and empty `subtitle` leave the footage clear. Supply one asset and
-one label entry; the label remains in the storyboard but is not drawn.
+one label entry; use an empty label to omit the badge. The badge remains visible
+independently of headline timing.
+
+Set `transition: "cut"` for a direct cut with no fade through black. Omit it or
+use `"fade"` to retain the 0.3-second fade at each end of the shot. Short scenes
+with direct cuts work well for an energetic montage; scene duration and title
+timing remain independent choices.
 
 `title_delay_seconds` defaults to 0.5. `title_duration_seconds` defaults to the
 rest of the scene. Both accept finite seconds; titles must fit within the scene
@@ -472,6 +479,10 @@ is rejected. Keep the original file and its original SHA-256. Several asset
 roles can select different excerpts from that same file, so adjusting a cut
 requires only a manifest edit. Trim points are retained in render provenance
 and invalidate only scenes that use the changed role.
+Set `"fit": "cover"` to fill the scene's media area with a centered crop while
+preserving the source aspect ratio. The default, `"contain"`, keeps the whole
+source visible with padding. An explicit pixel `crop` is applied before either
+fit mode. The fit choice is recorded with the asset and invalidates its scenes.
 Use the one-asset `application` scene layout for recorded software demos. Its
 compact header leaves a taller media panel for cameras, controls and telemetry;
 keep the subtitle to one short line. The ordinary `screen` layout reserves more

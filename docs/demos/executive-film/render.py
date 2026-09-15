@@ -99,6 +99,8 @@ def _validate_film_titles(scene):
         raise ValueError("Film title_position must be bottom-left or center")
     if type(scene.get("brand", False)) is not bool:
         raise ValueError("Film brand must be a boolean")
+    if scene.get("transition", "fade") not in {"fade", "cut"}:
+        raise ValueError("Film transition must be fade or cut")
     delay = scene.get("title_delay_seconds", 0.5)
     if type(delay) not in (int, float) or not math.isfinite(delay):
         raise ValueError("Film title timing must use finite seconds")
@@ -140,6 +142,8 @@ def _validate(storyboard, assets, scene_id=None):
             raise ValueError(f"Unsupported asset kind for {role}")
         if asset.get("playback", "loop") not in ("loop", "hold"):
             raise ValueError(f"Unsupported playback mode for {role}")
+        if asset.get("fit", "contain") not in ("contain", "cover"):
+            raise ValueError(f"Unsupported fit mode for {role}")
         crop = asset.get("crop")
         if crop and (len(crop) != 4 or any(type(v) is not int or v < 0 for v in crop)
                      or crop[2] == 0 or crop[3] == 0):
@@ -190,8 +194,12 @@ def _media_filter(index, asset, rectangle, duration, profile):
     if asset.get("crop"):
         crop_x, crop_y, crop_width, crop_height = asset["crop"]
         filters.append(f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y}")
-    filters += [f"scale={width}:{content_height}:force_original_aspect_ratio=decrease:force_divisible_by=2",
-                f"pad={width}:{height}:(ow-iw)/2:({content_height}-ih)/2:color=0x080d12", "setsar=1"]
+    if asset.get("fit", "contain") == "cover":
+        filters += [f"scale={width}:{content_height}:force_original_aspect_ratio=increase:force_divisible_by=2",
+                    f"crop={width}:{content_height}"]
+    else:
+        filters.append(f"scale={width}:{content_height}:force_original_aspect_ratio=decrease:force_divisible_by=2")
+    filters += [f"pad={width}:{height}:(ow-iw)/2:({content_height}-ih)/2:color=0x080d12", "setsar=1"]
     if asset["kind"] == "image":
         filters.append(f"zoompan=z='1+0.018*on/{30 * duration}':"
                        f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps=30")
@@ -231,8 +239,10 @@ def _film_filter_graph(graph, scene, count, width, height):
     graph.append(f"[{count + 2}:v]scale={width}:{height},format=rgba,"
                  f"fade=t=in:st={delay}:d={fade}:alpha=1,"
                  f"fade=t=out:st={delay + duration - fade}:d={fade}:alpha=1[titles]")
-    graph.append("[framed][titles]overlay=0:0:shortest=1,"
-                 f"fade=t=in:d=0.3,fade=t=out:st={scene['duration'] - 0.3}:d=0.3,format=yuv420p[out]")
+    transition = ""
+    if scene.get("transition", "fade") == "fade":
+        transition = f"fade=t=in:d=0.3,fade=t=out:st={scene['duration'] - 0.3}:d=0.3,"
+    graph.append(f"[framed][titles]overlay=0:0:shortest=1,{transition}format=yuv420p[out]")
     return ";\n".join(graph)
 
 
