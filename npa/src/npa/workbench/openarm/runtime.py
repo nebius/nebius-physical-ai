@@ -124,8 +124,9 @@ def _render_video(model: Any, data: Any, commands: list[Any], output: Path) -> N
     renderer = mujoco.Renderer(model, height=480, width=640)
     try:
         mujoco.mj_resetData(model, data)
+        actuator_indices = _arm_actuator_indices(model)
         for index, command in enumerate(commands):
-            data.ctrl[:] = command
+            data.ctrl[actuator_indices] = command
             mujoco.mj_step(model, data)
             if index % 5 == 0:
                 renderer.update_scene(data)

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from types import ModuleType
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,11 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
 from npa.sdk.workbench import openarm as sdk
-from npa.workbench.openarm.runtime import _step_mujoco, _validate_qualification_tree
+from npa.workbench.openarm.runtime import (
+    _render_video,
+    _step_mujoco,
+    _validate_qualification_tree,
+)
 from npa.workbench.openarm.schemas import OpenArmRunRequest, OpenArmStatusResponse
 from npa.workbench.openarm.service import RunRegistry, create_app
 
@@ -107,6 +112,58 @@ def test_mujoco_rollout_commands_only_bimanual_actuators(
     assert np.asarray(commands).shape == (3, 16)
     assert data.ctrl[0] == 0.0
     assert np.count_nonzero(data.ctrl[1:]) > 0
+
+
+def test_mujoco_renderer_replays_only_bimanual_actuators(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    names = [
+        *(f"right_joint{index}_ctrl" for index in range(1, 8)),
+        "right_finger1_ctrl",
+        *(f"left_joint{index}_ctrl" for index in range(1, 8)),
+        "left_finger1_ctrl",
+    ]
+    actuator_ids = {name: index + 1 for index, name in enumerate(names)}
+
+    class Renderer:
+        def __init__(self, _model, *, height, width):
+            assert (height, width) == (480, 640)
+
+        def update_scene(self, _data):
+            return None
+
+        def render(self):
+            return np.zeros((2, 2, 3), dtype=np.uint8)
+
+        def close(self):
+            return None
+
+    fake_mujoco = ModuleType("mujoco")
+    fake_mujoco.mjtObj = SimpleNamespace(mjOBJ_ACTUATOR=object())
+    fake_mujoco.mj_name2id = (
+        lambda _model, _kind, name: actuator_ids.get(name, -1)
+    )
+    fake_mujoco.Renderer = Renderer
+    fake_mujoco.mj_resetData = lambda _model, data: data.ctrl.fill(0.0)
+    fake_mujoco.mj_step = lambda _model, _data: None
+    fake_imageio = ModuleType("imageio.v2")
+    written = {}
+    fake_imageio.mimwrite = lambda path, frames, **kwargs: written.update(
+        path=path, frames=frames, kwargs=kwargs
+    )
+    fake_imageio_package = ModuleType("imageio")
+    fake_imageio_package.v2 = fake_imageio
+    monkeypatch.setitem(sys.modules, "mujoco", fake_mujoco)
+    monkeypatch.setitem(sys.modules, "imageio", fake_imageio_package)
+    monkeypatch.setitem(sys.modules, "imageio.v2", fake_imageio)
+    model = SimpleNamespace(actuator_ctrlrange=np.asarray([[-1.0, 1.0]] * 17))
+    data = SimpleNamespace(ctrl=np.zeros(17, dtype=float))
+
+    _render_video(model, data, [np.ones(16)], tmp_path / "rollout.mp4")
+
+    assert data.ctrl[0] == 0.0
+    assert np.array_equal(data.ctrl[1:], np.ones(16))
+    assert len(written["frames"]) == 1
 
 
 def test_sdk_service_parity(monkeypatch: pytest.MonkeyPatch) -> None:
