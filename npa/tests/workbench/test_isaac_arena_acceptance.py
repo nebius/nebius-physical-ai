@@ -106,7 +106,9 @@ def _proof(length: int = 20) -> dict:
                 "physics_state_changed_during_render": False,
                 "rendering": {
                     "mode": "RaytracedLighting",
+                    "legacy_mode_enabled": True,
                     "rt2_enabled": False,
+                    "path_tracing_enabled": False,
                     "antialiasing": "FXAA",
                     "stochastic_accumulation": False,
                     "accumulation_renders_per_frame": 0,
@@ -266,7 +268,17 @@ def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
             "span the scored episode",
         ),
         (
+            "capture.physics_freeze.rendering.legacy_mode_enabled",
+            False,
+            "span the scored episode",
+        ),
+        (
             "capture.physics_freeze.rendering.rt2_enabled",
+            True,
+            "span the scored episode",
+        ),
+        (
+            "capture.physics_freeze.rendering.path_tracing_enabled",
             True,
             "span the scored episode",
         ),

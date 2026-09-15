@@ -129,14 +129,17 @@ def test_capabilities_are_complete_and_honest() -> None:
     assert "EGL ICD" in viewport_graphics["headless_icd"]
     assert payload["rendering"]["viewport_video"]["renderer"] == {
         "mode": "RaytracedLighting",
+        "legacy_mode_enabled": True,
         "rt2_enabled": False,
+        "path_tracing_enabled": False,
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "reason": (
-            "Disabling RT2 prevents Isaac Sim 6 from remapping the request to "
-            "RealTimePathTracing; legacy RTX Real-Time plus spatial FXAA avoids "
-            "path-tracing grain, while task-bound temporal median and coherent "
-            "tracking remain independent acceptance checks."
+            "Selecting legacy RTX while disabling RT2 and interactive path "
+            "tracing at Kit startup prevents Isaac Sim 6 from remapping the "
+            "request to RealTimePathTracing; spatial FXAA avoids path-tracing "
+            "grain, while task-bound temporal median and coherent tracking "
+            "remain independent acceptance checks."
         ),
     }
     assert payload["outputs"]["rerun_rrd"] is False
@@ -163,6 +166,21 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
     assert "--headless" in argv
     assert argv[argv.index("--device") + 1] == "cuda:0"
     assert "--record_viewport_video" not in argv
+
+    video_argv = build_evaluation_argv(
+        IsaacArenaRequest(output_path=str(tmp_path), record_video=True),
+        output_dir=tmp_path / "video-upstream",
+    )
+    kit_args_index = video_argv.index("--kit_args")
+    assert video_argv[kit_args_index + 1].split() == [
+        "--/persistent/rtx/modes/rt/enabled=true",
+        "--/persistent/rtx/modes/rt2/enabled=false",
+        "--/persistent/rtx/modes/pt/enabled=false",
+        "--/rtx/rendermode=RaytracedLighting",
+        "--/rtx/post/aa/op=2",
+    ]
+    assert kit_args_index < video_argv.index("cube_goal_pose")
+    assert "--record_viewport_video" in video_argv
 
     cpu_argv = build_evaluation_argv(
         IsaacArenaRequest(output_path=str(tmp_path), execution_device="cpu"),
@@ -937,7 +955,9 @@ def test_passive_baseline_success_is_never_task_qualified_video(
             "physics_state_changed_during_render": False,
             "rendering": {
                 "mode": "RaytracedLighting",
+                "legacy_mode_enabled": True,
                 "rt2_enabled": False,
+                "path_tracing_enabled": False,
                 "antialiasing": "FXAA",
                 "stochastic_accumulation": False,
                 "accumulation_renders_per_frame": 0,

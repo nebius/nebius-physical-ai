@@ -635,7 +635,9 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
     rendering = capture.get("rendering")
     expected = {
         "mode": "RaytracedLighting",
+        "legacy_mode_enabled": True,
         "rt2_enabled": False,
+        "path_tracing_enabled": False,
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "accumulation_renders_per_frame": 0,

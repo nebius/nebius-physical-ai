@@ -197,7 +197,9 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and freeze.get("physics_state_changed_during_render") is False
         and isinstance(rendering, dict)
         and rendering.get("mode") == "RaytracedLighting"
+        and rendering.get("legacy_mode_enabled") is True
         and rendering.get("rt2_enabled") is False
+        and rendering.get("path_tracing_enabled") is False
         and rendering.get("antialiasing") == "FXAA"
         and rendering.get("stochastic_accumulation") is False
         and rendering.get("accumulation_renders_per_frame") == 0

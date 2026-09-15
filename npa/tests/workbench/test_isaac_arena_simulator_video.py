@@ -39,7 +39,10 @@ class _Wrapper:
 
 class _Settings:
     def __init__(self):
-        self.values = {simulator_video._PLAY_SIMULATIONS: True}
+        self.values = {
+            simulator_video._PLAY_SIMULATIONS: True,
+            **simulator_video._STARTUP_RENDER_SETTINGS,
+        }
         self.set_calls = []
 
     def get(self, key):
@@ -384,7 +387,6 @@ def test_capture_setup_preserves_existing_metric_configuration(
     assert cfg.recorders.success is success_recorder
     assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
     assert cfg.sim.render.carb_settings == {
-        "/persistent/rtx/modes/rt2/enabled": False,
         "/rtx/rendermode": "RaytracedLighting",
         "/rtx/post/aa/op": 2,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
@@ -554,17 +556,16 @@ def test_nonempty_black_annotator_does_not_become_evidence(
     assert not (tmp_path / "simulator-initial.png").exists()
 
 
-def test_capture_reasserts_stable_renderer_after_late_runtime_override(
+def test_capture_reasserts_mutable_renderer_settings_after_late_override(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
-    simulator_modules.settings.set("/persistent/rtx/modes/rt2/enabled", True)
     simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
     simulator_modules.settings.set("/rtx/post/aa/op", 1)
     simulator_modules.settings.set_calls.clear()
     env.reset()
-    assert simulator_modules.settings.set_calls[:3] == list(
-        simulator_video._RENDER_SETTINGS.items()
+    assert simulator_modules.settings.set_calls[:2] == list(
+        simulator_video._CAPTURE_RENDER_SETTINGS.items()
     )
     assert simulator_modules.settings.get("/persistent/rtx/modes/rt2/enabled") is False
     assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
@@ -590,24 +591,15 @@ def test_capture_refuses_renderer_that_rejects_required_settings(
     assert env.renders == 0
 
 
-def test_capture_refuses_implicit_rt2_remapping(
+def test_capture_refuses_wrong_startup_renderer_registration(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
-    native_set = simulator_modules.settings.set
-
-    def retain_rt2(key, value):
-        native_set(
-            key,
-            True if key == "/persistent/rtx/modes/rt2/enabled" else value,
-        )
-        if key == "/rtx/rendermode":
-            native_set(key, "RealTimePathTracing")
-
-    simulator_modules.settings.set = retain_rt2
+    simulator_modules.settings.set("/persistent/rtx/modes/rt2/enabled", True)
+    simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
     with pytest.raises(
         RuntimeError,
-        match=r'required capture settings: .*"/rtx/rendermode": "RealTimePathTracing"',
+        match=r'required capture settings: .*"/persistent/rtx/modes/rt2/enabled": true',
     ):
         env.reset()
     assert env.renders == 0

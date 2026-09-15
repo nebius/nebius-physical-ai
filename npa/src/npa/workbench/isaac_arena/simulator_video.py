@@ -14,17 +14,33 @@ from .simulator_phases import phase_scope, record_readiness
 
 _PLAY_SIMULATIONS = "/app/player/playSimulations"
 _PHYSICS_CLOCK = "native_physx_step_events_since_capture_setup"
-_RENDER_SETTINGS = {
-    # Isaac Sim 6 maps the legacy name to RT2 unless this persistent selector is
-    # disabled first.  RT2 reports ``RealTimePathTracing`` and is not the stable
-    # legacy renderer required by this evidence contract.
+_STARTUP_RENDER_SETTINGS = {
+    # Kit reads renderer availability while registering its render modes. These
+    # settings must also be present in AppLauncher's ``--kit_args``; changing
+    # them only after SimulationApp starts cannot switch the registered mode.
+    "/persistent/rtx/modes/rt/enabled": True,
     "/persistent/rtx/modes/rt2/enabled": False,
+    "/persistent/rtx/modes/pt/enabled": False,
+}
+_CAPTURE_RENDER_SETTINGS = {
     "/rtx/rendermode": "RaytracedLighting",
     # Spatial FXAA has no stochastic path-tracing grain or temporal history.
     # The separate video verifier still applies a temporal median before
     # requiring persistent, spatially coherent motion inside task progress.
     "/rtx/post/aa/op": 2,
 }
+_RENDER_SETTINGS = {**_STARTUP_RENDER_SETTINGS, **_CAPTURE_RENDER_SETTINGS}
+
+
+def legacy_rtx_kit_args() -> str:
+    """Return ordered Kit startup arguments for the stable legacy RTX mode."""
+
+    def encode(value: Any) -> str:
+        return str(value).lower() if type(value) is bool else str(value)
+
+    return " ".join(
+        f"--{key}={encode(value)}" for key, value in _RENDER_SETTINGS.items()
+    )
 
 
 class _PhysicsStepClock:
@@ -154,7 +170,7 @@ def _apply_rendering_settings(settings: Any) -> None:
     # settings are consumed. Reassert the deterministic spatial renderer at
     # the actual capture boundary and reject unsupported settings before a
     # single render is attempted.
-    for key, value in _RENDER_SETTINGS.items():
+    for key, value in _CAPTURE_RENDER_SETTINGS.items():
         settings.set(key, value)
     _rendering_settings_readback(settings)
 
@@ -166,7 +182,9 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
     actual = _rendering_settings_readback(settings)
     return {
         "mode": "RaytracedLighting",
+        "legacy_mode_enabled": True,
         "rt2_enabled": False,
+        "path_tracing_enabled": False,
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "accumulation_renders_per_frame": 0,
@@ -429,7 +447,7 @@ def configure_video_capture(env_cfg: Any) -> None:
 
     if env_cfg.recorders is None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
-    env_cfg.sim.render.carb_settings.update(_RENDER_SETTINGS)
+    env_cfg.sim.render.carb_settings.update(_CAPTURE_RENDER_SETTINGS)
     # Isaac Lab applies this native Replicator bridge after raw Carb settings;
     # make both configuration paths request the same spatial-only mode.
     env_cfg.sim.render.antialiasing_mode = "FXAA"

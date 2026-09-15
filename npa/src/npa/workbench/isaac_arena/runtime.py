@@ -48,6 +48,7 @@ from .video_evidence import verify_capture_evidence as _verify_capture_evidence
 from .ground_truth import simulator_ground_truth as _simulator_ground_truth
 from .acceptance import qualify_visual_acceptance as _qualify_visual_acceptance
 from .action_evidence import read_action_evidence as _read_action_evidence
+from .simulator_video import legacy_rtx_kit_args
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -177,7 +178,15 @@ def build_evaluation_argv(
     if request.record_video:
         # Keep the launcher preset explicit. Capture overrides it with the
         # required real-time spatial-AA settings and checks their readback.
-        argv.extend(["--rendering_mode", "balanced", "--record_viewport_video"])
+        argv.extend(
+            [
+                "--rendering_mode",
+                "balanced",
+                "--kit_args",
+                legacy_rtx_kit_args(),
+                "--record_viewport_video",
+            ]
+        )
     argv.extend(_policy_input_argv(request, local_input))
     # Upstream's subparsers require global and policy flags before the environment.
     argv.append(request.environment)

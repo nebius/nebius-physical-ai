@@ -76,7 +76,9 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
         "terminals": [_png_record(tmp_path / "terminal.png", frames[-1], 20)],
         "rendering": {
             "mode": "RaytracedLighting",
+            "legacy_mode_enabled": True,
             "rt2_enabled": False,
+            "path_tracing_enabled": False,
             "antialiasing": "FXAA",
             "stochastic_accumulation": False,
             "accumulation_renders_per_frame": 0,
