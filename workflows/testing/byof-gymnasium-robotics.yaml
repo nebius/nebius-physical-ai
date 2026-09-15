@@ -1,0 +1,57 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-gymnasium-robotics
+  description: >
+    Pre-registration workflow for the neutral Gymnasium-Robotics bootstrap.
+    The placeholder image is intentionally non-resolving; a future authorized
+    gate must inject a reviewed immutable candidate digest. Pinned upstream
+    runtime and Shadow Hand bytes are acquired only into an operator cache.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/Farama-Foundation/Gymnasium-Robotics.git"
+  repo_ref: "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: "registry.example.invalid/gymnasium-robotics:neutral-unbuilt"
+  build_command: ""
+  workload: solution-smoke
+  smoke_command: |
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
+    export NVIDIA_DRIVER_CAPABILITIES=graphics,utility
+    exec /usr/local/bin/npa-gymnasium-entrypoint run-smoke
+  solution_name: "gymnasium-robotics"
+  capability_name: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+  smoke_artifact_name: "gymnasium-robotics-smoke.json"
+  resource_profile_yaml: "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu"
+  task: "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 30
+  output_root: s3://{{config.bucket}}/oss-solutions/gymnasium-robotics
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Populate an external operator-owned cache from complete pinned runtime
+      locks, then run the genuine registered Shadow Hand smoke from a separately
+      authorized exact candidate digest on one RTX PRO 6000 Blackwell. The
+      complete private-use content locks still require an exact built-image byte
+      scan and manager-authorized qualification; the placeholder and unresolved
+      public Shadow rights do not authorize submission.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

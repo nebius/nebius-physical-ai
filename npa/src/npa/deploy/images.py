@@ -94,6 +94,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "fiftyone",
         "groot",
+        "gymnasium-robotics",
         "isaac-lab",
         "rerun-viewer",
         "sim2real-control",
@@ -148,6 +149,13 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+# Pre-registration candidates have a reviewed redistribution design but cannot become a
+# supported tool or trusted-build selection yet. Keep this inventory separate:
+# adding Gymnasium-Robotics to the canonical image/version tables would claim an
+# image tag before the withheld lock/manifest/SM120 evidence exists.
+PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(
+    {"gymnasium-robotics"}
+)
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.

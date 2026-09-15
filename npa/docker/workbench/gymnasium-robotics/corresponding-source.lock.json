@@ -1,0 +1,50 @@
+{
+  "deliveries": [
+    {
+      "artifacts": [
+        {
+          "count": 20,
+          "manifest_sha256": "57e12d6d4efa37699b851c60d7ae25ef53b3ed4a43956c80716e1a7f583e697c",
+          "official_base_url": "https://snapshot.ubuntu.com/ubuntu/20260905T000000Z",
+          "role": "signed_snapshot_indices"
+        },
+        {
+          "count": 142,
+          "manifest_sha256": "0b237d9533999d9ee81e6aa623e6e637ddaeabe80b758e965a4abc939c756d30",
+          "role": "binary_archives"
+        },
+        {
+          "count": 318,
+          "manifest_sha256": "ce96f665e5bb9c6eb4d7a3d780e7e4b17f09e809572e2851804a2599a88ae9dd",
+          "package_count": 102,
+          "role": "source_archives"
+        },
+        {
+          "count": 142,
+          "manifest_sha256": "447d0590a4b7bb21ef3e4492e74991d41f69ae51a100b1ac21355a283d54e09b",
+          "role": "installed_copyrights"
+        }
+      ],
+      "binary_component": "ubuntu-neutral-bootstrap-closure",
+      "binary_manifest_sha256": "e5e25fc8ac5570ebf90aa6a73d71243d611fba80d90e49ef2c9485bdc647a505",
+      "build_materials_sha256": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
+      "required_artifact_roles": [
+        "binary_manifest",
+        "build_materials",
+        "source_manifest"
+      ],
+      "source_manifest_sha256": "ce96f665e5bb9c6eb4d7a3d780e7e4b17f09e809572e2851804a2599a88ae9dd"
+    }
+  ],
+  "public_corresponding_source_delivery": "withheld-until-separate-publication-acceptance",
+  "reason": "All installed Ubuntu package bytes map to exact source packages and 318 artifacts in the signed immutable snapshot; publication of corresponding-source delivery remains a separate release gate.",
+  "runtime_fetched_material_excluded": [
+    "gymnasium-robotics-source",
+    "shadow-hand-assets",
+    "mujoco-and-python-wheels",
+    "operator-runtime-cache"
+  ],
+  "schema": "npa.gymnasium-robotics.baked-corresponding-source-lock.v2",
+  "scope": "candidate-image-layers-only",
+  "status": "complete"
+}
