@@ -749,7 +749,6 @@ def test_libero_preflight_preserves_the_bound_executable_profile(
         project="unit",
         infra="k8s/unit-context",
         global_config=libero_controller_config(),
-        authorization_global_config=libero_controller_config(),
         submission_backend="kubernetes",
         run_id=run_id,
         executable_profile_sha256=hashlib.sha256(before).hexdigest(),
@@ -1057,20 +1056,20 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
 
 
 @pytest.mark.parametrize(
-    "drift",
+    ("drift", "expected_check", "expected_status"),
     [
-        "qualification",
-        "authorization-bytes",
-        "authorization-digest",
-        "customer",
-        "candidate",
-        "run",
-        "backend",
-        "infra",
+        ("qualification", "qualification", "fail"),
+        ("authorization-bytes", "authorization", "needs_customer_acceptance"),
+        ("authorization-digest", "authorization", "needs_customer_acceptance"),
+        ("customer", "authorization", "needs_customer_acceptance"),
+        ("candidate", "submission_identity", "fail"),
+        ("run", "submission_identity", "fail"),
+        ("backend", "submission_identity", "fail"),
+        ("infra", "submission_identity", "fail"),
     ],
 )
 def test_libero_submission_authorization_rejects_every_identity_drift(
-    monkeypatch, drift
+    monkeypatch, drift, expected_check, expected_status
 ) -> None:
     from npa.deploy import images
     from npa.execution_preflight import (
@@ -1126,7 +1125,7 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
             "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "8" * 64
         )
 
-    with pytest.raises(ExecutionPreflightError, match="authorization"):
+    with pytest.raises(ExecutionPreflightError, match=expected_check) as failure:
         _verify_libero_submission_authorization(
             [document], process_env, run_id=run_id,
             submission_backend=(
@@ -1135,16 +1134,29 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
             infra="nebius" if drift == "infra" else "k8s/unit-context",
             executable_profile_sha256=profile_sha256,
         )
+    assert failure.value.check == expected_check
+    assert failure.value.status == expected_status
 
 
 def test_libero_self_attested_secret_names_never_reach_storage(
-    provider, configured
+    provider, configured, monkeypatch
 ) -> None:
+    from npa.deploy import images
     from npa.execution_preflight import (
         ExecutionPreflightError,
         preflight_skypilot_submission,
     )
 
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: {})
+    monkeypatch.setattr(
+        images,
+        "validate_libero_qualified_image_manifest",
+        lambda _manifest: {
+            "candidate_image": (
+                "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+            )
+        },
+    )
     run_id = "libero-self-attested-0001"
     document = libero_task("npa-byof-libero-payload")
     document["envs"]["NPA_BYOF_RUN_ID"] = run_id
@@ -1154,7 +1166,6 @@ def test_libero_self_attested_secret_names_never_reach_storage(
             project="unit",
             infra="k8s/unit-context",
             global_config=libero_controller_config(),
-            authorization_global_config=libero_controller_config(),
             submission_backend="kubernetes",
             run_id=run_id,
             executable_profile_sha256="a" * 64,

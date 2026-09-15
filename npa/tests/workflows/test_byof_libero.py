@@ -491,6 +491,75 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     assert validated == authorization
     assert observed_sha256 == hashlib.sha256(authorization_bytes).hexdigest()
 
+    forged = json.loads(authorization_bytes)
+    forged["signature"]["signature_b64"] = base64.b64encode(b"\0" * 64).decode()
+    with pytest.raises(RuntimeError, match="signature is invalid"):
+        validate_libero_customer_runtime_authorization(
+            json.dumps(forged, sort_keys=True).encode(),
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(key_file),
+            now=now,
+        )
+
+    other_public_key = Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    wrong_key_file = tmp_path / "wrong-customer-authorization-public-key.b64"
+    wrong_key_file.write_bytes(base64.b64encode(other_public_key))
+    wrong_key_file.chmod(0o600)
+    with pytest.raises(RuntimeError, match="trust root differs"):
+        validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(wrong_key_file),
+            now=now,
+        )
+
+    key_file.chmod(0o640)
+    with pytest.raises(RuntimeError, match="trust-root file is mutable"):
+        validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(key_file),
+            now=now,
+        )
+    key_file.chmod(0o600)
+
+    linked_key_file = tmp_path / "linked-customer-authorization-public-key.b64"
+    linked_key_file.symlink_to(key_file)
+    with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
+        validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            public_key_file=str(linked_key_file),
+            now=now,
+        )
+
+    monkeypatch.delenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", raising=False
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64",
+        base64.b64encode(public_key).decode(),
+    )
+    with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
+        validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=manifest,
+            run_id=run_id,
+            customer_identity_sha256="9" * 64,
+            now=now,
+        )
+
     authorization["run_id"] = "libero-other-customer-run"
     with pytest.raises(RuntimeError, match="exact customer/run contract"):
         validate_libero_customer_runtime_authorization(

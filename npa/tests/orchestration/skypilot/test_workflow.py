@@ -220,7 +220,7 @@ def test_submit_workflow_preflight_receives_exact_source_profile_identity(
     )
 
     assert observed["run_id"] == "libero-exact-profile-0001"
-    assert observed["authorization_global_config"] == {}
+    assert "authorization_global_config" not in observed
     assert observed["submission_backend"] == "kubernetes"
     assert observed["executable_profile_sha256"] == hashlib.sha256(
         yaml_bytes

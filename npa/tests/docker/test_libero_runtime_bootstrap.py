@@ -614,6 +614,37 @@ def test_customer_authorization_payload_cannot_select_its_trust_root(tmp_path) -
         )
 
 
+def test_customer_authorization_rejects_descriptor_metadata_race(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    authorization_path = Path(args.authorization)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    original_fstat = module.os.fstat
+    first_fstat = True
+
+    def racing_fstat(descriptor):
+        nonlocal first_fstat
+        metadata = original_fstat(descriptor)
+        if first_fstat:
+            first_fstat = False
+            os.utime(
+                authorization_path,
+                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+            )
+        return metadata
+
+    monkeypatch.setattr(module.os, "fstat", racing_fstat)
+
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization missing"):
+        module._validate_customer_authorization(
+            authorization_path,
+            args.authorization_sha256,
+            manifest,
+            module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+        )
+
+
 def test_customer_trust_root_rejects_descriptor_metadata_race(
     monkeypatch, tmp_path
 ) -> None:

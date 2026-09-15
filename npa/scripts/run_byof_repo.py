@@ -168,21 +168,31 @@ def _libero_customer_authorization(
         )
     path = Path(path_value).expanduser()
     try:
-        metadata = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError as exc:
         raise LiberoCustomerAcceptanceRequired(
             libero_customer_acceptance_notification(image_manifest)
         ) from exc
+    try:
+        before = os.fstat(descriptor)
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            authorization_bytes = stream.read(1024 * 1024 + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
     if (
-        not stat.S_ISREG(metadata.st_mode)
-        or path.is_symlink()
-        or metadata.st_uid != os.getuid()
-        or metadata.st_mode & 0o077
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or len(authorization_bytes) > 1024 * 1024
+        or before.st_size != len(authorization_bytes)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
         raise ValueError(
-            "LIBERO customer authorization must be an owner-private regular file"
+            "LIBERO customer authorization must be a stable owner-private regular file"
         )
-    authorization_bytes = path.read_bytes()
     try:
         authorization_status = json.loads(authorization_bytes).get("status")
     except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
@@ -209,7 +219,7 @@ def _libero_customer_authorization(
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
-    return path.resolve(), authorization_bytes, observed
+    return path, authorization_bytes, observed
 
 
 def _validate_libero_identity(args: argparse.Namespace) -> None:

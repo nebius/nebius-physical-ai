@@ -239,17 +239,32 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _is_private_regular_file(path: Path) -> bool:
+def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
+    """Read one stable owner-private file through a no-follow descriptor."""
+
     try:
-        info = path.lstat()
-    except OSError:
-        return False
-    return (
-        stat.S_ISREG(info.st_mode)
-        and not path.is_symlink()
-        and info.st_uid == os.geteuid()
-        and stat.S_IMODE(info.st_mode) & 0o077 == 0
-    )
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise CustomerAcceptanceRequired("authorization_missing") from exc
+    try:
+        before = os.fstat(descriptor)
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            payload = stream.read(limit + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or len(payload) > limit
+        or before.st_size != len(payload)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise CustomerAcceptanceRequired("authorization_missing")
+    return payload
 
 
 def _validate_manifest(
@@ -1031,12 +1046,16 @@ def _validate_customer_authorization(
 
     if not _is_hex(expected_sha256, 64):
         raise CustomerAcceptanceRequired("authorization_missing")
-    if not _is_private_regular_file(path):
-        raise CustomerAcceptanceRequired("authorization_missing")
-    observed_sha256 = _sha256(path)
+    authorization_bytes = _read_private_regular_bytes(path, limit=1024 * 1024)
+    observed_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
     if observed_sha256 != expected_sha256:
         raise BootstrapRefusal("customer authorization hash does not match")
-    authorization = _load_json(path)
+    try:
+        authorization = json.loads(authorization_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapRefusal("customer authorization is not valid JSON") from exc
+    if not isinstance(authorization, dict):
+        raise BootstrapRefusal("customer authorization is not an object")
     signature_record = authorization.get("signature")
     expected_keys = {
         "schema",
@@ -2272,7 +2291,7 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
     _storage_authorization(output_prefix, run_id, endpoint)
-    root = Path(f"/workspace/byof-runs/{run_id}")
+    root = _run_output_root(run_id)
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     summary = {
         "status": "success" if smoke_exit_code == 0 else "failed",
@@ -2289,12 +2308,16 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
         "created_unix": round(datetime.now(timezone.utc).timestamp(), 3),
     }
     summary_payload = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
-    summary_fd = os.open(
-        "npa_byof_summary.json",
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
-        dir_fd=root_fd,
-    )
+    try:
+        summary_fd = os.open(
+            "npa_byof_summary.json",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+            dir_fd=root_fd,
+        )
+    except BaseException:
+        os.close(root_fd)
+        raise
     with os.fdopen(summary_fd, "wb") as stream:
         stream.write(summary_payload)
 

@@ -207,6 +207,33 @@ def test_libero_denied_customer_authorization_notifies_without_validation(
     assert notification["reason"] == "authorization_denied"
 
 
+def test_libero_customer_authorization_rejects_descriptor_metadata_race(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, contract = _libero_contract_args(tmp_path)
+    args = module._parse_args(["--run-id", "libero-managed-route", *arguments])
+    authorization_path = Path(args.libero_customer_runtime_authorization_file)
+    original_fstat = module.os.fstat
+    first_fstat = True
+
+    def racing_fstat(descriptor):
+        nonlocal first_fstat
+        metadata = original_fstat(descriptor)
+        if first_fstat:
+            first_fstat = False
+            os.utime(
+                authorization_path,
+                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+            )
+        return metadata
+
+    monkeypatch.setattr(module.os, "fstat", racing_fstat)
+
+    with pytest.raises(ValueError, match="stable owner-private regular file"):
+        module._libero_customer_authorization(args, contract["image_manifest"])
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("run_byof_repo", SCRIPT_PATH)
     assert spec and spec.loader

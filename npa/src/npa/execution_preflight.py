@@ -593,8 +593,23 @@ def _verify_libero_submission_authorization(
             submission_backend=submission_backend,
             infra=infra,
         )
-        authorization, authorization_sha256, qualification = (
-            _libero_submission_authorization(process_env, run_id)
+    except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        raise ExecutionPreflightError(
+            "submission_identity",
+            "LIBERO submission identity is invalid",
+        ) from exc
+    try:
+        repository_manifest, qualification = _libero_submission_qualification()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise ExecutionPreflightError(
+            "qualification",
+            "LIBERO image qualification is invalid",
+        ) from exc
+    try:
+        authorization, authorization_sha256 = _libero_submission_authorization(
+            process_env,
+            run_id,
+            image_manifest=repository_manifest,
         )
     except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
         raise ExecutionPreflightError(
@@ -626,7 +641,7 @@ def _verify_libero_submission_authorization(
     }
     if candidate_images != {qualification.get("candidate_image")}:
         raise ExecutionPreflightError(
-            "authorization",
+            "submission_identity",
             "LIBERO executable submission differs from the qualified candidate image",
         )
     return authorization
@@ -657,10 +672,26 @@ def _validate_libero_submission_identity(
         raise RuntimeError("LIBERO executable profile selects a different run")
 
 
+def _libero_submission_qualification() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate repository qualification separately from customer acceptance."""
+
+    from npa.deploy.images import (
+        libero_image_manifest,
+        validate_libero_qualified_image_manifest,
+    )
+
+    repository_manifest = libero_image_manifest()
+    qualification = validate_libero_qualified_image_manifest(repository_manifest)
+    return repository_manifest, qualification
+
+
 def _libero_submission_authorization(
-    process_env: Mapping[str, str], run_id: str
-) -> tuple[dict[str, Any], str, dict[str, Any]]:
-    """Validate the repository qualification and customer authorization."""
+    process_env: Mapping[str, str],
+    run_id: str,
+    *,
+    image_manifest: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Validate customer acceptance against an independently qualified image."""
 
     authorization_bytes = base64.b64decode(
         process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""),
@@ -668,16 +699,12 @@ def _libero_submission_authorization(
     )
     from npa.deploy.images import (
         LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
-        libero_image_manifest,
         validate_libero_customer_runtime_authorization,
-        validate_libero_qualified_image_manifest,
     )
 
-    repository_manifest = libero_image_manifest()
-    qualification = validate_libero_qualified_image_manifest(repository_manifest)
     authorization, authorization_sha256 = validate_libero_customer_runtime_authorization(
         authorization_bytes,
-        image_manifest=repository_manifest,
+        image_manifest=image_manifest,
         run_id=run_id,
         customer_identity_sha256=process_env.get(
             "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
@@ -686,7 +713,7 @@ def _libero_submission_authorization(
             LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
         ),
     )
-    return authorization, authorization_sha256, qualification
+    return authorization, authorization_sha256
 
 
 def _verify_libero_output_storage_authorization(
@@ -856,7 +883,6 @@ def preflight_skypilot_submission(
     extra_env: Mapping[str, str] | None = None,
     target: ExecutionTarget | None = None,
     global_config: Mapping[str, Any] | None = None,
-    authorization_global_config: Mapping[str, Any] | None = None,
     submission_backend: str = "",
     sky_bin: str = "",
     cwd: str | None = None,
@@ -870,9 +896,6 @@ def preflight_skypilot_submission(
     """
     process_env = dict(os.environ)
     process_env.update(extra_env or {})
-    # The caller owns controller-config integrity separately. Customer terms
-    # authorization intentionally cannot bind infrastructure configuration.
-    del authorization_global_config
     if process_env.get("SKYPILOT_CONFIG"):
         raise ExecutionPreflightError("worker_environment", "internal SkyPilot config override prevents verification of the effective task environment", status="unknown")
     if cwd is not None or process_env.get("SKYPILOT_PROJECT_CONFIG"):

@@ -273,6 +273,25 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         "required": True,
         "credentials_establish_acceptance": False,
     }
+    credential_paths: list[tuple[str, ...]] = []
+
+    def collect_credential_paths(value: object, path: tuple[str, ...] = ()) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = (*path, str(key))
+                if "credential" in str(key).lower():
+                    credential_paths.append(child_path)
+                collect_credential_paths(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                collect_credential_paths(child, (*path, str(index)))
+        elif "credential" in str(value).lower():
+            credential_paths.append(path)
+
+    collect_credential_paths(manifest)
+    assert credential_paths == [
+        ("customer_runtime_authorization", "credentials_establish_acceptance")
+    ]
     assert "HF_TOKEN" not in serialized
     assert "NGC_API_KEY" not in serialized
     assert all(

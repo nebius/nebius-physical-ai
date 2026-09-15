@@ -26,6 +26,19 @@ and group/world permissions fail closed. The public key may be baked into a
 qualified neutral image. Signing material, customer identity, credentials,
 acceptance records, terms payloads, and runtime payloads never are.
 
+The authenticated control plane supplies these inputs; they are not customer
+acceptance switches and must not be synthesized locally:
+
+| Input | Boundary |
+| --- | --- |
+| `NPA_AUTHENTICATED_CUSTOMER_IDENTITY_SHA256` | Host-only hash of the authenticated customer identity. The BYOF host validates the signed record against it. |
+| `--libero-customer-runtime-authorization-file` | Owner-private, short-lived signed authorization for this customer and run. Missing or denied input returns the structured terms notification. |
+| `NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE` | Owner-private host trust root used to verify the control-plane signature. A caller-provided key or inline environment key cannot replace it. |
+| `NPA_LIBERO_CUSTOMER_IDENTITY_SHA256` | Verified identity hash forwarded to the isolated runtime only after host validation; customers do not set it directly. |
+
+The authorization file contains no access credential. HF/NGC credentials are
+separate upstream-access inputs and never establish terms acknowledgement.
+
 ## Six independent boundaries
 
 | Boundary | Phase A contract |

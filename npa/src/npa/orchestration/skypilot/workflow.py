@@ -814,7 +814,6 @@ class _PreparedWorkflowSubmission:
     config_path: Path
     sky_executable: str
     global_config: dict[str, Any]
-    authorization_global_config: dict[str, Any]
     source_profile_bytes: bytes
     run_id: str
     submission_backend: str
@@ -822,9 +821,9 @@ class _PreparedWorkflowSubmission:
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(authorization_global_config, controller_backend, infra):
+def _submission_global_config(runtime, controller_backend, infra):
     config = _controller_config_for_execution(
-        authorization_global_config,
+        _load_base_config(runtime.global_config_path),
         controller_backend=controller_backend, infra=infra,
     )
     context = _controller_region_from_infra(infra, controller_backend)
@@ -851,7 +850,6 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
         selected, _report, injected = _execution_preflight(
             prepared.docs, project=project, infra=infra, extra_env=env,
             target=target, global_config=prepared.global_config,
-            authorization_global_config=prepared.authorization_global_config,
             submission_backend=prepared.submission_backend,
             run_id=prepared.run_id,
             executable_profile_sha256=executable_profile_sha256,
@@ -892,14 +890,13 @@ def _prepare_workflow_submission(
         rendered.write_bytes(source_profile_bytes)
         _chmod_owner_only(rendered)
         executable = str(ensure_skypilot_version(runtime.sky_bin))
-        authorization_global_config = _load_base_config(runtime.global_config_path)
-        global_config = _submission_global_config(authorization_global_config, controller_backend, infra)
+        global_config = _submission_global_config(runtime, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
         generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
         _chmod_owner_only(generated)
         prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
                                                 generated, executable, global_config,
-                                                authorization_global_config, source_profile_bytes,
+                                                source_profile_bytes,
                                                 run_id, controller_backend)
         _preflight_prepared_submission(prepared, project=project, infra=infra,
                                       extra_env=extra_env, target=execution_target)

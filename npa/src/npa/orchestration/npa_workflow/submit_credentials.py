@@ -64,19 +64,19 @@ def resolve_submit_credentials(
         values = tuple(str(process_env.get(name) or "") for name in credential_names)
         if not all(values):
             raise ValueError(
-                "Manager-authorized storage credentials require one complete "
+                "Control-plane-authorized storage credentials require one complete "
                 "process-environment access/secret/session triplet"
             )
         environment_endpoint = storage_endpoint_from_environment(process_env)
         if not environment_endpoint:
             raise ValueError(
-                "Manager-authorized storage credentials require a process-environment endpoint"
+                "Control-plane-authorized storage credentials require a process-environment endpoint"
             )
         if explicit_endpoint and storage_endpoint_url(explicit_endpoint) != storage_endpoint_url(
             environment_endpoint
         ):
             raise ValueError(
-                "Explicit storage endpoint differs from manager-authorized environment"
+                "Explicit storage endpoint differs from control-plane-authorized environment"
             )
         requested_values = {
             name: str(process_env.get(name) or "")
@@ -101,8 +101,8 @@ def resolve_submit_credentials(
             secret_values=requested_values,
             missing=missing,
             provenance={
-                "credentials": "manager-authorized.environment",
-                "endpoint": "manager-authorized.environment",
+                "credentials": "control-plane-authorized.environment",
+                "endpoint": "control-plane-authorized.environment",
                 "bucket": "environment" if bucket else "missing",
             },
         )
