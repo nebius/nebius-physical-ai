@@ -962,8 +962,8 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
     lines = [
         f"**Workbench tool catalog** ({count} toolRefs — same surface as `npa.workflow` YAML `toolRef`):",
         "- Chat can **draft / validate / plan** YAML for these tools.",
-        "- Agent **Submit YAML** returns a **scheduler plan only** (not SkyPilot/K8s execute).",
-        "- Real execution: `npa workbench workflow run-spec <spec.yaml> --execute` on the operator machine.",
+        "- Agent UI **Prepare run** validates and plans first; a separate single-use confirmation launches the durable Kubernetes runtime.",
+        "- Operator execution remains available through `npa workbench workflow submit <spec.yaml> --runtime`.",
         "",
         "**Families:**",
     ]
@@ -980,7 +980,7 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
             lines.append(f"- `{ref}`")
         if count > sample_size:
             lines.append(f"- … and **{count - sample_size}** more via `GET /api/tools`")
-    lines.append("- Invoke tools via `npa workbench <tool> …` or npa.workflow specs on your operator machine.")
+    lines.append("- Invoke tools via `npa workbench <tool> …`, confirmed Agent UI workflow runs, or npa.workflow specs on your operator machine.")
     return "\n".join(lines)
 
 
@@ -1130,7 +1130,7 @@ def format_component_capabilities(tool_refs: list[str]) -> str:
             "- **LeRobot / GR00T / Genesis**: policy and sim backends.",
             "- Ask by name (`SONIC capabilities`, `what can lerobot do?`) for catalog-backed answers.",
             f"- **Current toolRef count**: `{len(tool_refs)}`",
-            "- Chat drafts YAML; operator CLI executes with `run-spec --execute` / SkyPilot submit.",
+            "- Chat drafts YAML; the Agent UI can execute it after an explicit confirmation, and the operator CLI remains available for direct control.",
         ]
     )
 
@@ -1144,17 +1144,17 @@ def format_workflow_execute_guidance() -> str:
             "| Draft YAML | Yes (`create_*` intents + Workflow panel) | Yes (`author-npa-workflow` / hand-edit) |",
             "| Validate | Yes (`POST /api/workflows/validate`) | `npa workbench workflow validate-spec` |",
             "| Plan | Yes (`POST /api/workflows/plan`) | `npa workbench workflow plan-spec` |",
-            "| Scheduler plan submit | Yes (`POST /api/workflows/submit` = **plan-only**) | `run-spec --plan-only --scheduler-plan` |",
-            "| Execute tool steps on K8s | No (not from agent chat) | `run-spec --execute` / SkyPilot `submit` |",
+            "| Scheduler plan | Yes (`POST /api/workflows/submit` without execution intent) | `run-spec --plan-only --scheduler-plan` |",
+            "| Execute tool steps on K8s | Yes, after a browser single-use confirmation | SkyPilot `submit --runtime` |",
             "| Direct `npa workbench <tool>` | Guidance only | Full CLI surface |",
             "",
             "**Operator execute example:**",
             "```bash",
             "npa/.venv/bin/npa workbench workflow validate-spec /tmp/spec.yaml --json",
             "npa/.venv/bin/npa workbench workflow plan-spec /tmp/spec.yaml --run-id agent-run --json",
-            "npa/.venv/bin/npa workbench workflow run-spec /tmp/spec.yaml --execute --json",
+            "npa/.venv/bin/npa workbench workflow submit /tmp/spec.yaml --runtime --json",
             "```",
-            "- Use chat to author/validate YAML, then run the CLI on the operator/dev VM for real workloads.",
+            "- Use chat to author/validate YAML, then choose **Prepare run** and confirm in the Agent UI, or execute from the operator/dev VM.",
         ]
     )
 

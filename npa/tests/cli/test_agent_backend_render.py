@@ -25,6 +25,7 @@ import pytest
 from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES
 from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_viewer_runtime import _sha256_file
+from npa.cli.agent_workflow import generate_workflow_yaml
 
 
 def test_sha256_file_streams_recording_without_read_bytes(
@@ -1542,7 +1543,17 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
-        lambda _project: {"has_infra": True, "configured": ["existing"]},
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": "/tmp/kubeconfig",
+                }
+            ],
+        },
     )
 
     def provision(project, cluster_name, **kwargs):
@@ -1572,12 +1583,248 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     assert provisions == [
         {
             "project": "demo",
-            "cluster_name": "npa-cluster",
+            "cluster_name": "existing-cluster",
             "dry_run": True,
             "validate": False,
             "skip_s3": True,
         }
     ]
+
+
+def test_agent_execution_resolves_catalog_secret_hints(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_secret_hints_backend"
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        generate_workflow_yaml("token-factory-deployment-review"), encoding="utf-8"
+    )
+
+    assert module._agent_workflow_secret_envs(
+        yaml_path, run_id="catalog-secret-hints"
+    ) == ("NEBIUS_TOKEN_FACTORY_KEY",)
+
+
+def test_workflow_execution_requires_and_uses_action_bound_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_execute_backend"
+    )
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    commands: list[tuple[list[str], object, bool]] = []
+    issued: list[tuple[dict, str]] = []
+    consumed: list[tuple[str, dict]] = []
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "confirmed-workflow"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "steps": [{"state": "generate"}]},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": "/tmp/kubeconfig",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(
+        module, "_agent_workflow_requires_staged_source", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_secret_envs",
+        lambda *_args, **_kwargs: ("NEBIUS_TOKEN_FACTORY_KEY",),
+    )
+
+    def run_npa(args, *, timeout_s=300, expect_json=True):
+        commands.append((list(args), timeout_s, expect_json))
+        if "run-spec" in args:
+            return {"ok": True, "steps": [{"state": "generate"}]}
+        if args[:3] == ["workbench", "workflow", "stage-src"]:
+            return {}
+        if args[:2] == ["skypilot", "bootstrap"]:
+            return {}
+        if args[:2] == ["skypilot", "bind-controller"]:
+            return {}
+        assert args[:3] == ["workbench", "workflow", "submit"]
+        return {
+            "run_id": "confirmed-run",
+            "workflow": "confirmed-workflow",
+            "status": "SUCCEEDED",
+            "steps": [{"state": "generate"}],
+        }
+
+    monkeypatch.setattr(module, "_run_agent_npa_json", run_npa)
+    monkeypatch.setattr(module, "_load_state", lambda: dict(state))
+
+    def save_state(value):
+        state.clear()
+        state.update(value)
+
+    monkeypatch.setattr(module, "_save_state", save_state)
+
+    def mutate_state(fn):
+        current = dict(state)
+        result = fn(current)
+        save_state(current)
+        return result
+
+    monkeypatch.setattr(module, "_mutate_state", mutate_state)
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    class InlineThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self) -> None:
+            self.target()
+
+    monkeypatch.setattr(module.threading, "Thread", InlineThread)
+
+    def issue_token(action, digest):
+        issued.append((action, digest))
+        state["agent_act"] = {
+            "confirm_token": "single-use-token",
+            "confirm_digest": digest,
+            "pending_action": action,
+        }
+        return "single-use-token"
+
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", issue_token)
+    monkeypatch.setattr(
+        module,
+        "_consume_workflow_confirmation",
+        lambda *, confirm_token, expected_action: consumed.append(
+            (confirm_token, expected_action)
+        ),
+    )
+
+    prepared = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "prepare_execution": True,
+        }
+    )
+
+    assert prepared["needs_confirmation"] is True
+    assert prepared["submit_mode"] == "agent-live-infra-confirm-required"
+    assert prepared["proposed_action"]["action"] == "execute_workflow"
+    assert prepared["proposed_action"]["kubernetes_context"] == "existing-context"
+    assert issued and issued[0][0] == prepared["proposed_action"]
+    assert state["agent_act"]["confirm_token"] == "single-use-token"
+    assert all("submit" not in command for command, _timeout, _json in commands)
+
+    completed = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "execute": True,
+            "confirm_token": "single-use-token",
+        }
+    )
+
+    assert consumed == [("single-use-token", prepared["proposed_action"])]
+    submit_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "submit"]
+    ]
+    assert len(submit_commands) == 1
+    assert "--runtime" in submit_commands[0][0]
+    assert "--infra" in submit_commands[0][0]
+    assert "k8s/existing-context" in submit_commands[0][0]
+    assert "--secret-env" in submit_commands[0][0]
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in submit_commands[0][0]
+    assert "--isolated-config-dir" not in submit_commands[0][0]
+    assert submit_commands[0][0][-2:] == ["--output-format", "json"]
+    assert submit_commands[0][1] is None
+    assert submit_commands[0][2] is True
+    source_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "stage-src"]
+    ]
+    assert source_commands == [
+        (
+            [
+                "workbench",
+                "workflow",
+                "stage-src",
+                "--project",
+                "demo",
+                "--run-id",
+                "confirmed-run-source",
+            ],
+            900,
+            False,
+        )
+    ]
+    assert commands.index(source_commands[0]) < commands.index(
+        (["skypilot", "bootstrap", "--save"], 600, False)
+    )
+    assert (["skypilot", "bootstrap", "--save"], 600, False) in commands
+    assert (
+        [
+            "skypilot",
+            "bind-controller",
+            "--project",
+            "demo",
+            "--context",
+            "existing-context",
+            "--json",
+        ],
+        300,
+        False,
+    ) in commands
+    assert completed["submit_mode"] == "agent-live-infra-executing"
+    assert completed["execution"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "RUNNING",
+        "state": "running",
+        "lifecycle_state": "",
+        "submission_state": "accepted",
+        "steps": 1,
+    }
+    assert state["workflow_executions"]["confirmed-run"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "SUCCEEDED",
+        "state": "succeeded",
+        "lifecycle_state": "",
+        "submission_state": "",
+        "steps": 1,
+        "submitted_at": state["workflow_executions"]["confirmed-run"]["submitted_at"],
+        "started_at": state["workflow_executions"]["confirmed-run"]["started_at"],
+        "finished_at": state["workflow_executions"]["confirmed-run"]["finished_at"],
+        "error": "",
+    }
+    status = module.workflow_execution_status("confirmed-run")
+    assert status["ok"] is True
+    assert status["execution"]["state"] == "succeeded"
+    assert status["execution"]["status"] == "SUCCEEDED"
 
 
 @pytest.mark.parametrize(

@@ -44,6 +44,10 @@ from npa.cli.agent_artifact_sources import (
     resolve_agent_storage_credentials,
     resolve_configured_artifact_storage_credentials as _resolve_configured_artifact_storage_credentials,
 )
+from npa.cli.agent_storage import (
+    resolve_deploy_storage_credentials as _resolve_deploy_storage_credentials_impl,
+    storage_credentials_allow_writes as _storage_credentials_allow_writes_impl,
+)
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _load_agent_artifact_sources_file,
     _load_agent_llm_config_file,
@@ -549,29 +553,14 @@ def _storage_credentials_allow_writes(
     prefix: str = "",
 ) -> bool:
     """Return True when credentials can list, write, and delete in the bucket."""
-    bucket_name = str(bucket or "").strip()
-    if not bucket_name:
-        return False
-    endpoint_url = str(endpoint or "").strip()
-    if not endpoint_url:
-        endpoint_url = (
-            f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
-        )
-    from npa.clients.storage_validation import probe_storage_write
-
-    normalized_prefix = str(prefix or "").strip().strip("/")
-    probe_prefix = "/".join(
-        part for part in (normalized_prefix, "npa-agent/preflight") if part
+    return _storage_credentials_allow_writes_impl(
+        bucket=bucket,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        prefix=prefix,
     )
-    probe = probe_storage_write(
-        bucket=bucket_name,
-        endpoint_url=endpoint_url,
-        access_key_id=str(access_key or "").strip(),
-        secret_access_key=str(secret_key or "").strip(),
-        region=str(region or "").strip(),
-        prefix=probe_prefix,
-    )
-    return bool(probe.ok)
 
 
 def _resolve_deploy_storage_credentials(
@@ -581,180 +570,18 @@ def _resolve_deploy_storage_credentials(
     project_alias: str = "",
     emit_status: bool = True,
 ) -> dict[str, str]:
-    """Resolve the exact writable-storage credentials agent deploy will use.
-
-    Project-scoped credentials are evaluated before shared and bootstrap
-    credentials. This is the same health-verified decision used by preflight,
-    setup, fresh-setup, and refresh; IAM access-key inventory is only reached
-    later when no configured candidate works and a caller explicitly supplies
-    freshly bootstrapped credentials.
-    """
-    candidate = dict(bootstrap_creds or {})
-    from npa.clients.credentials import load_credentials
-
-    project_name = str(project_alias or "").strip()
-    if project_name:
-        try:
-            project_storage = resolve_project_storage(
-                project_name,
-                include_shared_credentials=False,
-            )
-        except ConfigError:
-            project_storage = None
-        if project_storage is not None:
-            project_bucket = str(project_storage.checkpoint_bucket or "").strip()
-            project_prefix = ""
-            if project_bucket.startswith("s3://"):
-                rest = project_bucket[len("s3://") :]
-                project_bucket, _sep, project_prefix = rest.partition("/")
-                project_prefix = project_prefix.strip("/")
-            project_endpoint = str(
-                project_storage.endpoint_url or f"https://storage.{region}.nebius.cloud"
-            ).strip()
-            project_access_key = str(project_storage.aws_access_key_id or "").strip()
-            project_secret_key = str(
-                project_storage.aws_secret_access_key or ""
-            ).strip()
-            if project_bucket and _storage_credentials_allow_writes(
-                bucket=project_bucket,
-                endpoint=project_endpoint,
-                access_key=project_access_key,
-                secret_key=project_secret_key,
-                region=region,
-                prefix=project_prefix,
-            ):
-                if emit_status:
-                    typer.echo(
-                        "  Using health-verified project artifact storage credentials."
-                    )
-                candidate["s3_bucket"] = project_bucket
-                candidate["s3_prefix"] = project_prefix
-                candidate["s3_endpoint"] = project_endpoint
-                candidate["nebius_api_key"] = project_access_key
-                candidate["nebius_secret_key"] = project_secret_key
-                return candidate
-    # With no selected project, resolve_project_storage(None) is the canonical
-    # shared/default storage view and may combine the configured bucket with the
-    # shared credential file. Never use this view for an explicit project: that
-    # path above deliberately disables shared credential injection first.
-    if not project_name:
-        try:
-            configured = resolve_project_storage(None)
-        except ConfigError:
-            configured = None
-        configured_bucket = str(
-            getattr(configured, "checkpoint_bucket", "") or ""
-        ).strip()
-        configured_prefix = ""
-        if configured_bucket.startswith("s3://"):
-            rest = configured_bucket[len("s3://") :]
-            configured_bucket, _sep, configured_prefix = rest.partition("/")
-            configured_prefix = configured_prefix.strip("/")
-        configured_endpoint = str(
-            getattr(configured, "endpoint_url", "")
-            or f"https://storage.{region}.nebius.cloud"
-        ).strip()
-        configured_access_key = str(
-            getattr(configured, "aws_access_key_id", "") or ""
-        ).strip()
-        configured_secret_key = str(
-            getattr(configured, "aws_secret_access_key", "") or ""
-        ).strip()
-        if configured_bucket and _storage_credentials_allow_writes(
-            bucket=configured_bucket,
-            endpoint=configured_endpoint,
-            access_key=configured_access_key,
-            secret_key=configured_secret_key,
-            region=region,
-            prefix=configured_prefix,
-        ):
-            if emit_status:
-                typer.echo(
-                    "  Using health-verified configured artifact storage credentials."
-                )
-            candidate["s3_bucket"] = configured_bucket
-            candidate["s3_prefix"] = configured_prefix
-            candidate["s3_endpoint"] = configured_endpoint
-            candidate["nebius_api_key"] = configured_access_key
-            candidate["nebius_secret_key"] = configured_secret_key
-            return candidate
-    # Never record a host-level shared bucket as an explicit project's remote
-    # backend; keep immutable journal ownership exact.
-    if not project_name:
-        shared = load_credentials(environ={})
-        shared_bucket = str(shared.s3_bucket or "").strip()
-        shared_prefix = ""
-        if shared_bucket.startswith("s3://"):
-            rest = shared_bucket[len("s3://") :]
-            shared_bucket, _sep, shared_prefix = rest.partition("/")
-            shared_prefix = shared_prefix.strip("/")
-        shared_endpoint = str(
-            shared.s3_endpoint or f"https://storage.{region}.nebius.cloud"
-        ).strip()
-        shared_access_key = str(shared.s3_access_key_id or "").strip()
-        shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-        if shared_bucket and _storage_credentials_allow_writes(
-            bucket=shared_bucket,
-            endpoint=shared_endpoint,
-            access_key=shared_access_key,
-            secret_key=shared_secret_key,
-            region=region,
-            prefix=shared_prefix,
-        ):
-            if emit_status:
-                typer.echo(
-                    "  Using health-verified shared artifact storage credentials."
-                )
-            candidate["s3_bucket"] = shared_bucket
-            candidate["s3_prefix"] = shared_prefix
-            candidate["s3_endpoint"] = shared_endpoint
-            candidate["nebius_api_key"] = shared_access_key
-            candidate["nebius_secret_key"] = shared_secret_key
-            return candidate
-
-    bucket = str(candidate.get("s3_bucket", "")).strip()
-    endpoint = str(candidate.get("s3_endpoint", "")).strip()
-    access_key = str(candidate.get("nebius_api_key", "")).strip()
-    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
-    if _storage_credentials_allow_writes(
-        bucket=bucket,
-        endpoint=endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
+    """Resolve the exact writable-storage credentials Agent deploy will use."""
+    return _resolve_deploy_storage_credentials_impl(
         region=region,
-        prefix=str(candidate.get("s3_prefix", "")),
-    ):
-        return candidate
-    if project_name:
-        try:
-            saved_state = resolve_terraform_state(project_name)
-        except ConfigError:
-            saved_state = None
-        if saved_state is not None:
-            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
-            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
-            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
-            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
-            if _storage_credentials_allow_writes(
-                bucket=saved_bucket,
-                endpoint=saved_endpoint,
-                access_key=saved_access_key,
-                secret_key=saved_secret_key,
-                region=region,
-            ):
-                if emit_status:
-                    typer.echo(
-                        "  Bootstrap S3 key has no data-plane access; falling back "
-                        "to saved project terraform_state credentials."
-                    )
-                candidate["s3_bucket"] = saved_bucket
-                candidate["s3_endpoint"] = saved_endpoint
-                candidate["nebius_api_key"] = saved_access_key
-                candidate["nebius_secret_key"] = saved_secret_key
-                return candidate
-    raise AgentStorageCredentialError(
-        "unable to verify writable S3 credentials for deploy; "
-        "configure object-storage credentials with data-plane access before deploying the agent"
+        bootstrap_creds=bootstrap_creds,
+        project_alias=project_alias,
+        emit_status=emit_status,
+        resolve_project_storage=resolve_project_storage,
+        resolve_terraform_state=resolve_terraform_state,
+        config_error=ConfigError,
+        can_write=_storage_credentials_allow_writes,
+        emit=typer.echo,
+        credential_error=AgentStorageCredentialError,
     )
 
 
@@ -1562,6 +1389,7 @@ def _default_state() -> dict:
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
+        "workflow_executions": {{}},
         "gpu_allocation_fallback": {{}},
         "chat_history": [],
         "active_chat_session_id": "default",
@@ -1608,6 +1436,8 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["sim_viz_runs"] = {{}}
     if not isinstance(merged.get("sim2real_runs"), dict):
         merged["sim2real_runs"] = {{}}
+    if not isinstance(merged.get("workflow_executions"), dict):
+        merged["workflow_executions"] = {{}}
     if not isinstance(merged.get("active_run_id"), str):
         merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
@@ -1638,6 +1468,7 @@ def _normalize_loaded_state(data: dict | None) -> dict:
             "latest_submit",
             "workflow_draft",
             "workflow_submit",
+            "workflow_executions",
         ):
             merged[key] = clean[key]
     return merged
@@ -1674,7 +1505,11 @@ def _save_state(state: dict) -> None:
         # preserve the latest atomic namespace when one of those handlers
         # finishes with a stale snapshot after a simulator restart.
         latest = _load_state_unlocked()
-        preserved = preserve_latest_namespaces(state, latest, ("leisaac",))
+        # Confirmation gates are persisted by the atomic mutation helper. A
+        # concurrent status/viewer request may still complete with an older
+        # load-work-save snapshot, so preserve the latest gate just as we do
+        # the independently updated LeIsaac selection namespace.
+        preserved = preserve_latest_namespaces(state, latest, ("leisaac", "agent_act"))
         state.clear()
         state.update(preserved)
         _save_state_unlocked(state)
@@ -3288,6 +3123,11 @@ from agent_backend.semantic_router import classify_intent_semantic
 # Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
 # and imported here) rather than string-substituted into this f-string.
 from agent_backend.memory import RunMemory, JsonFileStore
+from agent_backend.workflow_execution import (
+    execute_workflow_yaml as _execute_workflow_yaml,
+    workflow_requires_staged_source as _workflow_requires_staged_source,
+    workflow_secret_envs as _workflow_secret_envs,
+)
 # Blueprint Phases H/I: retrieval + observability are also shipped modules.
 from agent_backend import retrieval as _retrieval
 from agent_backend import trace as _agent_tracing
@@ -3437,6 +3277,13 @@ def _agent_command_env() -> dict:
     env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
     env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
     env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
+    # A dedicated agent VM owns a staged NPA kubeconfig for its one selected
+    # project.  Give every child command that exact file up front: otherwise the
+    # isolated SkyPilot API can be verified with an empty KUBECONFIG and later
+    # reject the workflow submit after NPA adopts the context dynamically.
+    kubeconfig = _agent_exact_kubeconfig()
+    if kubeconfig:
+        env["KUBECONFIG"] = kubeconfig
     if Path("/mnt/cloud-metadata/token").is_file():
         env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
@@ -3460,6 +3307,28 @@ def _agent_command_env() -> dict:
                 if env.get("TF_VAR_ssh_public_key"):
                     break
     return env
+
+
+def _agent_exact_kubeconfig() -> str:
+    # Return the agent-owned kubeconfig for its configured exact context.
+
+    try:
+        config = _load_agent_config_yaml()
+        alias = _agent_project_alias("")
+        projects = config.get("projects") if isinstance(config, dict) else {{}}
+        project = projects.get(alias) if isinstance(projects, dict) else {{}}
+        kubernetes = (
+            project.get("kubernetes") if isinstance(project, dict) else {{}}
+        ) or {{}}
+        context = str(kubernetes.get("context") or "").strip()
+        if not context:
+            return ""
+        from npa.cluster.state import existing_kubeconfig
+
+        path = existing_kubeconfig(context)
+        return str(path) if path is not None else ""
+    except (OSError, ValueError):
+        return ""
 
 
 def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
@@ -3529,7 +3398,9 @@ def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
     )
 
 
-def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
+def _run_agent_npa_json(
+    args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
+) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         raise HTTPException(status_code=409, detail=reason)
@@ -3540,7 +3411,7 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
             env=_agent_command_env(),
             text=True,
             capture_output=True,
-            timeout=timeout_s,
+            timeout=timeout_s if timeout_s and timeout_s > 0 else None,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -3553,6 +3424,8 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
+    if not expect_json:
+        return {{}}
     stdout = (proc.stdout or "").strip()
     try:
         return json.loads(stdout)
@@ -3930,6 +3803,276 @@ def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     path = tmp_dir / f"workflow-{{secrets.token_hex(8)}}.yaml"
     path.write_text(yaml_text, encoding="utf-8")
     return path
+
+
+def _workflow_execution_action(
+    *, yaml_text: str, run_id: str, project: str, cluster_name: str,
+    kubernetes_context: str, workflow_name: str
+) -> dict:
+    # Return the single-use confirmation payload for an executable workflow.
+    return {{
+        "action": "execute_workflow",
+        "workflow_name": str(workflow_name or ""),
+        "workflow_sha256": hashlib.sha256(yaml_text.encode("utf-8")).hexdigest(),
+        "run_id": str(run_id or ""),
+        "project": str(project or ""),
+        "cluster_name": str(cluster_name or ""),
+        "kubernetes_context": str(kubernetes_context or ""),
+        "execution_target": "kubernetes",
+    }}
+
+
+def _workflow_confirmation_digest(action: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(action, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _consume_workflow_confirmation(*, confirm_token: str, expected_action: dict) -> None:
+    # Consume only the exact single-use action that the browser confirmed.
+    session_token, session_digest, pending = _consume_agent_confirm_token()
+    expected_digest = _workflow_confirmation_digest(expected_action)
+    if (
+        not session_token
+        or not secrets.compare_digest(str(confirm_token or ""), session_token)
+        or not secrets.compare_digest(session_digest, expected_digest)
+        or pending != expected_action
+    ):
+        raise HTTPException(status_code=403, detail="invalid or expired confirmation for workflow execution")
+
+
+def _public_workflow_execution_result(
+    result: dict, *, run_id: str, workflow_name: str, step_count: int
+) -> dict:
+    # Expose terminal execution facts without returning runtime configuration.
+    payload = result if isinstance(result, dict) else {{}}
+    raw_steps = payload.get("steps")
+    if isinstance(raw_steps, list):
+        observed_step_count = len(raw_steps)
+    else:
+        try:
+            observed_step_count = int(raw_steps or step_count or 0)
+        except (TypeError, ValueError):
+            observed_step_count = max(0, int(step_count or 0))
+    return {{
+        "run_id": str(payload.get("run_id") or run_id),
+        "workflow": str(payload.get("workflow") or workflow_name),
+        "status": str(payload.get("status") or "unknown"),
+        "lifecycle_state": str(payload.get("lifecycle_state") or ""),
+        "submission_state": str(payload.get("submission_state") or ""),
+        "steps": max(0, observed_step_count),
+    }}
+
+
+def _store_workflow_execution(run_id: str, update: dict) -> dict:
+    # Persist a narrow, browser-safe execution snapshot under the state lock.
+
+    def mutate(state: dict) -> dict:
+        executions = state.get("workflow_executions")
+        if not isinstance(executions, dict):
+            executions = {{}}
+            state["workflow_executions"] = executions
+        existing = executions.get(run_id)
+        record = dict(existing) if isinstance(existing, dict) else {{"run_id": run_id}}
+        record.update(update)
+        record["run_id"] = run_id
+        executions[run_id] = record
+        return dict(record)
+
+    return _mutate_state(mutate)
+
+
+def _workflow_execution_status_payload(run_id: str) -> dict:
+    state = _load_state()
+    executions = state.get("workflow_executions")
+    record = executions.get(run_id) if isinstance(executions, dict) else None
+    if not isinstance(record, dict):
+        raise HTTPException(status_code=404, detail="workflow execution not found")
+    allowed = {{
+        "run_id",
+        "workflow",
+        "status",
+        "state",
+        "lifecycle_state",
+        "submission_state",
+        "steps",
+        "submitted_at",
+        "started_at",
+        "finished_at",
+        "error",
+    }}
+    return {{key: record[key] for key in allowed if key in record}}
+
+
+def _workflow_execution_failure_summary(error: Exception) -> str:
+    # Classify a private subprocess failure without reflecting its detail.
+
+    detail = str(getattr(error, "detail", "") or error).lower()
+    categories = (
+        ("source staging", ("stage-src", "source stage", "source cache")),
+        ("Kubernetes context", ("kubeconfig", "kubernetes context", "cluster context")),
+        ("SkyPilot setup", ("skypilot", "sky launch", "sky status")),
+        ("image access", ("imagepull", "image pull", "registry")),
+        ("capacity", ("unschedulable", "capacity", "quota")),
+        ("credentials", ("unauthenticated", "authentication", "forbidden", "permission denied")),
+        ("workflow configuration", ("toolref", "validation", "argument", "option")),
+    )
+    category = next(
+        (name for name, markers in categories if any(marker in detail for marker in markers)),
+        "runtime",
+    )
+    return (
+        f"NPA execution failed during {{category}}; inspect the workflow stage timeline "
+        "and logs for the durable diagnostic."
+    )
+
+
+def _agent_workflow_requires_staged_source(
+    yaml_path: Path, *, project: str, run_id: str, assume_decision: str = ""
+) -> bool:
+    # Keep the rendered backend's public helper stable for focused tests.
+    return _workflow_requires_staged_source(
+        yaml_path,
+        project=project,
+        run_id=run_id,
+        assume_decision=assume_decision,
+    )
+
+
+def _agent_workflow_secret_envs(
+    yaml_path: Path, *, run_id: str, assume_decision: str = ""
+) -> tuple[str, ...]:
+    # Keep the rendered backend's public helper stable for focused tests.
+    return _workflow_secret_envs(
+        yaml_path,
+        run_id=run_id,
+        assume_decision=assume_decision,
+    )
+
+
+def _start_agent_workflow_execution(
+    *,
+    yaml_text: str,
+    run_id: str,
+    project: str,
+    kubernetes_context: str,
+    workflow_name: str,
+    step_count: int,
+    assume_decision: str = "",
+) -> dict:
+    # The durable NPA runtime remains the execution authority. This worker
+    # decouples long SkyPilot startup/submission from an HTTP proxy lifetime and
+    # records a recoverable, redacted status for the Agent UI to poll.
+
+    accepted = {{
+        "run_id": run_id,
+        "workflow": workflow_name,
+        "status": "RUNNING",
+        "state": "running",
+        "lifecycle_state": "",
+        "submission_state": "accepted",
+        "steps": max(0, int(step_count or 0)),
+        "submitted_at": _now_iso(),
+        "started_at": _now_iso(),
+    }}
+    _store_workflow_execution(run_id, accepted)
+
+    def execute() -> None:
+        try:
+            def report_progress(phase: str) -> None:
+                _store_workflow_execution(run_id, {{"submission_state": phase}})
+
+            result = _execute_agent_workflow_yaml(
+                yaml_text,
+                run_id=run_id,
+                project=project,
+                kubernetes_context=kubernetes_context,
+                assume_decision=assume_decision,
+                progress=report_progress,
+            )
+            execution = _public_workflow_execution_result(
+                result,
+                run_id=run_id,
+                workflow_name=workflow_name,
+                step_count=step_count,
+            )
+            terminal_status = str(execution.get("status") or "unknown").upper()
+            succeeded = terminal_status in {{"SUCCEEDED", "SUCCESS", "COMPLETED"}}
+            _store_workflow_execution(
+                run_id,
+                {{
+                    **execution,
+                    "state": "succeeded" if succeeded else "failed",
+                    "finished_at": _now_iso(),
+                    "error": "" if succeeded else "The durable workflow did not report success.",
+                }},
+            )
+        except Exception as exc:
+            # The command's detailed diagnostics can include operator storage
+            # references. Preserve durable NPA evidence, but keep the browser
+            # response generic and direct users to the stage/log views.
+            _store_workflow_execution(
+                run_id,
+                {{
+                    "status": "FAILED",
+                    "state": "failed",
+                    "finished_at": _now_iso(),
+                    "error": _workflow_execution_failure_summary(exc),
+                }},
+            )
+
+    thread = threading.Thread(
+        target=execute,
+        name=f"npa-agent-workflow-{{run_id}}",
+        daemon=True,
+    )
+    thread.start()
+    return accepted
+
+
+def _execute_agent_workflow_yaml(
+    yaml_text: str, *, run_id: str, project: str, kubernetes_context: str,
+    assume_decision: str = "", progress: Callable[[str], None] | None = None,
+) -> dict:
+    # Preserve the generated backend's test seam while shipping the complex
+    # durable execution mechanics as an importable backend module.
+    return _execute_workflow_yaml(
+        yaml_text,
+        run_id=run_id,
+        project=project,
+        kubernetes_context=kubernetes_context,
+        assume_decision=assume_decision,
+        progress=progress,
+        write_temp_yaml=_write_workflow_temp_yaml,
+        run_npa_json=_run_agent_npa_json,
+        requires_staged_source=_agent_workflow_requires_staged_source,
+        secret_envs=_agent_workflow_secret_envs,
+    )
+
+
+def _workflow_kubernetes_placement(
+    *, project: str, infra: dict, requested_cluster_name: str = ""
+) -> tuple[str, str]:
+    # Bind execution to a concrete configured/cached context, never ambient
+    # kubectl state or an arbitrary browser-supplied name.
+    selected = resolve_workflow_infrastructure(infra)
+    context = str(selected.get("context") or "").strip()
+    cluster_name = str(selected.get("cluster_name") or context).strip()
+    requested = str(requested_cluster_name or "").strip()
+    if not context:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "workflow execution requires a configured Kubernetes context; "
+                "the agent will not use an ambient context"
+            ),
+        )
+    if requested and requested not in {{cluster_name, context}}:
+        raise HTTPException(
+            status_code=409,
+            detail="requested cluster does not match the configured execution target",
+        )
+    return cluster_name or context, context
 
 
 def _agent_mk8s_numeric(value, *, field: str, minimum: int) -> int:
@@ -7007,6 +7150,23 @@ def artifacts_runs(
             return _page_response(
                 configured_page, effective_prefix=settings.get("prefix", "")
             )
+        generic_exact_page = (
+            _generic_exact_run_page(
+                s3,
+                query,
+                buckets=buckets,
+                base_prefix=settings.get("prefix", ""),
+                exclude=_discovery_exclude_roots(),
+                bucket_projects=bucket_projects,
+                discovery_limit=discovery_limit,
+            )
+            if not prefix
+            else None
+        )
+        if generic_exact_page is not None:
+            return _page_response(
+                generic_exact_page, effective_prefix=settings.get("prefix", "")
+            )
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             # Cached (TTL + stale-while-revalidate): the run list is polled on every
@@ -8587,6 +8747,13 @@ def list_k8s_infra(project: str = ""):
     return _agent_k8s_backends(project)
 
 
+@app.get("/workflows/executions/{{run_id}}")
+def workflow_execution_status(run_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(run_id or "")):
+        raise HTTPException(status_code=400, detail="invalid workflow execution id")
+    return {{"ok": True, "execution": _workflow_execution_status_payload(run_id)}}
+
+
 @app.get("/resources")
 @app.get("/tenant-resources")
 def tenant_resources(refresh: bool = False):
@@ -8599,7 +8766,8 @@ def tenant_resources(refresh: bool = False):
 def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     project = _agent_project_alias(str(body.get("project") or ""))
-    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
+    requested_cluster_name = str(body.get("cluster_name") or "").strip()
+    cluster_name = requested_cluster_name or "npa-cluster"
     # Default dry_run=True — real Terraform apply requires an explicit confirm token.
     dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
@@ -8789,38 +8957,51 @@ def submit_npa_workflow(payload: dict):
     if not plan.get("ok"):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
     project = _agent_project_alias(str(body.get("project") or ""))
-    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    # Submit is plan-only by default: never auto-provision real infra.
-    allow_provision = bool(body.get("allow_provision", False))
+    requested_cluster_name = str(body.get("cluster_name") or "").strip()
+    # A normal request remains a harmless scheduler-plan preview. The UI uses
+    # ``prepare_execution`` to obtain a single-use, action-bound confirmation
+    # before it asks this endpoint to launch work on Kubernetes.
+    prepare_execution = bool(body.get("prepare_execution", False))
+    execute = bool(body.get("execute", False))
     dry_run = bool(body.get("dry_run", False))
+    if execute and dry_run:
+        raise HTTPException(status_code=400, detail="dry_run cannot execute a workflow")
+    allow_provision = bool(body.get("allow_provision", False))
     validate_infra = bool(body.get("validate_infra", True))
+    confirm_token = str(body.get("confirm_token") or "").strip()
     infra_before = _agent_k8s_backends(project)
+    cluster_name = requested_cluster_name or "npa-cluster"
+    kubernetes_context = ""
     if not infra_before.get("has_infra") and not allow_provision:
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+    if infra_before.get("has_infra"):
+        cluster_name, kubernetes_context = _workflow_kubernetes_placement(
+            project=project,
+            infra=infra_before,
+            requested_cluster_name=requested_cluster_name,
+        )
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
     if allow_provision and (dry_run or not infra_before.get("has_infra")):
         # Real (non-dry-run) provision requires the confirm-token gate.
         if not dry_run and not infra_before.get("has_infra"):
-            confirm_token = str(body.get("confirm_token") or "").strip()
-            digest = "provision_infra:" + project + ":" + cluster_name
+            provision_action = {{
+                "action": "provision_infra",
+                "project": project,
+                "cluster_name": cluster_name,
+                "via": "workflows/submit",
+            }}
             if not confirm_token:
                 token = _issue_agent_confirm_token(
-                    {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "via": "workflows/submit"}},
-                    digest,
+                    provision_action, _workflow_confirmation_digest(provision_action)
                 )
                 blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
                 blocked["needs_confirmation"] = True
                 blocked["confirm_token"] = token
-                blocked["proposed_action"] = {{
-                    "action": "provision_infra",
-                    "project": project,
-                    "cluster_name": cluster_name,
-                    "dry_run": False,
-                }}
+                blocked["proposed_action"] = {{**provision_action, "dry_run": False}}
                 return blocked
-            session_token, confirm_digest, _pending = _consume_agent_confirm_token()
-            if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
-                raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
+            _consume_workflow_confirmation(
+                confirm_token=confirm_token, expected_action=provision_action
+            )
         provision = _provision_agent_infra(
             project,
             cluster_name,
@@ -8838,30 +9019,97 @@ def submit_npa_workflow(payload: dict):
             blocked["provision"] = provision
             return blocked
     scheduler_plan = {{}}
-    yaml_path = _write_workflow_temp_yaml(yaml_text)
-    try:
-        scheduler_plan = _run_agent_npa_json(
-            [
-                "workbench",
-                "workflow",
-                "run-spec",
-                str(yaml_path),
-                "--run-id",
-                run_id,
-                "--plan-only",
-                "--scheduler-plan",
-                "--json",
-            ],
-            timeout_s=180,
-        )
-    finally:
+    if not execute:
+        # The prepared action already included this non-mutating scheduler
+        # plan. Re-running it after the browser confirms is both redundant and
+        # can keep the HTTP request open long enough for an ingress to expire.
+        yaml_path = _write_workflow_temp_yaml(yaml_text)
         try:
-            yaml_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+            scheduler_plan = _run_agent_npa_json(
+                [
+                    "workbench",
+                    "workflow",
+                    "run-spec",
+                    str(yaml_path),
+                    "--run-id",
+                    run_id,
+                    "--plan-only",
+                    "--scheduler-plan",
+                    "--json",
+                ],
+                timeout_s=180,
+            )
+        finally:
+            try:
+                yaml_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     infra_after = _agent_k8s_backends(project)
+    if not kubernetes_context:
+        cluster_name, kubernetes_context = _workflow_kubernetes_placement(
+            project=project,
+            infra=infra_after,
+            requested_cluster_name=requested_cluster_name,
+        )
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=True)
+    step_count = len(plan.get("steps") or plan.get("states") or [])
+    execution_action = _workflow_execution_action(
+        yaml_text=yaml_text,
+        run_id=run_id,
+        project=project,
+        cluster_name=cluster_name,
+        kubernetes_context=kubernetes_context,
+        workflow_name=str(validation.get("name") or ""),
+    )
+    if prepare_execution and not execute:
+        submit_record = {{
+            "run_id": run_id,
+            "submitted_at": _now_iso(),
+            "name": str(validation.get("name") or ""),
+            "validation": validation,
+            "plan": plan,
+            "scheduler_plan": scheduler_plan,
+            "infra": infra_after,
+            "provision": provision,
+            "submit_mode": "agent-live-infra-confirm-required",
+            "note": (
+                "Workflow validation and scheduler planning completed. "
+                "Execution is waiting for the browser's single-use confirmation."
+            ),
+        }}
+        state["workflow_submit"] = submit_record
+        _save_state(state)
+        # ``_issue_agent_confirm_token`` mutates the persisted session. Issue
+        # it after saving this request's draft/plan snapshot so a stale local
+        # state copy cannot overwrite the just-minted one-time token.
+        token = _issue_agent_confirm_token(
+            execution_action, _workflow_confirmation_digest(execution_action)
+        )
+        return {{
+            "ok": True,
+            **submit_record,
+            "needs_confirmation": True,
+            "confirm_token": token,
+            "proposed_action": execution_action,
+        }}
+
+    execution = {{}}
+    if execute:
+        if not confirm_token:
+            raise HTTPException(status_code=403, detail="workflow execution requires confirmation")
+        _consume_workflow_confirmation(
+            confirm_token=confirm_token, expected_action=execution_action
+        )
+        execution = {{
+            "run_id": run_id,
+            "workflow": str(validation.get("name") or ""),
+            "status": "RUNNING",
+            "state": "running",
+            "lifecycle_state": "",
+            "submission_state": "accepted",
+            "steps": max(0, int(step_count or 0)),
+        }}
     submit_record = {{
         "run_id": run_id,
         "submitted_at": _now_iso(),
@@ -8871,10 +9119,18 @@ def submit_npa_workflow(payload: dict):
         "scheduler_plan": scheduler_plan,
         "infra": infra_after,
         "provision": provision,
-        "submit_mode": "agent-live-infra-plan" if not dry_run else "agent-live-infra-dry-run",
+        "execution": execution,
+        "submit_mode": (
+            "agent-live-infra-executing"
+            if execute
+            else "agent-live-infra-plan" if not dry_run else "agent-live-infra-dry-run"
+        ),
         "note": (
-            "Agent validated the workflow, ensured Kubernetes infra with NPA when needed, "
-            "and produced a scheduler plan. Workload execution uses the planned scheduler tasks."
+            "Agent validated and planned the workflow, then accepted it for execution through NPA's "
+            "durable SkyPilot runtime after browser confirmation."
+            if execute
+            else "Agent validated the workflow, ensured Kubernetes infra with NPA when needed, "
+            "and produced a scheduler plan without launching workload tasks."
         ),
     }}
     state["workflow_submit"] = submit_record
@@ -8900,6 +9156,16 @@ def submit_npa_workflow(payload: dict):
         }},
     )
     _save_state(state)
+    if execute:
+        _start_agent_workflow_execution(
+            yaml_text=yaml_text,
+            run_id=run_id,
+            project=project,
+            kubernetes_context=kubernetes_context,
+            workflow_name=str(validation.get("name") or ""),
+            step_count=step_count,
+            assume_decision=assume_decision,
+        )
     return {{"ok": True, **submit_record}}
 
 @app.post("/workflows/sim2real/submit")

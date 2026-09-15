@@ -3540,8 +3540,20 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
     project operations forever, even though no mutation occurred.
     """
 
+    # Execution preflight completes before SkyPilot's launch transaction exists.
+    # It is therefore just as certain as a transaction with launch_sequence=0:
+    # no managed job can have been created.  Keeping its lifecycle journal in
+    # recovery-required would block later, safe workflow submissions forever.
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
     transaction = getattr(exc, "transaction", None)
     launch_sequence = getattr(transaction, "launch_sequence", None)
+    if isinstance(exc, ExecutionPreflightError) or (
+        isinstance(exc, (SkyPilotSubmitError, KeyboardInterrupt))
+        and transaction is None
+    ):
+        launch_sequence = 0
     if launch_sequence == 0:
         operation.record_rollback(
             attempted=False,

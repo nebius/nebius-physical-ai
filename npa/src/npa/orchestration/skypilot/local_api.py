@@ -16,6 +16,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import time
 from typing import Any, Mapping
 from urllib.error import URLError
@@ -35,6 +36,18 @@ _RUNTIME_SETTINGS = {"storage_bucket": "NPA_S3_BUCKET", "storage_prefix": "NPA_S
 
 class IsolatedApiError(ValueError):
     """Secret-safe failure; no fallback to a shared daemon is permitted."""
+
+
+def _isolated_api_root(isolated_dir: Path) -> Path:
+    """Return one canonical owner directory for equivalent isolated paths.
+
+    macOS exposes ``/tmp`` through ``/private/tmp``.  A controller created
+    through one spelling must remain discoverable through the other; otherwise
+    a safe owner record is incorrectly treated as foreign on a later status,
+    cancellation, or submit operation.
+    """
+
+    return Path(isolated_dir).expanduser().resolve(strict=False) / "local-api"
 
 
 @contextmanager
@@ -413,6 +426,17 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
 def _session_members(record: Mapping[str, Any]) -> list[int]:
     if not record.get("pid"):
         return []
+    if sys.platform == "darwin":
+        # macOS does not expose Linux's procfs tree. The owned API server is
+        # started in its own session. Its queue child can briefly outlive the
+        # leader during graceful shutdown, so retain only listeners proven to
+        # belong to the recorded process group.
+        process = _process(record)
+        group = int(record["pid"])
+        members = set(_darwin_owned_listener_pids(record, process_group=group))
+        if process:
+            members.add(int(process["pid"]))
+        return sorted(members)
     snapshots: dict[int, tuple[int, int, bool]] = {}
     for directory in Path("/proc").iterdir():
         if not directory.name.isdigit():
@@ -471,6 +495,8 @@ def _endpoint(record: Mapping[str, Any]) -> str:
 
 def _process(record: Mapping[str, Any], *, verify_files: bool = True) -> dict[str, Any] | None:
     """Match the private intent marker even across a Popen/PID-save crash."""
+    if sys.platform == "darwin":
+        return _darwin_process(record)
     matches = []
     candidates = [Path("/proc") / str(record["pid"])] if record.get("pid") else Path("/proc").iterdir()
     for directory in candidates:
@@ -523,10 +549,139 @@ def _process(record: Mapping[str, Any], *, verify_files: bool = True) -> dict[st
     return matches[0] if matches else None
 
 
+def _darwin_process_fingerprint(line: str, record: Mapping[str, Any]) -> str:
+    """Keep CPython's framework launcher transition within one process lifetime."""
+    original = hashlib.sha256(line.encode()).hexdigest()
+    interpreter = record.get("interpreter")
+    if interpreter:
+        fields = line.split(None, 6)
+        command = fields[-1] if len(fields) == 7 else ""
+        executable, separator, arguments = command.partition(" -m sky.server.server")
+        resolved = Path(interpreter).resolve()
+        equivalents = {str(interpreter), str(resolved)}
+        framework = resolved.parent.parent
+        if resolved.parent.name == "bin" and framework.parent.parent.name == "Python.framework":
+            application = framework / "Resources/Python.app/Contents/MacOS/Python"
+            if application.is_file():
+                equivalents.add(str(application))
+        if not separator or executable not in equivalents:
+            raise IsolatedApiError("isolated SkyPilot API process executable disagrees with its ownership record")
+        # CPython replaces argv[0] when its macOS launcher execs the framework
+        # application. Preserve the PID, start time and all server arguments.
+        line = line[:len(line) - len(command)] + str(interpreter) + separator + arguments
+    fingerprint = hashlib.sha256(line.encode()).hexdigest()
+    previous = str(record.get("darwin_process_fingerprint") or "")
+    # Existing receipts may contain the unnormalized framework command hash.
+    if previous and previous not in {original, fingerprint}:
+        raise IsolatedApiError("isolated SkyPilot API process lifetime disagrees with its ownership record")
+    return fingerprint
+
+
+def _darwin_process(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Validate the task-owned server on macOS, where ``/proc`` is unavailable.
+
+    Linux can inspect the private environment marker and descendant tree through
+    procfs. On macOS we require an exact saved PID, a stable process
+    start/command fingerprint, and a loopback-listener check before use. A
+    missing or changed process is never adopted.
+    """
+
+    raw_pid = record.get("pid")
+    if raw_pid in (None, ""):
+        return None
+    try:
+        pid = int(raw_pid)
+    except (TypeError, ValueError):
+        raise IsolatedApiError(
+            "isolated SkyPilot API ownership record has an invalid process ID"
+        ) from None
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "pid=,lstart=,command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise IsolatedApiError(
+            "isolated SkyPilot API process ownership cannot be inspected on macOS"
+        ) from exc
+    line = (result.stdout or "").strip()
+    if result.returncode != 0 or not line:
+        return None
+    expected_port = str(record.get("port") or "")
+    if not expected_port:
+        raise IsolatedApiError(
+            "isolated SkyPilot API process lifetime disagrees with its ownership record"
+        )
+    # A former server's PID can be recycled after a graceful shutdown. It is
+    # not an owned process merely because the integer matches our receipt; do
+    # not block recovery (or later signal that foreign process) when it is no
+    # longer a Sky server on the recorded port.
+    if "sky.server.server" not in line or f"--port {expected_port}" not in line:
+        return None
+    fingerprint = _darwin_process_fingerprint(line, record)
+    if isinstance(record, dict):
+        record["darwin_process_fingerprint"] = fingerprint
+    return {"pid": pid, "start_ticks": fingerprint}
+
+
+def _darwin_owned_listener_pids(
+    record: Mapping[str, Any], *, process_group: int, ports: tuple[int, ...] | None = None
+) -> list[int]:
+    """Return only listener PIDs corroborated in one owned process group."""
+
+    selected_ports = ports or tuple(
+        int(record[key])
+        for key in ("port", "queue_port", "metrics_port")
+        if record.get(key) not in (None, "")
+    )
+    owned: set[int] = set()
+    for selected_port in selected_ports:
+        try:
+            listeners = subprocess.run(
+                ["lsof", "-nP", "-t", f"-iTCP:{selected_port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise IsolatedApiError(
+                "isolated SkyPilot API listener ownership cannot be inspected on macOS"
+            ) from exc
+        if listeners.returncode != 0:
+            continue
+        for raw_pid in (listeners.stdout or "").splitlines():
+            try:
+                listener_pid = int(raw_pid.strip())
+            except ValueError:
+                continue
+            try:
+                process = subprocess.run(
+                    ["ps", "-p", str(listener_pid), "-o", "pgid="],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if process.returncode == 0 and int(
+                    (process.stdout or "").strip()
+                ) == process_group:
+                    owned.add(listener_pid)
+            except (OSError, ValueError):
+                continue
+    return sorted(owned)
+
+
 def _listener_owned(record: Mapping[str, Any], process: Mapping[str, Any], *, port: int | None = None) -> bool:
     """Corroborate actual loopback LISTEN inode held by the daemon process tree."""
     root_pid = int(process["pid"])
     selected_port = port or record["port"]
+    if sys.platform == "darwin":
+        return bool(
+            _darwin_owned_listener_pids(
+                record, process_group=root_pid, ports=(int(selected_port),)
+            )
+        )
     try:
         namespace = Path(f"/proc/{root_pid}/ns/net").readlink()
     except FileNotFoundError:
@@ -559,7 +714,7 @@ def _listener_owned(record: Mapping[str, Any], process: Mapping[str, Any], *, po
 
 def isolated_api_environment(isolated_dir: Path, environment: Mapping[str, str]) -> dict[str, str]:
     """Persist endpoint intent before any client could connect to a shared API."""
-    root = Path(isolated_dir).absolute() / "local-api"
+    root = _isolated_api_root(isolated_dir)
     with _locked(root):
         record = _read(root)
         explicit = str(environment.get(_ENDPOINT) or "")
@@ -574,7 +729,7 @@ def isolated_api_environment(isolated_dir: Path, environment: Mapping[str, str])
         if process:
             _listener_owned(record, process)
         selected = {**environment, _ENDPOINT: _endpoint(record),
-                    "NPA_SKYPILOT_ISOLATED_API_DIR": str(Path(isolated_dir).absolute())}
+                    "NPA_SKYPILOT_ISOLATED_API_DIR": str(root.parent)}
         for setting, name in _RUNTIME_SETTINGS.items():
             value = record.get("runtime_settings", {}).get(setting)
             if value and not selected.get(name):
@@ -602,7 +757,7 @@ def isolated_api_environment(isolated_dir: Path, environment: Mapping[str, str])
             recovery_env["NPA_SKYPILOT_PROJECT"] = alias
         ensure_isolated_api(isolated_dir=isolated_dir,
                             sky_executable=str(Path(record["interpreter"]).parent / "sky"),
-                            environment=recovery_env, cwd=str(Path(isolated_dir).absolute()))
+                            environment=recovery_env, cwd=str(root.parent))
     return selected
 
 
@@ -610,7 +765,7 @@ def ensure_isolated_api(
     *, isolated_dir: Path, sky_executable: str, environment: Mapping[str, str], cwd: str,
 ) -> dict[str, Any]:
     """Start/adopt only this scope's exact daemon; never create a cloud job."""
-    root = Path(isolated_dir).absolute() / "local-api"
+    root = _isolated_api_root(isolated_dir)
     with _locked(root):
         record = _read(root)
         if record is None or environment.get(_ENDPOINT) != _endpoint(record):
@@ -684,6 +839,12 @@ def ensure_isolated_api(
                                   "--port", str(record["port"]), "--metrics-port", str(record["metrics_port"])],
                                  env=daemon_env, cwd=cwd, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=log, start_new_session=True)
+            if sys.platform == "darwin":
+                # Linux discovers the marker through /proc. macOS has no
+                # equivalent, so persist only the PID and immediately
+                # revalidate its start/command fingerprint before use.
+                record.update(pid=spawned.pid, start_ticks=None)
+                _write(root / "daemon.json", record)
         while True:
             process = _process(record)
             if process is None:
@@ -718,7 +879,7 @@ def owned_daemon_environment(isolated_dir: Path) -> dict[str, str]:
     lifetime, marker, executable, config and identity-file checks precede and
     follow the read; no foreign or ambiguous process may supply credentials.
     """
-    root = Path(isolated_dir).absolute() / "local-api"
+    root = _isolated_api_root(isolated_dir)
     with _locked(root):
         record = _read(root)
         if not record or not record.get("interpreter"):
@@ -740,7 +901,7 @@ def owned_daemon_environment(isolated_dir: Path) -> dict[str, str]:
 
 def stop_isolated_api(isolated_dir: Path) -> None:
     """Stop only the owned local process group, after callers finish cloud jobs."""
-    root = Path(isolated_dir).absolute() / "local-api"
+    root = _isolated_api_root(isolated_dir)
     with _locked(root):
         record = _read(root)
         if record is None or not record.get("interpreter"):
@@ -767,12 +928,28 @@ def stop_isolated_api(isolated_dir: Path) -> None:
             # The parent's graceful shutdown has finished; force-remove only
             # the corroborated orphan session, as Sky's own API stop does for
             # its local executor tree. No live leader/request is interrupted.
-            _session_members(record)
-            try:
-                os.killpg(record["pid"], signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            while _session_members(record):
-                time.sleep(0.2)
+            remaining = _session_members(record)
+            if remaining:
+                try:
+                    os.killpg(record["pid"], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                while _session_members(record):
+                    time.sleep(0.2)
+        # A stopped controller has no authority to pin the next controller's
+        # credentials or generated configuration.  Retain the endpoint marker
+        # and ports so clients cannot fall back to a shared API, but clear the
+        # retired process binding before a later clean start.
+        for key in (
+            "interpreter",
+            "environment_binding",
+            "config_sha256",
+            "identity_files",
+            "project_alias",
+            "runtime_settings",
+            "darwin_process_fingerprint",
+            "session_processes",
+        ):
+            record.pop(key, None)
         record.update(state="stopped", pid=None, start_ticks=None)
         _write(root / "daemon.json", record)

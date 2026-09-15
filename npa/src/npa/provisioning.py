@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import functools
 import inspect
+import logging
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -944,10 +945,13 @@ def _build_provision_plan(
                     str(getattr(environment, "region", "") or ""),
                     quota_names,
                 )
-            except Exception:
+            except Exception as project_exc:  # noqa: BLE001 - preserve fail-closed quota evidence
                 # Keep the ordinary planner's fail-closed unknown evidence when
                 # the exact-project view is unavailable or malformed too.
-                pass
+                logging.getLogger(__name__).debug(
+                    "project-scoped quota fallback was unavailable",
+                    exc_info=project_exc,
+                )
             else:
                 quota_reader = fixed_quota_reader(project_observations)
                 checks.append(

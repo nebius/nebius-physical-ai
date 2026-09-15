@@ -669,7 +669,7 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get(`#${id}`).should("exist");
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
-    cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
+    cy.get("#workflowSubmitHint").should("contain.text", "single-use confirmation");
     cy.get("#tabMain").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
@@ -1551,8 +1551,12 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#workflowSubmitYaml").click();
     cy.wait("@workflowSubmitYaml");
-    cy.get("#chatLog").should("contain.text", "Submitted npa.workflow");
-    cy.get("#chatLog").should("contain.text", "plan");
+    cy.get("#workflowExecutionConfirm").should("be.visible");
+    cy.get("#workflowExecutionConfirm").should("contain.text", "Confirm workflow execution");
+    cy.get("#workflowExecutionConfirm button").click();
+    cy.wait("@workflowSubmitYaml");
+    cy.get("#chatLog").should("contain.text", "Completed workflow run");
+    cy.get("#chatLog").should("contain.text", "SUCCEEDED");
   });
 
   it("covers Stages panel, Rerun buttons, and run-data loading", () => {

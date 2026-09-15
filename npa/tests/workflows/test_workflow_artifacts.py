@@ -20,6 +20,7 @@ from npa.workflows.artifacts import (
     download_s3_uri,
     encode_run_ref,
     find_run_artifacts,
+    find_run_sources_by_prefix_tree_across_buckets,
     infer_run_id_from_artifact_key,
     find_run_artifact_page,
     list_all_run_prefixes,
@@ -1676,6 +1677,32 @@ def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
     assert resolved_prefix == ""
     assert len(artifact_page.artifacts) == 6
     assert artifact_page.truncated is False
+
+
+def test_exact_prefix_tree_search_finds_nested_run_without_object_index() -> None:
+    run_id = "deployment-review-run-20300101t010203z"
+    s3 = _PrefixAwareS3(
+        [
+            ("archive/older-run/report.json", "2026-08-01T00:00:00+00:00"),
+            (f"workflow-family/{run_id}/generated/report.json", "2026-08-02T00:00:00+00:00"),
+            (f"workflow-family/{run_id}/review/triage.json", "2026-08-02T00:01:00+00:00"),
+        ]
+    )
+
+    sources, errors, complete = find_run_sources_by_prefix_tree_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id=run_id,
+        bucket_projects={"bucket": "project-a"},
+        s3=s3,
+    )
+
+    assert errors == ()
+    assert complete is True
+    assert [
+        (item.run_id, item.bucket, item.project_id, item.resolved_prefix)
+        for item in sources
+    ] == [(run_id, "bucket", "project-a", "workflow-family")]
 
 
 def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:

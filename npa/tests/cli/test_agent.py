@@ -387,6 +387,135 @@ def test_agent_operator_profile_privately_stages_remote_kubeconfig(
     )
 
 
+def test_agent_profile_adopts_one_project_owned_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bootstrap can stage the normal NPA cluster cache without guessing."""
+
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "projects:\n  demo:\n    project_id: project-unit\n", encoding="utf-8"
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\nclusters: []\n", encoding="utf-8")
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        cluster_state,
+        "list_local_clusters",
+        lambda: [
+            SimpleNamespace(
+                name="unit-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://cluster.example",
+                node_count=1,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        cluster_state,
+        "existing_kubeconfig",
+        lambda name: kubeconfig if name == "unit-context" else None,
+    )
+
+    placement, content = agent_env_files._remote_kubernetes_config("demo")
+
+    assert placement == {"cluster_name": "unit-context", "context": "unit-context"}
+    assert content == "apiVersion: v1\nclusters: []\n"
+
+
+def test_agent_profile_rejects_ambiguous_adopted_kubeconfigs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "projects:\n  demo:\n    project_id: project-unit\n", encoding="utf-8"
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\nclusters: []\n", encoding="utf-8")
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        cluster_state,
+        "list_local_clusters",
+        lambda: [
+            SimpleNamespace(
+                name="first-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://first.example",
+                node_count=1,
+            ),
+            SimpleNamespace(
+                name="second-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://second.example",
+                node_count=1,
+            ),
+        ],
+    )
+    monkeypatch.setattr(cluster_state, "existing_kubeconfig", lambda _name: kubeconfig)
+
+    assert agent_env_files._remote_kubernetes_config("demo") == ({}, "")
+
+
+def test_agent_staged_kubeconfig_uses_its_attached_nebius_profile() -> None:
+    from npa.cli import agent_env_files
+
+    staged = agent_env_files._agent_kubeconfig_without_operator_profile(
+        """apiVersion: v1
+users:
+  - name: cluster-user
+    user:
+      exec:
+        command: /operator/private/.nebius/bin/nebius
+        args: [mk8s, kubeconfig, exec, --profile, operator-only, --format, json]
+contexts: []
+"""
+    )
+
+    document = yaml.safe_load(staged)
+    executable = document["users"][0]["user"]["exec"]
+    args = executable["args"]
+    assert executable["command"] == "nebius"
+    assert args == ["mk8s", "kubeconfig", "exec", "--format", "json"]
+
+
+def test_agent_stages_a_valid_local_cluster_identity_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    state_path = tmp_path / "cluster.json"
+    state_path.write_text(
+        json.dumps({"name": "agent-context", "project_id": "project-unit"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cluster_state,
+        "state_file",
+        lambda name: state_path if name == "agent-context" else tmp_path / "missing",
+    )
+
+    content = agent_env_files._remote_cluster_state_content(
+        "agent-context", remote_kubeconfig_path="/home/agent/.npa/clusters/agent-context/kubeconfig"
+    )
+
+    assert json.loads(content) == {
+        "name": "agent-context",
+        "project_id": "project-unit",
+        "kubeconfig_path": "/home/agent/.npa/clusters/agent-context/kubeconfig",
+    }
+    assert agent_env_files._remote_cluster_state_content("../unsafe") == ""
+
+
 def test_agent_operator_profile_stages_exact_project_credentials() -> None:
     from npa.cli import agent_env_files
 
@@ -1422,7 +1551,7 @@ def test_bootstrap_explicit_ingress_recovery_uses_only_supplied_cidrs(
     agent_module._ensure_bootstrap_ingress(
         instance_id="instance-synthetic",
         ssh_cidr_block="203.0.113.50/32",
-        application_cidr_block="198.51.100.60/32",
+        application_cidr_block="203.0.113.50/32",
         allow_world_open_ssh=False,
         allow_world_open_application=False,
         agent_port=8088,
@@ -1441,7 +1570,7 @@ def test_bootstrap_explicit_ingress_recovery_uses_only_supplied_cidrs(
         {
             "vm_id": "instance-synthetic",
             "ports": (443, 8088, 9090),
-            "source": "198.51.100.60/32",
+            "source": "203.0.113.50/32",
             "allow_world_open": False,
             "tool": "agent-bootstrap",
         },
@@ -6499,7 +6628,7 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
             "--ssh-cidr-block",
             "203.0.113.50/32",
             "--application-cidr-block",
-            "198.51.100.60/32",
+            "203.0.113.50/32",
             "--adopt-remote-identity",
         ],
     )
@@ -6512,7 +6641,7 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
     ssh_option = resume_argv.index("--ssh-cidr-block")
     assert resume_argv[ssh_option + 1] == "203.0.113.50/32"
     application_option = resume_argv.index("--application-cidr-block")
-    assert resume_argv[application_option + 1] == "198.51.100.60/32"
+    assert resume_argv[application_option + 1] == "203.0.113.50/32"
     assert "--adopt-remote-identity" in resume_argv
 
 

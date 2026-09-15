@@ -13,6 +13,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.execution_preflight import ExecutionPreflightError
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.skypilot.image_bootstrap_contract import (
@@ -92,6 +93,53 @@ def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> N
     }
     assert operation.transitions[0][0] == "rolled-back"
     assert operation.transitions[0][1]["details"]["launch_attempted"] is False
+
+
+def test_execution_preflight_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(
+        operation,
+        ExecutionPreflightError("storage_mount", "static profile is unavailable"),
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "ExecutionPreflightError",
+        "launch_attempted": False,
+    }
+
+
+def test_prelaunch_skypilot_failure_without_transaction_rolls_back() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(
+        operation, SkyPilotSubmitError("isolated local API could not start")
+    )
+
+    assert operation.rollback is not None
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"]["launch_attempted"] is False
+
+
+def test_prelaunch_interrupt_without_transaction_rolls_back() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(operation, KeyboardInterrupt())
+
+    assert operation.rollback is not None
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "KeyboardInterrupt",
+        "launch_attempted": False,
+    }
 
 
 def test_postlaunch_failure_preserves_recovery_blocker() -> None:

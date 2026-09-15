@@ -2383,9 +2383,10 @@
             <button id="workflowUpload" class="btn" type="button">Upload YAML</button>
             <button id="workflowValidate" class="btn" type="button">Validate</button>
             <button id="workflowPlan" class="btn" type="button">Plan</button>
-            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit plan</button>
+            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Prepare run</button>
           </div>
-          <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Submit plan = scheduler plan-only. Execute tool steps with operator CLI <code>run-spec --execute</code>.</p>
+          <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Prepare run validates and plans without launching work. A second, single-use confirmation starts the durable Kubernetes workflow.</p>
+          <div id="workflowExecutionConfirm" class="infra-confirmation-card" style="margin-top:8px;" hidden></div>
           <div id="workflowPlanHost" class="plan-host" hidden></div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
@@ -7693,7 +7694,7 @@
         bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
-        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
+        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Prepare workflow run");
         bindClick("agentAccessRefresh", () => refreshAccess(true), "Refresh agent access");
         const accessProjectSelect = document.getElementById("agentAccessProjectSelect");
         if (accessProjectSelect) {
@@ -8505,13 +8506,18 @@
       async function submitWorkflowYaml() {
         const yaml = currentWorkflowYaml();
         if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        clearWorkflowExecutionConfirmation();
         const data = await apiJson("/api/workflows/submit", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ yaml }),
+          body: JSON.stringify({ yaml, prepare_execution: true, allow_provision: true }),
         });
         updateWorkflowMeta((data.validation) || {});
         if (data.plan) renderWorkflowPlan(data.plan);
+        if (data.needs_confirmation && data.confirm_token && data.proposed_action) {
+          showWorkflowExecutionConfirmation({ yaml, response: data });
+          return true;
+        }
         if (data && data.ok === false) {
           const detail = String(
             data.message || data.reason || data.error || data.submit_mode || "submit blocked"
@@ -8521,10 +8527,138 @@
         }
         appendChat(
           "assistant",
-          "Submitted npa.workflow **scheduler plan** — **run_id**: `" + String(data.run_id || "") +
-            "`, **mode**: `" + String(data.submit_mode || "plan-only") +
-            "`. This does **not** execute tool steps on K8s. Use operator CLI `run-spec --execute` for real workloads."
+          "Prepared npa.workflow run `" + String(data.run_id || "") +
+            "`. Review the validation and scheduler plan before confirming execution."
         );
+        return true;
+      }
+      let workflowExecutionPending = null;
+      function clearWorkflowExecutionConfirmation() {
+        workflowExecutionPending = null;
+        const host = document.getElementById("workflowExecutionConfirm");
+        if (!host) return;
+        host.replaceChildren();
+        host.hidden = true;
+      }
+      function workflowExecutionIsActive(execution) {
+        const state = String((execution && execution.state) || "").trim().toLowerCase();
+        const status = String((execution && execution.status) || "").trim().toLowerCase();
+        return state === "running" || state === "accepted" || ["running", "accepted", "queued", "submitted"].includes(status);
+      }
+      function workflowExecutionSucceeded(execution) {
+        const state = String((execution && execution.state) || "").trim().toLowerCase();
+        const status = String((execution && execution.status) || "").trim().toLowerCase();
+        return state === "succeeded" || ["succeeded", "success", "completed"].includes(status);
+      }
+      async function waitForWorkflowExecution(runId) {
+        const deadline = Date.now() + 15 * 60 * 1000;
+        let latest = {};
+        while (Date.now() < deadline) {
+          const data = await apiJson("/api/workflows/executions/" + encodeURIComponent(runId));
+          latest = data && data.execution && typeof data.execution === "object" ? data.execution : {};
+          if (!workflowExecutionIsActive(latest)) return latest;
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+        throw new Error("Workflow execution is still running. Its durable run was accepted; check the stage timeline shortly.");
+      }
+      function showWorkflowExecutionConfirmation(pending) {
+        const response = pending && pending.response ? pending.response : {};
+        const action = response.proposed_action || {};
+        const token = String(response.confirm_token || "");
+        const yaml = String(pending && pending.yaml || "");
+        const runId = String(response.run_id || "");
+        if (!token || !yaml || !runId) throw new Error("Workflow confirmation is incomplete");
+        workflowExecutionPending = { yaml, runId, token, action };
+        const host = document.getElementById("workflowExecutionConfirm");
+        if (!host) return;
+        const provisioning = String(action.action || "") === "provision_infra";
+        const title = provisioning ? "Confirm infrastructure deployment" : "Confirm workflow execution";
+        const note = provisioning
+          ? "NPA will create or validate the configured Kubernetes backend. It will then ask once more before submitting workload tasks."
+          : "NPA will submit this validated workflow through the durable Kubernetes runtime and wait for its terminal result.";
+        host.replaceChildren();
+        const heading = document.createElement("strong");
+        heading.textContent = title;
+        const text = document.createElement("p");
+        text.textContent = note;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-primary";
+        button.textContent = provisioning ? "Confirm deployment" : "Confirm run";
+        button.addEventListener("click", () => {
+          confirmWorkflowExecution(button).catch((err) => {
+            showToast(String((err && err.message) || err), "error");
+            button.disabled = false;
+          });
+        });
+        host.append(heading, text, button);
+        host.hidden = false;
+        appendChat(
+          "assistant",
+          title + " is ready for run `" + runId + "`. No workload tasks have started yet."
+        );
+      }
+      async function confirmWorkflowExecution(button) {
+        const pending = workflowExecutionPending;
+        if (!pending) throw new Error("No workflow execution is awaiting confirmation");
+        if (button) button.disabled = true;
+        const provisioning = String((pending.action || {}).action || "") === "provision_infra";
+        const body = provisioning
+          ? {
+            yaml: pending.yaml,
+            run_id: pending.runId,
+            allow_provision: true,
+            prepare_execution: true,
+            confirm_token: pending.token,
+          }
+          : {
+            yaml: pending.yaml,
+            run_id: pending.runId,
+            execute: true,
+            confirm_token: pending.token,
+          };
+        const data = await apiJson("/api/workflows/submit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        updateWorkflowMeta((data.validation) || {});
+        if (data.plan) renderWorkflowPlan(data.plan);
+        if (data.needs_confirmation && data.confirm_token && data.proposed_action) {
+          showWorkflowExecutionConfirmation({ yaml: pending.yaml, response: data });
+          return true;
+        }
+        if (data && data.ok === false) {
+          throw new Error(String(data.message || data.reason || data.error || "workflow execution failed"));
+        }
+        clearWorkflowExecutionConfirmation();
+        let execution = data.execution || {};
+        const executionRunId = String((execution && execution.run_id) || data.run_id || "");
+        if (workflowExecutionIsActive(execution)) {
+          appendChat(
+            "assistant",
+            "Accepted workflow run `" + executionRunId +
+              "`. Preparing the durable runtime and watching its terminal result."
+          );
+          execution = await waitForWorkflowExecution(executionRunId);
+        }
+        if (!workflowExecutionSucceeded(execution)) {
+          const failure = String(execution.error || "Workflow execution did not complete successfully.");
+          appendChat("error", "Workflow execution failed: " + failure);
+          throw new Error(failure);
+        }
+        appendChat(
+          "assistant",
+          "Completed workflow run `" + String((execution && execution.run_id) || data.run_id || "") +
+            "` with status `" + String((execution && execution.status) || "unknown") +
+            "`. Loading its artifact-backed stage timeline."
+        );
+        const input = document.getElementById("stagesRunInput");
+        if (input && data.run_id) {
+          input.value = String(data.run_id);
+          const load = document.getElementById("stagesLoadRun");
+          if (load) load.click();
+        }
         return true;
       }
       function queueChatText(text, options) {
