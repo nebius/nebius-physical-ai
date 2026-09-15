@@ -178,6 +178,12 @@ Use the standard [cancel → controller → cluster cleanup](../teardown.md) and
 preserve the output storage needed for review. Exact cleanup identities belong
 in private operational evidence.
 
+This exercise completed that cleanup sequence. Controller removal was verified;
+the final provider inventory contained **zero clusters, compute instances,
+compute disks, or filesystems**. The dedicated project, its default network,
+and output storage were retained. The quality recording remained readable after
+compute teardown.
+
 ## Implications for the model factory
 
 This run exercises an actual quality-feedback path. Successful generation and
