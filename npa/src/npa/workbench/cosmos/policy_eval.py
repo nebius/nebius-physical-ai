@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
+import http.client
 import socket
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
-from urllib.request import urlopen
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.cosmos.policy_artifacts import (
@@ -74,11 +73,17 @@ def evaluation_argv(python: Path, repo: Path, output: Path, port: int,
 
 def _wait_ready(process: subprocess.Popen, port: int) -> dict[str, Any]:
     while process.poll() is None:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         try:
-            with urlopen(f"http://127.0.0.1:{port}/info", timeout=5) as response:
+            connection.request("GET", "/info")
+            response = connection.getresponse()
+            if response.status == 200:
                 return json.load(response)
-        except (URLError, TimeoutError):
-            time.sleep(1)
+        except (OSError, http.client.HTTPException):
+            pass
+        finally:
+            connection.close()
+        time.sleep(1)
     raise RuntimeError("native policy server exited before model readiness")
 
 
