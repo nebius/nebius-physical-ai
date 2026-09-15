@@ -14,12 +14,18 @@ import os
 import platform
 import subprocess
 import tempfile
+import zipfile
 from importlib import metadata
 from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient
-from npa.workbench.openarm.schemas import OpenArmRunRequest, OpenArmSystemInfo
+from npa.workbench.openarm.schemas import (
+    OpenArmQualificationRequest,
+    OpenArmQualificationResponse,
+    OpenArmRunRequest,
+    OpenArmSystemInfo,
+)
 
 MUJOCO_COMMIT = "a8c979629f2591ad035d99d338ce114969e6cddc"
 ISAAC_COMMIT = "bad82e23716e6941c2de78ccb978f57c78b37734"
@@ -107,28 +113,33 @@ def _render_video(model: Any, data: Any, commands: list[Any], output: Path) -> N
         renderer.close()
 
 
-def _run_mujoco(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
+def _step_mujoco(
+    model: Any, data: Any, resolver: Any, steps: int
+) -> tuple[list[Any], list[Any], list[float]]:
     import mujoco
     import numpy as np
-    import openarm_mujoco.v2 as openarm
 
-    model_path = Path(openarm.openarm_demo_xml()).resolve()
-    model = mujoco.MjModel.from_xml_path(str(model_path))
-    data = mujoco.MjData(model)
-    resolver = openarm.JointResolver(model)
     commands: list[Any] = []
     samples: list[Any] = []
     energies: list[float] = []
-    for step in range(request.steps):
+    for step in range(steps):
         command = _sample_targets(model, step * 0.025)
         data.ctrl[:] = command
         mujoco.mj_step(model, data)
         commands.append(command.copy())
-        if step % max(1, request.steps // 100) == 0 or step + 1 == request.steps:
+        if step % max(1, steps // 100) == 0 or step + 1 == steps:
             right, _ = resolver.get_driver(data.qpos, "right")
             left, _ = resolver.get_driver(data.qpos, "left")
             samples.append(np.concatenate((right, left)))
             energies.append(float(np.dot(data.qvel, data.qvel)))
+    return commands, samples, energies
+
+
+def _write_mujoco_trace(
+    output_dir: Path, commands: list[Any], samples: list[Any], energies: list[float]
+) -> Path:
+    import numpy as np
+
     trace = output_dir / "mujoco_trajectory.npz"
     np.savez_compressed(
         trace,
@@ -136,6 +147,20 @@ def _run_mujoco(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
         command=np.asarray(commands),
         velocity_energy=np.asarray(energies),
     )
+    return trace
+
+
+def _mujoco_result(
+    request: OpenArmRunRequest,
+    model_path: Path,
+    model: Any,
+    data: Any,
+    samples: list[Any],
+    energies: list[float],
+    trace: Path,
+) -> dict[str, Any]:
+    import numpy as np
+
     if not np.isfinite(np.asarray(samples)).all() or float(data.time) <= 0:
         raise OpenArmError("MuJoCo produced non-finite state or did not advance time")
     artifact = {
@@ -143,14 +168,6 @@ def _run_mujoco(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
         "bytes": trace.stat().st_size,
         "sha256": _sha256(trace),
     }
-    if request.render:
-        video = output_dir / "mujoco_rollout.mp4"
-        _render_video(model, data, commands, video)
-        artifact["video"] = {
-            "path": video.name,
-            "bytes": video.stat().st_size,
-            "sha256": _sha256(video),
-        }
     return {
         "schema": "npa.openarm.mujoco_rollout.v1",
         "status": "completed",
@@ -165,6 +182,28 @@ def _run_mujoco(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
         "max_velocity_energy": max(energies),
         "artifact": artifact,
     }
+
+
+def _run_mujoco(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
+    import mujoco
+    import openarm_mujoco.v2 as openarm
+
+    model_path = Path(openarm.openarm_demo_xml()).resolve()
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    data = mujoco.MjData(model)
+    resolver = openarm.JointResolver(model)
+    commands, samples, energies = _step_mujoco(model, data, resolver, request.steps)
+    trace = _write_mujoco_trace(output_dir, commands, samples, energies)
+    result = _mujoco_result(request, model_path, model, data, samples, energies, trace)
+    if request.render:
+        video = output_dir / "mujoco_rollout.mp4"
+        _render_video(model, data, commands, video)
+        result["artifact"]["video"] = {
+            "path": video.name,
+            "bytes": video.stat().st_size,
+            "sha256": _sha256(video),
+        }
+    return result
 
 
 def _isaac_command(request: OpenArmRunRequest, output_dir: Path) -> list[str]:
@@ -221,6 +260,168 @@ def _run_isaac(request: OpenArmRunRequest, output_dir: Path) -> dict[str, Any]:
 def _upload(output_dir: Path, output_uri: str) -> str:
     client = StorageClient.from_environment()
     return client.upload_directory(str(output_dir), output_uri)
+
+
+def _load_result(root: Path, stage: str, expected_schema: str) -> dict[str, Any]:
+    result_path = root / stage / "result.json"
+    if not result_path.is_file():
+        raise OpenArmError(f"qualification input is missing {stage}/result.json")
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    if result.get("schema") != expected_schema or result.get("status") != "completed":
+        raise OpenArmError(f"{stage} has no completed {expected_schema} result")
+    if result.get("finite_metrics") is not True:
+        raise OpenArmError(f"{stage} did not certify finite metrics")
+    return result
+
+
+def _artifact_record(root: Path, stage: str, relative: str) -> dict[str, Any]:
+    stage_root = (root / stage).resolve()
+    artifact = (stage_root / relative).resolve()
+    if not artifact.is_relative_to(stage_root) or not artifact.is_file():
+        raise OpenArmError(f"{stage} artifact is missing or unsafe: {relative}")
+    size = artifact.stat().st_size
+    if size <= 0:
+        raise OpenArmError(f"{stage} artifact is empty: {relative}")
+    _validate_artifact_content(artifact, stage)
+    return {
+        "stage": stage,
+        "path": relative,
+        "bytes": size,
+        "sha256": _sha256(artifact),
+    }
+
+
+def _validate_npz(path: Path, stage: str) -> None:
+    import numpy as np
+
+    expected = {
+        "mujoco": {"joint_position", "command", "velocity_energy"},
+        "isaac-rollout": {"reward", "policy_observation"},
+    }[stage]
+    try:
+        with np.load(path, allow_pickle=False) as payload:
+            if not expected.issubset(payload.files):
+                raise OpenArmError(f"{stage} NPZ is missing arrays: {sorted(expected)}")
+            for key in expected:
+                values = payload[key]
+                if values.size == 0 or not np.isfinite(values).all():
+                    raise OpenArmError(f"{stage} NPZ has invalid {key} values")
+    except (OSError, ValueError) as exc:
+        raise OpenArmError(f"{stage} NPZ is unreadable: {exc}") from exc
+
+
+def _validate_checkpoint(path: Path) -> None:
+    if not zipfile.is_zipfile(path):
+        raise OpenArmError(
+            f"Isaac training checkpoint is not a Torch archive: {path.name}"
+        )
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+    if not any(name.endswith("data.pkl") for name in names):
+        raise OpenArmError(
+            f"Isaac training checkpoint has no serialized state: {path.name}"
+        )
+
+
+def _validate_video(path: Path) -> None:
+    completed = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name,width,height",
+            "-of",
+            "json",
+            str(path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    try:
+        streams = json.loads(completed.stdout).get("streams", [])
+    except json.JSONDecodeError as exc:
+        raise OpenArmError(f"MuJoCo video probe was invalid: {exc}") from exc
+    if completed.returncode or not streams:
+        raise OpenArmError("MuJoCo video has no decodable video stream")
+
+
+def _validate_artifact_content(path: Path, stage: str) -> None:
+    if stage in {"mujoco", "isaac-rollout"} and path.suffix == ".npz":
+        _validate_npz(path, stage)
+    elif stage == "mujoco" and path.suffix == ".mp4":
+        _validate_video(path)
+    elif stage == "isaac-training":
+        _validate_checkpoint(path)
+
+
+def _verify_declaration(record: dict[str, Any], declared: dict[str, Any]) -> None:
+    for key in ("bytes", "sha256"):
+        expected = declared.get(key)
+        if expected is not None and record[key] != expected:
+            raise OpenArmError(
+                f"artifact {record['path']} does not match declared {key}"
+            )
+
+
+def _declared_artifacts(
+    root: Path, stage: str, result: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if stage == "isaac-training":
+        declarations = [{"path": path} for path in result.get("checkpoints", [])]
+    else:
+        artifact = result.get("artifact", {})
+        declarations = [artifact]
+        video = artifact.get("video", {})
+        if stage == "mujoco" and video:
+            declarations.append(video)
+    paths = [row.get("path", "") for row in declarations]
+    if not paths or not all(isinstance(path, str) and path for path in paths):
+        raise OpenArmError(f"{stage} result declares no usable artifacts")
+    records = [_artifact_record(root, stage, path) for path in paths]
+    for record, declared in zip(records, declarations, strict=True):
+        _verify_declaration(record, declared)
+    return records
+
+
+def _validate_qualification_tree(root: Path) -> list[dict[str, Any]]:
+    expected = {
+        "mujoco": "npa.openarm.mujoco_rollout.v1",
+        "isaac-rollout": "npa.openarm.isaac_lab_rollout.v1",
+        "isaac-training": "npa.openarm.isaac_lab_training.v1",
+    }
+    artifacts: list[dict[str, Any]] = []
+    for stage, schema in expected.items():
+        result = _load_result(root, stage, schema)
+        artifacts.extend(_declared_artifacts(root, stage, result))
+    return artifacts
+
+
+def qualify(request: OpenArmQualificationRequest) -> OpenArmQualificationResponse:
+    """Validate every declared artifact from a completed dual-simulator run."""
+    client = StorageClient.from_environment()
+    with tempfile.TemporaryDirectory(prefix="npa-openarm-qualification-") as temporary:
+        root = Path(temporary) / "input"
+        report_root = Path(temporary) / "report"
+        root.mkdir()
+        report_root.mkdir()
+        client.download_directory(request.input_uri, str(root))
+        artifacts = _validate_qualification_tree(root)
+        response = OpenArmQualificationResponse(
+            schema="npa.openarm.qualification.v1",
+            status="completed",
+            input_uri=request.input_uri,
+            output_uri=request.output_uri,
+            artifacts=artifacts,
+        )
+        _write_json(
+            report_root / "qualification.json", response.model_dump(by_alias=True)
+        )
+        client.upload_directory(str(report_root), request.output_uri)
+    return response
 
 
 def run(

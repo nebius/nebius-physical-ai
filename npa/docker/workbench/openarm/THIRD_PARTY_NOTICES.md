@@ -9,13 +9,25 @@
 | glfw 2.10.2 | yes | zlib/libpng-style license. |
 | PyOpenGL 3.1.10 | yes | BSD-3-Clause. |
 | NumPy 1.26.4 / fsspec 2026.4.0 / typing-extensions 4.15.0 / zipp 4.1.0 | yes | BSD-3-Clause, BSD-3-Clause, PSF-2.0, and MIT respectively. |
-| NVIDIA CUDA base | yes | Official redistributable CUDA container; base is pinned by digest. |
+| NVIDIA CUDA/cuDNN development base | yes | Proprietary redistributable container, pinned by digest. Redistribution is conditioned by the NVIDIA Deep Learning Container License and applicable component notices. |
+| CUDA 12 runtime wheels required by PyTorch | yes | Exact-version NVIDIA CUDA components. The CUDA Toolkit EULA permits only the listed distributable portions and imposes application, access, protective-terms, and notice conditions. Separately packaged headers/static archives are removed. |
+| cuDNN 9.10.2.21 runtime libraries | yes | NVIDIA proprietary; only runtime `.so`/`.dll` portions are distributable under the cuDNN supplement. Wheel headers are removed and its license is retained. |
+| NCCL 2.27.5, NVSHMEM 3.3.20, and NVTX 12.8.90 | yes | Exact package metadata and retained license files identify BSD-3-Clause or Apache-2.0 code together with any NVIDIA package terms. |
 | Isaac Sim 5.1.0.0 and Isaac Lab 2.3.2.post1 | no | NVIDIA proprietary wheels, hash-pinned and operator-fetched at runtime only after the shared acceptance/refusal preflight. |
 | Isaac Lab source (`37ddf6…`) | no image layer; runtime cache | BSD-3-Clause checkout fetched by the shared bootstrap to provide official scripts. |
 | Credentials, caches, customer data, checkpoints, and outputs | no | Runtime-only operator material. |
 
-The shared Isaac OSS closure and Ubuntu package copyright files remain the
-complete runtime inventory. `components.json` records source and bake boundaries;
-the built image generates `python-license-inventory.json` from the installed
-distribution metadata. The release SBOM is authoritative for all transitive
-bytes in the published digest.
+The shared Isaac prerequisite closure contains both open-source packages and the
+NVIDIA runtime components listed above. Ubuntu package copyright files remain in
+the image. `components.json` records source and bake boundaries; the built image
+generates `python-license-inventory.json` with the installed distribution's exact
+license signals and retained license-file hashes. The release SBOM is
+authoritative for all transitive bytes in the published digest.
+
+Official governing sources reviewed for this packaging decision:
+
+- <https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license>
+- <https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html>
+- <https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html>
+- <https://github.com/NVIDIA/nccl/blob/v2.27.5-1/LICENSE.txt>
+- <https://pypi.org/project/nvidia-nvshmem-cu12/3.3.20/>

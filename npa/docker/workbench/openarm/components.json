@@ -9,6 +9,7 @@
       "revision": "a8c979629f2591ad035d99d338ce114969e6cddc",
       "source": "https://github.com/enactic/openarm_mujoco",
       "license": "Apache-2.0",
+      "license_sha256": "66a512fea6d46110e34cd7d320573a276a0a5db6cd2508e4eaadabbe39eb5938",
       "baked": true,
       "payload": "Python source, OpenArm v2 MJCF, and repository model assets"
     },
@@ -18,6 +19,7 @@
       "revision": "bad82e23716e6941c2de78ccb978f57c78b37734",
       "source": "https://github.com/enactic/openarm_isaac_lab",
       "license": "Apache-2.0",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "baked": true,
       "payload": "Python source and repository OpenArm USD assets"
     },
@@ -36,6 +38,14 @@
       "license": "NVIDIA Deep Learning Container License and component notices",
       "baked": true,
       "payload": "Digest-pinned upstream base; system copyright records retained"
+    },
+    {
+      "name": "NVIDIA CUDA/cuDNN Python runtime components",
+      "version": "exact versions in docker/workbench/common/isaac-oss-deps.txt",
+      "source": "https://pypi.org/project/nvidia-cuda-runtime-cu12/",
+      "license": "NVIDIA CUDA Toolkit EULA, cuDNN supplement, and per-package retained notices",
+      "baked": true,
+      "payload": "Runtime shared libraries only; separately installed SDK headers/static archives removed"
     },
     {
       "name": "NVIDIA Isaac Sim and Isaac Lab",
@@ -68,6 +78,8 @@
       "docker/workbench/openarm/mujoco-requirements.txt"
     ],
     "runtime_path": "/usr/share/doc/npa-openarm/python-license-inventory.json",
+    "vendor_prune_record": "/usr/share/doc/npa-openarm/python-vendor-prune.json",
+    "onboarding_contract": "/usr/share/doc/npa-openarm/ONBOARDING_CONTRACT.md",
     "system_packages": "Retained dpkg metadata and /usr/share/doc/*/copyright",
     "release_artifacts": [
       "OCI SBOM",

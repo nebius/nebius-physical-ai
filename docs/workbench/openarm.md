@@ -22,6 +22,19 @@ Unset `ACCEPT_EULA` takes the repository's documented non-interactive default;
 an empty or recognized negative value refuses before network access. Privacy
 and telemetry remain disabled.
 
+The CUDA base and the exact CUDA/cuDNN runtime distributions required by
+PyTorch are proprietary redistributable components rather than OSS. Publication
+is conditioned on NVIDIA's container, CUDA, and cuDNN distribution terms. The
+image removes separately installed vendor SDK headers and static archives,
+retains license files, and records their hashes; no patent rights are inferred.
+
+The complete legal decision, six artifact boundaries, delivery identity, cache
+policy, and release gates are recorded in
+`npa/docker/workbench/openarm/ONBOARDING_CONTRACT.md`. The built image also
+contains its exact Python distribution inventory and retains Ubuntu package
+copyright records. A generated inventory identifies bytes; it does not replace
+review of the cited upstream terms.
+
 ## Run MuJoCo
 
 ```bash
@@ -69,21 +82,25 @@ is supported only after exact-image live qualification.
 
 Set `OPENARM_TOKEN`, then deploy the authenticated RTX service. Supply a PVC to
 reuse the first-run Isaac cache; without one the deployment uses an ephemeral
-16 GiB volume:
+50 GiB volume:
 
 ```bash
-npa workbench openarm deploy --project <alias> --gpu-type rtxpro6000 \
-  --isaac-cache-pvc <claim> --dry-run --output-format json
-npa workbench openarm deploy --project <alias> --isaac-cache-pvc <claim>
+npa workbench openarm deploy --project "$NPA_PROJECT" --gpu-type rtxpro6000 \
+  --isaac-cache-pvc "$OPENARM_CACHE_PVC" --dry-run --output-format json
+npa workbench openarm deploy --project "$NPA_PROJECT" \
+  --isaac-cache-pvc "$OPENARM_CACHE_PVC"
 ```
 
 Service clients add `--service --endpoint <url> --wait`. `status`, `list`, and
 `system-info` are read-only. `delete` removes only the named service,
 deployment, and secret; it deliberately retains the cache PVC.
 
-The complete reference is `workflows/testing/openarm-simulators.yaml`. Its
-three real stages use `workbench.openarm.mujoco_rollout`,
-`workbench.openarm.isaac_rollout`, and `workbench.openarm.isaac_train`.
+The complete reference is `workflows/testing/openarm-simulators.yaml`. Its four
+real stages use `workbench.openarm.mujoco_rollout`,
+`workbench.openarm.isaac_rollout`, `workbench.openarm.isaac_train`, and
+`workbench.openarm.qualify`. The final stage downloads the preceding artifacts,
+rejects missing, empty, non-finite, or path-escaping payloads, hashes each real
+trace/video/checkpoint, and writes `qualification/qualification.json`.
 
 ## Verify
 

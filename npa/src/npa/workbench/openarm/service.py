@@ -95,72 +95,85 @@ def _execute(body: OpenArmRunRequest, identifier: str, registry: RunRegistry) ->
         )
 
 
-def create_app(*, registry: RunRegistry | None = None) -> FastAPI:
-    """Create an independently testable service instance."""
-    runs = registry or RUNS
-    app = FastAPI(title="NPA OpenArm", version="1")
+def _registry(request: Request) -> RunRegistry:
+    return request.app.state.openarm_registry
 
-    @app.get("/health")
-    async def health() -> dict[str, Any]:
-        return {"status": "ok", "runs": len(runs.values())}
 
-    @app.get("/system-info", response_model=OpenArmSystemInfo)
-    async def info(
-        request: Request, authorization: str = Header(default="")
-    ) -> OpenArmSystemInfo:
-        await _require_auth(request, authorization)
-        return await run_in_threadpool(system_info)
+async def _health(request: Request) -> dict[str, Any]:
+    return {"status": "ok", "runs": len(_registry(request).values())}
 
-    @app.get("/runs", response_model=OpenArmRunListResponse)
-    async def list_runs(
-        request: Request, authorization: str = Header(default="")
-    ) -> OpenArmRunListResponse:
-        await _require_auth(request, authorization)
-        return OpenArmRunListResponse(runs=runs.values())
 
-    @app.post("/run", response_model=OpenArmRunResponse)
-    async def start(
-        body: OpenArmRunRequest,
-        request: Request,
-        authorization: str = Header(default=""),
-    ) -> OpenArmRunResponse:
-        await _require_auth(request, authorization)
-        identifier = run_id(body)
-        current = runs.get(identifier)
-        if current is None or current.status == "failed":
-            runs.put(
-                OpenArmStatusResponse(
-                    run_id=identifier,
-                    status="running",
-                    simulator=body.simulator,
-                    output_uri=body.output_uri,
-                )
+async def _info(
+    request: Request, authorization: str = Header(default="")
+) -> OpenArmSystemInfo:
+    await _require_auth(request, authorization)
+    return await run_in_threadpool(system_info)
+
+
+async def _list_runs(
+    request: Request, authorization: str = Header(default="")
+) -> OpenArmRunListResponse:
+    await _require_auth(request, authorization)
+    return OpenArmRunListResponse(runs=_registry(request).values())
+
+
+async def _start(
+    body: OpenArmRunRequest,
+    request: Request,
+    authorization: str = Header(default=""),
+) -> OpenArmRunResponse:
+    await _require_auth(request, authorization)
+    runs = _registry(request)
+    identifier = run_id(body)
+    current = runs.get(identifier)
+    if current is None or current.status == "failed":
+        runs.put(
+            OpenArmStatusResponse(
+                run_id=identifier,
+                status="running",
+                simulator=body.simulator,
+                output_uri=body.output_uri,
             )
-            EXECUTOR.submit(_execute, body, identifier, runs)
-        status = (
-            current.status
-            if current is not None and current.status == "completed"
-            else "running"
         )
-        return OpenArmRunResponse(
-            run_id=identifier,
-            status=status,
-            simulator=body.simulator,
-            output_uri=body.output_uri,
-            manifest_sha256=manifest_sha256(body),
-        )
+        EXECUTOR.submit(_execute, body, identifier, runs)
+    status = current.status if current and current.status == "completed" else "running"
+    return OpenArmRunResponse(
+        run_id=identifier,
+        status=status,
+        simulator=body.simulator,
+        output_uri=body.output_uri,
+        manifest_sha256=manifest_sha256(body),
+    )
 
-    @app.get("/status", response_model=OpenArmStatusResponse)
-    async def status(
-        run_id: str, request: Request, authorization: str = Header(default="")
-    ) -> OpenArmStatusResponse:
-        await _require_auth(request, authorization)
-        value = runs.get(run_id)
-        if value is None:
-            raise HTTPException(status_code=404, detail=f"unknown run_id: {run_id}")
-        return value
 
-    return app
+async def _status(
+    run_id: str, request: Request, authorization: str = Header(default="")
+) -> OpenArmStatusResponse:
+    await _require_auth(request, authorization)
+    value = _registry(request).get(run_id)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"unknown run_id: {run_id}")
+    return value
+
+
+def create_app(*, registry: RunRegistry | None = None) -> FastAPI:
+    """Create an independently testable OpenArm service application."""
+    service = FastAPI(title="NPA OpenArm", version="1")
+    service.state.openarm_registry = registry or RUNS
+    service.add_api_route("/health", _health, methods=["GET"])
+    service.add_api_route(
+        "/system-info", _info, methods=["GET"], response_model=OpenArmSystemInfo
+    )
+    service.add_api_route(
+        "/runs", _list_runs, methods=["GET"], response_model=OpenArmRunListResponse
+    )
+    service.add_api_route(
+        "/run", _start, methods=["POST"], response_model=OpenArmRunResponse
+    )
+    service.add_api_route(
+        "/status", _status, methods=["GET"], response_model=OpenArmStatusResponse
+    )
+    return service
 
 
 app = create_app()

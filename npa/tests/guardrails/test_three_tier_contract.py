@@ -498,6 +498,19 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("max_iterations", "max_iterations", "--max-iterations"),
         ),
     ),
+    CapabilityContract(
+        name="openarm/qualify",
+        cli_module="npa.cli.workbench.openarm",
+        cli_callback="qualify_cmd",
+        sdk_module="npa.sdk.workbench.openarm",
+        sdk_attr="qualify",
+        spec_path=SPECS / "openarm-simulators.yaml",
+        tool_ref="workbench.openarm.qualify",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+        ),
+    ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------
     # `sim-to-real-trigger.yaml` is retired. This CLI parity check intentionally uses
     # a test-only DSL fixture; the canonical workflow is composed from run.shell

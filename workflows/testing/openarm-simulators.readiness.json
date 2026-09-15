@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "b9a225887326d988afe40ef58e76fa2735862bd6b9031c932586b745c2ae4aa3",
+  "workflow_sha256": "228f3d15f3a5925ccc404f2d13b3c4b7ac26f39998d98b7c2c64d0e3400aaf42",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec resolved all three OpenArm stages successfully.",
+      "reason": "validate-spec and plan-spec resolved all four OpenArm stages successfully.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openarm-simulators.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openarm-simulators.yaml --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Resolved commands invoke the real MuJoCo rollout, Isaac Lab environment rollout, and upstream RSL-RL trainer.",
+      "reason": "Resolved commands invoke the real MuJoCo rollout, Isaac Lab environment rollout, upstream RSL-RL trainer, and fail-closed artifact qualification.",
       "evidence": [
         "docs/workbench/openarm.md",
         "npa/tests/workbench/test_openarm.py"

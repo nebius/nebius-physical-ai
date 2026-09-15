@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from npa.cli.path_contract import validate_write_path
+from npa.cli.path_contract import validate_read_path, validate_write_path
 
 DEFAULT_PORT = 8792
 DEFAULT_TOKEN_ENV = "OPENARM_TOKEN"
@@ -97,3 +97,45 @@ class OpenArmSystemInfo(BaseModel):
     isaac_sim_version: str = ""
     isaac_lab_version: str = ""
     isaac_provisioning: str = "runtime-fetch"
+
+
+class OpenArmQualificationRequest(BaseModel):
+    """Artifact roots consumed and produced by the qualification gate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_uri: str = Field(..., min_length=1)
+    output_uri: str = Field(..., min_length=1)
+
+    @field_validator("input_uri")
+    @classmethod
+    def _input_is_s3(cls, value: str) -> str:
+        return validate_read_path(
+            value,
+            tool="OpenArm qualification",
+            option="--input-path",
+            allow_hf=False,
+            required=True,
+        )
+
+    @field_validator("output_uri")
+    @classmethod
+    def _qualification_output_is_s3(cls, value: str) -> str:
+        return validate_write_path(
+            value,
+            tool="OpenArm qualification",
+            option="--output-path",
+            required=True,
+        )
+
+
+class OpenArmQualificationResponse(BaseModel):
+    """Validated evidence summary for the complete dual-simulator workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_name: str = Field(alias="schema")
+    status: Literal["completed"]
+    input_uri: str
+    output_uri: str
+    artifacts: list[dict[str, Any]]

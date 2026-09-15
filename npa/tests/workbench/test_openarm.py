@@ -6,8 +6,10 @@ import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -16,6 +18,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
 from npa.sdk.workbench import openarm as sdk
+from npa.workbench.openarm.runtime import _validate_qualification_tree
 from npa.workbench.openarm.schemas import OpenArmRunRequest, OpenArmStatusResponse
 from npa.workbench.openarm.service import RunRegistry, create_app
 
@@ -26,7 +29,7 @@ WORKFLOW = ROOT / "workflows/testing/openarm-simulators.yaml"
 def test_cli_registered() -> None:
     result = CliRunner().invoke(app, ["workbench", "openarm", "--help"])
     assert result.exit_code == 0, result.output
-    for command in ("run", "deploy", "delete", "status", "system-info"):
+    for command in ("run", "qualify", "deploy", "delete", "status", "system-info"):
         assert command in result.output
 
 
@@ -108,6 +111,7 @@ def test_workflow_and_toolrefs_are_real_and_routed() -> None:
         "mujoco-rollout",
         "isaac-rollout",
         "isaac-training",
+        "qualify-artifacts",
     ]
     for ref in (
         "workbench.openarm.mujoco_rollout",
@@ -117,8 +121,72 @@ def test_workflow_and_toolrefs_are_real_and_routed() -> None:
         argv = argv_for_tool(ref)
         assert argv[:4] == ["npa", "workbench", "openarm", "run"]
         assert "--output-path" in argv
+    assert argv_for_tool("workbench.openarm.qualify")[:4] == [
+        "npa",
+        "workbench",
+        "openarm",
+        "qualify",
+    ]
     assert "--render" in argv_for_tool("workbench.openarm.mujoco_rollout")
     assert "--max-iterations" in argv_for_tool("workbench.openarm.isaac_train")
+    assert "--input-path" in argv_for_tool("workbench.openarm.qualify")
+
+
+def test_qualification_validates_real_artifact_tree(tmp_path: Path) -> None:
+    stages = {
+        "mujoco": ("npa.openarm.mujoco_rollout.v1", "trace.npz"),
+        "isaac-rollout": ("npa.openarm.isaac_lab_rollout.v1", "rollout.npz"),
+    }
+    for stage, (schema, artifact) in stages.items():
+        root = tmp_path / stage
+        root.mkdir()
+        arrays = (
+            {
+                "joint_position": np.ones((2, 16)),
+                "command": np.ones((3, 16)),
+                "velocity_energy": np.ones(2),
+            }
+            if stage == "mujoco"
+            else {"reward": np.ones(3), "policy_observation": np.ones((3, 8))}
+        )
+        np.savez(root / artifact, **arrays)
+        artifact_path = root / artifact
+        (root / "result.json").write_text(
+            json.dumps(
+                {
+                    "schema": schema,
+                    "status": "completed",
+                    "finite_metrics": True,
+                    "artifact": {
+                        "path": artifact,
+                        "bytes": artifact_path.stat().st_size,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    training = tmp_path / "isaac-training"
+    training.mkdir()
+    with zipfile.ZipFile(training / "model_0.pt", "w") as archive:
+        archive.writestr("checkpoint/data.pkl", b"serialized-state")
+    (training / "result.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.openarm.isaac_lab_training.v1",
+                "status": "completed",
+                "finite_metrics": True,
+                "checkpoints": ["model_0.pt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifacts = _validate_qualification_tree(tmp_path)
+    assert {row["stage"] for row in artifacts} == {
+        "mujoco",
+        "isaac-rollout",
+        "isaac-training",
+    }
+    assert all(len(row["sha256"]) == 64 for row in artifacts)
 
 
 def test_packaging_pins_and_excludes_isaac_payload() -> None:
@@ -132,6 +200,8 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "nvcr.io/nvidia/isaac" not in dockerfile
     assert "--require-hashes" in dockerfile
     assert (ROOT / "npa/docker/workbench/openarm/THIRD_PARTY_NOTICES.md").is_file()
+    assert "prune_python_vendor_devel.py" in dockerfile
+    assert (ROOT / "npa/docker/workbench/openarm/ONBOARDING_CONTRACT.md").is_file()
     components = json.loads(
         (ROOT / "npa/docker/workbench/openarm/components.json").read_text(
             encoding="utf-8"
@@ -141,6 +211,9 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "enactic/openarm_mujoco" in baked
     assert "enactic/openarm_isaac_lab" in baked
     assert "NVIDIA Isaac Sim and Isaac Lab" not in baked
+    sources = {row["name"]: row for row in components["components"]}
+    assert len(sources["enactic/openarm_mujoco"]["license_sha256"]) == 64
+    assert len(sources["enactic/openarm_isaac_lab"]["license_sha256"]) == 64
 
 
 def test_deploy_dry_run_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

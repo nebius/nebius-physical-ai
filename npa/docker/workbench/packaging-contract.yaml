@@ -212,7 +212,10 @@ images:
     notes: >-
       Bakes only the immutable Apache-2.0 Enactic openarm_mujoco 2.2.0 and
       openarm_isaac_lab 0.1.0 source/model assets, a digest-pinned CUDA base,
-      and the reviewed OSS dependency closure. NVIDIA Isaac Sim, Isaac Lab,
+      the reviewed open-source closure, and NVIDIA redistributable CUDA/cuDNN
+      runtime components required by the pinned PyTorch wheels. Separately
+      packaged vendor SDK headers/static archives are removed and license files
+      retained. NVIDIA Isaac Sim, Isaac Lab,
       Omniverse Kit, acceptance, caches, credentials, and operator data are
       absent and remain operator-fetched/runtime-owned. Full filesystem and
       layer scans plus real MuJoCo and RTX Isaac Lab execution are mandatory

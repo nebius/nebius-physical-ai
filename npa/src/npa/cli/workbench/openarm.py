@@ -8,7 +8,7 @@ import os
 import subprocess
 import time
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
 import typer
 
@@ -42,6 +42,20 @@ class OutputFormat(str, Enum):
     json = "json"
 
 
+_RENDER_HELP = "Encode a MuJoCo MP4."
+_TASK_HELP = "Upstream OpenArm Isaac environment id."
+_NUM_ENVS_HELP = "Isaac vectorized environments."
+_ITERATIONS_HELP = "RSL-RL iterations in train mode."
+ServiceOption = Annotated[
+    bool, typer.Option("--service", help="Submit to a deployed service.")
+]
+GpuTypeOption = Annotated[
+    str,
+    typer.Option("--gpu-type", help="GPU type: l40s, rtx6000, or rtxpro6000."),
+]
+NodeSelectorKeyOption = Annotated[str, typer.Option("--node-selector-key")]
+
+
 def _fail(message: str) -> None:
     typer.echo(message, err=True)
     raise typer.Exit(1)
@@ -54,6 +68,54 @@ def _emit(payload: dict[str, Any], output_format: OutputFormat) -> None:
         typer.echo("\n".join(f"{key}: {value}" for key, value in payload.items()))
 
 
+def _run_payload(
+    simulator: str,
+    output_path: str,
+    steps: int,
+    seed: int,
+    render: bool,
+    task: str,
+    num_envs: int,
+    isaac_mode: str,
+    max_iterations: int,
+    service: bool,
+    endpoint: str,
+    token_env: str,
+    wait: bool,
+    poll_seconds: float,
+) -> dict[str, Any]:
+    response = sdk.run(
+        simulator=simulator,
+        output_path=output_path,
+        steps=steps,
+        seed=seed,
+        render=render,
+        task=task,
+        num_envs=num_envs,
+        isaac_mode=isaac_mode,
+        max_iterations=max_iterations,
+        mode="service" if service else "local",
+        endpoint=endpoint,
+        token_env=token_env,
+    )
+    if service and wait:
+        return _wait(response.run_id, endpoint, token_env, poll_seconds)
+    return response.model_dump(mode="json")
+
+
+def _safe_run_payload(*args: Any) -> dict[str, Any]:
+    try:
+        return _run_payload(*args)
+    except (
+        sdk.OpenArmValidationError,
+        sdk.OpenArmServiceError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        _fail(str(exc))
+    raise AssertionError("_fail always exits")
+
+
 @app.command("run")
 @intent_boundary(OperationIntent.MUTATE)
 @json_stdout_contract
@@ -62,22 +124,12 @@ def run_cmd(
     output_path: str = typer.Option(..., "--output-path", help="S3 artifact prefix."),
     steps: int = typer.Option(DEFAULT_STEPS, "--steps", help="Physics/control steps."),
     seed: int = typer.Option(17, "--seed"),
-    render: bool = typer.Option(
-        False, "--render/--no-render", help="Encode a MuJoCo MP4."
-    ),
-    task: str = typer.Option(
-        DEFAULT_ISAAC_TASK, "--task", help="Upstream OpenArm Isaac environment id."
-    ),
-    num_envs: int = typer.Option(
-        64, "--num-envs", help="Isaac vectorized environments."
-    ),
+    render: bool = typer.Option(False, "--render/--no-render", help=_RENDER_HELP),
+    task: str = typer.Option(DEFAULT_ISAAC_TASK, "--task", help=_TASK_HELP),
+    num_envs: int = typer.Option(64, "--num-envs", help=_NUM_ENVS_HELP),
     isaac_mode: str = typer.Option("rollout", "--isaac-mode", help="rollout or train."),
-    max_iterations: int = typer.Option(
-        1, "--max-iterations", help="RSL-RL iterations in train mode."
-    ),
-    service: bool = typer.Option(
-        False, "--service", help="Submit to a deployed service."
-    ),
+    max_iterations: int = typer.Option(1, "--max-iterations", help=_ITERATIONS_HELP),
+    service: ServiceOption = False,
     endpoint: str = typer.Option("", "--endpoint"),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env"),
     wait: bool = typer.Option(False, "--wait", help="Wait for a service run."),
@@ -85,32 +137,39 @@ def run_cmd(
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format"),
 ) -> None:
     """Run a real OpenArm control rollout or upstream Isaac Lab training."""
-    try:
-        response = sdk.run(
-            simulator=simulator,
-            output_path=output_path,
-            steps=steps,
-            seed=seed,
-            render=render,
-            task=task,
-            num_envs=num_envs,
-            isaac_mode=isaac_mode,
-            max_iterations=max_iterations,
-            mode="service" if service else "local",
-            endpoint=endpoint,
-            token_env=token_env,
-        )
-        payload = response.model_dump(mode="json")
-        if service and wait:
-            payload = _wait(response.run_id, endpoint, token_env, poll_seconds)
-    except (
-        sdk.OpenArmValidationError,
-        sdk.OpenArmServiceError,
-        ValueError,
-        RuntimeError,
-    ) as exc:
-        _fail(str(exc))
+    payload = _safe_run_payload(
+        simulator,
+        output_path,
+        steps,
+        seed,
+        render,
+        task,
+        num_envs,
+        isaac_mode,
+        max_iterations,
+        service,
+        endpoint,
+        token_env,
+        wait,
+        poll_seconds,
+    )
     _emit(payload, output_format)
+
+
+@app.command("qualify")
+@intent_boundary(OperationIntent.MUTATE)
+@json_stdout_contract
+def qualify_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="S3 workflow root."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 report prefix."),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format"),
+) -> None:
+    """Validate every MuJoCo and Isaac artifact and write a qualification report."""
+    try:
+        response = sdk.qualify(input_path=input_path, output_path=output_path)
+    except (sdk.OpenArmValidationError, ValueError, RuntimeError) as exc:
+        _fail(str(exc))
+    _emit(response.model_dump(mode="json", by_alias=True), output_format)
 
 
 def _wait(
@@ -206,6 +265,106 @@ def _service_env(project: str, token_env: str) -> dict[str, str]:
     return {key: value for key, value in env.items() if value}
 
 
+def _cache_volume(cache_pvc: str) -> dict[str, Any]:
+    if cache_pvc:
+        source = {"persistentVolumeClaim": {"claimName": cache_pvc}}
+    else:
+        source = {"emptyDir": {"sizeLimit": "50Gi"}}
+    return {"name": "isaac-cache", **source}
+
+
+def _service_container(image: str, secret_name: str) -> dict[str, Any]:
+    return {
+        "name": "service",
+        "image": image,
+        "args": ["npa", "workbench", "openarm", "serve"],
+        "envFrom": [{"secretRef": {"name": secret_name}}],
+        "ports": [{"name": "http", "containerPort": DEFAULT_PORT}],
+        "volumeMounts": [{"name": "isaac-cache", "mountPath": "/opt/isaac-cache"}],
+        "resources": {
+            "requests": {"nvidia.com/gpu": "1"},
+            "limits": {"nvidia.com/gpu": "1"},
+        },
+        "readinessProbe": {"httpGet": {"path": "/health", "port": "http"}},
+        "securityContext": {
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
+    }
+
+
+def _pod_spec(
+    image: str,
+    secret_name: str,
+    cache_pvc: str,
+    node_selector_key: str,
+    node_selector_value: str,
+) -> dict[str, Any]:
+    return {
+        "nodeSelector": {node_selector_key: node_selector_value},
+        "tolerations": [
+            {
+                "key": "nvidia.com/gpu",
+                "operator": "Exists",
+                "effect": "NoSchedule",
+            }
+        ],
+        "securityContext": {"fsGroup": 1000},
+        "volumes": [_cache_volume(cache_pvc)],
+        "containers": [_service_container(image, secret_name)],
+    }
+
+
+def _deployment(
+    image: str,
+    name: str,
+    namespace: str,
+    labels: dict[str, str],
+    cache_pvc: str,
+    node_selector_key: str,
+    node_selector_value: str,
+) -> dict[str, Any]:
+    pod_spec = _pod_spec(
+        image, f"{name}-env", cache_pvc, node_selector_key, node_selector_value
+    )
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": name, "namespace": namespace, "labels": labels},
+        "spec": {
+            "replicas": 1,
+            "strategy": {"type": "Recreate"},
+            "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
+            "template": {"metadata": {"labels": labels}, "spec": pod_spec},
+        },
+    }
+
+
+def _secret(env: dict[str, str], name: str, namespace: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": f"{name}-env", "namespace": namespace},
+        "type": "Opaque",
+        "data": {
+            key: base64.b64encode(value.encode()).decode() for key, value in env.items()
+        },
+    }
+
+
+def _service(name: str, namespace: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "selector": {"app.kubernetes.io/instance": name},
+            "ports": [{"name": "http", "port": DEFAULT_PORT, "targetPort": "http"}],
+        },
+    }
+
+
 def _manifest(
     project: str,
     image: str,
@@ -217,11 +376,6 @@ def _manifest(
     node_selector_value: str,
 ) -> dict[str, Any]:
     env = _service_env(project, token_env)
-    volume = (
-        {"name": "isaac-cache", "persistentVolumeClaim": {"claimName": cache_pvc}}
-        if cache_pvc
-        else {"name": "isaac-cache", "emptyDir": {"sizeLimit": "50Gi"}}
-    )
     labels = {
         "app.kubernetes.io/name": "npa-openarm",
         "app.kubernetes.io/instance": name,
@@ -230,81 +384,17 @@ def _manifest(
         "apiVersion": "v1",
         "kind": "List",
         "items": [
-            {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": f"{name}-env", "namespace": namespace},
-                "type": "Opaque",
-                "data": {
-                    key: base64.b64encode(value.encode()).decode()
-                    for key, value in env.items()
-                },
-            },
-            {
-                "apiVersion": "apps/v1",
-                "kind": "Deployment",
-                "metadata": {"name": name, "namespace": namespace, "labels": labels},
-                "spec": {
-                    "replicas": 1,
-                    "strategy": {"type": "Recreate"},
-                    "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
-                    "template": {
-                        "metadata": {"labels": labels},
-                        "spec": {
-                            "nodeSelector": {node_selector_key: node_selector_value},
-                            "tolerations": [
-                                {
-                                    "key": "nvidia.com/gpu",
-                                    "operator": "Exists",
-                                    "effect": "NoSchedule",
-                                }
-                            ],
-                            "securityContext": {"fsGroup": 1000},
-                            "volumes": [volume],
-                            "containers": [
-                                {
-                                    "name": "service",
-                                    "image": image,
-                                    "args": ["npa", "workbench", "openarm", "serve"],
-                                    "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
-                                    "ports": [
-                                        {"name": "http", "containerPort": DEFAULT_PORT}
-                                    ],
-                                    "volumeMounts": [
-                                        {
-                                            "name": "isaac-cache",
-                                            "mountPath": "/opt/isaac-cache",
-                                        }
-                                    ],
-                                    "resources": {
-                                        "requests": {"nvidia.com/gpu": "1"},
-                                        "limits": {"nvidia.com/gpu": "1"},
-                                    },
-                                    "readinessProbe": {
-                                        "httpGet": {"path": "/health", "port": "http"}
-                                    },
-                                    "securityContext": {
-                                        "allowPrivilegeEscalation": False,
-                                        "capabilities": {"drop": ["ALL"]},
-                                        "seccompProfile": {"type": "RuntimeDefault"},
-                                    },
-                                }
-                            ],
-                        },
-                    },
-                },
-            },
-            {
-                "apiVersion": "v1",
-                "kind": "Service",
-                "metadata": {"name": name, "namespace": namespace},
-                "spec": {
-                    "selector": {"app.kubernetes.io/instance": name},
-                    "ports": [
-                        {"name": "http", "port": DEFAULT_PORT, "targetPort": "http"}
-                    ],
-                },
-            },
+            _secret(env, name, namespace),
+            _deployment(
+                image,
+                name,
+                namespace,
+                labels,
+                cache_pvc,
+                node_selector_key,
+                node_selector_value,
+            ),
+            _service(name, namespace),
         ],
     }
 
@@ -321,6 +411,72 @@ def _kubectl(
         _fail(f"kubectl failed: {exc}")
 
 
+def _node_selector(gpu_type: str, explicit_value: str) -> str:
+    value = explicit_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
+    if value:
+        return value
+    _fail(
+        "--gpu-type must be l40s, rtx6000, or rtxpro6000 unless "
+        "--node-selector-value is provided"
+    )
+    raise AssertionError("_fail always exits")
+
+
+def _redacted_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    redacted = json.loads(json.dumps(manifest))
+    redacted["items"][0]["data"] = {
+        key: "<redacted>" for key in redacted["items"][0]["data"]
+    }
+    return redacted
+
+
+def _apply_deployment(
+    manifest: dict[str, Any], name: str, namespace: str, kubeconfig: str
+) -> None:
+    _kubectl(["apply", "-f", "-"], payload=json.dumps(manifest), kubeconfig=kubeconfig)
+    _kubectl(
+        ["rollout", "status", f"deployment/{name}", "-n", namespace],
+        kubeconfig=kubeconfig,
+    )
+
+
+def _deployment_result(
+    project: str,
+    image: str,
+    name: str,
+    namespace: str,
+    kubeconfig: str,
+    cache_pvc: str,
+    gpu_type: str,
+    selector_key: str,
+    selector_value: str,
+    token_env: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    resolved_selector = _node_selector(gpu_type, selector_value)
+    resolved_image = image or container_image_for_tool("openarm")
+    manifest = _manifest(
+        project,
+        resolved_image,
+        name,
+        namespace,
+        cache_pvc,
+        token_env,
+        selector_key,
+        resolved_selector,
+    )
+    if dry_run:
+        return _redacted_manifest(manifest)
+    _apply_deployment(manifest, name, namespace, kubeconfig)
+    return {
+        "status": "deployed",
+        "name": name,
+        "namespace": namespace,
+        "image": resolved_image,
+        "node_selector": {selector_key: resolved_selector},
+    }
+
+
 @app.command("deploy")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
@@ -331,57 +487,29 @@ def deploy_cmd(
     namespace: str = typer.Option("workbench", "--namespace"),
     kubeconfig: str = typer.Option("", "--kubeconfig"),
     isaac_cache_pvc: str = typer.Option("", "--isaac-cache-pvc"),
-    gpu_type: str = typer.Option(
-        "rtxpro6000", "--gpu-type", help="GPU type: l40s, rtx6000, or rtxpro6000."
-    ),
-    node_selector_key: str = typer.Option(
-        "node.kubernetes.io/instance-type", "--node-selector-key"
-    ),
+    gpu_type: GpuTypeOption = "rtxpro6000",
+    node_selector_key: NodeSelectorKeyOption = "node.kubernetes.io/instance-type",
     node_selector_value: str = typer.Option("", "--node-selector-value"),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format"),
 ) -> None:
     """Ensure an authenticated single-RTX OpenArm service is deployed."""
-    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(
-        gpu_type.strip().lower()
-    )
-    if not selector_value:
-        _fail(
-            "--gpu-type must be l40s, rtx6000, or rtxpro6000 unless "
-            "--node-selector-value is provided"
-        )
-    resolved_image = image or container_image_for_tool("openarm")
-    manifest = _manifest(
+    payload = _deployment_result(
         project,
-        resolved_image,
+        image,
         name,
         namespace,
+        kubeconfig,
         isaac_cache_pvc,
-        token_env,
+        gpu_type,
         node_selector_key,
-        selector_value,
-    )
-    if dry_run:
-        redacted = json.loads(json.dumps(manifest))
-        redacted["items"][0]["data"] = {
-            key: "<redacted>" for key in redacted["items"][0]["data"]
-        }
-        _emit(redacted, output_format)
-        return
-    _kubectl(["apply", "-f", "-"], payload=json.dumps(manifest), kubeconfig=kubeconfig)
-    _kubectl(
-        ["rollout", "status", f"deployment/{name}", "-n", namespace],
-        kubeconfig=kubeconfig,
+        node_selector_value,
+        token_env,
+        dry_run,
     )
     _emit(
-        {
-            "status": "deployed",
-            "name": name,
-            "namespace": namespace,
-            "image": resolved_image,
-            "node_selector": {node_selector_key: selector_value},
-        },
+        payload,
         output_format,
     )
 

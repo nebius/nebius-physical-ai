@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,14 @@ import time
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -26,37 +35,39 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _rollout(args: argparse.Namespace) -> dict[str, object]:
-    import gymnasium as gym
-    import numpy as np
-    import openarm.tasks  # noqa: F401
+def _step_rollout(
+    env: object, args: argparse.Namespace, device: str
+) -> tuple[list[float], list[object]]:
     import torch
-    from isaaclab_tasks.utils import parse_env_cfg
 
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    env_cfg = parse_env_cfg(args.task, device=device, num_envs=args.num_envs)
-    env_cfg.seed = args.seed
-    env = gym.make(args.task, cfg=env_cfg)
     rewards = []
     observations = []
-    started = time.time()
-    try:
-        env.reset(seed=args.seed)
-        for _ in range(args.steps):
-            action = torch.as_tensor(
-                env.action_space.sample(), device=device, dtype=torch.float32
-            )
-            observation, reward, _terminated, _truncated, _info = env.step(action)
-            rewards.append(float(torch.as_tensor(reward).mean().item()))
-            policy = (
-                observation.get("policy") if isinstance(observation, dict) else None
-            )
-            if policy is not None:
-                observations.append(torch.as_tensor(policy)[0].detach().cpu().numpy())
-    finally:
-        env.close()
+    env.reset(seed=args.seed)
+    for _ in range(args.steps):
+        action = torch.as_tensor(
+            env.action_space.sample(), device=device, dtype=torch.float32
+        )
+        observation, reward, _terminated, _truncated, _info = env.step(action)
+        rewards.append(float(torch.as_tensor(reward).mean().item()))
+        policy = observation.get("policy") if isinstance(observation, dict) else None
+        if policy is not None:
+            observations.append(torch.as_tensor(policy)[0].detach().cpu().numpy())
+    return rewards, observations
+
+
+def _rollout_result(
+    args: argparse.Namespace,
+    rewards: list[float],
+    observations: list[object],
+    device: str,
+    started: float,
+) -> dict[str, object]:
+    import numpy as np
+
     if not rewards or not np.isfinite(rewards).all():
         raise RuntimeError("OpenArm Isaac rollout produced no finite rewards")
+    if not observations or not np.isfinite(np.asarray(observations)).all():
+        raise RuntimeError("OpenArm Isaac rollout produced no finite observations")
     trace = args.output_dir / "isaac_rollout.npz"
     np.savez_compressed(
         trace, reward=np.asarray(rewards), policy_observation=np.asarray(observations)
@@ -72,14 +83,35 @@ def _rollout(args: argparse.Namespace) -> dict[str, object]:
         "device": device,
         "mean_reward": float(np.mean(rewards)),
         "duration_seconds": time.time() - started,
-        "artifact": {"path": trace.name, "bytes": trace.stat().st_size},
+        "observation_samples": len(observations),
+        "artifact": {
+            "path": trace.name,
+            "bytes": trace.stat().st_size,
+            "sha256": _sha256(trace),
+        },
     }
 
 
-def _train(args: argparse.Namespace) -> dict[str, object]:
-    root = Path(os.environ.get("OPENARM_ISAAC_ROOT", "/opt/openarm/isaac"))
-    script = root / "scripts/reinforcement_learning/rsl_rl/train.py"
-    command = [
+def _rollout(args: argparse.Namespace) -> dict[str, object]:
+    import gymnasium as gym
+    import openarm.tasks  # noqa: F401
+    import torch
+    from isaaclab_tasks.utils import parse_env_cfg
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    env_cfg = parse_env_cfg(args.task, device=device, num_envs=args.num_envs)
+    env_cfg.seed = args.seed
+    env = gym.make(args.task, cfg=env_cfg)
+    started = time.time()
+    try:
+        rewards, observations = _step_rollout(env, args, device)
+    finally:
+        env.close()
+    return _rollout_result(args, rewards, observations, device, started)
+
+
+def _training_command(args: argparse.Namespace, script: Path) -> list[str]:
+    return [
         sys.executable,
         str(script),
         "--task",
@@ -92,9 +124,18 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         str(args.seed),
         "--headless",
     ]
+
+
+def _train(args: argparse.Namespace) -> dict[str, object]:
+    root = Path(os.environ.get("OPENARM_ISAAC_ROOT", "/opt/openarm/isaac"))
+    script = root / "scripts/reinforcement_learning/rsl_rl/train.py"
     started = time.time()
     completed = subprocess.run(
-        command, cwd=args.output_dir, text=True, capture_output=True, check=False
+        _training_command(args, script),
+        cwd=args.output_dir,
+        text=True,
+        capture_output=True,
+        check=False,
     )
     (args.output_dir / "training_stdout.log").write_text(
         completed.stdout, encoding="utf-8"

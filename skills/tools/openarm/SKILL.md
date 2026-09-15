@@ -25,6 +25,10 @@ qualification contract.
   `skills/atomic/solution-licensing/SKILL.md` before building or executing.
 - Invoke Isaac only through `${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}`. Never
   run this shim from a Dockerfile `RUN` instruction.
+- Classify the CUDA base and CUDA/cuDNN Python runtime libraries as conditional
+  NVIDIA redistributable components, not OSS. Retain their notices, remove
+  separately installed SDK headers/static archives, and review their exact
+  built-image files and SBOM before publication.
 
 ## Supported workloads
 
@@ -39,6 +43,13 @@ exists. `Isaac-Reach-OpenArm-v0` is the default qualification task. Treat lift,
 drawer, bimanual, imitation, teleoperation, and sim-to-real as unqualified until
 each has exact-image live evidence; upstream itself says the latter three are
 under development.
+
+The reference workflow must end with `workbench.openarm.qualify`. That stage
+downloads the common run root, validates all three terminal results, rejects
+unsafe/missing/empty artifacts, hashes the MuJoCo trace/video, Isaac rollout
+trace, and every upstream checkpoint, then emits
+`npa.openarm.qualification.v1`. A successful simulator process without this
+artifact-level gate is not complete workflow evidence.
 
 Use an L40S or RTX PRO 6000 for Isaac execution. H100, H200, and B200 are not
 valid render-capable qualification targets.

@@ -3309,6 +3309,25 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.openarm.qualify": ToolEntry(
+        name="workbench.openarm.qualify",
+        description=(
+            "Download and independently validate the MuJoCo trace/video, Isaac "
+            "rollout trace, and Isaac training checkpoint before finalization."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "qualify",
+            "--input-path",
+            "{{config.run_root_uri}}",
+            "--output-path",
+            "{{config.qualification_output_uri}}",
+            "--output-format",
+            "json",
+        ],
+    ),
 }
 
 

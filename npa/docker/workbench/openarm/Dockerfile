@@ -10,7 +10,7 @@ ARG NPA_SOURCE_SHA
 ARG NPA_RUNTIME_USER=ubuntu
 
 LABEL npa.tool="openarm" \
-      npa.version="2.2.0-isaac0.1.0" \
+      npa.version="2.2.0-isaac0.1.0-rtfetch" \
       npa.openarm_mujoco_commit="${OPENARM_MUJOCO_COMMIT}" \
       npa.openarm_isaac_commit="${OPENARM_ISAAC_COMMIT}" \
       npa.isaac_provisioning="runtime-fetch" \
@@ -51,9 +51,11 @@ COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 COPY docker/workbench/openarm/mujoco-requirements.txt /opt/npa/openarm/mujoco-requirements.txt
 COPY --chmod=0755 docker/workbench/openarm/isaac_runner.py /opt/npa/openarm/isaac_runner.py
 COPY --chmod=0755 docker/workbench/openarm/emit_license_inventory.py /opt/npa/openarm/emit_license_inventory.py
+COPY --chmod=0755 docker/workbench/openarm/prune_python_vendor_devel.py /opt/npa/openarm/prune_python_vendor_devel.py
 COPY --chmod=0444 docker/workbench/openarm/components.json /usr/share/doc/npa-openarm/components.json
 COPY --chmod=0444 docker/workbench/openarm/REDISTRIBUTION.md /usr/share/doc/npa-openarm/REDISTRIBUTION.md
 COPY --chmod=0444 docker/workbench/openarm/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-openarm/THIRD_PARTY_NOTICES.md
+COPY --chmod=0444 docker/workbench/openarm/ONBOARDING_CONTRACT.md /usr/share/doc/npa-openarm/ONBOARDING_CONTRACT.md
 COPY pyproject.toml /opt/npa/pyproject.toml
 COPY src/npa /opt/npa/src/npa
 COPY workflows /opt/npa/workflows
@@ -66,7 +68,7 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
 
-# The reviewed hash lock is additive to the exact shared Isaac OSS closure.
+# The reviewed hash lock is additive to the exact shared Isaac prerequisite closure.
 RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes \
       -r /opt/npa/openarm/mujoco-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps wheel==0.47.0 \
@@ -77,8 +79,11 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
     && git clone --filter=blob:none --no-checkout https://github.com/enactic/openarm_isaac_lab.git /opt/openarm/isaac \
     && git -C /opt/openarm/isaac checkout "${OPENARM_ISAAC_COMMIT}" \
     && test "$(git -C /opt/openarm/isaac rev-parse HEAD)" = "${OPENARM_ISAAC_COMMIT}" \
+    && printf '%s  %s\n' 66a512fea6d46110e34cd7d320573a276a0a5db6cd2508e4eaadabbe39eb5938 /opt/openarm/mujoco/LICENSE | sha256sum --check --strict \
+    && printf '%s  %s\n' cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 /opt/openarm/isaac/LICENSE.txt | sha256sum --check --strict \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/openarm/isaac/source/openarm \
     && /opt/npa/sim/venv/bin/python -m pip uninstall -y wheel \
+    && /opt/npa/sim/venv/bin/python /opt/npa/openarm/prune_python_vendor_devel.py \
     && /opt/npa/sim/venv/bin/python -m pip check \
     && cp /opt/openarm/mujoco/LICENSE /usr/share/doc/npa-openarm/OPENARM_MUJOCO_LICENSE \
     && cp /opt/openarm/isaac/LICENSE.txt /usr/share/doc/npa-openarm/OPENARM_ISAAC_LICENSE \

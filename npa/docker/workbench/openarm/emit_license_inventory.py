@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
+from typing import Any
 
 
 def _sha256(path: Path) -> str:
@@ -32,24 +33,57 @@ def _licenses(metadata: importlib.metadata.PackageMetadata) -> list[str]:
     return sorted(set(values))
 
 
+def _license_files(
+    distribution: importlib.metadata.Distribution,
+) -> list[dict[str, str]]:
+    records = []
+    for entry in distribution.files or []:
+        name = str(entry).lower()
+        if not any(marker in name for marker in ("license", "copying", "notice")):
+            continue
+        path = Path(distribution.locate_file(entry))
+        if path.is_file():
+            records.append({"path": str(entry), "sha256": _sha256(path)})
+    return sorted(records, key=lambda row: row["path"].lower())
+
+
+def _category(name: str, licenses: list[str]) -> str:
+    if not name.lower().startswith("nvidia-"):
+        return "declared-license"
+    signals = " ".join(licenses).lower()
+    if "proprietary" in signals and any(
+        marker in signals for marker in ("apache", "bsd")
+    ):
+        return "nvidia-mixed-license-signals"
+    if "proprietary" in signals:
+        return "nvidia-proprietary-redistributable-component"
+    return "nvidia-declared-license"
+
+
+def _package_record(distribution: importlib.metadata.Distribution) -> dict[str, Any]:
+    metadata = distribution.metadata
+    name = str(metadata.get("Name", distribution.name)).strip()
+    licenses = _licenses(metadata)
+    if not licenses:
+        raise RuntimeError(f"installed distribution has no license signal: {name}")
+    return {
+        "name": name,
+        "version": distribution.version,
+        "licenses": licenses,
+        "license_category": _category(name, licenses),
+        "license_files": _license_files(distribution),
+        "home_page": str(metadata.get("Home-page", "")).strip(),
+    }
+
+
 def main() -> int:
+    """Write a fail-closed inventory for every installed Python distribution."""
     destination = Path("/usr/share/doc/npa-openarm/python-license-inventory.json")
     locks = [
         Path("/opt/npa/docker/workbench/common/isaac-oss-deps.txt"),
         Path("/opt/npa/openarm/mujoco-requirements.txt"),
     ]
-    packages = []
-    for distribution in importlib.metadata.distributions():
-        metadata = distribution.metadata
-        name = str(metadata.get("Name", distribution.name)).strip()
-        packages.append(
-            {
-                "name": name,
-                "version": distribution.version,
-                "licenses": _licenses(metadata),
-                "home_page": str(metadata.get("Home-page", "")).strip(),
-            }
-        )
+    packages = [_package_record(row) for row in importlib.metadata.distributions()]
     payload = {
         "schema": "npa.python-license-inventory.v1",
         "packages": sorted(packages, key=lambda row: row["name"].lower()),

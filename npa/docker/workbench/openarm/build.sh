@@ -6,6 +6,8 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 REGISTRY=""
 TAG=""
 PUSH=0
+# Catalog identity used only by release promotion; development builds stay dev-<SHA>.
+RELEASE_VERSION="2.2.0-isaac0.1.0-rtfetch"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

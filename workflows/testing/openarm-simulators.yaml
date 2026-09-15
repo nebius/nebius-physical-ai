@@ -5,7 +5,8 @@ metadata:
   name: openarm-simulators
   description: >
     Real Enactic OpenArm qualification: a controlled bimanual MuJoCo rollout,
-    an Isaac Lab vectorized reach rollout, and upstream RSL-RL training.
+    an Isaac Lab vectorized reach rollout, upstream RSL-RL training, and
+    independent validation of every persisted artifact.
 
 config:
   bucket: example-bucket
@@ -16,9 +17,11 @@ config:
   isaac_steps: "100"
   num_envs: "64"
   max_iterations: "1"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   mujoco_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/mujoco/"
   isaac_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/isaac-rollout/"
   training_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/isaac-training/"
+  qualification_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/qualification/"
 
 resources:
   openarm-rtx:
@@ -57,4 +60,14 @@ states:
     outputs:
       - uri: "{{config.training_output_uri}}"
         schema: npa.openarm.isaac_lab_training.v1
+    next: qualify-artifacts
+
+  qualify-artifacts:
+    description: Download, hash, and validate every dual-simulator artifact.
+    toolRef: workbench.openarm.qualify
+    resources: openarm-rtx
+    needs: [isaac-training]
+    outputs:
+      - uri: "{{config.qualification_output_uri}}"
+        schema: npa.openarm.qualification.v1
     terminal: true
