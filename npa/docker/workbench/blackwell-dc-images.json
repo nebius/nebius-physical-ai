@@ -706,12 +706,22 @@
         "guardrail_state": {
           "requested": true,
           "discovered": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "evaluated": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "media_attempted_inputs": 1,
           "media_successful_inputs": 1,
@@ -847,6 +857,33 @@
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
       "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+    },
+    {
+      "name": "npa-diffusers",
+      "dockerfile": "diffusers/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The native capability has private BYOF B200 evidence. This newly packaged public digest must independently pass image byte scans and real B200 inference; B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model"
+    },
+    {
+      "name": "npa-lingbot-world",
+      "dockerfile": "lingbot-world/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The native capability has private BYOF B200 evidence. This newly packaged public digest must independently pass image byte scans and real B200 inference; B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model"
+    },
+    {
+      "name": "npa-sam2",
+      "dockerfile": "sam2/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The native capability has private BYOF B200 evidence. This newly packaged public digest must independently pass image byte scans and real B200 inference; B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model"
     }
   ],
   "validation_evidence": {

@@ -3,6 +3,9 @@ FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="diffusers" \
+      npa.version="275869dcae4ebcfee6a80253fdabc56033335020-runtime-fetch" \
+      org.opencontainers.image.title="NPA diffusers native GPU workflow runtime" \
+      org.opencontainers.image.description="Pinned OSS source and CPU dependencies; runtime-only CUDA and models" \
       npa.source_revision="${NPA_SOURCE_SHA}" \
       npa.byof.repo="https://github.com/huggingface/diffusers.git" \
       npa.byof.ref="275869dcae4ebcfee6a80253fdabc56033335020" \

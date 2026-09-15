@@ -89,9 +89,31 @@ def _validate_layout(scene):
         raise ValueError("Immersive scenes support at most two headline lines")
     if scene["layout"] == "film":
         _validate_film_titles(scene)
+    if scene["layout"] == "architecture":
+        _validate_architecture(scene)
     for field, maximum in (("source_notes", 2), ("review_steps", 3), ("pipeline_labels", 3)):
         if len(scene.get(field, [])) > maximum:
             raise ValueError(f"Scene {scene['id']} supports at most {maximum} {field}")
+
+
+def _validate_architecture(scene):
+    nodes = scene.get("compute_nodes")
+    if not isinstance(nodes, list) or not 1 <= len(nodes) <= 3:
+        raise ValueError("Architecture needs one to three compute nodes")
+    for node in nodes:
+        if not isinstance(node, dict) or not all(isinstance(node.get(key), str) and node[key].strip()
+                                               for key in ("title", "purpose")):
+            raise ValueError("Each compute node needs a title and purpose")
+        models = node.get("models")
+        if not isinstance(models, list) or len(models) > 3 or any(not isinstance(value, str) for value in models):
+            raise ValueError("Compute nodes support up to three model labels")
+    storage = scene.get("storage_node")
+    if not isinstance(storage, dict) or not all(isinstance(storage.get(key), str) and storage[key].strip()
+                                              for key in ("title", "detail")):
+        raise ValueError("Architecture needs a storage title and detail")
+    for key in ("controller", "architecture_note"):
+        if not isinstance(scene.get(key), str) or not scene[key].strip():
+            raise ValueError(f"Architecture needs {key}")
 
 
 def _validate_film_titles(scene):

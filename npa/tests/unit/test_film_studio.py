@@ -42,6 +42,27 @@ def test_registry_resolves_independent_projects_relative_to_registry(studio, tmp
     assert projects["exec"] != projects["inference"]
 
 
+def test_architecture_draft_needs_no_media_or_credentials(studio, tmp_path):
+    draft = importlib.import_module("film_draft")
+    scene = {"id": "infrastructure", "duration": 12, "layout": "architecture",
+             "title": ["Connect the workflow"], "subtitle": "", "eyebrow": "",
+             "assets": [], "labels": [], "narration": "Use the right infrastructure.",
+             "controller": "Workbench", "architecture_note": "Reference deployment.",
+             "compute_nodes": [{"title": "Compute", "purpose": "Inference", "models": ["Model"]}],
+             "storage_node": {"title": "Storage", "detail": "Run outputs"}}
+    story = tmp_path / "story.json"
+    assets = tmp_path / "assets.json"
+    story.write_text(json.dumps({"title": "Film", "scenes": [scene]}))
+    assets.write_text("{}")
+    _, _, selected, required = draft._inputs({"storyboard": story, "assets": assets}, "infrastructure")
+    assert selected == {**scene, "footer": "Film"}
+    assert required == {}
+    assert draft.render._rectangles(scene) == []
+    scene["compute_nodes"][0]["models"] = "not a list"
+    with pytest.raises(ValueError, match="model labels"):
+        draft.render._validate_layout(scene)
+
+
 @pytest.mark.parametrize("projects", [[], {"list": "p.json"}, {"init": "p.json"}, {"search": "p.json"}, {"exec": {}}, {"Exec": "p.json"}])
 def test_invalid_registry_fails_before_running_a_command(studio, tmp_path, projects):
     path = tmp_path / "studio.json"

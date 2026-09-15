@@ -44,6 +44,8 @@ def _paragraph(draw, position, text, size, width, color=_MUTED, weight=500):
 
 def _rectangles(scene):
     layout = scene["layout"]
+    if layout == "architecture":
+        return []
     if layout in {"film", "hero", "cinematic", "immersive"}:
         return [(0, 0, 1920, 1080)]
     if layout in {"close", "triptych"}:
@@ -87,6 +89,8 @@ def _branding(image, index, total, footer):
 def _base(scene, index, total):
     if scene["layout"] == "film":
         return _film_base(scene)
+    if scene["layout"] == "architecture":
+        return _architecture_base(scene)
     image = Image.new("RGBA", (_WIDTH, _HEIGHT), _INK)
     draw = ImageDraw.Draw(image)
     for x in range(72, _WIDTH, 150):
@@ -111,6 +115,10 @@ def _base(scene, index, total):
 
 
 def _headlines(draw, scene):
+    if scene["layout"] == "architecture":
+        _text(draw, (96, 155), " ".join(scene["title"]), 66, _WHITE, 700)
+        _text(draw, (96, 252), scene["subtitle"], 28, _MUTED)
+        return
     if scene["layout"] == "film":
         _film_headlines(draw, scene)
         return
@@ -210,6 +218,38 @@ def _film_headlines(draw, scene):
     subtitle = scene["subtitle"]
     x = (1920 - draw.textlength(subtitle, font=_font(26, 500))) / 2 if centered else 100
     _text(draw, (x, title_y + len(scene["title"]) * spacing + 14), subtitle, 26, _WHITE)
+
+
+def _architecture_card(draw, node, x, width):
+    draw.rounded_rectangle((x, 442, x + width, 700), radius=20,
+                           fill=(18, 29, 35, 255), outline=(58, 77, 83, 255), width=2)
+    _text(draw, (x + 30, 473), node["title"], 40, _WHITE, 700)
+    _text(draw, (x + 30, 535), node["purpose"], 25, _ACCENT, 600)
+    for index, model in enumerate(node["models"]):
+        _text(draw, (x + 30, 582 + index * 33), model, 23, _MUTED)
+
+
+def _architecture_base(scene):
+    image = Image.new("RGBA", (_WIDTH, _HEIGHT), _INK)
+    image.alpha_composite(_logo(), (96, 60))
+    draw = ImageDraw.Draw(image)
+    _text(draw, (96, 345), scene["controller"], 29, _WHITE, 600)
+    nodes = scene["compute_nodes"]
+    width = (1728 - 36 * (len(nodes) - 1)) // len(nodes)
+    for index, node in enumerate(nodes):
+        x = 96 + index * (width + 36)
+        center = x + width // 2
+        draw.line((center, 407, center, 442), fill=_ACCENT, width=3)
+        draw.line((center, 700, center, 763), fill=_ACCENT, width=3)
+        draw.polygon(((center - 7, 752), (center + 7, 752), (center, 763)), fill=_ACCENT)
+        _architecture_card(draw, node, x, width)
+    draw.line((96, 407, 1824, 407), fill=(75, 98, 104, 255), width=2)
+    draw.rounded_rectangle((96, 775, 1824, 907), radius=20,
+                           fill=(25, 39, 41, 255), outline=_ACCENT, width=2)
+    _text(draw, (130, 805), scene["storage_node"]["title"], 35, _WHITE, 700)
+    _text(draw, (580, 819), scene["storage_node"]["detail"], 24, _MUTED)
+    _text(draw, (96, 958), scene["architecture_note"], 20, _MUTED)
+    return image
 
 
 def _details(draw, scene):

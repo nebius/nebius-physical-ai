@@ -3,6 +3,9 @@ FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="lingbot-world" \
+      npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-runtime-fetch" \
+      org.opencontainers.image.title="NPA lingbot-world native GPU workflow runtime" \
+      org.opencontainers.image.description="Pinned OSS source and CPU dependencies; runtime-only CUDA and models" \
       npa.source_revision="${NPA_SOURCE_SHA}" \
       npa.byof.repo="https://github.com/Robbyant/lingbot-world.git" \
       npa.byof.ref="a43bec7f8091c83e9b30b16b912f6fc906236fa6" \

@@ -80,6 +80,31 @@ audio cache. Replacing the music rebuilds the mix while retaining cached visual
 scenes. Omit this field to use the original synthesized default bed. Supply music
 you are authorized to use, and record its origin with the project evidence.
 
+## Infrastructure closing diagram
+
+Use `layout: "architecture"` with empty `assets` and `labels` arrays to explain
+where a workflow runs without reusing footage. The diagram supports one to three
+compute cards feeding a storage card. All wording comes from the scene:
+
+```json
+{
+  "controller": "Workbench connects the workflow",
+  "compute_nodes": [
+    {"title": "Token Factory", "purpose": "Hosted inference", "models": ["Vision evaluation"]},
+    {"title": "GPU compute", "purpose": "Model inference", "models": ["World models"]},
+    {"title": "RTX", "purpose": "Simulation + rendering", "models": ["MuJoCo", "Isaac Lab"]}
+  ],
+  "storage_node": {"title": "Object Storage", "detail": "Video files · Datasets · Results"},
+  "architecture_note": "Reference deployment; consult artifact provenance for actual run hardware."
+}
+```
+
+Keep card titles short and supply up to three model labels per card. The normal
+scene title, subtitle, narration and duration remain editable. A reference
+architecture describes possible placement; its labels do not rewrite the GPU or
+model identity in an artifact's provenance. Draft previews need no credentials,
+media generation or hosted inference calls.
+
 ## Find footage in object storage
 
 `npa studio search` discovers assets before a film project exists. It uses the
