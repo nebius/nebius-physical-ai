@@ -71,16 +71,18 @@ AUDIT_ARCH_X86_64 = 0xC000003E
 SYS_SOCKET_X86_64 = 41
 AF_INET = 2
 AF_INET6 = 10
-RUNTIME_AUTHORITY_ENV = frozenset(
+RUNTIME_ENVIRONMENT_ALLOWLIST = frozenset(
     {
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        "KUBERNETES_SERVICE_HOST",
-        "KUBERNETES_SERVICE_PORT",
-        "NEBIUS_S3_ENDPOINT",
-        "NPA_S3_BUCKET",
-        "S3_OUTPUT_PREFIX",
+        "BYOF_IMAGE",
+        "MUJOCO_GL",
+        "NPA_BYOF_POD_IMAGE_ID",
+        "NPA_GYMNASIUM_RUNTIME_CACHE",
+        "NPA_SMOKE_OUTPUT_DIR",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "PYOPENGL_PLATFORM",
     }
 )
+RUNTIME_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 INOTIFY_CHANGE_MASK = (
     0x00000002  # IN_MODIFY
     | 0x00000004  # IN_ATTRIB
@@ -472,9 +474,7 @@ def _validate_cache_directory(
         _refuse("runtime cache path component is group/world writable")
 
 
-def _open_cache_component(
-    parent_fd: int, name: str, *, operator_owned: bool
-) -> int:
+def _open_cache_component(parent_fd: int, name: str, *, operator_owned: bool) -> int:
     """Create if needed and bind one no-follow directory below a trusted fd."""
 
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -768,38 +768,44 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
         venv.EnvBuilder(with_pip=True, clear=False, symlinks=False).create(runtime)
         _remove_venv_compatibility_link(runtime)
         python = runtime / "bin/python"
-        if _execute_isolated_command(
-            [
-                str(python),
-                "-I",
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-index",
-                "--no-deps",
-                "--require-hashes",
-                "--find-links",
-                str(wheelhouse),
-                "--requirement",
-                str(requirements),
-            ]
-        ) != 0:
+        if (
+            _execute_isolated_command(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-index",
+                    "--no-deps",
+                    "--require-hashes",
+                    "--find-links",
+                    str(wheelhouse),
+                    "--requirement",
+                    str(requirements),
+                ]
+            )
+            != 0
+        ):
             _refuse("offline wheel installation failed")
-        if _execute_isolated_command(
-            [
-                str(python),
-                "-I",
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-index",
-                "--no-deps",
-                "--no-build-isolation",
-                str(source),
-            ]
-        ) != 0:
+        if (
+            _execute_isolated_command(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-index",
+                    "--no-deps",
+                    "--no-build-isolation",
+                    str(source),
+                ]
+            )
+            != 0
+        ):
             _refuse("offline source installation failed")
     except OSError as error:
         _refuse(f"offline runtime installation failed: {error}")
@@ -822,9 +828,7 @@ def _exclusive_lock(cache_root_fd: int) -> Iterator[None]:
         if metadata.st_uid != os.geteuid() or not stat.S_ISREG(metadata.st_mode):
             _refuse("runtime cache lock is not an operator-owned regular file")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        named = os.stat(
-            ".bootstrap.lock", dir_fd=cache_root_fd, follow_symlinks=False
-        )
+        named = os.stat(".bootstrap.lock", dir_fd=cache_root_fd, follow_symlinks=False)
         if (named.st_dev, named.st_ino) != (metadata.st_dev, metadata.st_ino):
             _refuse("runtime cache lock identity changed while being acquired")
         yield
@@ -843,9 +847,7 @@ def _replace_current_link(cache_root_fd: int, runtime_digest: str) -> None:
     else:
         _refuse("runtime current-link staging name already exists")
     try:
-        os.symlink(
-            f"versions/{runtime_digest}", temporary_name, dir_fd=cache_root_fd
-        )
+        os.symlink(f"versions/{runtime_digest}", temporary_name, dir_fd=cache_root_fd)
         os.replace(
             temporary_name,
             "current",
@@ -1063,7 +1065,9 @@ def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
                         or opened.st_ino != metadata.st_ino
                         or not stat.S_ISREG(opened.st_mode)
                     ):
-                        _refuse(f"runtime cache file changed during validation: {relative}")
+                        _refuse(
+                            f"runtime cache file changed during validation: {relative}"
+                        )
                     digest = _stream_sha256(stream)
                 entries.append(
                     {
@@ -1114,22 +1118,18 @@ def _validated_existing(
         "rights_boundary",
         "tree_manifest_sha256",
     }
-    expected_artifacts = {
-        item.name: item.sha256 for item in runtime_lock.artifacts
-    }
+    expected_artifacts = {item.name: item.sha256 for item in runtime_lock.artifacts}
     if (
         set(receipt) != expected_receipt_keys
         or receipt.get("schema") != RECEIPT_SCHEMA
         or receipt.get("status") != "ready"
         or receipt.get("manifest_sha256") != runtime_lock.digest
-        or receipt.get("requirements_lock_sha256")
-        != runtime_lock.requirements_sha256
+        or receipt.get("requirements_lock_sha256") != runtime_lock.requirements_sha256
         or receipt.get("source_commit") != EXPECTED_SOURCE_COMMIT
         or receipt.get("mujoco_version") != EXPECTED_MUJOCO_VERSION
         or receipt.get("artifact_sha256") != expected_artifacts
         or receipt.get("rights_boundary") != RIGHTS_BOUNDARY
-        or receipt.get("tree_manifest_sha256")
-        != hashlib.sha256(tree_raw).hexdigest()
+        or receipt.get("tree_manifest_sha256") != hashlib.sha256(tree_raw).hexdigest()
     ):
         _refuse("existing runtime cache receipt does not match the pinned runtime")
     if (
@@ -1253,9 +1253,7 @@ def _open_validated_runtime(
         ):
             _refuse("runtime Python is not a sealed operator-owned executable")
         try:
-            tree = json.loads(
-                _read_owned_control(bound_root / "tree-manifest.json")
-            )
+            tree = json.loads(_read_owned_control(bound_root / "tree-manifest.json"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             _refuse(f"runtime tree manifest changed before execution: {error}")
         if not isinstance(tree, dict) or not isinstance(tree.get("entries"), list):
@@ -1263,8 +1261,7 @@ def _open_validated_runtime(
         expected_python = [
             entry
             for entry in tree.get("entries", [])
-            if isinstance(entry, dict)
-            and entry.get("path") == "runtime/bin/python"
+            if isinstance(entry, dict) and entry.get("path") == "runtime/bin/python"
         ]
         with os.fdopen(os.dup(python_fd), "rb") as stream:
             python_sha256 = _stream_sha256(stream)
@@ -1414,9 +1411,7 @@ def prepare(
                     }
                     _write_control(
                         receipt_path,
-                        (
-                            json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-                        ).encode(),
+                        (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(),
                     )
                     staged = stage.lstat()
                     if stat.S_IMODE(staged.st_mode) & 0o222:
@@ -1448,8 +1443,8 @@ def prepare(
             _replace_current_link(cache.root_fd, runtime_lock.digest)
             _require_cache_identities(cache)
             if retain_runtime_handles:
-                receipt, directory_fd, python_fd, monitor_fd = (
-                    _open_validated_runtime(target, runtime_lock)
+                receipt, directory_fd, python_fd, monitor_fd = _open_validated_runtime(
+                    target, runtime_lock
                 )
                 handles = (directory_fd, python_fd, monitor_fd)
             try:
@@ -1495,22 +1490,18 @@ def _prctl(option: int, argument: object = 0, argument2: object = 0) -> int:
     return result
 
 
-def _authority_free_environment() -> dict[str, str]:
-    """Remove storage and workload-identity authority from untrusted code."""
+def _runtime_environment(directory_fd: int | None = None) -> dict[str, str]:
+    """Expose only the non-secret inputs required by the reviewed capability."""
 
-    blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")
-    return {
-        name: value
-        for name, value in os.environ.items()
-        if name not in RUNTIME_AUTHORITY_ENV and not name.startswith(blocked_prefixes)
+    environment = {
+        name: os.environ[name]
+        for name in RUNTIME_ENVIRONMENT_ALLOWLIST
+        if name in os.environ
     }
-
-
-def _runtime_environment(directory_fd: int) -> dict[str, str]:
-    return {
-        **_authority_free_environment(),
-        "NPA_GYMNASIUM_RUNTIME_ROOT": f"/proc/self/fd/{directory_fd}",
-    }
+    environment["PATH"] = RUNTIME_PATH
+    if directory_fd is not None:
+        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = f"/proc/self/fd/{directory_fd}"
+    return environment
 
 
 def _install_runtime_network_filter() -> None:
@@ -1585,7 +1576,7 @@ def _execute_isolated_command(command: list[str]) -> int:
             try:
                 os.setsid()
                 _install_runtime_network_filter()
-                os.execve(command[0], command, _authority_free_environment())
+                os.execve(command[0], command, _runtime_environment())
             except (BootstrapRefusal, OSError) as error:
                 os.write(2, f"isolated runtime install failed: {error}\n".encode())
                 os._exit(65)

@@ -4,19 +4,32 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import socket
 import stat
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable
+
+import zstandard
 
 MAX_METADATA_BYTES = 1_048_576
 MAX_SOURCE_ARCHIVE_BYTES = 21_474_836_480
+MAX_SOURCE_ARCHIVE_EXPANDED_BYTES = 25_769_803_776
+MAX_SOURCE_ARCHIVE_MEMBERS = 4_096
 READ_CHUNK_BYTES = 1_048_576
+TAR_BLOCK_BYTES = 512
+SOURCE_MANIFEST_MEMBER = "source-manifest.json"
+SOURCE_MANIFEST_SCHEMA = "npa.gymnasium-robotics.corresponding-source-manifest.v1"
+# A publication origin must be added here by a separate, evidence-backed review.
+# The empty current contract keeps the pre-registration candidate fail closed.
+REVIEWED_PUBLIC_DELIVERY_ORIGINS: frozenset[str] = frozenset()
 ACCEPTED_RECORD = Path(__file__).with_name("gymnasium_robotics_image_manifest.json")
 SOURCE_LOCK = (
     Path(__file__).resolve().parents[3]
@@ -110,16 +123,22 @@ def _sha256_hex(value: Any, label: str) -> str:
 
 def _validate_lock(lock: dict[str, Any]) -> dict[str, Any]:
     _require(
-        lock.get("schema") == "npa.gymnasium-robotics.baked-corresponding-source-lock.v2",
+        lock.get("schema")
+        == "npa.gymnasium-robotics.baked-corresponding-source-lock.v2",
         "corresponding-source lock schema is unsupported",
     )
-    _require(lock.get("status") == "complete", "corresponding-source lock is incomplete")
+    _require(
+        lock.get("status") == "complete", "corresponding-source lock is incomplete"
+    )
     _require(
         lock.get("public_corresponding_source_delivery") == "accepted-public-immutable",
         "public corresponding-source delivery is not accepted",
     )
     deliveries = lock.get("deliveries")
-    _require(isinstance(deliveries, list) and len(deliveries) == 1, "lock requires one delivery")
+    _require(
+        isinstance(deliveries, list) and len(deliveries) == 1,
+        "lock requires one delivery",
+    )
     delivery = _mapping(deliveries[0], "locked delivery")
     _sha256_hex(delivery.get("binary_manifest_sha256"), "binary manifest")
     _sha256_hex(delivery.get("build_materials_sha256"), "build materials")
@@ -128,39 +147,147 @@ def _validate_lock(lock: dict[str, Any]) -> dict[str, Any]:
     return delivery
 
 
-def _validate_reference(reference: Any, artifact_sha256: str) -> str:
+def _public_addresses(
+    hostname: str,
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> None:
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            answers = resolver(hostname, 443, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise CorrespondingSourceError(
+                "source artifact hostname resolution failed"
+            ) from exc
+        _require(bool(answers), "source artifact hostname resolution failed")
+        addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+        try:
+            for answer in answers:
+                sockaddr = answer[4]
+                addresses.append(
+                    ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
+                )
+        except (IndexError, TypeError, ValueError) as exc:
+            raise CorrespondingSourceError(
+                "source artifact hostname resolution is malformed"
+            ) from exc
+    else:
+        addresses = [literal]
+    _require(
+        all(
+            address.is_global
+            and not address.is_loopback
+            and not address.is_private
+            and not address.is_link_local
+            and not address.is_reserved
+            and not address.is_multicast
+            and not address.is_unspecified
+            for address in addresses
+        ),
+        "source artifact destination is not globally routable",
+    )
+
+
+def _validate_reference(
+    reference: Any,
+    artifact_sha256: str,
+    *,
+    reviewed_origins: frozenset[str],
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> str:
     _require(isinstance(reference, str), "source artifact reference must be a string")
     parsed = urllib.parse.urlsplit(reference)
     _require(parsed.scheme == "https", "source artifact reference must use HTTPS")
     _require(bool(parsed.hostname), "source artifact reference has no host")
-    _require(not parsed.username and not parsed.password, "source artifact reference embeds credentials")
-    _require(not parsed.query and not parsed.fragment, "source artifact reference must be immutable")
+    _require(
+        not parsed.username and not parsed.password,
+        "source artifact reference embeds credentials",
+    )
+    _require(
+        not parsed.query and not parsed.fragment,
+        "source artifact reference must be immutable",
+    )
     hostname = str(parsed.hostname).lower()
-    _require(hostname != "localhost" and not hostname.endswith(".local"), "source artifact host is not public")
-    _require(artifact_sha256 in parsed.path.lower(), "source artifact reference is not digest-addressed")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise CorrespondingSourceError(
+            "source artifact reference has an invalid port"
+        ) from exc
+    _require(port is None, "source artifact reference uses an unsupported port")
+    formatted_host = f"[{hostname}]" if ":" in hostname else hostname
+    origin = f"https://{formatted_host}"
+    _require(
+        origin in reviewed_origins,
+        "source artifact origin is not in the reviewed public delivery contract",
+    )
+    _public_addresses(hostname, resolver)
+    _require(
+        artifact_sha256 in parsed.path.lower(),
+        "source artifact reference is not digest-addressed",
+    )
     return reference
 
 
 def _validate_record(
-    record: dict[str, Any], lock: dict[str, Any], lock_bytes: bytes, subject: dict[str, str]
+    record: dict[str, Any],
+    lock: dict[str, Any],
+    lock_bytes: bytes,
+    subject: dict[str, str],
+    *,
+    reviewed_origins: frozenset[str],
+    resolver: Callable[..., list[tuple[Any, ...]]],
 ) -> dict[str, Any]:
     _exact_fields(
         record,
-        {"format", "status", "tool", "source_revision", "image", "corresponding_source"},
+        {
+            "format",
+            "status",
+            "tool",
+            "source_revision",
+            "image",
+            "corresponding_source",
+        },
         "accepted record",
     )
-    _require(record["format"] == "npa_gymnasium_robotics_accepted_image_manifest_v1", "accepted record format is unsupported")
-    _require(record["status"] == "accepted-for-publication", "publication record is not accepted")
-    _require(record["tool"] == "gymnasium-robotics", "publication record has the wrong subject")
-    _require(record["source_revision"] == subject["source_revision"], "source revision does not match")
+    _require(
+        record["format"] == "npa_gymnasium_robotics_accepted_image_manifest_v1",
+        "accepted record format is unsupported",
+    )
+    _require(
+        record["status"] == "accepted-for-publication",
+        "publication record is not accepted",
+    )
+    _require(
+        record["tool"] == "gymnasium-robotics",
+        "publication record has the wrong subject",
+    )
+    _require(
+        record["source_revision"] == subject["source_revision"],
+        "source revision does not match",
+    )
     _validate_image(_mapping(record["image"], "image binding"), subject)
     source = _mapping(record["corresponding_source"], "corresponding-source binding")
-    _exact_fields(source, {"lock_sha256", "delivery", "artifact"}, "corresponding-source binding")
-    _require(source["lock_sha256"] == hashlib.sha256(lock_bytes).hexdigest(), "corresponding-source lock digest does not match")
+    _exact_fields(
+        source, {"lock_sha256", "delivery", "artifact"}, "corresponding-source binding"
+    )
+    _require(
+        source["lock_sha256"] == hashlib.sha256(lock_bytes).hexdigest(),
+        "corresponding-source lock digest does not match",
+    )
     delivery = _validate_lock(lock)
-    _require(source["delivery"] == delivery, "corresponding-source delivery does not match the lock")
+    _require(
+        source["delivery"] == delivery,
+        "corresponding-source delivery does not match the lock",
+    )
     artifact = _mapping(source["artifact"], "source artifact")
-    _validate_artifact(artifact, delivery)
+    _validate_artifact(
+        artifact,
+        delivery,
+        reviewed_origins=reviewed_origins,
+        resolver=resolver,
+    )
     return artifact
 
 
@@ -172,36 +299,309 @@ def _validate_image(image: dict[str, Any], subject: dict[str, str]) -> None:
     )
     platform = _mapping(image["platform"], "image platform")
     _exact_fields(platform, {"os", "architecture"}, "image platform")
-    _require(platform == {"os": "linux", "architecture": "amd64"}, "image platform is not linux/amd64")
+    _require(
+        platform == {"os": "linux", "architecture": "amd64"},
+        "image platform is not linux/amd64",
+    )
     for field in ("digest", "platform_manifest_digest", "config_digest"):
         _digest(image[field], f"image {field}")
         _require(image[field] == subject[field], f"image {field} does not match")
 
 
-def _validate_artifact(artifact: dict[str, Any], delivery: dict[str, Any]) -> None:
+def _validate_artifact(
+    artifact: dict[str, Any],
+    delivery: dict[str, Any],
+    *,
+    reviewed_origins: frozenset[str],
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> None:
     _exact_fields(
         artifact,
-        {"reference", "sha256", "size_bytes", "media_type", "anonymous", "immutable", "contents_manifest_sha256"},
+        {
+            "reference",
+            "sha256",
+            "size_bytes",
+            "media_type",
+            "anonymous",
+            "immutable",
+            "contents_manifest_sha256",
+        },
         "source artifact",
     )
     artifact_sha256 = _sha256_hex(artifact["sha256"], "source artifact")
-    _validate_reference(artifact["reference"], artifact_sha256)
+    _validate_reference(
+        artifact["reference"],
+        artifact_sha256,
+        reviewed_origins=reviewed_origins,
+        resolver=resolver,
+    )
     _require(artifact["anonymous"] is True, "source artifact is not anonymous")
     _require(artifact["immutable"] is True, "source artifact is not immutable")
-    _require(artifact["media_type"] == "application/zstd", "source artifact media type is unsupported")
+    _require(
+        artifact["media_type"] == "application/zstd",
+        "source artifact media type is unsupported",
+    )
     size = artifact["size_bytes"]
-    _require(isinstance(size, int) and 0 < size <= MAX_SOURCE_ARCHIVE_BYTES, "source artifact size is invalid")
+    _require(
+        isinstance(size, int) and 0 < size <= MAX_SOURCE_ARCHIVE_BYTES,
+        "source artifact size is invalid",
+    )
     _require(
         artifact["contents_manifest_sha256"] == delivery["source_manifest_sha256"],
         "source artifact contents manifest does not match the lock",
     )
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: BinaryIO,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise CorrespondingSourceError("source artifact redirected")
+
+
 def _open_anonymous(request: urllib.request.Request, timeout: float) -> BinaryIO:
-    return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
+    return opener.open(request, timeout=timeout)  # noqa: S310
 
 
-def _verify_download(artifact: dict[str, Any], opener: Callable[..., BinaryIO]) -> None:
+def _tar_number(field: bytes, label: str) -> int:
+    value = field.rstrip(b"\0 ").lstrip(b" ")
+    _require(
+        bool(value) and all(48 <= byte <= 55 for byte in value),
+        f"source archive {label} is malformed",
+    )
+    return int(value, 8)
+
+
+def _safe_archive_path(value: str, *, directory: bool, label: str) -> str:
+    if directory:
+        value = value.rstrip("/")
+    path = PurePosixPath(value)
+    _require(
+        bool(value)
+        and "\\" not in value
+        and not path.is_absolute()
+        and all(part not in {"", ".", ".."} for part in path.parts)
+        and str(path) == value,
+        f"{label} path is unsafe",
+    )
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise CorrespondingSourceError(f"{label} path is not UTF-8") from exc
+    _require(len(encoded) <= 255, f"{label} path is too long")
+    return value
+
+
+def _tar_path(header: bytes, *, directory: bool) -> str:
+    name = header[0:100].split(b"\0", 1)[0]
+    prefix = header[345:500].split(b"\0", 1)[0]
+    raw = prefix + (b"/" if prefix and name else b"") + name
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CorrespondingSourceError(
+            "source archive member path is not UTF-8"
+        ) from exc
+    return _safe_archive_path(
+        decoded,
+        directory=directory,
+        label="source archive member",
+    )
+
+
+def _manifest_files(raw: bytes) -> list[tuple[str, int, str]]:
+    _require(len(raw) <= MAX_METADATA_BYTES, "source manifest is too large")
+    try:
+        payload = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CorrespondingSourceError("source manifest is not valid JSON") from exc
+    payload = _mapping(payload, "source manifest")
+    _exact_fields(payload, {"schema", "files"}, "source manifest")
+    _require(
+        payload["schema"] == SOURCE_MANIFEST_SCHEMA,
+        "source manifest schema is unsupported",
+    )
+    files = payload["files"]
+    _require(
+        isinstance(files, list) and 0 < len(files) < MAX_SOURCE_ARCHIVE_MEMBERS,
+        "source manifest file inventory is invalid",
+    )
+    observed: set[str] = set()
+    result: list[tuple[str, int, str]] = []
+    for index, value in enumerate(files):
+        item = _mapping(value, f"source manifest file {index}")
+        _exact_fields(
+            item, {"path", "size_bytes", "sha256"}, f"source manifest file {index}"
+        )
+        path = item["path"]
+        _require(isinstance(path, str), "source manifest path must be a string")
+        normalized = _safe_archive_path(
+            path,
+            directory=False,
+            label="source manifest member",
+        )
+        _require(
+            normalized != SOURCE_MANIFEST_MEMBER, "source manifest may not list itself"
+        )
+        folded = normalized.casefold()
+        _require(folded not in observed, "source manifest contains a duplicate path")
+        observed.add(folded)
+        size = item["size_bytes"]
+        _require(
+            isinstance(size, int) and size >= 0, "source manifest file size is invalid"
+        )
+        digest = _sha256_hex(item["sha256"], "source manifest file")
+        result.append((normalized, size, digest))
+    return result
+
+
+def _read_exact(
+    stream: BinaryIO,
+    size: int,
+    expanded: list[int],
+    *,
+    allow_eof: bool = False,
+) -> bytes | None:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            if allow_eof and not chunks:
+                return None
+            raise CorrespondingSourceError("source archive is truncated")
+        expanded[0] += len(chunk)
+        _require(
+            expanded[0] <= MAX_SOURCE_ARCHIVE_EXPANDED_BYTES,
+            "source archive exceeds its expansion limit",
+        )
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _verify_source_archive(archive: BinaryIO, expected_manifest_sha256: str) -> None:
+    expanded = [0]
+    seen: set[str] = set()
+    observed_files: list[tuple[str, int, str]] = []
+    manifest_raw: bytes | None = None
+    member_count = 0
+    try:
+        with zstandard.ZstdDecompressor(max_window_size=64 * 1024 * 1024).stream_reader(
+            archive, read_across_frames=True
+        ) as decoded:
+            while True:
+                header = _read_exact(decoded, TAR_BLOCK_BYTES, expanded, allow_eof=True)
+                _require(header is not None, "source archive has no TAR terminator")
+                if header == b"\0" * TAR_BLOCK_BYTES:
+                    second = _read_exact(decoded, TAR_BLOCK_BYTES, expanded)
+                    _require(
+                        second == b"\0" * TAR_BLOCK_BYTES,
+                        "source archive TAR terminator is malformed",
+                    )
+                    while trailing := decoded.read(READ_CHUNK_BYTES):
+                        expanded[0] += len(trailing)
+                        _require(
+                            expanded[0] <= MAX_SOURCE_ARCHIVE_EXPANDED_BYTES,
+                            "source archive exceeds its expansion limit",
+                        )
+                        _require(
+                            not trailing.strip(b"\0"),
+                            "source archive has trailing data",
+                        )
+                    break
+                member_count += 1
+                _require(
+                    member_count <= MAX_SOURCE_ARCHIVE_MEMBERS,
+                    "source archive has too many members",
+                )
+                _require(
+                    header[257:263] == b"ustar\0" and header[263:265] == b"00",
+                    "source archive TAR format is unsupported",
+                )
+                expected_checksum = _tar_number(header[148:156], "header checksum")
+                actual_checksum = sum(header[:148]) + (32 * 8) + sum(header[156:])
+                _require(
+                    expected_checksum == actual_checksum,
+                    "source archive TAR checksum does not match",
+                )
+                kind = header[156:157]
+                _require(
+                    kind in {b"\0", b"0", b"5"},
+                    "source archive contains a link or special member",
+                )
+                directory = kind == b"5"
+                name = _tar_path(header, directory=directory)
+                folded = name.casefold()
+                _require(folded not in seen, "source archive contains a duplicate path")
+                seen.add(folded)
+                size = _tar_number(header[124:136], "member size")
+                _require(
+                    not directory or size == 0, "source archive directory has a body"
+                )
+                digest = hashlib.sha256()
+                captured: list[bytes] | None = (
+                    [] if name == SOURCE_MANIFEST_MEMBER else None
+                )
+                remaining = size
+                while remaining:
+                    chunk_size = min(remaining, READ_CHUNK_BYTES)
+                    chunk = _read_exact(decoded, chunk_size, expanded)
+                    assert chunk is not None
+                    digest.update(chunk)
+                    if captured is not None:
+                        _require(
+                            size <= MAX_METADATA_BYTES, "source manifest is too large"
+                        )
+                        captured.append(chunk)
+                    remaining -= len(chunk)
+                padding = (-size) % TAR_BLOCK_BYTES
+                if padding:
+                    padded = _read_exact(decoded, padding, expanded)
+                    _require(
+                        padded == b"\0" * padding,
+                        "source archive member padding is malformed",
+                    )
+                if directory:
+                    continue
+                if captured is not None:
+                    _require(
+                        manifest_raw is None,
+                        "source archive contains multiple source manifests",
+                    )
+                    manifest_raw = b"".join(captured)
+                else:
+                    observed_files.append((name, size, digest.hexdigest()))
+    except zstandard.ZstdError as exc:
+        raise CorrespondingSourceError(
+            "source archive Zstandard stream is malformed"
+        ) from exc
+    _require(manifest_raw is not None, "source archive has no source manifest")
+    _require(
+        hashlib.sha256(manifest_raw).hexdigest() == expected_manifest_sha256,
+        "source archive manifest identity does not match the lock",
+    )
+    _require(
+        _manifest_files(manifest_raw) == observed_files,
+        "source archive members do not match the locked source manifest",
+    )
+
+
+def _verify_download(
+    artifact: dict[str, Any],
+    expected_manifest_sha256: str,
+    opener: Callable[..., BinaryIO],
+) -> None:
     request = urllib.request.Request(
         artifact["reference"], headers={"Accept": "application/octet-stream"}
     )
@@ -209,17 +609,36 @@ def _verify_download(artifact: dict[str, Any], opener: Callable[..., BinaryIO]) 
     digest = hashlib.sha256()
     total = 0
     try:
-        with opener(request, timeout=60) as response:
-            _require(getattr(response, "status", 200) == 200, "anonymous source retrieval failed")
-            _require(response.geturl() == artifact["reference"], "source artifact redirected")
+        with (
+            tempfile.TemporaryFile() as archive,
+            opener(request, timeout=60) as response,
+        ):
+            _require(
+                getattr(response, "status", 200) == 200,
+                "anonymous source retrieval failed",
+            )
+            _require(
+                response.geturl() == artifact["reference"], "source artifact redirected"
+            )
             while chunk := response.read(READ_CHUNK_BYTES):
                 total += len(chunk)
-                _require(total <= expected_size, "source artifact exceeds accepted size")
+                _require(
+                    total <= expected_size, "source artifact exceeds accepted size"
+                )
                 digest.update(chunk)
+                archive.write(chunk)
+            archive.flush()
+            archive.seek(0)
+            _require(total == expected_size, "source artifact size does not match")
+            _require(
+                digest.hexdigest() == artifact["sha256"],
+                "source artifact digest does not match",
+            )
+            _verify_source_archive(archive, expected_manifest_sha256)
+    except CorrespondingSourceError:
+        raise
     except (OSError, urllib.error.URLError) as exc:
         raise CorrespondingSourceError("anonymous source retrieval failed") from exc
-    _require(total == expected_size, "source artifact size does not match")
-    _require(digest.hexdigest() == artifact["sha256"], "source artifact digest does not match")
 
 
 def verify_corresponding_source_delivery(
@@ -249,17 +668,30 @@ def verify_corresponding_source_delivery(
     Raises:
         CorrespondingSourceError: Any record, binding, or retrieval is invalid.
     """
-    _require(bool(re.fullmatch(r"[0-9a-f]{40}", source_revision)), "source revision is invalid")
+    _require(
+        bool(re.fullmatch(r"[0-9a-f]{40}", source_revision)),
+        "source revision is invalid",
+    )
     subject = {
         "source_revision": source_revision,
         "digest": _digest(image_digest, "image digest"),
-        "platform_manifest_digest": _digest(platform_manifest_digest, "platform manifest"),
+        "platform_manifest_digest": _digest(
+            platform_manifest_digest, "platform manifest"
+        ),
         "config_digest": _digest(config_digest, "image config"),
     }
     record, _ = _load_json(record_path, "accepted publication record")
     lock, lock_bytes = _load_json(lock_path, "corresponding-source lock")
-    artifact = _validate_record(record, lock, lock_bytes, subject)
-    _verify_download(artifact, opener)
+    artifact = _validate_record(
+        record,
+        lock,
+        lock_bytes,
+        subject,
+        reviewed_origins=REVIEWED_PUBLIC_DELIVERY_ORIGINS,
+        resolver=socket.getaddrinfo,
+    )
+    delivery = _validate_lock(lock)
+    _verify_download(artifact, delivery["source_manifest_sha256"], opener)
     return record
 
 

@@ -174,18 +174,23 @@ run: |
   )
   if os.environ.get("BYOF_SMOKE_COMMAND", "").strip() != expected_command:
       raise SystemExit("unexpected Gymnasium smoke command")
-  blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")
-  blocked_names = {
-      "KUBERNETES_SERVICE_HOST",
-      "KUBERNETES_SERVICE_PORT",
-      "NPA_S3_BUCKET",
-      "S3_OUTPUT_PREFIX",
+  runtime_environment_allowlist = {
+      "BYOF_IMAGE",
+      "MUJOCO_GL",
+      "NPA_BYOF_POD_IMAGE_ID",
+      "NPA_GYMNASIUM_RUNTIME_CACHE",
+      "NPA_SMOKE_OUTPUT_DIR",
+      "NVIDIA_DRIVER_CAPABILITIES",
+      "PYOPENGL_PLATFORM",
   }
   runtime_environment = {
-      name: value
-      for name, value in os.environ.items()
-      if name not in blocked_names and not name.startswith(blocked_prefixes)
+      name: os.environ[name]
+      for name in runtime_environment_allowlist
+      if name in os.environ
   }
+  runtime_environment["PATH"] = (
+      "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  )
   with (root / "solution_smoke_stdout.log").open("wb") as stdout, (
       root / "solution_smoke_stderr.log"
   ).open("wb") as stderr:

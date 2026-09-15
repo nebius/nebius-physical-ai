@@ -42,9 +42,10 @@ def test_streaming_digest_is_bounded_without_file_digest(
             return super().read(size)
 
     payload = b"a" * (BOOTSTRAP.SHA256_CHUNK_BYTES + 1)
-    assert BOOTSTRAP._stream_sha256(RecordingStream(payload)) == hashlib.sha256(
-        payload
-    ).hexdigest()
+    assert (
+        BOOTSTRAP._stream_sha256(RecordingStream(payload))
+        == hashlib.sha256(payload).hexdigest()
+    )
     assert read_sizes == [BOOTSTRAP.SHA256_CHUNK_BYTES] * 3
 
 
@@ -54,7 +55,9 @@ def tmp_path() -> Iterator[Path]:
 
     trusted_tmp = ROOT.parent / "test-tmp"
     trusted_tmp.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="runtime-bootstrap-", dir=trusted_tmp) as raw:
+    with tempfile.TemporaryDirectory(
+        prefix="runtime-bootstrap-", dir=trusted_tmp
+    ) as raw:
         yield Path(raw)
 
 
@@ -803,13 +806,50 @@ def test_exec_path_uses_descriptor_bound_interpreter_and_runtime_root() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert 'bound_root = Path(f"/proc/self/fd/{directory_fd}")' in source
     assert 'f"/proc/self/fd/{directory_fd}"' in source
-    assert (
-        'python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"' in source
-    )
+    assert 'python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"' in source
     assert "os.execve(" in source
     assert "python_fd," in source
     assert 'result["_runtime_monitor_fd"]' in source
     assert "_wait_for_runtime_child" in source
+
+
+def test_untrusted_runtime_environment_is_an_exact_minimal_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    required = {
+        "BYOF_IMAGE": "registry.invalid/image@sha256:" + "a" * 64,
+        "MUJOCO_GL": "egl",
+        "NPA_BYOF_POD_IMAGE_ID": "containerd://image@sha256:" + "a" * 64,
+        "NPA_GYMNASIUM_RUNTIME_CACHE": "/workspace/.cache/npa/runtime",
+        "NPA_SMOKE_OUTPUT_DIR": "/workspace/output",
+        "NVIDIA_DRIVER_CAPABILITIES": "graphics,utility",
+        "PYOPENGL_PLATFORM": "egl",
+    }
+    authority = {
+        "AWS_SECRET_ACCESS_KEY": "blocked",
+        "AZURE_CLIENT_SECRET": "blocked",
+        "GOOGLE_APPLICATION_CREDENTIALS": "blocked",
+        "NEBIUS_IAM_TOKEN": "blocked",
+        "GITHUB_TOKEN": "blocked",
+        "GH_TOKEN": "blocked",
+        "HF_TOKEN": "blocked",
+        "HUGGING_FACE_HUB_TOKEN": "blocked",
+        "NGC_API_KEY": "blocked",
+        "DOCKER_AUTH_CONFIG": "blocked",
+        "KUBERNETES_SERVICE_HOST": "blocked",
+        "SSH_AUTH_SOCK": "blocked",
+        "HTTPS_PROXY": "blocked",
+        "NPA_AGENT_DATASET_URI": "blocked",
+    }
+    monkeypatch.setattr(BOOTSTRAP.os, "environ", {**required, **authority})
+    expected = {**required, "PATH": BOOTSTRAP.RUNTIME_PATH}
+    assert BOOTSTRAP._runtime_environment() == expected
+    assert BOOTSTRAP._runtime_environment(17) == {
+        **expected,
+        "NPA_GYMNASIUM_RUNTIME_ROOT": "/proc/self/fd/17",
+    }
+    assert set(BOOTSTRAP.RUNTIME_ENVIRONMENT_ALLOWLIST) == set(required)
+    assert not set(authority).intersection(BOOTSTRAP._runtime_environment(17))
 
 
 def test_descriptor_bound_runtime_executes_unchanged_tree(tmp_path: Path) -> None:

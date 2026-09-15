@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
-from pathlib import Path
 import subprocess
+import textwrap
+from pathlib import Path
 
 import yaml
 
@@ -56,7 +58,9 @@ def test_neutral_image_lock_gate_accepts_only_the_reviewed_content_closure() -> 
     )
 
 
-def test_runtime_and_neutral_baked_closures_are_exact_but_publicly_quarantined() -> None:
+def test_runtime_and_neutral_baked_closures_are_exact_but_publicly_quarantined() -> (
+    None
+):
     source = json.loads((IMAGE_ROOT / "source-lock.json").read_text())
     apt = json.loads((IMAGE_ROOT / "apt-runtime.lock.json").read_text())
     corresponding = json.loads(
@@ -68,9 +72,9 @@ def test_runtime_and_neutral_baked_closures_are_exact_but_publicly_quarantined()
     assert source["components"]["shadow_sr_common"]["preferred_form_complete"] is False
     assert len(apt["resolved_binary_packages"]) == 142
     assert len(apt["resolved_source_packages"]) == 102
-    assert sum(
-        len(item["artifacts"]) for item in apt["resolved_source_packages"]
-    ) == 318
+    assert (
+        sum(len(item["artifacts"]) for item in apt["resolved_source_packages"]) == 318
+    )
     assert "python3-boto3" in {
         item["package"] for item in apt["requested_runtime_packages"]
     }
@@ -151,12 +155,9 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "RUNTIME_PYTHON" not in profile
     assert "/usr/bin/python3 -I -B" in profile
     assert "/usr/local/bin/npa-gymnasium-entrypoint prepare-runtime" in profile
-    assert "/bin/bash -lc \"${BYOF_SMOKE_COMMAND}\"" not in profile
+    assert '/bin/bash -lc "${BYOF_SMOKE_COMMAND}"' not in profile
     assert '["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"]' in profile
     assert "-u AWS_SECRET_ACCESS_KEY" not in profile
-    assert 'blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")' in profile
-    assert "name not in blocked_names" in profile
-    assert "not name.startswith(blocked_prefixes)" in profile
     assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
@@ -166,6 +167,63 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert 'get_paginator("list_objects_v2")' in profile
     assert "observed_keys != expected_keys" in profile
     assert "root.rglob" not in profile
+
+
+def test_profile_runtime_environment_is_the_exact_non_secret_allowlist() -> None:
+    profile = PROFILE.read_text(encoding="utf-8")
+    coordinator = textwrap.dedent(
+        profile.rsplit("<<'PY'\n", 1)[1].split("\n  PY", 1)[0]
+    )
+    syntax = ast.parse(coordinator)
+    assignments = {
+        target.id: node.value
+        for node in syntax.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    allowlist = ast.literal_eval(assignments["runtime_environment_allowlist"])
+    bootstrap_syntax = ast.parse(
+        (IMAGE_ROOT / "runtime-bootstrap.py").read_text(encoding="utf-8")
+    )
+    bootstrap_assignments = {
+        target.id: node.value
+        for node in bootstrap_syntax.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    bootstrap_allowlist = ast.literal_eval(
+        bootstrap_assignments["RUNTIME_ENVIRONMENT_ALLOWLIST"].args[0]
+    )
+    assert allowlist == {
+        "BYOF_IMAGE",
+        "MUJOCO_GL",
+        "NPA_BYOF_POD_IMAGE_ID",
+        "NPA_GYMNASIUM_RUNTIME_CACHE",
+        "NPA_SMOKE_OUTPUT_DIR",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "PYOPENGL_PLATFORM",
+    }
+    assert bootstrap_allowlist == allowlist
+    authority = {
+        "AWS_SECRET_ACCESS_KEY",
+        "AZURE_CLIENT_SECRET",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "NEBIUS_IAM_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "NGC_API_KEY",
+        "DOCKER_AUTH_CONFIG",
+        "KUBERNETES_SERVICE_HOST",
+        "SSH_AUTH_SOCK",
+        "HTTPS_PROXY",
+        "NPA_AGENT_DATASET_URI",
+    }
+    assert not authority.intersection(allowlist)
+    assert 'runtime_environment["PATH"]' in coordinator
 
 
 def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:
