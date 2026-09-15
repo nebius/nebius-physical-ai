@@ -408,6 +408,38 @@ def _oci_layout(
     return hashlib.sha256(config).hexdigest(), diff_ids, descriptors
 
 
+def _measure_oci_nested_archive_budget(
+    files: dict[str, bytes],
+) -> tuple[list[dict[str, int]], dict[str, int]]:
+    """Measure descriptor and materialized-layer work for the OCI fixture."""
+
+    raw_layers = [
+        _tar_bytes({"etc/neutral-base": b"base"}),
+        _tar_bytes(files),
+    ]
+    descriptor_budgets = []
+    for index, raw in enumerate(raw_layers):
+        budget = SCAN._NestedArchiveBudget()
+        SCAN._nested_archive_members(
+            f"layer-{index}", _gzip_layer(raw), budget=budget
+        )
+        descriptor_budgets.append(
+            {
+                "member_count": budget.member_count,
+                "expanded_bytes": budget.expanded_bytes,
+                "work_bytes": budget.work_bytes,
+            }
+        )
+    materialized_budget = SCAN._NestedArchiveBudget()
+    for name, content in {"etc/neutral-base": b"base", **files}.items():
+        SCAN._nested_archive_members(name, content, budget=materialized_budget)
+    return descriptor_budgets, {
+        "member_count": materialized_budget.member_count,
+        "expanded_bytes": materialized_budget.expanded_bytes,
+        "work_bytes": materialized_budget.work_bytes,
+    }
+
+
 def _scan_directory_case(kind: str, body: bytes, tmp_path: Path) -> object:
     if kind == "zip":
         nested = _zip_with_member("neutral/", content=body)
@@ -460,6 +492,118 @@ def test_oci_layout_binds_compressed_descriptors_and_uncompressed_diff_ids(
     assert result["ordered_layer_diff_ids"] == diff_ids
     assert result["ordered_layer_descriptors"] == descriptors
     assert result["distributed_blob_scan_complete"] is True
+
+
+@pytest.mark.parametrize(
+    ("field", "limit_name", "message"),
+    [
+        ("member_count", "MAX_NESTED_ARCHIVE_MEMBERS", "member budget exceeded"),
+        (
+            "expanded_bytes",
+            "MAX_NESTED_ARCHIVE_EXPANDED_BYTES",
+            "expanded-byte budget exceeded",
+        ),
+        ("work_bytes", "MAX_NESTED_ARCHIVE_WORK_BYTES", "work budget exceeded"),
+    ],
+)
+def test_oci_layout_refuses_cumulative_nested_budget_across_descriptors(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    limit_name: str,
+    message: str,
+) -> None:
+    files = {
+        **_required(),
+        "opt/npa/gymnasium-robotics/neutral-fixture.zip": _zip_with_files(
+            {"neutral.txt": b"neutral nested member"}
+        ),
+    }
+    image = tmp_path / f"cumulative-{field}.tar"
+    _oci_layout(image, files)
+    descriptor_budgets, _materialized_budget = _measure_oci_nested_archive_budget(
+        files
+    )
+    largest_individual = max(item[field] for item in descriptor_budgets)
+    assert largest_individual > 0
+    assert sum(item[field] for item in descriptor_budgets) > largest_individual
+    monkeypatch.setattr(SCAN, limit_name, largest_individual)
+
+    with pytest.raises(ValueError, match=message):
+        SCAN.scan_oci_layout(image)
+
+
+@pytest.mark.parametrize(
+    ("field", "limit_name", "message"),
+    [
+        ("member_count", "MAX_NESTED_ARCHIVE_MEMBERS", "member budget exceeded"),
+        (
+            "expanded_bytes",
+            "MAX_NESTED_ARCHIVE_EXPANDED_BYTES",
+            "expanded-byte budget exceeded",
+        ),
+        ("work_bytes", "MAX_NESTED_ARCHIVE_WORK_BYTES", "work budget exceeded"),
+    ],
+)
+def test_oci_layout_refuses_cumulative_budget_in_materialized_layers(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    limit_name: str,
+    message: str,
+) -> None:
+    files = {
+        **_required(),
+        "opt/npa/gymnasium-robotics/neutral-fixture.zip": _zip_with_files(
+            {"neutral.txt": b"neutral nested member"}
+        ),
+    }
+    image = tmp_path / f"materialized-{field}.tar"
+    _oci_layout(image, files)
+    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
+        files
+    )
+    before_materialization = 2 * sum(
+        item[field] for item in descriptor_budgets
+    )
+    materialized = materialized_budget[field]
+    assert materialized > 0
+    monkeypatch.setattr(SCAN, limit_name, before_materialization + materialized - 1)
+
+    with pytest.raises(ValueError, match=message):
+        SCAN.scan_oci_layout(image)
+
+
+def test_oci_layout_accepts_exact_scanwide_nested_budget_boundaries(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {
+        **_required(),
+        "opt/npa/gymnasium-robotics/neutral-fixture.zip": _zip_with_files(
+            {"neutral.txt": b"neutral nested member"}
+        ),
+    }
+    image = tmp_path / "exact-scanwide-budget.tar"
+    _oci_layout(image, files)
+    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
+        files
+    )
+    totals = {
+        field: 2 * sum(item[field] for item in descriptor_budgets)
+        + materialized_budget[field]
+        for field in ("member_count", "expanded_bytes", "work_bytes")
+    }
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_MEMBERS", totals["member_count"])
+    monkeypatch.setattr(
+        SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", totals["expanded_bytes"]
+    )
+    monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_WORK_BYTES", totals["work_bytes"])
+
+    assert SCAN.scan_oci_layout(image)["status"] == "passed"
 
 
 @pytest.mark.parametrize(
