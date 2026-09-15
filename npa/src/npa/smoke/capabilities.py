@@ -159,9 +159,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "motion-lib validate_motion_lib on synthetic payload",
     ],
     "fiftyone": [
-        "fiftyone import + version pin",
-        "CLI --help",
-        "app config (DB-free env smoke)",
+        "FiftyOne installed version pin",
+        "create a real dataset using bundled MongoDB",
+        "query the dataset and verify sample fields",
+        "CPU Brain uniqueness, similarity and PCA visualization",
+        "launch the App on loopback, read its response and stop it",
     ],
     "lancedb": [
         "FastAPI server start",
