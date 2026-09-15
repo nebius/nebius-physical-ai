@@ -26,6 +26,37 @@ placement, or customer-data compatibility. Continue with the operator runbook's
 preflight and complete `submit --runtime` command using your verified inputs.
 Keep the returned run ID for status, logs, artifacts, and durable resume.
 
+## One seam, one value
+
+Every BYO seam is one value addressed four ways. This table is generated from
+the canonical `SIM2REAL_SEAMS` tuple in
+`npa/src/npa/workflows/sim2real_health.py`; if a flag, kwarg, or env name
+drifts, the coherence guardrail test fails.
+
+| Seam | CLI flag (`npa workbench sim2real run`) | SDK kwarg (`sim2real.run()`) | YAML env |
+| --- | --- | --- | --- |
+| `s3_endpoint` | `--s3-endpoint` | `s3_endpoint` | `AWS_ENDPOINT_URL` |
+| `s3_bucket` | `--s3-bucket` | `s3_bucket` | `NPA_SIM2REAL_BUCKET` |
+| `s3_prefix` | `--s3-prefix` | `s3_prefix` | `NPA_SIM2REAL_PREFIX` |
+| `trigger_dataset_uri` | `--trigger-dataset-uri` | `trigger_dataset_uri` | `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
+| `trigger_dataset_id` | `--trigger-dataset-id` | `trigger_dataset_id` | `NPA_SIM2REAL_TRIGGER_DATASET_ID` |
+| `assets_uri` | `--assets-uri` | `assets_uri` | `ASSETS_URI` |
+| `scene_spec_uri` | `--scene-spec-uri` | `scene_spec_uri` | `SCENE_SPEC_URI` |
+| `augment_image` | `--augment-image` | `augment_image` | `AUGMENT_IMAGE` |
+| `policy_image` | `--policy-image` | `policy_image` | `POLICY_IMAGE` |
+| `trainer_image` | `--trainer-image` | `trainer_image` | `TRAINER_IMAGE` |
+| `vlm_image` | `--vlm-image` | `vlm_image` | `VLM_IMAGE` |
+| `eval_image` | `--eval-image` | `eval_image` | `EVAL_IMAGE` |
+| `k8s_isaac_cache_pvc` | `--k8s-isaac-cache-pvc` | `k8s_isaac_cache_pvc` | `NPA_SIM2REAL_ISAAC_CACHE_PVC` |
+| `vlm_model` | `--vlm-model` | `vlm_model` | `VLM_MODEL` |
+| `threshold` | `--threshold` | `threshold` | `SUCCESS_THRESHOLD` |
+| `inner_iterations` | `--inner-iterations` | `inner_iterations` | `INNER_ITERATIONS` |
+| `outer_iterations` | `--outer-iterations` | `outer_iterations` | `OUTER_ITERATIONS` |
+| `loop_of_loops_iterations` | `--loop-of-loops-iterations` | `loop_of_loops_iterations` | `LOOP_OF_LOOPS_ITERATIONS` |
+| `rollout_count` | `--rollout-count` | `rollout_count` | `ROLLOUT_COUNT` |
+| `steps_per_rollout` | `--steps-per-rollout` | `steps_per_rollout` | `STEPS_PER_ROLLOUT` |
+| `heldout_env_count` | `--heldout-env-count` | `heldout_env_count` | `HELDOUT_ENV_COUNT` |
+
 ## Runtime and outputs
 
 The YAML exposes all 14 stages and runs through the standard workflow runtime.
