@@ -57,7 +57,10 @@ module "k8s_training" {
   k8s_version                     = var.k8s_version
   ssh_user_name                   = var.ssh_user_name
   ssh_public_key                  = var.ssh_public_key
-  mk8s_cluster_public_endpoint    = true
+  # SECURITY: the managed-K8s API endpoint is public by default (see the
+  # mk8s_cluster_public_endpoint variable). Set it to false for production
+  # clusters to keep the control plane off the public internet.
+  mk8s_cluster_public_endpoint    = var.mk8s_cluster_public_endpoint
   enable_k8s_node_group_sa        = var.enable_k8s_node_group_sa
   enable_egress_gateway           = false
   cpu_nodes_public_ips            = false
