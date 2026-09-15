@@ -176,6 +176,8 @@ Use your configured project and verified artifact bucket. Run credential checks
 and the image preflight in the [workflow operations guide](npa-workflow-guide.md)
 with the same image and storage overrides. Before a GPU submit, verify the
 licensed runtime, asset mount, fixed policy, and sufficient writable output disk.
+The workflow requests `source_overlay: true`, so submit stages the current NPA
+checkout and installs it over the prepared image before running the evaluator.
 Full-suite videos can be large; this runner retains local originals until upload
 verification and uses S3 as the durable evidence store.
 
