@@ -36,15 +36,10 @@ setup: |
   /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
   /usr/bin/python3 -I -B -c 'import boto3, botocore'
   install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
-  env \
-    -u AWS_ACCESS_KEY_ID \
-    -u AWS_SECRET_ACCESS_KEY \
-    -u AWS_SESSION_TOKEN \
-    -u AWS_PROFILE \
-    -u AWS_SHARED_CREDENTIALS_FILE \
-    -u AWS_WEB_IDENTITY_TOKEN_FILE \
-    -u AWS_ROLE_ARN \
-    /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+  unset AWS_SHARED_CREDENTIALS_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN
+  unset AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI
+  /usr/local/bin/npa-gymnasium-entrypoint prepare-runtime
 run: |
   set -euo pipefail
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
@@ -149,42 +144,61 @@ run: |
   # before any artifact collection can begin.
   rm -f -- "${POD_IMAGE_RECEIPT}"
 
-  SMOKE_EXIT_CODE=0
-  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
-    set +e
-    (
-      cd /
-      env \
-        -u AWS_ACCESS_KEY_ID \
-        -u AWS_SECRET_ACCESS_KEY \
-        -u AWS_SESSION_TOKEN \
-        -u AWS_PROFILE \
-        -u AWS_SHARED_CREDENTIALS_FILE \
-        -u AWS_WEB_IDENTITY_TOKEN_FILE \
-        -u AWS_ROLE_ARN \
-        /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
-    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
-    SMOKE_EXIT_CODE=$?
-    set -e
-  fi
-  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
-    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
-  fi
-  export SMOKE_EXIT_CODE
-  /usr/bin/python3 -I -B - <<'PY'
+  # Replace the credential-bearing shell with a non-dumpable trusted
+  # coordinator. Runtime-fetched code gets a scrubbed environment, no network
+  # authority, and no privilege elevation; uploads begin only after the
+  # descriptor-bound supervisor has proved the complete process tree absent.
+  exec /usr/bin/python3 -I -B - <<'PY'
+  import ctypes
   import hashlib
   import json
   import os
+  import subprocess
   import time
   from pathlib import Path
   from urllib.parse import urlparse
 
-  import boto3
-  from botocore.config import Config
+  libc = ctypes.CDLL(None, use_errno=True)
+  if libc.prctl(4, 0, 0, 0, 0) != 0:
+      raise SystemExit("cannot protect the credential-bearing coordinator")
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
-  smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+  expected_command = "\n".join(
+      (
+          "export MUJOCO_GL=egl",
+          "export PYOPENGL_PLATFORM=egl",
+          "export NVIDIA_DRIVER_CAPABILITIES=graphics,utility",
+          "exec /usr/local/bin/npa-gymnasium-entrypoint run-smoke",
+      )
+  )
+  if os.environ.get("BYOF_SMOKE_COMMAND", "").strip() != expected_command:
+      raise SystemExit("unexpected Gymnasium smoke command")
+  blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")
+  blocked_names = {
+      "KUBERNETES_SERVICE_HOST",
+      "KUBERNETES_SERVICE_PORT",
+      "NPA_S3_BUCKET",
+      "S3_OUTPUT_PREFIX",
+  }
+  runtime_environment = {
+      name: value
+      for name, value in os.environ.items()
+      if name not in blocked_names and not name.startswith(blocked_prefixes)
+  }
+  with (root / "solution_smoke_stdout.log").open("wb") as stdout, (
+      root / "solution_smoke_stderr.log"
+  ).open("wb") as stderr:
+      completed = subprocess.run(
+          ["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"],
+          cwd="/",
+          env=runtime_environment,
+          stdin=subprocess.DEVNULL,
+          stdout=stdout,
+          stderr=stderr,
+          check=False,
+      )
+  smoke_exit_code = completed.returncode
   artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
   if artifact_name != "gymnasium-robotics-smoke.json":
       raise SystemExit("unexpected Gymnasium qualification artifact name")
@@ -224,6 +238,11 @@ run: |
   print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
   if smoke_exit_code != 0:
       raise SystemExit(smoke_exit_code)
+
+  # No boto/storage client exists until the isolated runtime supervisor has
+  # returned, which includes its fail-closed surviving-descendant check.
+  import boto3
+  from botocore.config import Config
 
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
@@ -279,6 +298,3 @@ run: |
           raise SystemExit("qualification output prefix contains unexpected objects")
       print(f"uploaded_file_count={len(upload_paths)}", flush=True)
   PY
-  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
-    exit "${SMOKE_EXIT_CODE}"
-  fi

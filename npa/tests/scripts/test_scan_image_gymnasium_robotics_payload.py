@@ -173,6 +173,31 @@ def _gzip_with_header_marker(kind: str, marker: bytes) -> bytes:
     return bytes(content[:10] + marker + b"\0" + content[10:])
 
 
+def _retag_directory_body_members(
+    rendered: bytearray, directories: dict[str, bytes]
+) -> None:
+    """Turn allocated regular bodies into checksum-valid directory members."""
+
+    with tarfile.open(fileobj=io.BytesIO(rendered), mode="r:") as archive:
+        offsets = {}
+        members = archive.getmembers()
+        for requested, body in directories.items():
+            if not body:
+                continue
+            normalized = requested.rstrip("/")
+            matches = [
+                member for member in members if member.name.rstrip("/") == normalized
+            ]
+            assert len(matches) == 1
+            offsets[requested] = matches[0].offset
+    for offset in offsets.values():
+        header = rendered[offset : offset + 512]
+        header[156:157] = tarfile.DIRTYPE
+        header[148:156] = b" " * 8
+        header[148:156] = f"{sum(header):06o}\0 ".encode("ascii")
+        rendered[offset : offset + 512] = header
+
+
 def _tar_bytes(
     files: dict[str, bytes],
     *,
@@ -184,6 +209,7 @@ def _tar_bytes(
     hardlink_bodies: dict[str, bytes] | None = None,
     suffix: bytes = b"",
     gname: str = "",
+    structural_directory_bodies: bool = False,
 ) -> bytes:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w") as archive:
@@ -208,13 +234,24 @@ def _tar_bytes(
             archive.addfile(info, io.BytesIO(body) if body else None)
         for name, raw in (directories or {}).items():
             info = tarfile.TarInfo(name)
-            info.type = tarfile.DIRTYPE
+            info.type = (
+                tarfile.REGTYPE
+                if structural_directory_bodies and raw
+                else tarfile.DIRTYPE
+            )
             info.size = len(raw)
             info.linkname = (directory_linknames or {}).get(name, "")
-            archive.addfile(info)
+            archive.addfile(
+                info,
+                io.BytesIO(raw) if structural_directory_bodies and raw else None,
+            )
     rendered = bytearray(output.getvalue())
+    if structural_directory_bodies:
+        _retag_directory_body_members(rendered, directories or {})
     with tarfile.open(fileobj=io.BytesIO(rendered), mode="r:") as archive:
         for name, raw in (directories or {}).items():
+            if structural_directory_bodies:
+                continue
             member = archive.getmember(name)
             rendered[member.offset_data : member.offset_data + len(raw)] = raw
     return bytes(rendered) + suffix
@@ -244,8 +281,18 @@ def _docker_save(
     oci_config_path: bool = False,
     configured_diff_ids: list[str] | None = None,
     structural_gname: str = "",
+    base_symlinks: dict[str, str] | None = None,
+    base_hardlinks: dict[str, str] | None = None,
 ) -> tuple[str, list[str]]:
-    base = _tar_bytes({"etc/neutral-base": b"base"}, gname=structural_gname)
+    base_files = {"etc/neutral-base": b"base"}
+    if base_symlinks or base_hardlinks:
+        base_files["opt/target"] = b"target"
+    base = _tar_bytes(
+        base_files,
+        symlinks=base_symlinks,
+        hardlinks=base_hardlinks,
+        gname=structural_gname,
+    )
     app = _tar_bytes(
         files,
         symlinks=symlinks,
@@ -355,6 +402,8 @@ def _oci_layout(
     configured_diff_ids: list[str] | None = None,
     index_depth: int = 0,
     index_repeat_count: int = 1,
+    nonregular_name: str | None = None,
+    directory_bodies: dict[str, bytes] | None = None,
 ) -> tuple[str, list[str], list[dict[str, object]]]:
     raw_layers = [
         _tar_bytes({"etc/neutral-base": b"base"}),
@@ -431,7 +480,20 @@ def _oci_layout(
             for digest, content in blobs.items()
         },
     }
-    path.write_bytes(_tar_bytes(archive_files))
+    nonregular = {}
+    if nonregular_name is not None:
+        archive_files.pop(nonregular_name)
+        nonregular[nonregular_name] = "untrusted-target"
+    directories = {"blobs/": b"", "blobs/sha256/": b""}
+    directories.update(directory_bodies or {})
+    path.write_bytes(
+        _tar_bytes(
+            archive_files,
+            directories=directories,
+            symlinks=nonregular,
+            structural_directory_bodies=True,
+        )
+    )
     return hashlib.sha256(config).hexdigest(), diff_ids, descriptors
 
 
@@ -519,6 +581,27 @@ def test_oci_layout_binds_compressed_descriptors_and_uncompressed_diff_ids(
     assert result["ordered_layer_diff_ids"] == diff_ids
     assert result["ordered_layer_descriptors"] == descriptors
     assert result["distributed_blob_scan_complete"] is True
+
+
+@pytest.mark.parametrize("name", ["oci-layout", "index.json"])
+def test_oci_layout_refuses_nonregular_required_outer_member(
+    tmp_path: Path, structural_scan: None, name: str
+) -> None:
+    image = tmp_path / "nonregular-oci.tar"
+    _oci_layout(image, _required(), nonregular_name=name)
+
+    with pytest.raises(ValueError, match="archive member is not a regular file"):
+        SCAN.scan_oci_layout(image)
+
+
+def test_oci_layout_refuses_body_bearing_required_directory(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "directory-body-oci.tar"
+    _oci_layout(image, _required(), directory_bodies={"blobs/": b"hidden"})
+
+    with pytest.raises(ValueError, match="unaccounted tar bytes: OCI layout archive"):
+        SCAN.scan_oci_layout(image)
 
 
 def test_oci_descriptor_graph_budget_accepts_exact_normal_boundary(
@@ -1780,6 +1863,25 @@ def test_link_to_forbidden_cache_refuses(tmp_path: Path, structural_scan: None) 
         symlinks={"opt/neutral-link": "/workspace/.cache/npa/runtime"},
     )
     with pytest.raises(ValueError, match="forbidden image link target"):
+        SCAN.scan(image)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_retained_descendant_beneath_link_ancestor_refuses(
+    tmp_path: Path, structural_scan: None, kind: str
+) -> None:
+    image = tmp_path / f"{kind}-ancestor.tar"
+    links = {"opt/redirect": "opt/target"}
+    kwargs = {
+        "base_symlinks" if kind == "symlink" else "base_hardlinks": links
+    }
+    _docker_save(
+        image,
+        {**_required(), "opt/redirect/child": b"payload"},
+        **kwargs,
+    )
+
+    with pytest.raises(ValueError, match="retained descendant has a link ancestor"):
         SCAN.scan(image)
 
 

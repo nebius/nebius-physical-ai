@@ -610,6 +610,30 @@ def _validate_tar_directory(
         raise ValueError(f"invalid tar directory: {label}")
 
 
+def _validate_exact_outer_layout(
+    archive: tarfile.TarFile,
+    members: dict[str, tarfile.TarInfo],
+    regular_files: set[str],
+    *,
+    label: str,
+) -> None:
+    """Require only graph files and their zero-body parent directories."""
+
+    directories = {
+        str(parent)
+        for name in regular_files
+        for parent in PurePosixPath(name).parents
+        if str(parent) != "."
+    }
+    if set(members) != regular_files | directories:
+        raise ValueError(f"{label} has missing or unreferenced members")
+    for name in regular_files:
+        if not members[name].isfile():
+            raise ValueError(f"{label} file is not regular: {name}")
+    for name in directories:
+        _validate_tar_directory(archive, members[name], f"{label}:{name}")
+
+
 def _validate_zip_directory(
     archive: zipfile.ZipFile, member: zipfile.ZipInfo, label: str
 ) -> None:
@@ -1304,6 +1328,15 @@ def _layers_from_bytes(
             if record["kind"] == "regular":
                 rootfs[path] = current_rootfs[path]
     for path, record in entries.items():
+        for parent in PurePosixPath(path).parents:
+            parent_name = str(parent)
+            if parent_name == ".":
+                break
+            ancestor = entries.get(parent_name)
+            if ancestor is not None and ancestor["kind"] in {"symlink", "hardlink"}:
+                raise ValueError(
+                    f"retained descendant has a link ancestor: {path}"
+                )
         if record["kind"] == "hardlink":
             target = record["resolved_link_target"]
             if target not in entries or entries[target]["kind"] != "regular":
@@ -1837,12 +1870,13 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
                     "digest": descriptor["digest"],
                 }
             )
-        outer_files = {
-            name for name, member in outer_by_name.items() if member.isfile()
-        }
         allowed_files = {"oci-layout", "index.json", *referenced}
-        if outer_files != allowed_files:
-            raise ValueError("OCI layout has missing or unreferenced blob members")
+        _validate_exact_outer_layout(
+            archive,
+            outer_by_name,
+            allowed_files,
+            label="OCI layout",
+        )
     return _finalize_scan(
         archive_sha256=archive_sha256,
         config_raw=config_raw,

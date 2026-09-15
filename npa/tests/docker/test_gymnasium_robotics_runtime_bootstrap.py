@@ -585,6 +585,87 @@ def test_descriptor_bound_runtime_executes_unchanged_tree(tmp_path: Path) -> Non
     assert status == 0
 
 
+def _execute_script_from_runtime(tmp_path: Path, source: str) -> int:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    result = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        tmp_path / "cache",
+        opener=_opener(content, []),
+        installer=_python_installer,
+        retain_runtime_handles=True,
+    )
+    script = tmp_path / "runtime-probe.py"
+    script.write_text(source, encoding="utf-8")
+    return BOOTSTRAP._execute_validated_runtime(
+        int(result["_runtime_directory_fd"]),
+        int(result["_runtime_python_fd"]),
+        int(result["_runtime_monitor_fd"]),
+        [str(script)],
+    )
+
+
+def test_runtime_cannot_read_credential_parent_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "parent-only-v75-secret")
+    status = _execute_script_from_runtime(
+        tmp_path,
+        "import os\n"
+        "from pathlib import Path\n"
+        "assert 'AWS_SECRET_ACCESS_KEY' not in os.environ\n"
+        "try:\n"
+        "    Path(f'/proc/{os.getppid()}/environ').read_bytes()\n"
+        "except PermissionError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise SystemExit(71)\n",
+    )
+    assert status == 0
+
+
+def test_runtime_cannot_open_metadata_network_or_elevate_with_sudo(
+    tmp_path: Path,
+) -> None:
+    status = _execute_script_from_runtime(
+        tmp_path,
+        "import os\n"
+        "import shutil\n"
+        "import socket\n"
+        "import subprocess\n"
+        "try:\n"
+        "    socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "except PermissionError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise SystemExit(72)\n"
+        "assert 'NoNewPrivs:\\t1' in open('/proc/self/status').read()\n"
+        "sudo = shutil.which('sudo')\n"
+        "assert sudo is not None\n"
+        "assert subprocess.run([sudo, '-n', 'true']).returncode != 0\n",
+    )
+    assert status == 0
+
+
+def test_runtime_refuses_and_kills_surviving_descendant(tmp_path: Path) -> None:
+    pid_path = tmp_path / "survivor.pid"
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="surviving descendant"):
+        _execute_script_from_runtime(
+            tmp_path,
+            "import os\n"
+            "import time\n"
+            f"pid_path = {str(pid_path)!r}\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    time.sleep(60)\n"
+            "    os._exit(0)\n"
+            "open(pid_path, 'w').write(str(child))\n",
+        )
+    survivor = int(pid_path.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(survivor, 0)
+
+
 @pytest.mark.parametrize("mutation", ["content", "replacement"])
 def test_descriptor_bound_execution_refuses_same_uid_descendant_race(
     tmp_path: Path, mutation: str
