@@ -26,12 +26,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+# The CUDA devel base carries an old linux-libc-dev build and an unused Nsight
+# EFA helper linked against vulnerable Go standard libraries. Refresh the
+# headers explicitly and remove the profiler tree instead of exempting either
+# finding from the complete-image security gate.
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg git openssh-server python3.12 python3.12-dev \
+      ca-certificates ffmpeg git linux-libc-dev openssh-server python3.12 python3.12-dev \
       python3.12-venv rsync sudo \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
