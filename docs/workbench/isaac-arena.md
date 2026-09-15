@@ -217,7 +217,10 @@ source evidence; the independent temporal-median and coherent block-tracking
 gate still rejects static scenes and incoherent flicker.
 The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
-are read back and verified. The patch preserves early Kit
+are requested through Isaac Lab's native render configuration, reasserted at
+the live capture boundary after application defaults have settled, and read
+back exactly before frame zero. A renderer that ignores either setting fails
+with the observed values retained in the run log. The patch preserves early Kit
 camera enablement required by `env.render()`, but prevents that recorder choice from also adding
 the embodiment's unused observation cameras. Upstream camera-observation video
 is not exposed by this adapter. The patch is context-bound to the pinned source

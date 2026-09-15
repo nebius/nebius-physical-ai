@@ -386,7 +386,7 @@ def test_capture_setup_preserves_existing_metric_configuration(
         "/rtx/post/aa/op": 2,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
     }
-    assert cfg.sim.render.antialiasing_mode is None
+    assert cfg.sim.render.antialiasing_mode == "FXAA"
     assert (
         cfg.recorders.npa_video.class_type.__mro__[1]
         is simulator_video._VideoCaptureMethods
@@ -551,18 +551,32 @@ def test_nonempty_black_annotator_does_not_become_evidence(
     assert not (tmp_path / "simulator-initial.png").exists()
 
 
-def test_capture_refuses_path_tracing_or_temporal_aa_readback(
+def test_capture_reasserts_stable_renderer_after_late_runtime_override(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
     simulator_modules.settings.set("/rtx/rendermode", "PathTracing")
-    with pytest.raises(RuntimeError, match="required capture settings"):
-        env.reset()
-    assert env.renders == 0
-
-    simulator_modules.settings.set("/rtx/rendermode", "RaytracedLighting")
     simulator_modules.settings.set("/rtx/post/aa/op", 1)
-    with pytest.raises(RuntimeError, match="required capture settings"):
+    env.reset()
+    assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
+    assert simulator_modules.settings.get("/rtx/post/aa/op") == 2
+    assert env._npa_video_rendering["stochastic_accumulation"] is False
+
+
+def test_capture_refuses_renderer_that_rejects_required_settings(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native_set = simulator_modules.settings.set
+
+    def reject_fxaa(key, value):
+        native_set(key, 1 if key == "/rtx/post/aa/op" else value)
+
+    simulator_modules.settings.set = reject_fxaa
+    with pytest.raises(
+        RuntimeError,
+        match=r'required capture settings: .*"/rtx/post/aa/op": 1',
+    ):
         env.reset()
     assert env.renders == 0
 

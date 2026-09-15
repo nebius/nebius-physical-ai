@@ -85,6 +85,10 @@ selects CPU physics and replay tensors following upstream's GR1 tutorial, while
 the viewport still uses the reserved RTX GPU. Record both devices separately.
 The fixture does not record its original physics device; this selection needs
 fresh task/video validation and is not proof of successful reproduction.
+The RTX renderer must request spatial FXAA through Isaac Lab, reassert RTX
+Real-Time plus FXAA at the live capture boundary, and verify exact Carb-setting
+readback before frame zero. Treat a mismatch as a failed run; do not accept a
+default renderer or infer stability from the requested configuration alone.
 
 ```bash
 npa workbench health preflight --checks nebius,s3

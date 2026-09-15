@@ -133,10 +133,17 @@ def _assert_physics_unchanged(before: dict, after: dict) -> None:
 
 
 def _rendering_evidence(settings: Any) -> dict[str, Any]:
+    # Isaac Sim can reapply application defaults after SimulationCfg raw
+    # settings are consumed. Reassert the deterministic spatial renderer at
+    # the actual capture boundary, then require exact readback before a single
+    # frame can become evidence.
+    for key, value in _RENDER_SETTINGS.items():
+        settings.set(key, value)
     actual = {key: settings.get(key) for key in _RENDER_SETTINGS}
     if actual != _RENDER_SETTINGS:
         raise RuntimeError(
-            "Arena video renderer does not match its required capture settings"
+            "Arena video renderer does not match its required capture settings: "
+            + json.dumps(actual, sort_keys=True, default=str)
         )
     return {
         "mode": "RaytracedLighting",
@@ -400,9 +407,9 @@ def configure_video_capture(env_cfg: Any) -> None:
     if env_cfg.recorders is None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
     env_cfg.sim.render.carb_settings.update(_RENDER_SETTINGS)
-    # The exact spatial-AA mode is set in carb_settings and read back at capture.
-    # Prevent Replicator from replacing it with a temporal or AI AA mode.
-    env_cfg.sim.render.antialiasing_mode = None
+    # Isaac Lab applies this native Replicator bridge after raw Carb settings;
+    # make both configuration paths request the same spatial-only mode.
+    env_cfg.sim.render.antialiasing_mode = "FXAA"
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())
 
 
