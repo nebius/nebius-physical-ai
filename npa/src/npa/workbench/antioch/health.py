@@ -38,7 +38,9 @@ class StateHealthServer:
             def log_message(self, _format: str, *_args: object) -> None:
                 return
 
-        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        # Kubernetes probes address the pod IP, so loopback-only binding would
+        # make this unauthenticated, status-only health endpoint unreachable.
+        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)  # nosec B104
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name=f"antioch-state-health-{port}",

@@ -126,7 +126,9 @@ def cartpole_offline_policy_episode(
         "action_schema": ["cart_effort_positive", "cart_effort_negative"],
         "fps": 20,
     }
-    target = Path("/tmp/npa-antioch-cartpole-episode.npz")
+    # Antioch collects artifacts from this engine-container-local scratch path;
+    # the container is single-run and the filename is not shared with the host.
+    target = Path("/tmp/npa-antioch-cartpole-episode.npz")  # nosec B108
     np.savez(
         target,
         observation_state=np.stack(states),

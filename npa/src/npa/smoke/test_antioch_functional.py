@@ -49,7 +49,8 @@ def main() -> int:
                     f"{base}/system-info",
                     headers={"Authorization": f"Bearer {token}"},
                 )
-                with urllib.request.urlopen(request) as response:  # noqa: S310
+                # The URL is constructed above from a fixed loopback literal.
+                with urllib.request.urlopen(request) as response:  # nosec B310
                     payload = json.load(response)
                 break
             except (OSError, urllib.error.URLError):
@@ -59,7 +60,8 @@ def main() -> int:
         if payload is None:
             raise RuntimeError("Antioch control-plane server did not become ready")
         try:
-            urllib.request.urlopen(f"{base}/system-info")  # noqa: S310
+            # The unauthenticated negative probe is fixed to loopback as well.
+            urllib.request.urlopen(f"{base}/system-info")  # nosec B310
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise RuntimeError(

@@ -12,6 +12,9 @@ from pathlib import Path
 from websockets.sync.server import serve
 
 MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+# The declared Antioch service port must be reachable from the tunnel sidecar;
+# WSS client certificates and the API token gate every request.
+LISTEN_HOST = "0.0.0.0"  # nosec B104
 ROLES = frozenset({"operator", "simulation"})
 
 
@@ -88,7 +91,7 @@ def main() -> int:
     bridge = RelayBridge(token)
     with serve(
         bridge.handle,
-        "0.0.0.0",
+        LISTEN_HOST,
         8444,
         ssl=context,
         compression=None,

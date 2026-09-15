@@ -6,6 +6,7 @@ import hashlib
 import gzip
 import json
 import re
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -46,6 +47,34 @@ def _safe_member(member: tarfile.TarInfo) -> bool:
         and not member.isdev()
         and (member.isfile() or member.isdir())
     )
+
+
+def _extract_safe_members(
+    bundle: tarfile.TarFile, project: Path, members: list[tarfile.TarInfo]
+) -> None:
+    """Extract validated regular files without tarfile's path-writing API."""
+
+    seen: set[Path] = set()
+    for member in members:
+        relative = Path(member.name)
+        if relative in seen:
+            raise AntiochProjectError("project archive contains a duplicate path")
+        seen.add(relative)
+        target = project.joinpath(*relative.parts)
+        if member.isdir():
+            if target.exists() and not target.is_dir():
+                raise AntiochProjectError("project archive path changes file type")
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise AntiochProjectError("project archive would overwrite a path")
+        source = bundle.extractfile(member)
+        if source is None:
+            raise AntiochProjectError("project archive file has no readable payload")
+        with source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
 
 
 def _assert_no_secrets(root: Path) -> None:
@@ -111,7 +140,7 @@ def stage_project(
                 raise AntiochProjectError(
                     "project archive contains an unsafe path or link"
                 )
-            bundle.extractall(project)
+            _extract_safe_members(bundle, project, members)
     except (tarfile.TarError, OSError) as exc:
         raise AntiochProjectError(
             "project archive could not be safely extracted"

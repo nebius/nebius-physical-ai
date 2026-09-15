@@ -218,7 +218,8 @@ def test_config_archive_rejects_non_owner_only_nested_state(tmp_path: Path) -> N
     config = _config(tmp_path)
     nested = Path(config.antioch_config_dir) / "ssh"
     nested.mkdir(mode=0o755)
-    os.chmod(nested, 0o755)
+    # Deliberately violate the owner-only contract for this negative test.
+    os.chmod(nested, 0o755)  # nosec B103
     with pytest.raises(cluster_deploy.ClusterLiveError, match="owner-only"):
         cluster_deploy._config_archive(Path(config.antioch_config_dir))
 
@@ -422,13 +423,16 @@ def test_state_health_server_preserves_fail_closed_probe_semantics() -> None:
     )
     server.start()
     try:
-        with urllib.request.urlopen(
+        # The test server and URL are both fixed to loopback.
+        with urllib.request.urlopen(  # nosec B310
             f"http://127.0.0.1:{port}/live", timeout=2
         ) as reply:
             assert reply.status == 200
             assert reply.read() == b"ok\n"
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/ready", timeout=2)
+            urllib.request.urlopen(  # nosec B310
+                f"http://127.0.0.1:{port}/ready", timeout=2
+            )
         assert exc_info.value.code == 503
     finally:
         server.close()

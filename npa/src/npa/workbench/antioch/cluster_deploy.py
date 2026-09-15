@@ -29,6 +29,9 @@ _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 _SECRET_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _ANTIOCH_TERMS_ENV = "NPA_ANTIOCH_ACCEPT_TERMS"
+# Every use is backed by the deployment's pod-scoped emptyDir volume, not a
+# host-shared temporary directory.
+_POD_TMP_PATH = "/tmp"  # nosec B108
 
 
 class ClusterLiveError(RuntimeError):
@@ -265,7 +268,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
             {"name": "state", "mountPath": state_root},
             {"name": "runtime", "mountPath": "/var/lib/npa-antioch-live"},
             {"name": "runtime-cache", "mountPath": "/workspace/.cache/npa/antioch"},
-            {"name": "tmp", "mountPath": "/tmp"},
+            {"name": "tmp", "mountPath": _POD_TMP_PATH},
         ],
         "ports": [{"name": "ctrl-health", "containerPort": 18080}],
         "readinessProbe": {
@@ -315,7 +318,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
         "volumeMounts": [
             relay_private_mount,
             {"name": "state", "mountPath": state_root},
-            {"name": "tmp", "mountPath": "/tmp"},
+            {"name": "tmp", "mountPath": _POD_TMP_PATH},
         ],
         "ports": [{"name": "relay-health", "containerPort": 18081}],
         "readinessProbe": {
@@ -409,7 +412,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
                                     "mountPath": "/sources/project",
                                     "readOnly": True,
                                 },
-                                {"name": "tmp", "mountPath": "/tmp"},
+                                {"name": "tmp", "mountPath": _POD_TMP_PATH},
                             ],
                         }
                     ],

@@ -16,6 +16,7 @@ import tempfile
 import urllib.request
 import venv
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .vendor_cli import AntiochCli, AntiochCliError
 
@@ -158,6 +159,18 @@ def ensure_runtime(*, expected_version: str = ANTIOCH_CLI_VERSION) -> Path:
         )
         if not url:
             raise AntiochRuntimeError("NPA_ANTIOCH_CLI_URL must not be empty")
+        parsed_url = urlsplit(url)
+        if (
+            parsed_url.scheme != "https"
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise AntiochRuntimeError(
+                "NPA_ANTIOCH_CLI_URL must be an unsigned HTTPS URL"
+            )
         if expected_sha != ANTIOCH_CLI_SHA256:
             raise AntiochRuntimeError(
                 "NPA_ANTIOCH_CLI_SHA256 must match the adapter's reviewed 0.3.63 wheel digest"
@@ -170,7 +183,9 @@ def ensure_runtime(*, expected_version: str = ANTIOCH_CLI_VERSION) -> Path:
             wheel = temp / "antioch_sim-0.3.63-py3-none-any.whl"
             try:
                 with (
-                    urllib.request.urlopen(url) as response,
+                    # Scheme and authority are checked immediately above and the
+                    # exact wheel bytes are still bound to the reviewed digest.
+                    urllib.request.urlopen(url) as response,  # nosec B310
                     wheel.open("wb") as output,
                 ):
                     shutil.copyfileobj(response, output)

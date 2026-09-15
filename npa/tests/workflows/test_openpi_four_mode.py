@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility.
+    import tomli as tomllib
 
 import numpy as np
 import pytest

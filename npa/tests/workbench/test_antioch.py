@@ -361,6 +361,32 @@ def test_project_staging_rejects_traversal(tmp_path: Path) -> None:
         )
 
 
+def test_project_staging_rejects_duplicate_archive_paths(tmp_path: Path) -> None:
+    archive_path = tmp_path / "duplicate.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as bundle:
+        for content in (b"id: first\n", b"id: second\n"):
+            info = tarfile.TarInfo("project/antioch.yaml")
+            info.size = len(content)
+            bundle.addfile(info, io.BytesIO(content))
+    archive = archive_path.read_bytes()
+    manifest = ProjectManifest(
+        archive=ProjectArchive(
+            size_bytes=len(archive), sha256=sha256_bytes(archive)
+        ),
+        source_name="synthetic-cartpole",
+        source_revision="1",
+        source_license="CC0-1.0",
+        source_sha256="a" * 64,
+    )
+    with pytest.raises(AntiochProjectError, match="duplicate path"):
+        stage_project(
+            ProjectStorage(canonical_json(manifest.model_dump(mode="json")), archive),
+            "s3://safe/input",
+            tmp_path / "stage",
+            project_id="npa-safe",
+        )
+
+
 def test_project_packaging_is_reproducible_and_excludes_caches(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

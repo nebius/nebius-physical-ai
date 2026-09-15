@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -37,7 +37,7 @@ def _timestamp_seconds(value: object) -> float:
     if isinstance(value, str) and value.strip():
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-                UTC
+                timezone.utc
             ).timestamp()
         except ValueError as exc:
             raise AntiochLiveReconcileError(

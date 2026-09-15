@@ -28,9 +28,11 @@ from cryptography.x509.oid import NameOID
 from .runtime import ensure_runtime
 from .vendor_cli import AntiochCli, AntiochCliError
 
-REMOTE_CLIENT_ROOT = "/tmp/npa-live-client-current"
-REMOTE_CLIENT_STAGING_PREFIX = "/tmp/npa-live-client-generation-"
-REMOTE_CLIENT_UPLOAD_PREFIX = "/tmp/npa-live-client-upload-"
+# These fixed roots exist only inside the single-run Antioch service container;
+# generation and upload paths append an unpredictable UUID before use.
+REMOTE_CLIENT_ROOT = "/tmp/npa-live-client-current"  # nosec B108
+REMOTE_CLIENT_STAGING_PREFIX = "/tmp/npa-live-client-generation-"  # nosec B108
+REMOTE_CLIENT_UPLOAD_PREFIX = "/tmp/npa-live-client-upload-"  # nosec B108
 UPSTREAM_BUNDLE_FILES = ("ca.crt", "api-key", "endpoint.json")
 RELAY_BUNDLE_FILES = (
     "relay-ca.crt",
@@ -313,7 +315,8 @@ def _stage_runtime_source(
             raise AntiochLiveError(f"live runtime source {name!r} is unavailable")
     last_error: Exception | None = None
     for attempt in range(attempts):
-        staging = f"/tmp/npa-live-source-{uuid.uuid4().hex}"
+        # UUID suffix plus mode 0700 makes this service-container-local staging.
+        staging = f"/tmp/npa-live-source-{uuid.uuid4().hex}"  # nosec B108
         try:
             cli.services_exec(
                 runtime,
@@ -507,7 +510,8 @@ def _write_supervisor(
             f"test {source_check_expression}",
         ]
     )
-    source_staging = f"/tmp/npa-live-supervisor-source-{uuid.uuid4().hex}"
+    # UUID suffix plus mode 0700 makes this service-container-local staging.
+    source_staging = f"/tmp/npa-live-supervisor-source-{uuid.uuid4().hex}"  # nosec B108
     source_stage_commands = [
         shlex.join(
             [

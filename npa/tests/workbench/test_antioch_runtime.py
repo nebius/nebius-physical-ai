@@ -110,6 +110,31 @@ def test_ensure_runtime_rejects_checksum_mismatch(
         runtime.ensure_runtime()
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.invalid/antioch.whl",
+        "file:///var/empty/antioch.whl",
+        "https://user@example.invalid/antioch.whl",
+        "https://example.invalid/antioch.whl?signature=value",
+        "https://example.invalid/antioch.whl#fragment",
+    ],
+)
+def test_ensure_runtime_rejects_untrusted_download_urls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str
+) -> None:
+    monkeypatch.setenv("NPA_ANTIOCH_ACCEPT_TERMS", "YES")
+    monkeypatch.setenv("NPA_ANTIOCH_RUNTIME_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("NPA_ANTIOCH_CLI_URL", url)
+    monkeypatch.setattr(
+        runtime.urllib.request,
+        "urlopen",
+        lambda _url: pytest.fail("invalid URL reached the network boundary"),
+    )
+    with pytest.raises(runtime.AntiochRuntimeError, match="unsigned HTTPS URL"):
+        runtime.ensure_runtime()
+
+
 def test_ensure_runtime_offline_cold_cache_fails_before_network(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -39,7 +39,9 @@ def _resolved_telemetry_entity(relative_entity: str) -> str:
 
 logger = antioch.Logger(TELEMETRY_ROOT)
 
-CLIENT_ROOT = Path("/tmp/npa-live-client-current")
+# This fixed path is private to the single-run simulation container and points
+# at an atomically replaced, authenticated client bundle.
+CLIENT_ROOT = Path("/tmp/npa-live-client-current")  # nosec B108
 ACTION_SHAPE = (15, 8)
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ

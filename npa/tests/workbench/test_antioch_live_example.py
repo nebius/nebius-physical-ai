@@ -191,7 +191,8 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
     bridge = (EXAMPLE / "src/relay_bridge.py").read_text(encoding="utf-8")
     compile(bridge, "antioch-openpi-live-relay-bridge", "exec")
     assert "ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)" in bridge
-    assert '"0.0.0.0",\n        8444,' in bridge
+    assert 'LISTEN_HOST = "0.0.0.0"' in bridge
+    assert "LISTEN_HOST,\n        8444," in bridge
     assert "hmac.compare_digest" in bridge
     assert 'ROLES = frozenset({"operator", "simulation"})' in bridge
 
@@ -1343,8 +1344,9 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     assert '"msgpack==1.1.1"' in dockerfile
     assert '"websockets==15.0.1"' in dockerfile
     assert "/workspace/project" in dockerfile
-    assert "/tmp/npa-home/.cache \\" in dockerfile
-    assert "/tmp/npa-home/.cache/ov" in dockerfile
+    # These assertions verify the isolated image's writable cache contract.
+    assert "/tmp/npa-home/.cache \\" in dockerfile  # nosec B108
+    assert "/tmp/npa-home/.cache/ov" in dockerfile  # nosec B108
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache"
         in dockerfile
