@@ -468,17 +468,18 @@ def _capture_step_mapping(task_motion: dict[str, Any], total_steps: int) -> int:
     try:
         interval = task_motion["progress_interval"]
         capture = task_motion["video_capture"]
-        terminal = interval["end_action_step"]
+        progress_end = interval["end_action_step"]
+        terminal = capture["terminal_action_step"]
         steps = capture["action_steps"]
         valid = (
-            type(terminal) is int
-            and 0 < terminal <= total_steps
+            type(progress_end) is int
+            and 0 < progress_end <= total_steps
+            and type(terminal) is int
+            and terminal == total_steps
             and type(interval["total_action_steps"]) is int
             and interval["total_action_steps"] == total_steps
             and type(capture["initial_action_step"]) is int
             and capture["initial_action_step"] == 0
-            and type(capture["terminal_action_step"]) is int
-            and capture["terminal_action_step"] == terminal
             and isinstance(steps, list)
             and all(type(step) is int for step in steps)
             and steps == list(range(1, terminal + 1))

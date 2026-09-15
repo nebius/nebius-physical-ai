@@ -89,6 +89,15 @@ The RTX renderer must request spatial FXAA through Isaac Lab, reassert RTX
 Real-Time plus FXAA at the live capture boundary, and verify exact Carb-setting
 readback before frame zero. Treat a mismatch as a failed run; do not accept a
 default renderer or infer stability from the requested configuration alone.
+Task-qualified evidence also requires the registered environment/policy pair,
+a sanitized policy-to-`env.step` action journal covering the full scored episode,
+finite nonzero varied actions, and zero synthetic padding. Replay must match the
+prepared private action-sequence commitment exactly. Keep the task-specific
+progress interval as a subset for visual motion analysis; capture, actions, and
+the terminal PNG must still span the complete native episode.
+Enforce the adapter's declared maximum trailing-identical-action fraction on
+both prepared and executed sequences; a varying prefix cannot hide a dominant
+held final action.
 
 ```bash
 npa workbench health preflight --checks nebius,s3

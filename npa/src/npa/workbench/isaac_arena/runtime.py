@@ -47,6 +47,7 @@ from .video_evidence import probe_mp4 as _probe_mp4, denoise_mp4 as _denoise_mp4
 from .video_evidence import verify_capture_evidence as _verify_capture_evidence
 from .ground_truth import simulator_ground_truth as _simulator_ground_truth
 from .acceptance import qualify_visual_acceptance as _qualify_visual_acceptance
+from .action_evidence import read_action_evidence as _read_action_evidence
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -576,15 +577,26 @@ def _validated_summary(
             "upstream numeric success metric disagrees with episode JSONL"
         )
     steps = ((evidence or {}).get("execution") or {}).get("prepared_steps")
-    summary["simulator_ground_truth"] = _simulator_ground_truth(
+    require_task_success = request.record_video and request.policy_type != "zero_action"
+    ground_truth = _simulator_ground_truth(
         run_dir,
         environment=request.environment,
+        policy_type=request.policy_type,
         expected_episodes=summary["episodes"],
         expected_successes=summary["successes"],
         expected_action_steps=steps,
-        require_task_success=request.record_video
-        and request.policy_type != "zero_action",
+        require_task_success=require_task_success,
     )
+    ground_truth["action_evidence"] = (
+        _read_action_evidence(
+            run_dir,
+            policy_type=request.policy_type,
+            expected_steps=ground_truth["episodes"][0]["episode_length"],
+        )
+        if require_task_success
+        else None
+    )
+    summary["simulator_ground_truth"] = ground_truth
     return summary
 
 
@@ -619,6 +631,7 @@ def _video_binding(
 ) -> dict:
     source_hash = str((evidence or {}).get("sha256") or "")
     motion = ground_truth.get("task_motion") or {}
+    actions = ground_truth.get("action_evidence") or {}
     return {
         "run_id": request.run_id or run_dir.name,
         "upstream_run_directory": run_dir.name,
@@ -631,6 +644,8 @@ def _video_binding(
             ((evidence or {}).get("execution") or {}).get("prepared_sha256")
             or source_hash
         ),
+        "executed_action_evidence_sha256": ((actions.get("file") or {}).get("sha256")),
+        "executed_action_sequence_sha256": actions.get("sequence_sha256"),
         "simulator_ground_truth_sha256": [
             item["sha256"] for item in ground_truth["files"]
         ],

@@ -74,6 +74,10 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
     && grep -q 'finalize_video_capture(env)' \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && grep -q 'record_executed_action(env, actions, num_steps_completed + 1)' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
+    && grep -q 'finalize_action_evidence(env)' \
+      /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
     && grep -q 'step_trigger=lambda step: step == 0' \
       /opt/isaac-arena/isaaclab_arena/video/video_recording.py \
     && grep -q 'def record_post_reset' \

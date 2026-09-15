@@ -135,6 +135,19 @@ def test_capture_verifies_real_png_and_encoded_terminal_frame(capture) -> None:
     assert comparison["mean_absolute_luma_difference"] < 1
 
 
+def test_capture_spans_full_episode_when_progress_threshold_crosses_early(
+    capture,
+) -> None:
+    video, payload, motion, _ = capture
+    motion["progress_interval"]["end_action_step"] = 10
+    result = verify_capture_evidence(
+        video.parent, video, task_motion=motion, expected_steps=20
+    )
+    assert result["captured_action_steps"] == 20
+    assert result["terminal"]["action_step"] == 20
+    assert result["terminal"]["sha256"] == payload["terminals"][0]["sha256"]
+
+
 def test_autoreset_frame_cannot_replace_successful_terminal_frame(capture) -> None:
     video, _, motion, frames = capture
     frames[-1] = _frame(17)

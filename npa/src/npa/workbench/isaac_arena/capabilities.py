@@ -13,6 +13,13 @@ from .task_progress import task_progress_capabilities
 from .video_evidence import video_acceptance_thresholds
 
 _TASK_PROGRESS_CAPABILITIES = task_progress_capabilities()
+_TASK_QUALIFIED_POLICIES = sorted(
+    {
+        policy
+        for adapter in _TASK_PROGRESS_CAPABILITIES
+        for policy in adapter["supported_policy_types"]
+    }
+)
 
 _ENVIRONMENT_CAPABILITIES: tuple[dict[str, Any], ...] = (
     {
@@ -547,10 +554,10 @@ _CAPABILITY_MANIFEST = {
                 item["environment"] for item in _TASK_PROGRESS_CAPABILITIES
             ],
             "progress_adapters": _TASK_PROGRESS_CAPABILITIES,
-            "policy_adapters": ["replay", "rsl_rl"],
-            "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; replay source actions are measurably nonzero.",
+            "policy_adapters": _TASK_QUALIFIED_POLICIES,
+            "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; a registered policy adapter has measured finite, nonzero, varied policy-to-environment actions without padding; replay actions exactly match the prepared private tensor commitment.",
             "visual_interval": "Coherent denoised motion is measured from the first door progress through its first crossing of the upstream success threshold, excluding subsequent reset or idle frames.",
-            "shared_contract": "Actions without padding, one native successful scored episode, registered environment progress, exact simulator capture steps, capture/PNG/raw/evidence hash chain, and noise-resistant video motion must all bind to the same episode horizon.",
+            "shared_contract": "Measured policy-to-environment actions without padding, one native successful scored episode, registered environment/policy progress, exact full-episode simulator capture steps, capture/PNG/raw/evidence hash chain, and noise-resistant video motion must all bind to the same episode horizon. The visual analysis interval may be the task-specific progress subset.",
             "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification requires an explicitly registered task-progress adapter and is otherwise unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",
             "live_validation": "Consult the external readiness record for the exact image digest, target hardware, execution device, and task. The baked implementation status does not establish a physical-GPU result.",

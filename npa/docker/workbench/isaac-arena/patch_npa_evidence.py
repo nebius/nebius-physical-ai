@@ -87,6 +87,20 @@ POLICY_RUNNER_STEP_PATCHED = """\
                     actions = policy.get_action(env, obs)
                 with phase_scope(env, "env_step", num_steps_completed + 1):
                     obs, _, terminated, truncated, _ = env.step(actions)
+                from npa.workbench.isaac_arena.action_evidence import record_executed_action
+                record_executed_action(env, actions, num_steps_completed + 1)
+"""
+
+POLICY_RUNNER_POLICY = """\
+        policy = build_policy_from_cli(policy_cls, args_cli)
+        # Simulation length.
+"""
+
+POLICY_RUNNER_POLICY_PATCHED = """\
+        policy = build_policy_from_cli(policy_cls, args_cli)
+        from npa.workbench.isaac_arena.action_evidence import configure_action_evidence
+        configure_action_evidence(env, output_dir, args_cli.policy_type, local_rank)
+        # Simulation length.
 """
 
 POLICY_RUNNER_CAMERA_CONTEXT = """\
@@ -112,11 +126,15 @@ POLICY_RUNNER_ROLLOUT_END_PATCHED = """\
         # Retain unfinished measurements before env.close stops physics and
         # deletes the scene/recorder managers. This never scores an episode.
         from npa.workbench.isaac_arena.simulator_video import finalize_video_capture
+        from npa.workbench.isaac_arena.action_evidence import finalize_action_evidence
         from npa.workbench.isaac_arena.simulator_phases import finalize_phase_journal
         try:
             finalize_video_capture(env)
         finally:
-            finalize_phase_journal(env)
+            try:
+                finalize_action_evidence(env)
+            finally:
+                finalize_phase_journal(env)
 
 
 def list_variations(args_parser: argparse.ArgumentParser) -> None:
@@ -219,8 +237,16 @@ def _patch_runner(policy_runner: Path) -> None:
         "live-diagnostic-finalization",
     )
     _replace_once(
-        policy_runner, POLICY_RUNNER_STEP, POLICY_RUNNER_STEP_PATCHED,
+        policy_runner,
+        POLICY_RUNNER_STEP,
+        POLICY_RUNNER_STEP_PATCHED,
         "scalar-phase-diagnostics",
+    )
+    _replace_once(
+        policy_runner,
+        POLICY_RUNNER_POLICY,
+        POLICY_RUNNER_POLICY_PATCHED,
+        "executed-action-evidence",
     )
     policy_text = policy_runner.read_text(encoding="utf-8")
     if policy_text.count(POLICY_RUNNER_CAMERA_CONTEXT) != 1:

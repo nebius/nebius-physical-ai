@@ -20,6 +20,8 @@ class TaskProgressAdapter:
 
     name: str
     environment: str
+    supported_policy_types: tuple[str, ...]
+    maximum_trailing_identical_action_fraction: float
     signal_names: tuple[str, ...]
     qualifier: ProgressQualifier
     thresholds: Mapping[str, float]
@@ -133,6 +135,8 @@ _TASK_PROGRESS_ADAPTERS: Mapping[str, TaskProgressAdapter] = MappingProxyType(
         "gr1_open_microwave": TaskProgressAdapter(
             name="arena.open-door.revolute-joint.v1",
             environment="gr1_open_microwave",
+            supported_policy_types=("replay", "rsl_rl"),
+            maximum_trailing_identical_action_fraction=0.25,
             signal_names=("revolute_joint_state",),
             qualifier=_qualify_open_microwave,
             thresholds=MappingProxyType(
@@ -159,6 +163,10 @@ def task_progress_capabilities() -> list[dict[str, Any]]:
         {
             "name": adapter.name,
             "environment": adapter.environment,
+            "supported_policy_types": list(adapter.supported_policy_types),
+            "maximum_trailing_identical_action_fraction": (
+                adapter.maximum_trailing_identical_action_fraction
+            ),
             "signal_names": list(adapter.signal_names),
             "thresholds": dict(adapter.thresholds),
         }
@@ -170,11 +178,16 @@ def qualify_task_progress(
     adapter: TaskProgressAdapter,
     episodes: Sequence[tuple[dict, Mapping[str, Any]]],
     *,
+    policy_type: str,
     expected_action_steps: int | None,
     require_success: bool,
 ) -> dict | None:
     """Apply one adapter only to a native successful episode."""
 
+    if require_success and policy_type not in adapter.supported_policy_types:
+        raise IsaacArenaError(
+            f"{adapter.environment} does not register {policy_type} for visual qualification"
+        )
     for record, signals in episodes:
         if record["success"]:
             return adapter.qualifier(

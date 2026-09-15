@@ -160,7 +160,13 @@ workers may leave only workflow logs.
 The original operator input and the normalized execution HDF5 are never output
 artifacts. The result redacts their location and binds both the source SHA-256
 and prepared execution-input SHA-256, along with source and prepared step counts.
-Observed action counts and task outcomes come from the simulator evidence.
+Observed action counts come from a sanitized policy-to-environment journal that
+is written only after each native `env.step` returns. It retains per-step and
+sequence SHA-256 commitments, shape/count, finite/nonzero/variation statistics,
+and no raw actions. Replay qualification requires that sequence commitment to
+equal the prepared private action tensor, so mutation, truncation, padding, a
+constant held tail, or an unexecuted policy call cannot pass. Task outcomes come
+from the simulator evidence.
 A completed evaluation may truthfully report a success rate of zero. Nonzero
 actions and movement metrics never substitute for the upstream task result.
 
@@ -174,26 +180,33 @@ metric trace. A shared fail-closed contract requires one horizon across executed
 actions, the native scored episode, task progress, simulator capture, and video;
 replay steps must be nonzero and must not be padded or held. Environment-specific
 progress semantics are explicit registry entries rather than generic motion
-thresholds. The sole current entry supports `gr1_open_microwave` with `replay`
-or `rsl_rl`: the upstream JSONL, numeric
+thresholds, and each entry declares its supported policy types. The sole current
+entry supports `gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
 `success_rate > 0`, and HDF5 success flag must agree, the final door openness
 must exceed the upstream threshold of `0.8`, and maximum openness must increase
 at least `0.5` from the initial state. The acceptance interval runs from the
 first measured door progress to the first threshold crossing, excluding idle
-and reset frames. The result records the named progress adapter and a
+and reset frames from visual motion analysis. Capture and action evidence still
+span the complete native scored episode through its terminal action; an early
+threshold crossing cannot truncate the proof. The result records the named progress adapter and a
 `npa.isaac-arena.visual-acceptance.v1` binding. Other registered scored
 environments remain available for ordinary evaluation; their nonzero-policy
 video qualification is unsupported until a task-specific adapter is registered.
+The microwave adapter also rejects an exactly repeated terminal action run over
+25% of the scored horizon. This limit is declared by the adapter, measured for
+both prepared and executed actions, and prevents a short varying prefix plus a
+dominant held tail from passing the shared contract.
 
-Successful video qualification retains `simulator-video-evidence.json`, an actual
-initial PNG, and an actual terminal PNG captured before automatic reset. The sidecar binds each
+Successful video qualification retains `simulator-video-evidence.json`,
+`simulator-action-evidence.json`, an actual initial PNG, and an actual terminal
+PNG captured before automatic reset. The sidecars bind each
 PNG's file and decoded-RGB SHA-256 to its action step; contiguous capture indices
 must match the simulator HDF5. The terminal PNG must also match the corresponding
 decoded source-MP4 frame within encoding tolerances. The result records these
 bindings, initial/final state, measured changes, thresholds, source and derivative
 hashes, run identity, and input hashes. The shared acceptance record verifies a
-single hash chain from capture sidecar and PNGs through the raw MP4 to its
-denoised evidence derivative, all on the same native episode and action horizon.
+single hash chain from executed-action and capture sidecars and PNGs through the
+raw MP4 to its denoised evidence derivative, all on the same native episode and action horizon.
 A static scene with rendering noise fails the gate. A zero-action baseline is never task-qualified, even if it passes the
 capture and coherent-motion checks. Failed qualification retains diagnostic
 artifacts. State-only evaluation reports scored outcomes, including zero success,

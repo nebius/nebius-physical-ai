@@ -5,6 +5,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .action_evidence import (
+    validate_action_evidence,
+    validate_prepared_action_sequence,
+)
 from .errors import IsaacArenaError
 from .task_progress import task_progress_adapter
 
@@ -53,7 +57,9 @@ def _native_episode(summary: dict, ground_truth: dict) -> tuple[dict, int]:
     return episode, length
 
 
-def _task_progress(environment: str, ground_truth: dict, episode: dict) -> dict:
+def _task_progress(
+    environment: str, policy_type: str, ground_truth: dict, episode: dict
+) -> dict:
     adapter = ground_truth.get("task_progress_adapter")
     motion = ground_truth.get("task_motion")
     registered = task_progress_adapter(environment)
@@ -67,6 +73,7 @@ def _task_progress(environment: str, ground_truth: dict, episode: dict) -> dict:
     )
     valid = (
         registered is not None
+        and policy_type in registered.supported_policy_types
         and adapter == registered.name
         and isinstance(motion, dict)
         and motion.get("adapter") == adapter
@@ -85,19 +92,56 @@ def _task_progress(environment: str, ground_truth: dict, episode: dict) -> dict:
 
 
 def _action_contract(
+    environment: str,
     policy_type: str,
     evidence: dict | None,
+    ground_truth: dict,
     episode_length: int,
 ) -> dict:
+    adapter = task_progress_adapter(environment)
+    if adapter is None or policy_type not in adapter.supported_policy_types:
+        raise IsaacArenaError(
+            "visual acceptance requires registered native task progress"
+        )
+    maximum_held_fraction = adapter.maximum_trailing_identical_action_fraction
+    observed = validate_action_evidence(
+        ground_truth.get("action_evidence"),
+        policy_type=policy_type,
+        expected_steps=episode_length,
+        require_nonzero_varied=True,
+        maximum_trailing_identical_fraction=maximum_held_fraction,
+    )
+    action_file = observed.get("file")
+    if not isinstance(action_file, dict) or not _sha256(action_file.get("sha256")):
+        raise IsaacArenaError("visual acceptance requires measured executed actions")
     if policy_type == "rsl_rl":
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("kind") != "rsl_rl_checkpoint"
+            or not _sha256(evidence.get("sha256"))
+        ):
+            raise IsaacArenaError(
+                "visual acceptance requires a hash-bound native policy checkpoint"
+            )
         return {
             "source": "native_policy_actions",
             "executed_steps": episode_length,
             "padding_steps": 0,
+            "sequence_sha256": observed["sequence_sha256"],
+            "evidence_sha256": action_file["sha256"],
+            "trailing_identical_action_fraction": observed[
+                "trailing_identical_action_fraction"
+            ],
+            "maximum_trailing_identical_action_fraction": maximum_held_fraction,
         }
     execution = (evidence or {}).get("execution") or {}
     source_steps = execution.get("source_steps")
     prepared_steps = execution.get("prepared_steps")
+    prepared = validate_prepared_action_sequence(
+        execution.get("prepared_action_sequence"),
+        expected_steps=episode_length,
+        maximum_trailing_identical_fraction=maximum_held_fraction,
+    )
     valid = (
         policy_type == "replay"
         and ((evidence or {}).get("trajectory") or {}).get("nonzero_actions") is True
@@ -105,6 +149,8 @@ def _action_contract(
         and source_steps == prepared_steps == episode_length
         and execution.get("action_padding_steps") == 0
         and execution.get("strategy") == "actions_initial_state_exact_replay"
+        and observed.get("action_shape") == prepared.get("action_shape")
+        and observed.get("sequence_sha256") == prepared.get("sequence_sha256")
     )
     if not valid:
         raise IsaacArenaError(
@@ -115,6 +161,12 @@ def _action_contract(
         "source_steps": source_steps,
         "executed_steps": prepared_steps,
         "padding_steps": 0,
+        "sequence_sha256": observed["sequence_sha256"],
+        "evidence_sha256": action_file["sha256"],
+        "trailing_identical_action_fraction": observed[
+            "trailing_identical_action_fraction"
+        ],
+        "maximum_trailing_identical_action_fraction": maximum_held_fraction,
     }
 
 
@@ -196,6 +248,8 @@ def _video_contract(
         ((evidence or {}).get("execution") or {}).get("prepared_sha256") or source_hash
     )
     ground_truth_files = ground_truth.get("files")
+    action_evidence = ground_truth.get("action_evidence") or {}
+    action_file = action_evidence.get("file") or {}
     ground_truth_hashes = (
         [item.get("sha256") for item in ground_truth_files]
         if isinstance(ground_truth_files, list)
@@ -230,6 +284,11 @@ def _video_contract(
         and bool(binding["upstream_run_directory"])
         and binding.get("input_sha256") == source_hash
         and binding.get("execution_input_sha256") == execution_hash
+        and binding.get("executed_action_evidence_sha256") == action_file.get("sha256")
+        and _sha256(binding.get("executed_action_evidence_sha256"))
+        and binding.get("executed_action_sequence_sha256")
+        == action_evidence.get("sequence_sha256")
+        and _sha256(binding.get("executed_action_sequence_sha256"))
         and ground_truth_hashes
         and all(_sha256(item) for item in ground_truth_hashes)
         and binding.get("simulator_ground_truth_sha256") == ground_truth_hashes
@@ -277,7 +336,7 @@ def qualify_visual_acceptance(
             "task-qualified visual acceptance requires a nonzero policy adapter"
         )
     episode, length = _native_episode(summary, ground_truth)
-    progress = _task_progress(environment, ground_truth, episode)
+    progress = _task_progress(environment, policy_type, ground_truth, episode)
     interval = progress.get("progress_interval")
     if not isinstance(interval, dict) or interval.get("total_action_steps") != length:
         raise IsaacArenaError(
@@ -288,7 +347,9 @@ def qualify_visual_acceptance(
         "schema": ACCEPTANCE_SCHEMA,
         "qualified": True,
         "environment": environment,
-        "actions": _action_contract(policy_type, evidence, length),
+        "actions": _action_contract(
+            environment, policy_type, evidence, ground_truth, length
+        ),
         "episode": {
             "name": episode["episode"],
             "length": length,

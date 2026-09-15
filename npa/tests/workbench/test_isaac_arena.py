@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -25,6 +26,11 @@ from npa.workbench.isaac_arena.runtime import (
     _prepare_viewport_graphics,
     _prepare_replay_execution_input,
     _probe_mp4,
+)
+from npa.workbench.isaac_arena.action_evidence import (
+    configure_action_evidence,
+    finalize_action_evidence,
+    record_executed_action,
 )
 
 
@@ -101,6 +107,8 @@ def test_capabilities_are_complete_and_honest() -> None:
         {
             "name": "arena.open-door.revolute-joint.v1",
             "environment": "gr1_open_microwave",
+            "supported_policy_types": ["replay", "rsl_rl"],
+            "maximum_trailing_identical_action_fraction": 0.25,
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,
@@ -298,6 +306,7 @@ def _fake_moving_upstream(
     results.write_text(json.dumps(record) + "\n", encoding="utf-8")
     run = results.parent
     _write_ground_truth(run, success=True, microwave=True)
+    _write_executed_actions(run, argv)
     return subprocess.CompletedProcess(
         argv,
         0,
@@ -353,6 +362,24 @@ def _write_ground_truth(run: Path, *, success: bool, microwave: bool = False) ->
                 "object_linear_velocity",
                 data=np.zeros((4, 3), dtype=np.float32),
             )
+
+
+def _write_executed_actions(run: Path, argv: list[str]) -> None:
+    import h5py
+
+    policy_type = argv[argv.index("--policy_type") + 1]
+    if policy_type == "zero_action":
+        return
+    if policy_type != "replay":
+        raise AssertionError("test fixture has no native checkpoint policy")
+    replay = Path(argv[argv.index("--replay_file_path") + 1])
+    with h5py.File(replay) as dataset:
+        actions = dataset["data/demo_0/actions"][:]
+    env = SimpleNamespace()
+    configure_action_evidence(env, run, policy_type)
+    for step, action in enumerate(actions, 1):
+        record_executed_action(env, action[None, :], step)
+    finalize_action_evidence(env)
 
 
 def _make_replay(path: Path, *, steps: int = 4, pink: bool = False) -> None:
@@ -437,12 +464,19 @@ def test_replay_execution_input_is_minimal_hash_bound_and_horizon_complete(
         "prepared_sha256": normalized["prepared_sha256"],
         "source_steps": 4,
         "prepared_steps": 4,
+        "prepared_action_sequence": normalized["prepared_action_sequence"],
         "runtime_outcome_claim": False,
         "action_padding_steps": 0,
         "initial_state_application": "isaac_lab_reset_to_relative",
         "fields": ["actions", "initial_state"],
         "published": False,
     }
+    action_sequence = normalized["prepared_action_sequence"]
+    assert action_sequence["steps"] == 4
+    assert action_sequence["action_shape"] == [3]
+    assert action_sequence["nonzero_actions"] is True
+    assert action_sequence["varied_actions"] is True
+    assert len(action_sequence["sequence_sha256"]) == 64
     assert len(normalized["prepared_sha256"]) == 64
 
 
@@ -793,6 +827,8 @@ def test_execution_requires_scored_episode_report_and_requested_video(
         "action_steps": None,
         "input_sha256": "",
         "execution_input_sha256": "",
+        "executed_action_evidence_sha256": None,
+        "executed_action_sequence_sha256": None,
         "simulator_ground_truth_sha256": [ground_truth["files"][0]["sha256"]],
     }
     raw_video = next(
@@ -956,6 +992,8 @@ def test_replay_binds_nonzero_input_behavior_and_video_to_run(
     )
     assert video["video"]["binding"]["input_sha256"] == "a" * 64
     assert len(video["video"]["binding"]["execution_input_sha256"]) == 64
+    assert len(video["video"]["binding"]["executed_action_evidence_sha256"]) == 64
+    assert len(video["video"]["binding"]["executed_action_sequence_sha256"]) == 64
     assert video["video"]["binding"]["simulator_ground_truth_sha256"] == [
         result["summary"]["simulator_ground_truth"]["files"][0]["sha256"]
     ]

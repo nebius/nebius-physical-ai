@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .action_evidence import action_sequence_evidence
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
 from .replay_quaternions import dataset_format_version, normalize_pose_representation
@@ -185,11 +186,13 @@ def _copy_execution_episode(
 
 def _write_execution_input(
     source: Path, destination: Path, episode_name: str, embodiment: str
-) -> tuple[int, dict[str, Any]]:
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
     h5py, np = _replay_dependencies("normalization")
     try:
         with h5py.File(source, "r") as source_file:
-            target_poses = validate_recorded_target_poses(source_file, episode_name, embodiment)
+            target_poses = validate_recorded_target_poses(
+                source_file, episode_name, embodiment
+            )
             actions = np.asarray(source_file["data"][episode_name]["actions"])
             with h5py.File(destination, "w") as output_file:
                 _copy_execution_episode(source_file, output_file, episode_name, actions)
@@ -198,11 +201,15 @@ def _write_execution_input(
                 )
                 if target_poses is not None:
                     representation["recorded_target_poses"] = target_poses
+                prepared_actions = np.asarray(
+                    output_file[f"data/{episode_name}/actions"]
+                )
+                prepared_action_sequence = action_sequence_evidence(prepared_actions)
     except (KeyError, OSError) as exc:
         raise IsaacArenaError(
             "replay input cannot be normalized for execution"
         ) from exc
-    return int(actions.shape[0]), representation
+    return int(actions.shape[0]), representation, prepared_action_sequence
 
 
 def _prepare_replay_execution_input(
@@ -222,7 +229,7 @@ def _prepare_replay_execution_input(
         raise IsaacArenaError("replay evidence does not identify an episode")
     destination = private_dir / "replay-execution.hdf5"
     private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    source_steps, representation = _write_execution_input(
+    source_steps, representation, prepared_action_sequence = _write_execution_input(
         source, destination, episode_name, embodiment
     )
     destination.chmod(0o600)
@@ -233,6 +240,7 @@ def _prepare_replay_execution_input(
         "prepared_sha256": _sha256(destination),
         "source_steps": source_steps,
         "prepared_steps": source_steps,
+        "prepared_action_sequence": prepared_action_sequence,
         "runtime_outcome_claim": False,
         "action_padding_steps": 0,
         "initial_state_application": "isaac_lab_reset_to_relative",
