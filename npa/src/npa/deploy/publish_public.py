@@ -55,6 +55,12 @@ from pathlib import Path
 from typing import Any
 
 from npa.deploy import images
+from npa.deploy.corresponding_source import (
+    ACCEPTED_RECORD as GYMNASIUM_ACCEPTED_RECORD,
+    SOURCE_LOCK as GYMNASIUM_SOURCE_LOCK,
+    CorrespondingSourceError,
+    verify_corresponding_source_delivery,
+)
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
@@ -427,6 +433,33 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
         "scanned, or GPU validated. Publication is blocked until that evidence "
         "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
     )
+
+
+def verify_gymnasium_corresponding_source(item: PublishItem) -> tuple[bool, str]:
+    """Require exact public corresponding source before Gymnasium release copying."""
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", item.source_ref)
+    if match is None:
+        return False, "Gymnasium source image is not pinned by immutable digest"
+    try:
+        manifest = _crane_json(["manifest", item.source_ref])
+        if manifest.get("manifests") is not None:
+            raise RuntimeError("Gymnasium source must be one linux/amd64 manifest")
+        config_digest = manifest.get("config", {}).get("digest")
+        config = _crane_json(["config", item.source_ref]).get("config") or {}
+        labels = config.get("Labels") if isinstance(config, dict) else {}
+        revision = labels.get("org.opencontainers.image.revision") if isinstance(labels, dict) else None
+        verify_corresponding_source_delivery(
+            GYMNASIUM_ACCEPTED_RECORD,
+            GYMNASIUM_SOURCE_LOCK,
+            source_revision=str(revision or ""),
+            image_digest=match.group(1),
+            platform_manifest_digest=match.group(1),
+            config_digest=str(config_digest or ""),
+        )
+        return True, "exact anonymous corresponding-source delivery verified"
+    except (CorrespondingSourceError, KeyError, TypeError, RuntimeError) as exc:
+        return False, str(exc)
 
 
 def verify_gpu_accepted_publication_source(item: PublishItem) -> tuple[bool, str]:
@@ -1417,6 +1450,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"
+        if ok and item.tool == "gymnasium-robotics":
+            ok, detail = verify_gymnasium_corresponding_source(item)
+            detail = f"CORRESPONDING SOURCE GATE — {detail}"
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"

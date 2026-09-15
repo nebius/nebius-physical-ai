@@ -93,6 +93,23 @@ def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
         assert gate in text
 
 
+def test_corresponding_source_delivery_is_verified_before_image_push() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    source_gate = text.index("Require Gymnasium public corresponding source before push")
+    push = text.index('docker push "$IMAGE"')
+    assert source_gate < push
+    for token in (
+        '--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json"',
+        '.["containerimage.digest"]',
+        '.["containerimage.config.digest"]',
+        "npa.deploy.corresponding_source",
+        "gymnasium_robotics_image_manifest.json",
+        "corresponding-source.lock.json",
+        '--source-revision "$DEVELOPMENT_SHA"',
+    ):
+        assert token in text
+
+
 def test_trusted_workflow_refuses_pre_registration_selection_before_build() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     refusal = text.index("pre-registration candidate has no build authority")

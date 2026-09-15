@@ -402,6 +402,7 @@ jobs:
           fi
           docker buildx build \
             --load \
+            --metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json" \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
@@ -597,6 +598,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Require Gymnasium public corresponding source before push
+        if: matrix.tool == 'gymnasium-robotics'
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
+          image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+          config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
+          test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          npa/.venv/bin/python -m npa.deploy.corresponding_source \
+            --record npa/src/npa/deploy/gymnasium_robotics_image_manifest.json \
+            --lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json \
+            --source-revision "$DEVELOPMENT_SHA" \
+            --image-digest "$image_digest" \
+            --platform-manifest-digest "$image_digest" \
+            --config-digest "$config_digest"
 
       - name: Gate and publish the exact NCore OCI graph
         if: matrix.tool == 'ncore'
