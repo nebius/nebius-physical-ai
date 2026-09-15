@@ -4483,13 +4483,25 @@ def _safe_infra_chat_status(response: object) -> str:
 
 
 def _mk8s_chat_desired(user_text: str) -> dict:
-    # Translate the one safe, explicit resource-shape request chat supports.
+    # Translate only safe, explicit resource-shape requests chat supports.
+    #
+    # ``rtx-rendering`` is a bounded NPA workload profile, not a guessed
+    # accelerator SKU: the provisioner resolves its compatible platform,
+    # preset, driver mode, and health gates from the active NPA configuration.
+    # This lets an operator ask for the profile by name without exposing or
+    # hardcoding tenant-specific infrastructure details in chat.
     text = str(user_text or "").lower()
     if re.search(r"\\b(?:cpu[- ]only|no[- ]gpu|without[- ]gpus?)\\b", text):
         # Keep this deliberately narrow: do not infer a GPU model, a capacity
         # class, or preemptible consent from natural language. A CPU-only shape
         # is fully specified and is useful for hosted-inference workflow stages.
         return {{"cpu_nodes": 1, "gpu_nodes": 0}}
+    if re.search(r"\\b(?:rtx[- ]?rendering|rt[- ]?core)\\b", text):
+        return {{
+            "gpu_nodes": 1,
+            "gpu_workload_profile": "rtx-rendering",
+            "gpu_cuda_smoke": True,
+        }}
     return {{}}
 
 
@@ -4512,11 +4524,15 @@ def _maybe_toolground_chat_reply(
     if intent == "mk8s_provision":
         desired = _mk8s_chat_desired(user_text)
         request = {{"dry_run": True, "validate": False, "skip_s3": True, **desired}}
-        shape_note = (
-            "- **shape**: CPU-only (one CPU node; no GPU node).\\n"
-            if desired
-            else ""
-        )
+        if desired.get("gpu_workload_profile") == "rtx-rendering":
+            shape_note = (
+                "- **shape**: one on-demand RTX rendering GPU node; NPA resolves the configured "
+                "platform and runs the GPU health gate.\\n"
+            )
+        elif desired:
+            shape_note = "- **shape**: CPU-only (one CPU node; no GPU node).\\n"
+        else:
+            shape_note = ""
         if confirm_token:
             request.update({{"dry_run": False, "validate": True, "confirm_token": confirm_token}})
             response = provision_infra(request)

@@ -739,6 +739,55 @@ def test_rendered_chat_mk8s_cpu_only_request_binds_confirmed_shape(
     assert "CPU-only" in initial["reply"]
 
 
+def test_rendered_chat_mk8s_rtx_rendering_request_binds_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """The named GPU profile remains identical from preflight to confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_rtx_rendering_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-rtx-rendering-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+
+    def provision(_project, _cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    prompt = (
+        "Provision one on-demand RTX rendering GPU node in an MK8s cluster "
+        "for this workflow."
+    )
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert {
+        key: calls[0][1][key]
+        for key in ("gpu_nodes", "gpu_workload_profile", "gpu_cuda_smoke")
+    } == {
+        "gpu_nodes": 1,
+        "gpu_workload_profile": "rtx-rendering",
+        "gpu_cuda_smoke": True,
+    }
+    assert "RTX rendering GPU node" in initial["reply"]
+
+
 def test_rendered_chat_mk8s_unknown_preflight_never_issues_confirmation(
     monkeypatch, tmp_path
 ) -> None:
