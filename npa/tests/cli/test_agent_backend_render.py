@@ -684,6 +684,8 @@ def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
         assert initial["confirm_token"]
         assert calls == [True]
         assert "project" not in initial["reply"].lower()
+        assert "/api/infra/mk8s/provision" in initial["reply"]
+        assert "npa provision-if-absent" in initial["reply"]
 
         confirmed = module._agent_chat_with_tools(
             raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],

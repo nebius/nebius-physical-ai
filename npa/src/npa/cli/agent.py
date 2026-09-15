@@ -4562,7 +4562,7 @@ def _maybe_toolground_chat_reply(
             "- I checked the configured Kubernetes deployment path with a non-mutating dry-run.\\n"
             + shape_note
             + "- **status**: `ready`\\n"
-            + "- No cloud resources have been created. Use the confirmation card below to create or reuse the configured backend."
+            + "- No cloud resources have been created. The confirmation card calls `POST /api/infra/mk8s/provision`, which invokes `npa provision-if-absent` to create or reuse the configured backend."
         )
         details = {{"phase": "ready_for_confirmation", "status": "ready", "needs_confirmation": bool(token)}}
         return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details, "confirm_token": token}}, intent
