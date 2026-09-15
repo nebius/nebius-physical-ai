@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -149,8 +151,9 @@ def test_the_paths_match_what_the_dataset_integration_posts() -> None:
         encoding="utf-8"
     )
 
-    assert '_post(lancedb_endpoint, "/index"' in source
-    assert '_post(lancedb_endpoint, "/query"' in source
+    # Match across line breaks: ruff format may split the call over lines.
+    assert re.search(r'_post\(\s*lancedb_endpoint,\s*"/index"', source)
+    assert re.search(r'_post\(\s*lancedb_endpoint,\s*"/query"', source)
     server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(
         encoding="utf-8"
     )
