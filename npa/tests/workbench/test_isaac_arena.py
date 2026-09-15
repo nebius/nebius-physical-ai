@@ -937,6 +937,7 @@ def test_passive_baseline_success_is_never_task_qualified_video(
             "physics_state_changed_during_render": False,
             "rendering": {
                 "mode": "RaytracedLighting",
+                "rt2_enabled": False,
                 "antialiasing": "FXAA",
                 "stochastic_accumulation": False,
                 "accumulation_renders_per_frame": 0,
