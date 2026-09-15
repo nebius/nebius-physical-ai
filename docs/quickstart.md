@@ -43,6 +43,8 @@ npa --version
 npa workbench --help
 ```
 
+(Prefer `uv`? [Install](install.md#3-install-npa-editable-from-the-clone) lists the equivalent `uv` commands.)
+
 Both checks work without cloud credentials. In each new shell, return to the
 clone and run `source .venv/bin/activate`, or use `.venv/bin/npa` directly.
 The base package supports cloud operations; [local engine extras](install.md#3-install-npa-editable-from-the-clone)
