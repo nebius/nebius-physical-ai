@@ -1,0 +1,86 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: behavior-challenge-eval
+  description: >-
+    Evaluate a fixed policy through the unmodified BEHAVIOR 2026 evaluator.
+    Requires an operator-prepared licensed runtime, assets, and policy service.
+    Preserve original metrics and videos; produce a ZIP for reporting selections.
+config:
+  bucket: example-bucket
+  source_overlay: true
+  prefix: "runs/{{run.id}}/behavior"
+  input_uri: "s3://{{config.bucket}}/behavior/recipe.json"
+  policy_readme_uri: "s3://{{config.bucket}}/behavior/policy.md"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  runtime_image: "registry.example.invalid/operator/behavior-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  upstream_root: /opt/BEHAVIOR-1K
+  evaluator_python: /opt/conda/envs/behavior/bin/python
+  data_root: /data/behavior
+  policy_host: policy.example.invalid
+  policy_port: 8000
+  assets_claim: behavior-assets
+resources:
+  simulator:
+    cloud: kubernetes
+    accelerators: L40S:1
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          volumes:
+            - name: behavior-assets
+              persistentVolumeClaim:
+                claimName: "{{config.assets_claim}}"
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: behavior-assets
+                  mountPath: /data/behavior
+                  readOnly: true
+                - name: dshm
+                  mountPath: /dev/shm
+initial: evaluate
+states:
+  evaluate:
+    resources: simulator
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.behavior_challenge
+        - evaluate
+        - --input-path
+        - "{{config.input_uri}}"
+        - --output-path
+        - "{{config.output_uri}}"
+        - --policy-readme-uri
+        - "{{config.policy_readme_uri}}"
+        - --upstream-root
+        - "{{config.upstream_root}}"
+        - --evaluator-python
+        - "{{config.evaluator_python}}"
+        - --data-root
+        - "{{config.data_root}}"
+        - --host
+        - "{{config.policy_host}}"
+        - --port
+        - "{{config.policy_port}}"
+    inputs:
+      - uri: "{{config.input_uri}}"
+        schema: npa.behavior.recipe.v1
+      - uri: "{{config.policy_readme_uri}}"
+    outputs:
+      - uri: "{{config.output_uri}}summary.json"
+        schema: npa.behavior.artifacts.v1
+      - uri: "{{config.output_uri}}videos/"
+        kind: directory
+      - uri: "{{config.output_uri}}json/"
+        kind: directory
+    terminal: true

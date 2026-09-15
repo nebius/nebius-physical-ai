@@ -1,0 +1,50 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "261e06841f3d3ea150b402ad2dd6ad0e752b2540c8438ed2ce639a945e988d1a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec accepted the workflow and plan-spec rendered the evaluate stage with the pinned module and configured S3 input/output paths. This does not establish runtime readiness.",
+      "evidence": [
+        "workflows/testing/behavior-challenge-eval.yaml",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py",
+        "npa/tests/smoke/test_all_workflow_yamls.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Commands invoke the pinned official evaluator for prescribed cases; all 1000 report commands were accepted by upstream argparse. No policy score or training result is established.",
+      "evidence": [
+        "npa/tests/workflows/test_behavior_challenge.py",
+        "https://github.com/StanfordVL/BEHAVIOR-1K/tree/v3.9.2/OmniGibson/omnigibson/eval"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Example bucket must be replaced and exact output prefix write/read access verified.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "BEHAVIOR asset-use eligibility and acceptance are unresolved; licensed assets, a fixed policy service, and its recipe have not been staged.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "General credential probes passed, but model entitlement and BEHAVIOR asset use remain unresolved.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "Operator runtime image is an explicit placeholder; no image was built or validated.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "RT-core GPU, prepared simulator environment, asset PVC, and task-configured policy endpoints have not been validated.",
+      "evidence": []
+    }
+  }
+}
