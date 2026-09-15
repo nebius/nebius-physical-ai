@@ -5,6 +5,16 @@ description: Start, recover, or verify human Nebius CLI authentication on a remo
 
 # VM Nebius Authentication
 
+For an operator who cannot forward the callback port but can use a private
+terminal on the CLI machine, use
+[nebius-headless-oauth](../nebius-headless-oauth/SKILL.md) for manual callback
+delivery. Its returned URL contains a one-time code and must not pass through
+chat. The tunnel flow below remains the path when SSH forwarding is available.
+
+For unattended VM or CI work, use
+[nebius-service-account-auth](../nebius-service-account-auth/SKILL.md) to
+configure or verify a dedicated service identity and project-scoped grants.
+
 ## Diagnose before starting login
 
 For a read-only readiness request, use
