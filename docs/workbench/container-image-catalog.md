@@ -47,9 +47,10 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
+**40 packaging entries** (38 redistribution-eligible and two restricted) and
+**41 mapped tools**: 32 public-release members, two restricted tools, and seven
+quarantined tools (`curobo`, `diffusers`, `lingbot-world`, `ncore`, `openpi`,
+`robocasa`, and `sam2`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
 
@@ -63,6 +64,13 @@ publication gates plus the checked-in Blackwell validator and real
 release plan.
 
 ## Pending NCore conversion image
+
+The additional `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2` source-only
+job runtimes have checked-in public packaging contracts. They cover the six
+[native video and perception workflows](video-generation-byof.md). Their
+supported publication remains quarantined until exact development-image scans
+and fresh GPU capability results are accepted. Previous private BYOF results do
+not qualify these new image digests.
 
 `npa-ncore` is an additional development validation candidate for the
 [COLMAP ingestion workflow](guides/nurec-colmap-reconstruct.md). It packages

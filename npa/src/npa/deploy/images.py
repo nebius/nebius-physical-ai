@@ -70,6 +70,9 @@ CONTAINER_IMAGE_NAMES = {
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
     "wan2-2": "npa-wan2-2",
+    "diffusers": "npa-diffusers",
+    "lingbot-world": "npa-lingbot-world",
+    "sam2": "npa-sam2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
@@ -146,7 +149,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore", "diffusers", "lingbot-world", "sam2"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -255,6 +260,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
+    "diffusers": "0.38.0-rtfetch-unbuilt",
+    "lingbot-world": "a43bec7-rtfetch-unbuilt",
+    "sam2": "2.1-rtfetch-unbuilt",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",

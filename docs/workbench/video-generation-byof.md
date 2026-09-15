@@ -7,6 +7,39 @@ publishes an MP4, capability JSON, and `npa_byof_summary.json` to your bucket.
 The [catalog](oss-solution-catalog.md) records packaged GPU qualification status.
 These are Tier 1 workflow integrations; they do not add standalone model servers.
 
+## Curated public runtime packaging
+
+Three source-only job Dockerfiles now package these integrations for the official
+GHCR publication process: `diffusers/Dockerfile`, `lingbot-world/Dockerfile`, and
+`sam2/Dockerfile` under `npa/docker/workbench`. These are initially development
+candidates; consult the container catalog for accepted digests before use.
+Development tags use the full NPA source SHA. All source/checkpoint revisions,
+credentials, input media, and GPU capability evidence remain distinct records.
+
+Each image provides `model-runtime health` (source metadata), `ensure` (the
+hash-locked CUDA runtime), `status`, `exec COMMAND`, and `golden OPTIONS`.
+`golden` runs native inference and validates every decoded output frame.
+For example, on a CUDA-enabled container with a writable output mount:
+
+```bash
+model-runtime golden --model cogvideox-2b --output-path /outputs/cog
+model-runtime golden --model depth-anything-v2 \
+  --input-path /inputs/video.mp4 --output-path /outputs/depth
+model-runtime golden --model sam2.1 --input-path /inputs/video.mp4 \
+  --box 240 100 700 500 --output-path /outputs/masks
+model-runtime golden --model lingbot-world --input-path /inputs/image.png \
+  --gpus 4 --output-path /outputs/camera
+```
+
+Select the matching image for each capability. Optional `--prompt` and
+`--seed` default to a warehouse-robot scene and 42. `--gpus` selects two or four
+devices for LingBot; four is the default. Inputs are local mounted files.
+The existing `NPA_WAN_RUNTIME_CACHE` and `NPA_WAN_RUNTIME_OFFLINE` settings
+control the shared CUDA cache, and Hugging Face's standard cache and credential
+settings control model downloads. No tenant or registry credential is baked.
+
+## Operator-built alternative
+
 Build the shared image in your own registry. The accepted base supplies pinned
 OSS CPU dependencies and a hash-locked runtime-fetch mechanism for CUDA/PyTorch.
 The child replaces the baked source with Diffusers 0.38.0; weights, credentials,
