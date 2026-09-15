@@ -8,11 +8,17 @@ proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; training and serving use the challenge's upstream baseline
 implementations.
 
-**Status:** protocol planning and local artifact tests are implemented. GPU
+**Status:** protocol planning, supervised radio serving, and local artifact tests are implemented. GPU
 evaluation, a trained challenge solution, policy memory measurements, and an
 official submission have not been demonstrated. The runtime image, licensed
 asset volume, and policy endpoint are required operator inputs. This integration
 does not add a published BEHAVIOR container to the Workbench image catalog.
+
+A private development run has authorized inputs, verified storage access, and a
+scheduled RTX PRO 6000 worker. The official radio checkpoint archive has SHA-256
+`169c5d8c6dfc6aa463bfc162da983ea26e4cf82eca1d63de3719d3157a61f3be`.
+The simulator runtime is Isaac Sim 5.1.0.0 from the pinned upstream installer.
+These preparation checks do not yet establish a working rollout or policy score.
 
 ## Rules and pinned source
 
@@ -93,6 +99,33 @@ fetching Gemma-derived checkpoints; see the
 [third-party terms skill](../../skills/atomic/third-party-eula-preflight/SKILL.md).
 GR00T's gated dependencies require exact artifact access. Neither choice is
 authorized by the BEHAVIOR Data Bundle acceptance alone.
+
+### Supervise the official radio policy in the worker
+
+An operator workflow can append these four arguments to the internal `evaluate`
+command and set `--host 127.0.0.1`:
+
+| Argument | Prepared worker-local input |
+| --- | --- |
+| `--policy-root` | Unchanged `wensi-ai/openpi` checkout at `0cc8e355f7bac0976db1cc3139b1ff0379feea60` |
+| `--policy-python` | That checkout's installed policy interpreter |
+| `--policy-checkpoint` | Extracted `pi05_turn_on_the_radio` directory |
+| `--policy-archive` | Original official `pi05TurningOnRadio.zip` download |
+
+Forward the OpenPI acceptance through `--secret-env NPA_OPENPI_ACCEPT_GEMMA_TERMS`
+after completing the run-scoped opt-in. The worker checks the recipe's archive
+SHA-256, compares every loaded checkpoint file with the archive, rejects extra
+files and an occupied policy endpoint, then starts the official server. It uses
+`--repo-id turning_on_radio`: the provided archive stores normalization under
+`assets/turning_on_radio`, rather than the demonstration repository name in the
+generic training example. No checkpoint or normalization data is rewritten.
+
+This option supports only `turning_on_radio`. It records `policy-provenance.json`
+and `policy.log`, waits for the real health endpoint, and stops its own server
+on success or failure. Startup failures preserve diagnostics in S3 with zero
+completed cases. The default command still connects to an independently served
+policy. Provision sufficient simulator and policy resources; this convenience
+does not establish compliance with the challenge's 24 GB model requirement.
 
 ## Freeze the evaluation selection
 
@@ -211,15 +244,19 @@ exercise decoding, exact-byte archives, invalid artifacts, failure preservation,
 split isolation, and atomic duplicate refusal. They are not robot policy results.
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_behavior_challenge.py -q
+npa/.venv/bin/python -m pytest \
+  npa/tests/workflows/test_behavior_challenge.py \
+  npa/tests/workflows/test_behavior_policy.py -q
 ```
 
 The opt-in live test is `npa/tests/e2e/test_behavior_challenge_live.py`. In the
 prepared GPU runtime, set `NPA_INTEGRATION_E2E=1` and
 `NPA_BEHAVIOR_LIVE_CONFIG` to a private JSON file with `input_path`,
 `output_path`, `policy_readme_uri`, `upstream_root`, `evaluator_python`,
-`data_root`, `host`, and `port`, then run that test. Use a fresh development
+`data_root`, `host`, and `port`, then run that test. To supervise the official
+radio server, also supply `policy_root`, `policy_python`, `policy_checkpoint`,
+and `policy_archive`, with the same run-scoped terms opt-in. Use a fresh development
 selection; invoking it consumes the prescribed cases and claims its prefix.
-The submit matrix currently plans this recipe because runtime and asset
-readiness remain unresolved. Live coverage must pass before this draft is
+The submit matrix currently plans this recipe because the template needs an
+operator-prepared runtime, asset volume, and policy. Live coverage must pass before this draft is
 presented as a validated challenge integration.

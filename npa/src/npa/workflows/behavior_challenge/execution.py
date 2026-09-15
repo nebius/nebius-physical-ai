@@ -23,6 +23,7 @@ from .artifacts import (
     write_summary,
 )
 from .protocol import evaluator_argv, file_digest, make_plan, verify_upstream
+from .policy import managed_policy
 
 
 def _s3_location(uri: str) -> tuple[str, str]:
@@ -53,12 +54,29 @@ def _upload_verified(storage: StorageClient, path: Path, uri: str) -> None:
         raise ValueError("Uploaded artifact failed SHA-256 readback verification")
 
 
+def _publish_policy_log(storage, path, uri, published):
+    # The server can append while an upload is running; verify a stable snapshot.
+    with tempfile.TemporaryDirectory(prefix="npa-behavior-log-") as directory:
+        snapshot = Path(directory) / "policy.log"
+        shutil.copyfile(path, snapshot)
+        digest = file_digest(snapshot)
+        if published.get("policy.log") != digest:
+            _upload_verified(storage, snapshot, f"{uri.rstrip('/')}/policy.log")
+            published["policy.log"] = digest
+
+
 def _publish(storage: StorageClient, output: Path, uri: str, published: dict) -> None:
     for path in sorted(output.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(output).as_posix()
-        if relative in published and relative not in {"attempts.json", "summary.json"}:
+        if relative == "policy.log":
+            _publish_policy_log(storage, path, uri, published)
+            continue
+        if relative in published and relative not in {
+            "attempts.json",
+            "summary.json",
+        }:
             continue
         digest = file_digest(path)
         if published.get(relative) == digest:
@@ -160,8 +178,9 @@ def _evaluate_cases(
     output: Path,
     storage: StorageClient,
     environment: dict,
+    published: dict,
 ) -> dict:
-    records, published, attempts = [], {}, []
+    records, attempts = [], []
     commands = _commands(args, plan, output)
     _write_instructions(output, plan, commands)
     try:
@@ -179,6 +198,16 @@ def _evaluate_cases(
         return summary
     finally:
         write_summary(output, plan, records)
+        _publish(storage, output, args.output_path, published)
+
+
+def _execute_with_policy(args, plan, output, storage, environment):
+    published = {}
+    write_summary(output, plan, [])
+    try:
+        with managed_policy(args, plan, output):
+            return _evaluate_cases(args, plan, output, storage, environment, published)
+    finally:
         _publish(storage, output, args.output_path, published)
 
 
@@ -228,7 +257,7 @@ def evaluate(args: argparse.Namespace) -> dict:
     completed = False
     try:
         plan = _prepare_plan(args, storage, output)
-        result = _evaluate_cases(args, plan, output, storage, environment)
+        result = _execute_with_policy(args, plan, output, storage, environment)
         completed = True
         return result
     finally:

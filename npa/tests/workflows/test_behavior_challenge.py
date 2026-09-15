@@ -357,6 +357,25 @@ def test_storage_readback_detects_changed_bytes(tmp_path):
         execution._upload_verified(storage, path, "s3://fixture/output/artifact")
 
 
+def test_active_policy_log_upload_uses_a_stable_snapshot(tmp_path):
+    log = tmp_path / "policy.log"
+    log.write_bytes(b"ready\n")
+    storage = _Storage({})
+    upload = storage.upload_file
+
+    def append_during_upload(path, uri):
+        with log.open("ab") as stream:
+            stream.write(b"new event\n")
+        upload(path, uri)
+
+    storage.upload_file = append_during_upload
+    published = {}
+    execution._publish(storage, tmp_path, "s3://fixture/output/", published)
+    assert storage.objects["output/policy.log"] == b"ready\n"
+    execution._publish(storage, tmp_path, "s3://fixture/output/", published)
+    assert storage.objects["output/policy.log"] == b"ready\nnew event\n"
+
+
 def test_submission_rejects_post_validation_changes(upstream, recipe, tmp_path):
     plan = protocol.make_plan(recipe, upstream)
     records = []
@@ -377,6 +396,25 @@ def test_development_run_never_creates_submission(execution_fixture):
     assert calls == list(range(10, 20))
     assert summary["challenge_score"] is None
     assert "output/submission.zip" not in storage.objects
+
+
+def test_policy_startup_failure_publishes_diagnostics(execution_fixture, monkeypatch):
+    from contextlib import contextmanager
+
+    args, storage, calls = execution_fixture
+
+    @contextmanager
+    def failed_policy(args, plan, output):
+        (output / "policy.log").write_text("Policy startup failed\n")
+        raise RuntimeError("startup failed")
+        yield
+
+    monkeypatch.setattr(execution, "managed_policy", failed_policy)
+    with pytest.raises(RuntimeError, match="startup failed"):
+        execution.evaluate(args)
+    assert calls == []
+    assert storage.objects["output/policy.log"] == b"Policy startup failed\n"
+    assert json.loads(storage.objects["output/summary.json"])["completed"] == 0
 
 
 def test_missing_licensed_assets_fail_before_simulator_import(tmp_path, monkeypatch):

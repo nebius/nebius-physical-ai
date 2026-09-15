@@ -10,6 +10,11 @@ from .execution import evaluate
 from .protocol import make_plan, verify_upstream
 
 
+def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
+    for field in ("root", "python", "checkpoint", "archive"):
+        parser.add_argument(f"--policy-{field}", type=Path)
+
+
 def main() -> None:
     """Plan locally or invoke the licensed evaluator through the workflow stage.
 
@@ -39,6 +44,7 @@ def main() -> None:
     run.add_argument("--data-root", required=True)
     run.add_argument("--host", required=True)
     run.add_argument("--port", type=int, default=8000)
+    _add_policy_arguments(run)
     args = parser.parse_args()
     if args.command == "plan":
         verify_upstream(args.upstream_root)

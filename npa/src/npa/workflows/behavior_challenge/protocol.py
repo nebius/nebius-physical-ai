@@ -7,11 +7,28 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import BinaryIO
 
 UPSTREAM_COMMIT = "b1979916ec1549b10a4e65e630bc6504a9af1b00"
 WRAPPER = "omnigibson.eval.wrappers.RGBDFullResWrapper"
 EVAL_DIRECTORY = Path("OmniGibson/omnigibson/eval")
 SPLITS = {"development": tuple(range(10, 20)), "report": tuple(range(10))}
+
+
+def stream_digest(stream: BinaryIO) -> str:
+    """Compute SHA-256 from bounded reads on every supported Python version.
+
+    Args:
+        stream: Binary stream positioned at the first byte to hash.
+    Returns:
+        Hexadecimal SHA-256 digest of the remaining bytes.
+    Raises:
+        OSError: The stream cannot be read.
+    """
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def file_digest(path: Path) -> str:
@@ -25,7 +42,7 @@ def file_digest(path: Path) -> str:
         OSError: The file cannot be read.
     """
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return stream_digest(stream)
 
 
 def verify_upstream(root: Path) -> None:

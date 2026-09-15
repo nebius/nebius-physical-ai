@@ -20,7 +20,15 @@ def test_behavior_challenge_live():
             "Requires licensed assets, fixed policy, and NPA_BEHAVIOR_LIVE_CONFIG"
         )
     settings = json.loads(Path(config).read_text())
-    settings["upstream_root"] = Path(settings["upstream_root"])
+    for field in (
+        "upstream_root",
+        "policy_root",
+        "policy_python",
+        "policy_checkpoint",
+        "policy_archive",
+    ):
+        if settings.get(field):
+            settings[field] = Path(settings[field])
     result = evaluate(argparse.Namespace(**settings))
     assert result["complete"]
     assert result["completed"] == result["planned"]
