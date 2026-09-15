@@ -147,6 +147,38 @@ def test_evidence_patch_preserves_render_and_applies_every_context(
         module.patch_sources(policy, embodiment, video, metric)
 
 
+def test_evidence_patch_matches_pinned_upstream_policy_layout(tmp_path: Path) -> None:
+    """Keep policy instrumentation anchored to the real pinned source layout."""
+    module = _evidence_patch()
+    pinned_policy_context = """\
+        # Create the policy through the typed config compatibility adapter.
+        policy = build_policy_from_cli(policy_cls, args_cli)
+
+        # Simulation length.
+"""
+    policy = tmp_path / "policy_runner.py"
+    policy.write_text(
+        module.POLICY_RUNNER_RESET
+        + module.POLICY_RUNNER_ENVIRONMENT
+        + module.POLICY_RUNNER_CAMERA_CONTEXT
+        + module.POLICY_RUNNER_ROLLOUT_END
+        + module.POLICY_RUNNER_STEP
+        + pinned_policy_context
+    )
+    embodiment = tmp_path / "embodiment.py"
+    embodiment.write_text(module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT)
+    video = tmp_path / "video.py"
+    video.write_text(module.VIDEO_TRIGGER)
+    metric = tmp_path / "metric.py"
+    metric.write_text(module.REVOLUTE_POST_STEP)
+
+    module.patch_sources(policy, embodiment, video, metric)
+
+    patched = policy.read_text()
+    assert module.POLICY_RUNNER_POLICY_PATCHED in patched
+    assert pinned_policy_context not in patched
+
+
 def _replay_reset_assertions() -> str:
     return textwrap.dedent("""\
         from types import SimpleNamespace

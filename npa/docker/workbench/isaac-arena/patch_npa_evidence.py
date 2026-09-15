@@ -93,6 +93,7 @@ POLICY_RUNNER_STEP_PATCHED = """\
 
 POLICY_RUNNER_POLICY = """\
         policy = build_policy_from_cli(policy_cls, args_cli)
+
         # Simulation length.
 """
 
@@ -100,6 +101,7 @@ POLICY_RUNNER_POLICY_PATCHED = """\
         policy = build_policy_from_cli(policy_cls, args_cli)
         from npa.workbench.isaac_arena.action_evidence import configure_action_evidence
         configure_action_evidence(env, output_dir, args_cli.policy_type, local_rank)
+
         # Simulation length.
 """
 
