@@ -854,6 +854,13 @@
       "validation_run": "private-access-controlled-validation-record",
       "validated_tag": "dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
       "validated_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "publication_model": "exact-digest-promoted",
+      "published_tag": "2.2.0-isaac0.1.0-rtfetch",
+      "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
       "validated_gpu": {
         "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
         "capability": "12.0",

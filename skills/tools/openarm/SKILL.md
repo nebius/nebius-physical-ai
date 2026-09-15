@@ -51,8 +51,8 @@ trace, and every upstream checkpoint, then emits
 `npa.openarm.qualification.v1`. A successful simulator process without this
 artifact-level gate is not complete workflow evidence.
 
-Use an L40S or RTX PRO 6000 for Isaac execution. H100, H200, and B200 are not
-valid render-capable qualification targets.
+Use an L40S or RTX PRO 6000 for Isaac execution. H100, H200, B200, and B300 are
+not valid render-capable qualification targets.
 
 Direct service deployment must mount an operator-owned PVC for
 `/opt/isaac-cache`; never reintroduce an `emptyDir` fallback for the proprietary
@@ -69,6 +69,18 @@ runtime. Service deletion retains that claim.
    exact digest. Inspect the uploaded result, NPZ, and training checkpoint.
 6. Record accepted evidence without concrete infrastructure identifiers, then
    promote the already validated digest. Never rebuild a release tag.
+
+## Accepted release
+
+Release `2.2.0-isaac0.1.0-rtfetch` is bound to development revision
+`01fbf3a554cb7b15066283fd171c5b81f6207eda` and OCI digest
+`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`.
+Those exact bytes passed the ordered gate above and the complete four-stage
+workflow on RTX PRO 6000. The accepted scope is the 500-step rendered MuJoCo
+rollout, the 64-environment × 100-step upstream reach rollout, and one upstream
+RSL-RL training iteration with checkpoint plus independent artifact
+qualification. Do not extend that evidence to other tasks, policy convergence,
+physical hardware, L40S, or non-RT GPUs.
 
 ## Tests
 
