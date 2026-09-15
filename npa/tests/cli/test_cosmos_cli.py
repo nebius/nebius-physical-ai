@@ -1604,7 +1604,7 @@ def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:
     assert _service_values(cmd)["COSMOS_DISABLE_SAFETY"] == "0"
     assert "load_kwargs[\"safety_checker\"] = _NoOpSafetyChecker()" in cmd
     assert 'values["HF_TOKEN"] = os.environ["HF_TOKEN"]' in cmd
-    assert 'sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env' in cmd
+    assert 'sudo mv -f "$stage/env" /etc/npa-cosmos-server/env' in cmd
     assert "--local-dir /opt/cosmos-data/models/nvidia--Cosmos-Test" in cmd
 
 
@@ -1647,7 +1647,7 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     assert "from fastapi import FastAPI, HTTPException" in cmd
     assert '@app.get("/jobs/{job_id}")' in cmd
     assert 'values["HF_TOKEN"] = os.environ["HF_TOKEN"]' in cmd
-    assert 'sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env' in cmd
+    assert 'sudo mv -f "$stage/env" /etc/npa-cosmos-server/env' in cmd
     assert "sudo systemctl restart npa-cosmos-server" in cmd
     # second SSH call loads the model so `serve` actually pre-warms it on vm runtime
     load_cmd = ssh.run_or_raise.call_args_list[1].args[0]

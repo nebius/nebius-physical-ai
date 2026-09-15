@@ -25,7 +25,9 @@ set -eu
 stage="$(sudo mktemp {parent}/.services-installed.XXXXXXXX)"
 trap 'sudo rm -f -- "$stage"' EXIT
 builtin printf '%s\\n' {shlex.quote(digest)} | sudo tee "$stage" >/dev/null
-sudo mv -fT -- "$stage" {shlex.quote(_INSTALL_RECEIPT)}
+# Source and destination are regular files on the same filesystem; POSIX mv
+# publishes the complete receipt atomically without GNU-only -T.
+sudo mv -f "$stage" {shlex.quote(_INSTALL_RECEIPT)}
 )
 """
 

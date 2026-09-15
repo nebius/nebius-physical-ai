@@ -69,7 +69,7 @@ class _PodCommandClient:
                    + "trap 'rm -rf -- \"$stage\"' EXIT; "
                    + "install -m 0600 /dev/null \"$stage/payload\"; "
                    + "cat > \"$stage/payload\"; "
-                   + f"mv -fT -- \"$stage/payload\" {target}")
+                   + f"mv -f \"$stage/payload\" {target}")
         result = subprocess.run([*self.prefix, "exec", "-i", self.pod, "--", "bash", "-c", command], input=content, capture_output=True, check=False)
         assert result.returncode == 0, "private Pod upload failed"
         return remote_path

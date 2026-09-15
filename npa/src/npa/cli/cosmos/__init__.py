@@ -1207,7 +1207,9 @@ if any(ord(char) < 32 or ord(char) == 127 for value in values.values() for char 
 sys.stdout.write("".join(key + "=" + json.dumps(value, ensure_ascii=False) + "\\n" for key, value in values.items()))
 COSMOS_ENV_PY
 sudo chmod 0600 "$stage/env"
-sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env
+# The stage and destination are regular files in the same directory. This is
+# an atomic rename and works with both GNU and BSD mv.
+sudo mv -f "$stage/env" /etc/npa-cosmos-server/env
 )
 """
 

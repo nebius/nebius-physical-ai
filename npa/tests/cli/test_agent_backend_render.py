@@ -1371,7 +1371,7 @@ def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
     assert "| sudo htpasswd -iBc" in commands[0]
     assert "password" not in commands[0].split("| sudo htpasswd", 1)[1]
     assert 'sudo chown root:www-data "$stage/auth"' in setup
-    assert 'sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
+    assert 'sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
 
 
 def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:

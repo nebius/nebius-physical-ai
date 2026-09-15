@@ -757,7 +757,9 @@ sudo install -m 0600 /dev/null "$stage/auth"
 builtin printf '%s\\n' {shlex.quote(auth_password)} | sudo htpasswd -iBc -C 12 "$stage/auth" {shlex.quote(auth_user)}
 sudo chown root:www-data "$stage/auth"
 sudo chmod 0640 "$stage/auth"
-sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd
+# The staged source and regular-file destination share /etc/nginx, so this
+# portable rename atomically replaces the complete credential file.
+sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd
 )
 """
 

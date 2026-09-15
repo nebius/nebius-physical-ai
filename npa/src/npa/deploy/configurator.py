@@ -114,10 +114,16 @@ def write_remote_env_file(
     env: dict[str, Any],
     *,
     owner: str = "ubuntu",
+    group: str | None = None,
 ) -> None:
     """Atomically install a private shell env file on the VM."""
     write_remote_text_file(
-        ssh, remote_path, render_shell_env_file(env), owner=owner, mode="0600"
+        ssh,
+        remote_path,
+        render_shell_env_file(env),
+        owner=owner,
+        group=group,
+        mode="0600",
     )
 
 
@@ -127,10 +133,16 @@ def write_remote_docker_env_file(
     env: dict[str, Any],
     *,
     owner: str = "ubuntu",
+    group: str | None = None,
 ) -> None:
     """Atomically install a private Docker env file without shell quoting."""
     write_remote_text_file(
-        ssh, remote_path, render_docker_env_file(env), owner=owner, mode="0600"
+        ssh,
+        remote_path,
+        render_docker_env_file(env),
+        owner=owner,
+        group=group,
+        mode="0600",
     )
 
 
@@ -140,17 +152,20 @@ def write_remote_text_file(
     content: str,
     *,
     owner: str = "ubuntu",
+    group: str | None = None,
     mode: str = "0644",
 ) -> None:
     """Stage privately, then atomically replace a root-managed destination.
 
     Both staging directories are created with mode 0700 before file creation.
-    The final temporary file resides on the destination filesystem, so mv -T
-    publishes one complete file without opening an existing destination.
+    The final temporary file resides on the destination filesystem. A portable
+    ``mv -f`` therefore publishes one complete regular file atomically without
+    opening an existing destination.
     """
     parent = shlex.quote(str(Path(remote_path).parent))
     target = shlex.quote(remote_path)
     template = shlex.quote(str(Path(remote_path).parent / ".npa-install.XXXXXXXXXX"))
+    group_name = shlex.quote(group or owner)
     with ssh.temporary_directory() as directory:
         source = f"{directory}/payload"
         ssh.upload_private_text(content, source)
@@ -160,8 +175,8 @@ def write_remote_text_file(
             f"npa_install_dir=$(sudo mktemp -d {template}); "
             "trap 'sudo rm -rf -- \"$npa_install_dir\"' EXIT HUP INT TERM; "
             f"sudo install -m {shlex.quote(mode)} -o {shlex.quote(owner)} "
-            f"-g {shlex.quote(owner)} -- {shlex.quote(source)} \"$npa_install_dir/payload\"; "
-            f"sudo mv -fT -- \"$npa_install_dir/payload\" {target}"
+            f"-g {group_name} -- {shlex.quote(source)} \"$npa_install_dir/payload\"; "
+            f"sudo mv -f \"$npa_install_dir/payload\" {target}"
         )
         ssh.run_or_raise(f"bash -lc {shlex.quote(script)}", label="install remote file")
 
