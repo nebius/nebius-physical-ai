@@ -244,6 +244,49 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
     assert calls.read_text(encoding="utf-8") == "-A\n"
 
 
+def test_skypilot_failure_sentinels_do_not_follow_preplaced_symlinks(tmp_path) -> None:
+    guard_source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text(
+        encoding="utf-8"
+    )
+    contract_failure = tmp_path / "bootstrap-contract.failed"
+    sky_failure = tmp_path / "apt-ssh-setup.failed"
+    contract_target = tmp_path / "contract-target"
+    sky_target = tmp_path / "sky-target"
+    contract_target.write_text("preserve-contract\n", encoding="utf-8")
+    sky_target.write_text("preserve-sky\n", encoding="utf-8")
+    contract_failure.symlink_to(contract_target)
+    sky_failure.symlink_to(sky_target)
+    guard_source = guard_source.replace(
+        "/tmp/npa-skypilot-bootstrap-contract.failed", str(contract_failure)
+    ).replace("/tmp/apt-ssh-setup.failed", str(sky_failure))
+    guard_source = guard_source.replace(
+        "guard_owner_uid=0", f"guard_owner_uid={os.getuid()}"
+    )
+    guard = tmp_path / "npa-skypilot-bootstrap-guard"
+    guard.write_text(guard_source, encoding="utf-8")
+    guard.chmod(0o755)
+    keygen = tmp_path / "ssh-keygen"
+    keygen.symlink_to(guard)
+
+    result = subprocess.run(
+        [keygen, "-f", str(tmp_path / "unexpected")],
+        env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, check=False,
+    )
+
+    expected = (
+        "NPA_SKYPILOT_BOOTSTRAP_FAILED status=87 "
+        "detail=unexpected-ssh-keygen-arguments\n"
+    )
+    assert result.returncode == 87
+    assert result.stderr == expected
+    assert contract_target.read_text(encoding="utf-8") == "preserve-contract\n"
+    assert sky_target.read_text(encoding="utf-8") == "preserve-sky\n"
+    assert not contract_failure.is_symlink()
+    assert not sky_failure.is_symlink()
+    assert contract_failure.read_text(encoding="utf-8") == expected
+    assert sky_failure.read_text(encoding="utf-8") == expected
+
+
 def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
     text = LOCK.read_text(encoding="utf-8")
     lines = [

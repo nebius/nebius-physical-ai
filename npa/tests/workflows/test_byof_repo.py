@@ -1941,7 +1941,9 @@ def test_immutable_image_digest_accepts_only_exact_digest_suffix() -> None:
 def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    state = tmp_path / "bootstrap-apt.state"
+    state_dir = tmp_path / "private-bootstrap-state"
+    state = state_dir / "apt.state"
+    legacy_state = tmp_path / "npa-skypilot-bootstrap-apt.state"
     contract_failure = tmp_path / "bootstrap-contract.failed"
     sky_failure = tmp_path / "apt-ssh-setup.failed"
     apt_complete = tmp_path / "apt-ssh-setup.complete"
@@ -2002,7 +2004,8 @@ esac
     replacements = {
         "/usr/bin/apt-get": str(real_apt),
         "/usr/bin/timeout": shutil.which("timeout") or "/usr/bin/timeout",
-        str(skypilot_tmp / "npa-skypilot-bootstrap-apt.state"): str(state),
+        "/run/npa-skypilot-bootstrap": str(state_dir),
+        "guard_owner_uid=0": f"guard_owner_uid={os.getuid()}",
         str(skypilot_tmp / "npa-skypilot-bootstrap-contract.failed"): str(
             contract_failure
         ),
@@ -2029,8 +2032,10 @@ esac
         "contract_failure": contract_failure,
         "env": env,
         "guard": guard,
+        "legacy_state": legacy_state,
         "sky_failure": sky_failure,
         "state": state,
+        "state_dir": state_dir,
     }
 
 
@@ -2108,6 +2113,8 @@ def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
     assert "operation=update" in update.stdout
     assert "operation=install package=fuse provider=fuse3" in install.stdout
     assert fixture["state"].read_text(encoding="utf-8") == "complete\n"
+    assert fixture["state_dir"].stat().st_mode & 0o777 == 0o700
+    assert fixture["state"].stat().st_mode & 0o777 == 0o600
     assert not fixture["apt_calls"].exists()
 
     ordinary_apt = subprocess.run(
@@ -2119,6 +2126,128 @@ def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
     )
     assert ordinary_apt.returncode == 0
     assert fixture["apt_calls"].read_text(encoding="utf-8") == "update\n"
+
+
+def test_bootstrap_guard_private_state_matches_checked_in_source() -> None:
+    module = _load_module()
+    generated = module._skypilot_bootstrap_guard_script()
+    checked_in = (
+        ROOT / "npa" / "docker" / "workbench" / "libero" / "skypilot-bootstrap-guard.sh"
+    ).read_text(encoding="utf-8")
+
+    def private_state_block(text: str) -> str:
+        start = text.index("guard_runtime_dir=")
+        return text[start : text.index("\npackage_installed()", start)]
+
+    assert private_state_block(generated) == private_state_block(checked_in)
+    for text in (generated, checked_in):
+        assert "guard_state=/tmp/npa-skypilot-bootstrap-apt.state" not in text
+        assert 'cat "$guard_state"' not in text
+        assert ' > "$guard_failure"' not in text
+        assert ' > "$sky_failure"' not in text
+
+
+def test_bootstrap_guard_atomically_replaces_failure_sentinel_symlinks(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module, missing="rsync")
+    contract_target = tmp_path / "contract-target"
+    sky_target = tmp_path / "sky-target"
+    contract_target.write_text("preserve-contract\n", encoding="utf-8")
+    sky_target.write_text("preserve-sky\n", encoding="utf-8")
+    fixture["contract_failure"].symlink_to(contract_target)
+    fixture["sky_failure"].symlink_to(sky_target)
+
+    result = subprocess.run(
+        [fixture["guard"], "verify"],
+        env=fixture["env"], capture_output=True, text=True, check=False,
+    )
+
+    expected = "NPA_SKYPILOT_BOOTSTRAP_FAILED status=86 detail=missing:rsync\n"
+    assert result.returncode == 86
+    assert result.stderr == expected
+    assert contract_target.read_text(encoding="utf-8") == "preserve-contract\n"
+    assert sky_target.read_text(encoding="utf-8") == "preserve-sky\n"
+    for sentinel in (fixture["contract_failure"], fixture["sky_failure"]):
+        assert not sentinel.is_symlink()
+        assert sentinel.read_text(encoding="utf-8") == expected
+
+
+@pytest.mark.parametrize("unsafe_kind", ("symlink", "file", "mode", "owner"))
+def test_bootstrap_guard_refuses_unsafe_private_state_directory(
+    tmp_path, unsafe_kind
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    state_dir = fixture["state_dir"]
+    if unsafe_kind == "symlink":
+        target = tmp_path / "state-target"
+        target.mkdir(mode=0o700)
+        state_dir.symlink_to(target, target_is_directory=True)
+    elif unsafe_kind == "file":
+        state_dir.write_text("not-a-directory\n", encoding="utf-8")
+    else:
+        state_dir.mkdir()
+        state_dir.chmod(0o700 if unsafe_kind == "owner" else 0o755)
+    if unsafe_kind == "owner":
+        fake_stat = fixture["bin_dir"] / "stat"
+        fake_stat.write_text(
+            "#!/bin/sh\nlast=\nfor value in \"$@\"; do last=$value; done\n"
+            "if [ \"$last\" = \"$NPA_TEST_STATE_DIR\" ]; then printf '999:700\\n'; "
+            "else exec /usr/bin/stat \"$@\"; fi\n",
+            encoding="utf-8",
+        )
+        fake_stat.chmod(0o755)
+        fixture["env"]["NPA_TEST_STATE_DIR"] = str(state_dir)
+
+    result = subprocess.run(
+        [fixture["bin_dir"] / "apt-get", "update"],
+        env=fixture["env"], capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 87
+    assert "detail=unsafe-private-state:" in result.stderr
+    assert "operation=update" not in result.stdout
+    assert not fixture["apt_calls"].exists()
+
+
+def test_bootstrap_guard_refuses_symlinked_state_preseed_without_bypass(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    fixture["state_dir"].mkdir(mode=0o700)
+    hostile_target = tmp_path / "hostile-state"
+    hostile_target.write_text("verified-update\n", encoding="utf-8")
+    hostile_target.chmod(0o600)
+    fixture["state"].symlink_to(hostile_target)
+
+    result = subprocess.run(
+        [fixture["bin_dir"] / "apt-get", "install", "-y", "fuse"],
+        env=fixture["env"], capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 87
+    assert "detail=unsafe-private-state:state-symlink" in result.stderr
+    assert "operation=install" not in result.stdout
+    assert hostile_target.read_text(encoding="utf-8") == "verified-update\n"
+    assert not fixture["apt_calls"].exists()
+
+
+def test_bootstrap_guard_ignores_legacy_tmp_state_preseed(tmp_path) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    fixture["legacy_state"].write_text("verified-update\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [fixture["bin_dir"] / "apt-get", "install", "-y", "fuse"],
+        env=fixture["env"], capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0
+    assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" not in result.stdout
+    assert fixture["apt_calls"].read_text(encoding="utf-8") == "install -y fuse\n"
 
 
 def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
