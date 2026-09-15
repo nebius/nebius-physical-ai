@@ -81,9 +81,10 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 
 ## Go bigger
 
-- **Full training runs locally or on a workbench VM.** `train-teacher` (and
-  `generate-demos` / `eval-teacher`) run on your GPU box, or on a Workbench VM
-  when you pass `-p <project> -n <workbench>` (forwarded over SSH).
+- **Full training runs on cloud GPUs.** `train-teacher` (and
+  `generate-demos` / `eval-teacher`) execute on Nebius GPU infrastructure, not
+  your laptop — target a GPU workbench VM by passing `-p <project> -n <workbench>`
+  (forwarded over SSH).
 - **Serverless runs real PPO training.** `train-teacher --runtime serverless`
   submits the same training implementation as a Nebius AI Job and uploads its
   checkpoint and summaries to `--output-path`. It needs `--project-id`, or a
