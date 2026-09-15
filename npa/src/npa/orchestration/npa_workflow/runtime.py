@@ -420,6 +420,38 @@ def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> 
     return f"{sequence_number:03d}|{group or 'serial'}|" + ",".join(parts)
 
 
+def _record_reached_running(record: Mapping[str, Any]) -> bool:
+    """Return whether a durable wave record proves scheduler execution began.
+
+    Poll observations normally carry this evidence.  A driver can lose object-store
+    access after SkyPilot has returned per-task ``RUNNING`` state but before the next
+    observation is persisted, so retain that authoritative task evidence as well.
+    Explicit output adoption still requires exact-job absence and validation of every
+    declared durable output.
+    """
+
+    observations = record.get("observations") or []
+    if any(
+        isinstance(item, Mapping)
+        and (
+            str(item.get("scheduler_state") or "").upper() == "RUNNING"
+            or "RUNNING"
+            in {
+                str(value or "").upper()
+                for value in (item.get("statuses") or {}).values()
+            }
+        )
+        for item in observations
+    ):
+        return True
+    return any(
+        isinstance(task, Mapping)
+        and str(task.get("status") or task.get("job_status") or "").upper()
+        == "RUNNING"
+        for task in (record.get("tasks") or [])
+    )
+
+
 class SkyPilotWaveExecutor:
     """Execute planned steps as SkyPilot managed jobs, one wave at a time.
 
@@ -614,20 +646,7 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
-                observations = latest.get("observations") or []
-                reached_running = any(
-                    isinstance(item, Mapping)
-                    and (
-                        str(item.get("scheduler_state") or "").upper()
-                        == "RUNNING"
-                        or "RUNNING"
-                        in {
-                            str(value or "").upper()
-                            for value in (item.get("statuses") or {}).values()
-                        }
-                    )
-                    for item in observations
-                )
+                reached_running = _record_reached_running(latest)
                 if (
                     self.options.adopt_absent_in_flight_outputs
                     and reached_running
@@ -993,19 +1012,7 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
-            observations = record.get("observations") or []
-            reached_running = any(
-                isinstance(item, Mapping)
-                and (
-                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                    or "RUNNING"
-                    in {
-                        str(value or "").upper()
-                        for value in (item.get("statuses") or {}).values()
-                    }
-                )
-                for item in observations
-            )
+            reached_running = _record_reached_running(record)
             explicit_output_adoption = (
                 self.options.adopt_absent_in_flight_outputs
                 and reached_running
