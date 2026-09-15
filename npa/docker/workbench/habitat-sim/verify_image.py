@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 NPA_ROOT = Path(__file__).resolve().parents[3]
+CHECKOUT_ROOT = NPA_ROOT.parent
 sys.path.insert(0, str(NPA_ROOT / "scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
@@ -49,25 +50,23 @@ def _load_contract() -> dict[str, object]:
     return contract
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the complete Habitat OCI verification command."""
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--oci-archive", type=Path, required=True)
-    parser.add_argument("--expected-image-id", required=True)
-    parser.add_argument("--expected-source-revision", required=True)
-    parser.add_argument("--expected-dpkg-inventory-sha256", required=True)
-    parser.add_argument("--expected-python-venv-inventory-sha256", required=True)
-    parser.add_argument("--expected-native-closure-sha256", required=True)
-    parser.add_argument("--json", type=Path, required=True)
-    args = parser.parse_args(argv)
-    report: dict[str, object]
+def _require_root(path: Path, missing_code: str) -> None:
     try:
+        path.lstat()
+    except FileNotFoundError:
+        raise W.ScanError(missing_code) from None
+
+
+def _verify_archive(args: argparse.Namespace) -> dict[str, object]:
+    _require_root(args.analysis_root, "analysis_root_missing")
+    _require_root(args.trusted_root, "trusted_root_missing")
+    with W.authorized_roots(args.analysis_root, args.trusted_root) as roots:
+        W.require(roots[1] == CHECKOUT_ROOT, "trusted_source_root_mismatch")
         contract = _load_contract()
         archive, fd, info = W.open_private_fd(args.oci_archive)
         try:
             archive_hash = P.binding(archive)["sha256"]
-            report = H.verify(
+            return H.verify(
                 fd,
                 info.st_size,
                 args.expected_image_id,
@@ -80,12 +79,38 @@ def main(argv: list[str] | None = None) -> int:
             )
         finally:
             os.close(fd)
+
+
+def _failure_report(code: str) -> dict[str, object]:
+    return {
+        "schema_version": H.SCHEMA,
+        "valid": False,
+        "findings": [{"code": code}],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the complete Habitat OCI verification command."""
+
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--analysis-root", type=Path, required=True)
+    parser.add_argument("--trusted-root", type=Path, required=True)
+    parser.add_argument("--oci-archive", type=Path, required=True)
+    parser.add_argument("--expected-image-id", required=True)
+    parser.add_argument("--expected-source-revision", required=True)
+    parser.add_argument("--expected-dpkg-inventory-sha256", required=True)
+    parser.add_argument("--expected-python-venv-inventory-sha256", required=True)
+    parser.add_argument("--expected-native-closure-sha256", required=True)
+    parser.add_argument("--json", type=Path, required=True)
+    args = parser.parse_args(argv)
+    report: dict[str, object]
+    try:
+        report = _verify_archive(args)
+    except W.ScanError as error:
+        report = _failure_report(str(error))
     except W.INPUT_ERRORS:
-        report = {
-            "schema_version": H.SCHEMA,
-            "valid": False,
-            "findings": [{"code": "unreadable_or_incomplete_image_evidence"}],
-        }
+        report = _failure_report("unreadable_or_incomplete_image_evidence")
     args.json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(
         "Habitat-Sim complete image verification "
