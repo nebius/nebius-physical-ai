@@ -11,8 +11,10 @@ import json
 import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tarfile
+import textwrap
 
 import pytest
 import yaml
@@ -368,6 +370,111 @@ def _verify(
         os.close(fd)
 
 
+def _cli_fixture(tmp_path: Path) -> dict[str, object]:
+    analysis = tmp_path / "analysis"
+    analysis.mkdir(mode=0o700)
+    contract, entries = _fixture()
+    archive, expected, diff_ids = _oci(analysis, [entries])
+    archive.chmod(0o600)
+    contract["required_base_diff_ids"] = [diff_ids[0]]
+    baseline_root = tmp_path / "baseline"
+    baseline_root.mkdir()
+    baseline = _verify(baseline_root, [entries], contract=contract)
+    contract_path = analysis / "runtime-payload.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    contract_path.chmod(0o600)
+    return {
+        "analysis": analysis,
+        "archive": archive,
+        "contract": contract_path,
+        "expected": expected,
+        "dpkg": baseline["dpkg_inventory_sha256"],
+        "python": baseline["python_venv_inventory_sha256"],
+        "native": baseline["native_elf_closure_sha256"],
+    }
+
+
+def _write_cli_wrapper(wrapper: Path) -> None:
+    wrapper.write_text(
+        textwrap.dedent(
+            f"""
+            import importlib.util
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            os.umask(0o077)
+            spec = importlib.util.spec_from_file_location(
+                "habitat_image_verifier", {str(PACKAGE / "verify_image.py")!r}
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            contract = json.loads(Path(sys.argv[1]).read_text())
+            module._load_contract = lambda: contract
+            raise SystemExit(module.main(sys.argv[2:]))
+            """
+        ),
+        encoding="utf-8",
+    )
+
+
+def _cli_arguments(
+    wrapper: Path,
+    report: Path,
+    fixture: dict[str, object],
+    analysis_root: Path,
+    trusted_root: Path,
+    archive: Path,
+) -> list[str]:
+    return [
+        sys.executable,
+        str(wrapper),
+        str(fixture["contract"]),
+        "--analysis-root",
+        str(analysis_root or fixture["analysis"]),
+        "--trusted-root",
+        str(trusted_root),
+        "--oci-archive",
+        str(archive or fixture["archive"]),
+        "--expected-image-id",
+        str(fixture["expected"]),
+        "--expected-source-revision",
+        SOURCE_REVISION,
+        "--expected-dpkg-inventory-sha256",
+        str(fixture["dpkg"]),
+        "--expected-python-venv-inventory-sha256",
+        str(fixture["python"]),
+        "--expected-native-closure-sha256",
+        str(fixture["native"]),
+        "--json",
+        str(report),
+    ]
+
+
+def _run_cli(
+    tmp_path: Path,
+    fixture: dict[str, object],
+    *,
+    analysis_root: Path | None = None,
+    trusted_root: Path = ROOT,
+    archive: Path | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+    wrapper = tmp_path / "invoke-verifier.py"
+    _write_cli_wrapper(wrapper)
+    report = tmp_path / "cli-report.json"
+    command = _cli_arguments(
+        wrapper,
+        report,
+        fixture,
+        analysis_root or fixture["analysis"],
+        trusted_root,
+        archive or fixture["archive"],
+    )
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    return result, json.loads(report.read_text())
+
+
 def _codes(report: dict[str, object]) -> set[str]:
     return {row["code"] for row in report["findings"]}
 
@@ -408,6 +515,63 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     assert report["native_elf_closure"][0]["owners"] == ["python-wheel-record"]
     assert report["expected_source_revision"] == SOURCE_REVISION
     assert report["oci_graph"]["attestation_manifest_count"] == 1
+
+
+def test_host_verifier_cli_accepts_owner_only_synthetic_oci(tmp_path) -> None:
+    fixture = _cli_fixture(tmp_path)
+    assert fixture["analysis"].stat().st_mode & 0o777 == 0o700
+    assert fixture["archive"].stat().st_mode & 0o777 == 0o600
+    result, report = _run_cli(tmp_path, fixture)
+    assert result.returncode == 0, result.stderr
+    assert report["valid"] is True
+
+
+@pytest.mark.parametrize(
+    ("root_name", "expected_code"),
+    [
+        ("analysis", "analysis_root_missing"),
+        ("trusted", "trusted_root_missing"),
+    ],
+)
+def test_host_verifier_cli_identifies_missing_root(
+    tmp_path, root_name: str, expected_code: str
+) -> None:
+    fixture = _cli_fixture(tmp_path)
+    roots = {"analysis": fixture["analysis"], "trusted": ROOT}
+    roots[root_name] = tmp_path / f"missing-{root_name}"
+    result, report = _run_cli(
+        tmp_path,
+        fixture,
+        analysis_root=roots["analysis"],
+        trusted_root=roots["trusted"],
+    )
+    assert result.returncode == 1
+    assert _codes(report) == {expected_code}
+
+
+def test_host_verifier_cli_refuses_archive_outside_analysis_root(tmp_path) -> None:
+    fixture = _cli_fixture(tmp_path)
+    unrelated = tmp_path / "unrelated-analysis"
+    unrelated.mkdir(mode=0o700)
+    result, report = _run_cli(tmp_path, fixture, analysis_root=unrelated)
+    assert result.returncode == 1
+    assert _codes(report) == {"input_outside_authorized_roots"}
+
+
+def test_host_verifier_cli_refuses_unsafe_or_wrong_trusted_root(tmp_path) -> None:
+    fixture = _cli_fixture(tmp_path)
+    unsafe = tmp_path / "unsafe-analysis"
+    unsafe.mkdir(mode=0o755)
+    unsafe.chmod(0o755)
+    result, report = _run_cli(tmp_path, fixture, analysis_root=unsafe)
+    assert result.returncode == 1
+    assert _codes(report) == {"root_permissions"}
+
+    wrong_trusted = tmp_path / "wrong-trusted"
+    wrong_trusted.mkdir(mode=0o755)
+    result, report = _run_cli(tmp_path, fixture, trusted_root=wrong_trusted)
+    assert result.returncode == 1
+    assert _codes(report) == {"trusted_source_root_mismatch"}
 
 
 def test_complete_runtime_inventory_hashes_are_required(tmp_path) -> None:
@@ -869,6 +1033,21 @@ def test_empty_base_cache_directories_are_allowed_but_cache_bytes_are_not(
     cached = file("var/lib/apt/lists/archive.example_Packages", b"package metadata")
     assert "forbidden_path" in _codes(
         _verify(tmp_path, [[*directories, cached, *_required_entries()]])
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "root/.cache/payload.bin",
+        "home/ubuntu/.cache/payload.bin",
+        "opt/runtime/.cache/payload.bin",
+    ],
+)
+def test_dot_cache_payloads_are_refused(tmp_path, path: str) -> None:
+    cached = file(path, b"cached payload")
+    assert "forbidden_path" in _codes(
+        _verify(tmp_path, [[cached, *_required_entries()]])
     )
 
 
