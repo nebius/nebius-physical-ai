@@ -40,11 +40,13 @@ class _Wrapper:
 class _Settings:
     def __init__(self):
         self.values = {simulator_video._PLAY_SIMULATIONS: True}
+        self.set_calls = []
 
     def get(self, key):
         return self.values.get(key)
 
     def set(self, key, value):
+        self.set_calls.append((key, value))
         self.values[key] = value
 
 
@@ -559,7 +561,11 @@ def test_capture_reasserts_stable_renderer_after_late_runtime_override(
     simulator_modules.settings.set("/persistent/rtx/modes/rt2/enabled", True)
     simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
     simulator_modules.settings.set("/rtx/post/aa/op", 1)
+    simulator_modules.settings.set_calls.clear()
     env.reset()
+    assert simulator_modules.settings.set_calls[:3] == list(
+        simulator_video._RENDER_SETTINGS.items()
+    )
     assert simulator_modules.settings.get("/persistent/rtx/modes/rt2/enabled") is False
     assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
     assert simulator_modules.settings.get("/rtx/post/aa/op") == 2
@@ -605,6 +611,30 @@ def test_capture_refuses_implicit_rt2_remapping(
     ):
         env.reset()
     assert env.renders == 0
+
+
+def test_capture_refuses_rt2_remap_triggered_by_render(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native_render = env.video_recorder.render_rgb_array
+    native_set = simulator_modules.settings.set
+
+    def remap_during_render():
+        frame = native_render()
+        native_set("/persistent/rtx/modes/rt2/enabled", True)
+        native_set("/rtx/rendermode", "RealTimePathTracing")
+        return frame
+
+    env.video_recorder.render_rgb_array = remap_during_render
+    with pytest.raises(
+        RuntimeError,
+        match=r'required capture settings: .*"/rtx/rendermode": "RealTimePathTracing"',
+    ):
+        env.reset()
+    assert env.renders == 1
+    assert not (tmp_path / "simulator-initial.png").exists()
+    assert not (tmp_path / "simulator-video-evidence.json").exists()
 
 
 def test_explicit_finalization_retains_diagnostic_before_simulator_teardown(

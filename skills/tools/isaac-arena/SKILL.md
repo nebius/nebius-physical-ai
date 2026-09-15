@@ -87,8 +87,8 @@ The fixture does not record its original physics device; this selection needs
 fresh task/video validation and is not proof of successful reproduction.
 The RTX renderer must request spatial FXAA through Isaac Lab, explicitly disable
 RT2 before reasserting legacy RTX Real-Time plus FXAA at the live capture
-boundary, and verify exact Carb-setting
-readback before frame zero. Treat a mismatch as a failed run; do not accept a
+boundary, and verify exact Carb-setting readback before rendering and again,
+without another write, after the final accepted render. Treat a mismatch as a failed run; do not accept a
 default renderer or infer stability from the requested configuration alone.
 Task-qualified evidence also requires the registered environment/policy pair,
 a sanitized policy-to-`env.step` action journal covering the full scored episode,

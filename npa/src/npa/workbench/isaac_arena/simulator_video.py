@@ -136,25 +136,41 @@ def _assert_physics_unchanged(before: dict, after: dict) -> None:
         )
 
 
-def _rendering_evidence(settings: Any) -> dict[str, Any]:
-    # Isaac Sim can reapply application defaults after SimulationCfg raw
-    # settings are consumed. Reassert the deterministic spatial renderer at
-    # the actual capture boundary, then require exact readback before a single
-    # frame can become evidence.
-    for key, value in _RENDER_SETTINGS.items():
-        settings.set(key, value)
+def _rendering_settings_readback(settings: Any) -> dict[str, Any]:
     actual = {key: settings.get(key) for key in _RENDER_SETTINGS}
-    if actual != _RENDER_SETTINGS:
+    if any(
+        type(actual[key]) is not type(expected) or actual[key] != expected
+        for key, expected in _RENDER_SETTINGS.items()
+    ):
         raise RuntimeError(
             "Arena video renderer does not match its required capture settings: "
             + json.dumps(actual, sort_keys=True, default=str)
         )
+    return actual
+
+
+def _apply_rendering_settings(settings: Any) -> None:
+    # Isaac Sim can reapply application defaults after SimulationCfg raw
+    # settings are consumed. Reassert the deterministic spatial renderer at
+    # the actual capture boundary and reject unsupported settings before a
+    # single render is attempted.
+    for key, value in _RENDER_SETTINGS.items():
+        settings.set(key, value)
+    _rendering_settings_readback(settings)
+
+
+def _rendering_evidence(settings: Any) -> dict[str, Any]:
+    # Kit/Replicator may apply a deferred renderer remap only when it pumps the
+    # frame. This read is intentionally non-mutating and happens after the
+    # final accepted render, so retained evidence cannot describe stale state.
+    actual = _rendering_settings_readback(settings)
     return {
         "mode": "RaytracedLighting",
         "rt2_enabled": False,
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "accumulation_renders_per_frame": 0,
+        "readback_phase": "after_final_accepted_render",
         "settings": actual,
     }
 
@@ -242,17 +258,19 @@ def _capture_frame(env: Any) -> np.ndarray:
 
 def _capture_verified_frame(env: Any) -> np.ndarray:
     settings, context = _kit_interfaces()
-    env._npa_video_rendering = _rendering_evidence(settings)
+    _apply_rendering_settings(settings)
     before = _physics_snapshot(env)
     previous = settings.get(_PLAY_SIMULATIONS)
     try:
         settings.set(_PLAY_SIMULATIONS, False)
         env.sim.physics_manager.forward()
         frame, renders = _ready_capture_frame(env, context)
+        rendering = _rendering_evidence(settings)
     finally:
         settings.set(_PLAY_SIMULATIONS, previous)
         after = _physics_snapshot(env)
         _assert_physics_unchanged(before, after)
+    env._npa_video_rendering = rendering
     env._npa_video_capture_proof = _freeze_evidence(before, after, renders)
     if getattr(env, "_npa_video_initial_physics_state", None) is None:
         env._npa_video_initial_physics_state = before

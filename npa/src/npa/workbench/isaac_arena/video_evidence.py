@@ -639,6 +639,7 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "accumulation_renders_per_frame": 0,
+        "readback_phase": "after_final_accepted_render",
     }
     if not isinstance(rendering, dict) or any(
         type(rendering.get(key)) is not type(value) or rendering[key] != value

@@ -80,6 +80,7 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
             "antialiasing": "FXAA",
             "stochastic_accumulation": False,
             "accumulation_renders_per_frame": 0,
+            "readback_phase": "after_final_accepted_render",
             "settings": dict(_RENDER_SETTINGS),
         },
         "physics_freeze_checks": [

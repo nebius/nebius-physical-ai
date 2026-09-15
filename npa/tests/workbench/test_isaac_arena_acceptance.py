@@ -110,6 +110,7 @@ def _proof(length: int = 20) -> dict:
                     "antialiasing": "FXAA",
                     "stochastic_accumulation": False,
                     "accumulation_renders_per_frame": 0,
+                    "readback_phase": "after_final_accepted_render",
                 },
             },
             "terminal_frame_comparison": {"source_frame_index": length - 1},
@@ -267,6 +268,11 @@ def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
         (
             "capture.physics_freeze.rendering.rt2_enabled",
             True,
+            "span the scored episode",
+        ),
+        (
+            "capture.physics_freeze.rendering.readback_phase",
+            "before_render",
             "span the scored episode",
         ),
         (

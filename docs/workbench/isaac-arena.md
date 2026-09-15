@@ -234,7 +234,8 @@ The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
 are requested through Isaac Lab's native render configuration, reasserted at
 the live capture boundary after application defaults have settled, and read
-back exactly before frame zero. A renderer that ignores any required setting fails
+back exactly both before rendering and, without another write, immediately after
+the final accepted render. A renderer that ignores or defers any required setting fails
 with the observed values retained in the run log. The patch preserves early Kit
 camera enablement required by `env.render()`, but prevents that recorder choice from also adding
 the embodiment's unused observation cameras. Upstream camera-observation video

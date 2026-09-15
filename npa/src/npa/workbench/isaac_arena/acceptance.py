@@ -201,6 +201,7 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and rendering.get("antialiasing") == "FXAA"
         and rendering.get("stochastic_accumulation") is False
         and rendering.get("accumulation_renders_per_frame") == 0
+        and rendering.get("readback_phase") == "after_final_accepted_render"
         and isinstance(comparison, dict)
         and comparison.get("source_frame_index") == episode_length - 1
         and _sha256(capture.get("source_mp4_sha256"))

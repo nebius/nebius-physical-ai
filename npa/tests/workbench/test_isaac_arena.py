@@ -941,6 +941,7 @@ def test_passive_baseline_success_is_never_task_qualified_video(
                 "antialiasing": "FXAA",
                 "stochastic_accumulation": False,
                 "accumulation_renders_per_frame": 0,
+                "readback_phase": "after_final_accepted_render",
             },
         },
         "terminal_frame_comparison": {"source_frame_index": 3},
