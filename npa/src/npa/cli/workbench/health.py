@@ -449,7 +449,7 @@ def access_command(
         raise typer.Exit(code=1)
 
 
-@app.command("sim2real", hidden=True)
+@app.command("sim2real")
 def sim2real_command(
     run_id: str = typer.Option(
         "sim2real-doctor", "--run-id", help="Run id for the probed config."
@@ -530,8 +530,12 @@ def sim2real_command(
 ) -> None:
     """Validate a sim2real config and check the recurring blockers up front.
 
-    Deprecated: use ``npa workbench workflow submit`` on the sim2real runbook for
-    preflight and ``npa workbench workflow status <run-id>`` for live progress.
+    Runs the sim2real preflight suite (config, coherence, s3, registry,
+    tokens, cluster) before submitting the sim2real workflow, so S3,
+    registry, token, kube-context, and GPU blockers surface before launch
+    instead of mid-run. Use ``npa workbench workflow submit`` on the sim2real
+    runbook for the run itself and ``npa workbench workflow status <run-id>``
+    for live progress.
     """
 
     overrides: dict[str, object] = {
