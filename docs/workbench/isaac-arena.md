@@ -224,15 +224,17 @@ The retained native subscription must observe progress between real actions;
 an inactive observer cannot provide a freeze proof. Its elapsed time starts at
 capture setup and is not an absolute simulation clock.
 Texture streaming and asset loading must finish before capture accepts a frame.
-Capture requires RTX Real-Time (`RaytracedLighting`) with spatial FXAA and no
-stochastic or temporal accumulation. This removes path-tracing grain from the
-source evidence; the independent temporal-median and coherent block-tracking
-gate still rejects static scenes and incoherent flicker.
+Capture requires legacy RTX Real-Time (`RaytracedLighting`) with RT2 explicitly
+disabled, spatial FXAA, and no stochastic or temporal accumulation. Isaac Sim 6
+otherwise remaps that renderer request to `RealTimePathTracing`; exact readback
+rejects the remap. This removes path-tracing grain from the source evidence; the
+independent temporal-median and coherent block-tracking gate still rejects static
+scenes and incoherent flicker.
 The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
 are requested through Isaac Lab's native render configuration, reasserted at
 the live capture boundary after application defaults have settled, and read
-back exactly before frame zero. A renderer that ignores either setting fails
+back exactly before frame zero. A renderer that ignores any required setting fails
 with the observed values retained in the run log. The patch preserves early Kit
 camera enablement required by `env.render()`, but prevents that recorder choice from also adding
 the embodiment's unused observation cameras. Upstream camera-observation video

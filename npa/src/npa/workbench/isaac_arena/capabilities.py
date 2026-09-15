@@ -528,9 +528,10 @@ _CAPABILITY_MANIFEST = {
             "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
             "renderer": {
                 "mode": "RaytracedLighting",
+                "rt2_enabled": False,
                 "antialiasing": "FXAA",
                 "stochastic_accumulation": False,
-                "reason": "Stable RTX Real-Time frames avoid path-tracing grain; task-bound temporal median and coherent tracking remain independent acceptance checks.",
+                "reason": "Disabling RT2 prevents Isaac Sim 6 from remapping the request to RealTimePathTracing; legacy RTX Real-Time plus spatial FXAA avoids path-tracing grain, while task-bound temporal median and coherent tracking remain independent acceptance checks.",
             },
             "graphics_userspace": (
                 "Native NVIDIA EGL/Vulkan, libnvoptix.so.1 and readable nonempty OptiX weights are preferred. "

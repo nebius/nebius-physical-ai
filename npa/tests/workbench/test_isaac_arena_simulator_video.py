@@ -382,6 +382,7 @@ def test_capture_setup_preserves_existing_metric_configuration(
     assert cfg.recorders.success is success_recorder
     assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
     assert cfg.sim.render.carb_settings == {
+        "/persistent/rtx/modes/rt2/enabled": False,
         "/rtx/rendermode": "RaytracedLighting",
         "/rtx/post/aa/op": 2,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
@@ -555,9 +556,11 @@ def test_capture_reasserts_stable_renderer_after_late_runtime_override(
     simulator_modules, tmp_path: Path
 ) -> None:
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
-    simulator_modules.settings.set("/rtx/rendermode", "PathTracing")
+    simulator_modules.settings.set("/persistent/rtx/modes/rt2/enabled", True)
+    simulator_modules.settings.set("/rtx/rendermode", "RealTimePathTracing")
     simulator_modules.settings.set("/rtx/post/aa/op", 1)
     env.reset()
+    assert simulator_modules.settings.get("/persistent/rtx/modes/rt2/enabled") is False
     assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
     assert simulator_modules.settings.get("/rtx/post/aa/op") == 2
     assert env._npa_video_rendering["stochastic_accumulation"] is False
@@ -576,6 +579,29 @@ def test_capture_refuses_renderer_that_rejects_required_settings(
     with pytest.raises(
         RuntimeError,
         match=r'required capture settings: .*"/rtx/post/aa/op": 1',
+    ):
+        env.reset()
+    assert env.renders == 0
+
+
+def test_capture_refuses_implicit_rt2_remapping(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native_set = simulator_modules.settings.set
+
+    def retain_rt2(key, value):
+        native_set(
+            key,
+            True if key == "/persistent/rtx/modes/rt2/enabled" else value,
+        )
+        if key == "/rtx/rendermode":
+            native_set(key, "RealTimePathTracing")
+
+    simulator_modules.settings.set = retain_rt2
+    with pytest.raises(
+        RuntimeError,
+        match=r'required capture settings: .*"/rtx/rendermode": "RealTimePathTracing"',
     ):
         env.reset()
     assert env.renders == 0

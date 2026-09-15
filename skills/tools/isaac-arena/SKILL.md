@@ -85,8 +85,9 @@ selects CPU physics and replay tensors following upstream's GR1 tutorial, while
 the viewport still uses the reserved RTX GPU. Record both devices separately.
 The fixture does not record its original physics device; this selection needs
 fresh task/video validation and is not proof of successful reproduction.
-The RTX renderer must request spatial FXAA through Isaac Lab, reassert RTX
-Real-Time plus FXAA at the live capture boundary, and verify exact Carb-setting
+The RTX renderer must request spatial FXAA through Isaac Lab, explicitly disable
+RT2 before reasserting legacy RTX Real-Time plus FXAA at the live capture
+boundary, and verify exact Carb-setting
 readback before frame zero. Treat a mismatch as a failed run; do not accept a
 default renderer or infer stability from the requested configuration alone.
 Task-qualified evidence also requires the registered environment/policy pair,
@@ -205,9 +206,9 @@ physics checks: native PhysX step-event counts and elapsed event time, the Lab
 physics counter, and uncached robot/object state must remain unchanged during
 rendering. The native subscription must also observe progress between real
 actions; elapsed event time starts at capture setup, not an absolute clock.
-Verify asset/texture readiness and the exact RTX Real-Time
-`RaytracedLighting` plus spatial-FXAA settings readback. Do not use stochastic
-path-tracing or temporal accumulation for acceptance footage. The separate
+Verify asset/texture readiness and the exact legacy RTX Real-Time
+`RaytracedLighting`, RT2-disabled, and spatial-FXAA settings readback. Do not use
+stochastic path-tracing or temporal accumulation for acceptance footage. The separate
 temporal-median and coherent-motion verifier remains mandatory. Rendering must
 not add physics steps or video frames. An unfinished recorder buffer belongs only in the separate
 unscored diagnostic and cannot create upstream success or completed episodes.

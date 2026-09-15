@@ -15,6 +15,10 @@ from .simulator_phases import phase_scope, record_readiness
 _PLAY_SIMULATIONS = "/app/player/playSimulations"
 _PHYSICS_CLOCK = "native_physx_step_events_since_capture_setup"
 _RENDER_SETTINGS = {
+    # Isaac Sim 6 maps the legacy name to RT2 unless this persistent selector is
+    # disabled first.  RT2 reports ``RealTimePathTracing`` and is not the stable
+    # legacy renderer required by this evidence contract.
+    "/persistent/rtx/modes/rt2/enabled": False,
     "/rtx/rendermode": "RaytracedLighting",
     # Spatial FXAA has no stochastic path-tracing grain or temporal history.
     # The separate video verifier still applies a temporal median before
@@ -147,6 +151,7 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
         )
     return {
         "mode": "RaytracedLighting",
+        "rt2_enabled": False,
         "antialiasing": "FXAA",
         "stochastic_accumulation": False,
         "accumulation_renders_per_frame": 0,
