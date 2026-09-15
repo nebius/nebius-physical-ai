@@ -714,20 +714,58 @@ def authorize_artifact_inventory_key(
     return normalized_key
 
 
+def _resolve_s3_timeout(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    timeout = float(value)
+    if timeout <= 0:
+        raise ValueError(f"{name} must be positive")
+    return timeout
+
+
 def build_s3_client(
     *,
     endpoint_url: str,
     aws_access_key_id: str,
     aws_secret_access_key: str,
     region_name: str = "eu-north1",
+    connect_timeout: float | None = None,
+    read_timeout: float | None = None,
+    retries: dict[str, Any] | None = None,
 ):
+    """Build an S3 client with optional bounded transport behavior.
+
+    Args:
+        endpoint_url: S3-compatible endpoint URL.
+        aws_access_key_id: S3 access-key identifier.
+        aws_secret_access_key: S3 secret access key.
+        region_name: S3 signing region.
+        connect_timeout: Optional positive connection timeout in seconds.
+        read_timeout: Optional positive socket-read timeout in seconds.
+        retries: Optional botocore retry configuration.
+
+    Returns:
+        A configured boto3 S3 client.
+
+    Raises:
+        ValueError: If a supplied timeout is not positive.
+    """
+    resolved_connect_timeout = _resolve_s3_timeout(connect_timeout, "connect_timeout")
+    resolved_read_timeout = _resolve_s3_timeout(read_timeout, "read_timeout")
+    config_kwargs: dict[str, Any] = {"signature_version": "s3v4"}
+    if resolved_connect_timeout is not None:
+        config_kwargs["connect_timeout"] = resolved_connect_timeout
+    if resolved_read_timeout is not None:
+        config_kwargs["read_timeout"] = resolved_read_timeout
+    if retries is not None:
+        config_kwargs["retries"] = retries
     import boto3
 
     kwargs: dict[str, Any] = {
         "aws_access_key_id": aws_access_key_id or None,
         "aws_secret_access_key": aws_secret_access_key or None,
         "region_name": region_name,
-        "config": BotoConfig(signature_version="s3v4"),
+        "config": BotoConfig(**config_kwargs),
     }
     if endpoint_url.strip():
         kwargs["endpoint_url"] = endpoint_url.strip()
@@ -2207,6 +2245,22 @@ def _s3_cache_identity(s3) -> str:
     return f"{endpoint}|{access_key}"
 
 
+def _pending_run_list_page(limit: int) -> RunListPage:
+    return RunListPage(
+        runs=[],
+        truncated=True,
+        total_runs=0,
+        limit=limit,
+        discovery_complete=False,
+        source_errors=(
+            {
+                "code": "artifact_discovery_pending",
+                "message": "Artifact discovery is running in the background.",
+            },
+        ),
+    )
+
+
 def list_runs_cached_multi(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -2220,8 +2274,15 @@ def list_runs_cached_multi(
     s3=None,
     ttl: "float | None" = None,
     refresh_sync: bool = False,
+    cold_start_async: bool = False,
 ) -> RunListPage:
-    """Cache generic or explicit-prefix discovery across accessible buckets."""
+    """Cache generic or explicit-prefix discovery across accessible buckets.
+
+    ``cold_start_async`` returns an explicitly incomplete page while one daemon
+    refresh populates an empty cache. Interactive callers can stay responsive
+    when the first object-store walk is slow without treating the empty page as
+    a completed inventory.
+    """
     # DEFAULT_RUN_LIST_TTL is defined below this block; resolve at call time.
     if ttl is None:
         ttl = DEFAULT_RUN_LIST_TTL
@@ -2274,6 +2335,9 @@ def list_runs_cached_multi(
                 entry = _RUN_LIST_CACHE.get(key)
             return entry[1] if entry else page
         return page
+    if cold_start_async and not refresh_sync:
+        _schedule_run_list_refresh(key, _compute)
+        return _pending_run_list_page(limit)
     page = _compute()
     with _RUN_LIST_LOCK:
         _RUN_LIST_CACHE[key] = (time.monotonic(), page)

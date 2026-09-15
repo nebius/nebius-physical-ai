@@ -12866,6 +12866,14 @@
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.pagination_complete === false ? " (discovery incomplete)" : "";
+          const pending = Array.isArray(data.source_errors) && data.source_errors.some((item) => {
+            const code = String((item && item.code) || "");
+            return code === "artifact_access_pending" || code === "artifact_discovery_pending";
+          });
+          const accessPending = Array.isArray(data.source_errors) && data.source_errors.some((item) =>
+            String((item && item.code) || "") === "artifact_access_pending"
+          );
+          const pendingHint = pending ? " · checking storage in background; refresh shortly" : "";
           const totalIsExact = data.total_runs != null;
           const discoveredCount = totalIsExact
             ? Number(data.total_runs || 0)
@@ -12879,7 +12887,18 @@
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
             " consolidated ·" + discoveredLabel + String(discoveredCount) + trunc +
-            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
+            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped + pendingHint;
+          const retryAfterMs = Math.max(0, Number(data.retry_after_seconds || 0) * 1000);
+          if (accessPending && retryAfterMs > 0) {
+            window.setTimeout(() => {
+              if (requestId !== runSearchRequestId) return;
+              void _refreshArtifactRuns(q, {
+                background: true,
+                resourceBucket: scope.resourceBucket,
+                projectId: scope.projectId,
+              }).catch(() => {});
+            }, retryAfterMs);
+          }
         }
         return { data, runs, merged };
       }

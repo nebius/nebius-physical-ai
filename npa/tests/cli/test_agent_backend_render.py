@@ -198,6 +198,32 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert "POST /api/agent/gpu-allocation/consent" in body
 
 
+def test_rendered_agent_s3_client_bounds_interactive_discovery(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_s3_timeout_backend"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://storage.example.test")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    captured: dict[str, object] = {}
+
+    def build_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(module, "build_s3_client", build_client)
+
+    _client, settings = module._agent_s3_client()
+
+    assert settings["bucket"] == "test-bucket"
+    assert captured["connect_timeout"] == 3.0
+    assert captured["read_timeout"] == 8.0
+    assert captured["retries"] == {"total_max_attempts": 1, "mode": "standard"}
+
+
 def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
     monkeypatch, tmp_path
 ) -> None:
@@ -2607,6 +2633,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         now=lambda: "2026-08-06T23:30:00+00:00",
     )
     monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
+    )
     access_payload = module.agent_access(refresh=True)
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
@@ -2624,12 +2653,22 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     def _list_runs(buckets, **kwargs):
         called["buckets"] = list(buckets)
         called["project_map"] = dict(kwargs.get("bucket_projects") or {})
+        called["cold_start_async"] = kwargs.get("cold_start_async")
         return _RunPage()
 
     monkeypatch.setattr(
         module,
         "_agent_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: None
+    )
+    pending = module.artifacts_runs(limit=20)
+    assert pending["pagination_complete"] is False
+    assert pending["source_errors"][0]["code"] == "artifact_access_pending"
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
     )
     monkeypatch.setattr(module, "list_runs_cached_multi", _list_runs)
     scoped = module.artifacts_runs(
@@ -2639,6 +2678,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     )
     assert called["buckets"] == ["bucket-test"]
     assert called["project_map"] == {"bucket-test": "project-test"}
+    assert called["cold_start_async"] is True
     assert scoped["resource_scope"] == {
         "project_id": "project-test",
         "bucket": "bucket-test",
@@ -3674,8 +3714,8 @@ def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None
     """
     body = _render_backend_body(monkeypatch)
 
-    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
-    assert '@app.get("/sim-viz/rrd-blob")' not in body
+    assert '@app.get("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_get")' in body
+    assert '@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")' in body
 
 
 def test_rendered_backend_skips_unreadable_ssh_key_candidates(

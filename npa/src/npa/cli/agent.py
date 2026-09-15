@@ -2135,6 +2135,12 @@ def _agent_s3_client():
             "endpoint_url": settings["endpoint"],
             "aws_access_key_id": settings["access_key"],
             "region_name": settings["region"],
+            # Discovery runs on the interactive UI path. An unreachable object
+            # store must produce an API error promptly instead of pinning the
+            # single backend worker behind the SDK's long adaptive retries.
+            "connect_timeout": 3.0,
+            "read_timeout": 8.0,
+            "retries": {{"total_max_attempts": 1, "mode": "standard"}},
         }}
         secret_param = "aws" + "_secret_access_key"
         client_kwargs[secret_param] = settings["secret_key"]
@@ -6691,13 +6697,55 @@ def artifacts_runs(
     # bounded observed match count is never represented as a global total.
     try:
         s3, settings = _agent_s3_client()
-        access_report = _agent_access_report()
+        query = str(q or "").strip()
+        has_durable_exact_source = bool(
+            len(query) >= 20 and _configured_agent_artifact_sources()
+        )
+        access_report = (
+            _agent_access_report()
+            if has_durable_exact_source
+            else _agent_access_report_for_artifact_discovery()
+        )
+        if access_report is None:
+            page_size = max(1, min(int(limit), 500))
+            base = settings.get("prefix", "")
+            return {{
+                "ok": True,
+                "contract": ARTIFACT_DISCOVERY_CONTRACT,
+                "bucket": settings["bucket"],
+                "buckets": [],
+                "resource_scope": {{
+                    "project_id": str(project_id or ""),
+                    "bucket": str(resource_bucket or ""),
+                }},
+                "prefix": base,
+                "base_prefix": base,
+                "query": str(q or "").strip(),
+                "summary_mode": "artifact_index",
+                "namespace": "npa_workflow_artifact_run",
+                "namespace_help": "Searches discovered NPA workflow/artifact runs; Codex maintenance job IDs are a separate operator-local namespace.",
+                "access": {{"status": "refreshing", "scope": "initializing", "searched_projects": [], "unavailable_projects": []}},
+                "runs": [],
+                "count": 0,
+                "count_scope": "page",
+                "total_runs": None,
+                "total_runs_scope": "unavailable",
+                "observed_run_count": 0,
+                "observed_match_count": 0,
+                "query_complete": False,
+                "limit": page_size,
+                "cursor": cursor,
+                "next_cursor": "",
+                "truncated": True,
+                "pagination_complete": False,
+                "source_errors": [{{"code": "artifact_access_pending", "message": "Artifact access is being verified. Refresh shortly."}}],
+                "retry_after_seconds": 2,
+            }}
         access_diagnostics = _agent_access_diagnostics(access_report)
         bucket_projects = artifact_bucket_projects(access_report)
         buckets, selected_scope = _agent_artifact_list_scope(
             access_report, resource_bucket, project_id
         )
-        query = str(q or "").strip()
         page_size = max(1, min(int(limit), 500))
         offset = _artifact_run_cursor_offset(cursor)
         discovery_limit = 10_000
@@ -6775,6 +6823,7 @@ def artifacts_runs(
                 bucket_projects=bucket_projects,
                 lightweight=True,
                 s3=s3,
+                cold_start_async=True,
             )
             return _page_response(page, effective_prefix=effective_prefix)
         # No user prefix: discover runs generically across ALL bucket roots.
@@ -6797,6 +6846,7 @@ def artifacts_runs(
             bucket_projects=bucket_projects,
             lightweight=True,
             s3=s3,
+            cold_start_async=True,
         )
         return _page_response(page, effective_prefix=base)
     except HTTPException:
@@ -8099,7 +8149,8 @@ def sim_viz_rrd(run_id: str = ""):
 # viewer URL, and a GET-only route answers 405, logging a console error on every
 # page load. The probe failure is caught and ignored, so this is cosmetic -- but
 # an error that fires every load trains operators to ignore the console.
-@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])
+@app.get("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_get")
+@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")
 def sim_viz_rrd_blob(run_id: str = ""):
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
     return _sim_viz_rrd_file_response(run_id=run_id)

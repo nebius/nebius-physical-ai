@@ -767,6 +767,46 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
     assert all(result is report for result in results)
 
 
+def test_cold_artifact_access_starts_background_discovery(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    report = _discover()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def discover():
+        entered.set()
+        assert release.wait(timeout=2)
+        return report
+
+    monkeypatch.setattr(runtime, "_discover_agent_access_report", discover)
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=None,
+            expires_at=0.0,
+            refreshing=False,
+        )
+    try:
+        assert runtime._agent_access_report_for_artifact_discovery() is None
+        assert entered.wait(timeout=2)
+        assert runtime._agent_access_report_for_artifact_discovery() is None
+        release.set()
+        with runtime._AGENT_ACCESS_CONDITION:
+            assert runtime._AGENT_ACCESS_CONDITION.wait_for(
+                lambda: not bool(runtime._AGENT_ACCESS_CACHE["refreshing"]),
+                timeout=2,
+            )
+        assert runtime._agent_access_report_for_artifact_discovery() is report
+    finally:
+        release.set()
+        with runtime._AGENT_ACCESS_CONDITION:
+            runtime._AGENT_ACCESS_CACHE.update(
+                report=None,
+                expires_at=0.0,
+                refreshing=False,
+            )
+
+
 def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
     monkeypatch,
 ) -> None:
