@@ -447,10 +447,13 @@ images:
       content-locked for a separately approved private non-conveying build; the
       Dockerfile verifies those reviewed bytes before package network access.
       Runtime fetch changes delivery only and grants no use, derivative, output,
-      or service rights. No image has been built; post-build scanner anchors
-      remain unset, Shadow public-rights closure is incomplete, and no supported
-      tag, accepted manifest, public pull, current-byte GPU qualification, or
-      SM120 claim exists.
+      or service rights. An owner-only reference build produced the exact config
+      and 20-DiffID graph pinned by the product scanner, but that transaction
+      stopped before a complete product scan, SBOM, push, or immutable digest and
+      its artifact was cleaned. The graph is scanner input, not accepted or
+      current-head image evidence. Shadow public-rights closure remains
+      incomplete, and no supported tag, accepted manifest, public pull,
+      current-byte GPU qualification, or SM120 claim exists.
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

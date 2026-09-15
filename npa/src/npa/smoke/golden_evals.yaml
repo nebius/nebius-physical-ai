@@ -51,10 +51,13 @@ containers:
       external_fetch:
         - exact Gymnasium-Robotics source and hashed Python wheels into an operator-owned cache
       notes: >-
-        No image exists. Candidate layers contain only neutral bootstrap bytes;
-        upstream source, Shadow assets, MuJoCo/Python workload, populated cache,
-        model, dataset, vendor runtime, credential, checkpoint, and output bytes
-        are excluded. Fetching later is delivery, not rights acceptance.
+        An owner-only reference build supplied the exact config and ordered
+        20-DiffID scanner anchors, but did not complete the product scan, SBOM,
+        push, or immutable-digest gates and left no accepted artifact. Intended
+        candidate layers contain only neutral bootstrap bytes; upstream source,
+        Shadow assets, MuJoCo/Python workload, populated cache, model, dataset,
+        vendor runtime, credential, checkpoint, and output bytes are excluded.
+        Fetching later is delivery, not rights acceptance.
     golden_eval:
       kind: container-smoke
       command: bash /usr/local/bin/npa-gymnasium-entrypoint run-smoke

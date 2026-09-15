@@ -63,11 +63,14 @@ a new registry audit or acceptance of the quarantined images.
 Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
 It is deliberately absent from the mapped-tool count, supported versions,
 public build matrix, and release table. It appears in the GPU compatibility
-matrix only as a quarantined pre-registration/no-image row. Its Dockerfile
-refuses before package network access until the exact neutral-bootstrap package
-and corresponding-source closure exists. Runtime fetching later changes
-delivery only, not use, derivative, output, or service rights. No image, scan,
-anonymous pull, or current GPU capability is claimed.
+matrix only as a quarantined pre-registration/no-accepted-image row. An
+owner-only reference build supplied the exact config and ordered 20-DiffID
+scanner anchors, but did not complete the product scan, SBOM, push, or
+immutable-digest gates and left no accepted artifact. Its Dockerfile refuses
+before package network access until the exact neutral-bootstrap package and
+corresponding-source closure exists. Runtime fetching later changes delivery
+only, not use, derivative, output, or service rights. No accepted or public
+image, anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact

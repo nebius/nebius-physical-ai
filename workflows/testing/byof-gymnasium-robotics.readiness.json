@@ -37,7 +37,7 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "No neutral-bootstrap image has been built. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
+      "reason": "An owner-only reference build produced the config and ordered 20-DiffID graph pinned by the product scanner, but its transaction stopped before a complete product scan, SBOM, push, or immutable digest and cleaned the artifact. No retained, pullable, accepted, or exact-current-head image exists. The accepted c308945a private digest is historical evidence for different executable/workflow bytes and cannot qualify the redesign.",
       "evidence": [
         "npa/docker/workbench/gymnasium-robotics/REDISTRIBUTION.md"
       ]

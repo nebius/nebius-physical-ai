@@ -7,10 +7,14 @@ transfer.
 
 ## Neutral public-image quarantine
 
-The repository describes a zero-Shadow-payload neutral bootstrap, not a built
-image. `npa-gymnasium-robotics` remains in **pre-registration quarantine**: it
-has no supported tag, accepted manifest, SM120 compatibility record, registry
-object, or anonymous-pull evidence. The candidate layers exclude the upstream
+The repository describes a zero-Shadow-payload neutral bootstrap. An owner-only
+reference build produced the exact config and ordered 20-DiffID graph now pinned
+by the product scanner, but its transaction stopped before the complete product
+scan, SBOM, push, or immutable-digest gates and cleaned the artifact. Those
+anchors are scanner inputs, not accepted image or current-head capability proof.
+`npa-gymnasium-robotics` remains in **pre-registration quarantine**: it has no
+supported tag, accepted manifest, SM120 compatibility record, retained registry
+object, or anonymous-pull evidence. The intended layers exclude the upstream
 solution tree, Shadow Hand assets, MuJoCo/Python wheels, runtime cache, CUDA or
 other vendor runtime, credentials, datasets, checkpoints, and outputs. The
 Dockerfile's first executable gate binds the exact neutral Ubuntu/Python
@@ -100,12 +104,15 @@ use, create derivative works, retain outputs, or provide a hosted service, and
 private custody does not change that boundary. The built bytes must still be
 scanned to prove the absence of upstream source/assets, MuJoCo/Python workload
 runtime, vendor runtime, secrets, datasets, checkpoints, and persistent caches.
-The future acceptance scanner binds independently reviewed hashes for every
-completed neutral-image lock and the Ubuntu base diff ID; the post-build config
-and ordered layer graph remain withheld until real bytes exist. It also checks the exact Docker config, every
-raw ordered layer (including header/padding bytes), all retained regular files,
-directories, links and metadata, and recursively nested source/package
-archives. A locally self-consistent lock or rootfs classification cannot pass.
+The acceptance scanner binds independently reviewed hashes for every completed
+neutral-image lock, the Ubuntu base diff ID, and the owner-only reference
+build's exact config and ordered 20-DiffID graph. The reference transaction did
+not complete the product scan and left no accepted artifact, so those anchors
+do not qualify this head or any future rebuild. The scanner checks the exact
+Docker config, every raw ordered layer (including header/padding bytes), all
+retained regular files, directories, links and metadata, and recursively nested
+source/package archives. A locally self-consistent lock or rootfs classification
+cannot pass.
 
 ## Hard-gate capability
 
