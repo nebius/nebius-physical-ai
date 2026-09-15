@@ -865,7 +865,9 @@ def test_libero_preflight_requires_output_authority_before_target_resolution(
     "drift",
     ["endpoint", "access", "session", "prefix", "policy", "expired"],
 )
-def test_libero_output_authority_binds_every_execution_input(drift) -> None:
+def test_libero_output_authority_binds_every_execution_input(
+    drift, monkeypatch
+) -> None:
     from datetime import datetime, timedelta, timezone
 
     from npa.execution_preflight import _verify_libero_output_storage_authorization
@@ -879,9 +881,15 @@ def test_libero_output_authority_binds_every_execution_input(drift) -> None:
     policy_sha256 = "7" * 64
     now = datetime.now(timezone.utc)
     authorization = {
-        "schema": "npa.libero.output-storage-authorization.v2",
-        "issuer": "npa-control-plane",
+        "schema": "npa.libero.output-storage-authorization.v3",
+        "issuer": "npa-output-storage-control-plane",
+        "capability_id": "libero-storage-capability-0001",
+        "customer_identity_sha256": "8" * 64,
         "run_id": run_id,
+        "candidate_image": (
+            "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+        ),
+        "runtime_manifest_sha256": "6" * 64,
         "output_prefix": prefix,
         "endpoint_url": endpoint,
         "access_key_id_sha256": hashlib.sha256(access_key.encode()).hexdigest(),
@@ -891,9 +899,18 @@ def test_libero_output_authority_binds_every_execution_input(drift) -> None:
         "issued_at": (now - timedelta(minutes=1)).isoformat(),
         "expires_at": (now + timedelta(hours=1)).isoformat(),
         "nonce": "control-plane-storage-authorization-nonce-0001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": "5" * 64,
+            "signature_b64": "synthetic-signature",
+        },
     }
     payload = json.dumps(authorization, sort_keys=True).encode()
     customer_authorization = {
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "run_id": run_id,
+        "candidate_image": authorization["candidate_image"],
+        "runtime_manifest_sha256": authorization["runtime_manifest_sha256"],
         "expires_at": (now + timedelta(hours=2)).isoformat(),
     }
     document = libero_task("npa-byof-libero-payload")
@@ -918,6 +935,30 @@ def test_libero_output_authority_binds_every_execution_input(drift) -> None:
             payload
         ).decode(),
     }
+
+    def validate_storage(payload_bytes, **kwargs):
+        observed = json.loads(payload_bytes)
+        if (
+            observed.get("expires_at", "") <= now.isoformat()
+            or observed.get("output_prefix") != kwargs["output_prefix"]
+            or observed.get("endpoint_url") != kwargs["endpoint_url"]
+            or observed.get("access_key_id_sha256")
+            != hashlib.sha256(kwargs["access_key_id"].encode()).hexdigest()
+            or observed.get("secret_access_key_sha256")
+            != hashlib.sha256(kwargs["secret_access_key"].encode()).hexdigest()
+            or observed.get("session_token_sha256")
+            != hashlib.sha256(kwargs["session_token"].encode()).hexdigest()
+            or observed.get("policy_sha256") != kwargs["expected_policy_sha256"]
+        ):
+            raise RuntimeError("storage capability differs")
+        return observed, hashlib.sha256(payload_bytes).hexdigest()
+
+    from npa.deploy import images
+
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: {})
+    monkeypatch.setattr(
+        images, "validate_libero_output_storage_authorization", validate_storage
+    )
 
     _verify_libero_output_storage_authorization(
         [document], process_env, customer_authorization=customer_authorization, run_id=run_id
@@ -1003,6 +1044,8 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
     manifest = {"schema": "qualified-fixture"}
     authorization_bytes = b'{"fixture":"customer-authorization"}\n'
     authorization_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
+    caller_bytes = b'{"fixture":"authenticated-caller"}\n'
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
     customer_identity_sha256 = "8" * 64
     authorization = {"customer_identity_sha256": customer_identity_sha256}
     candidate = (
@@ -1020,11 +1063,18 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
         observed["authorization"] = (payload, kwargs)
         return authorization, authorization_sha256
 
+    def validate_caller(payload, **kwargs):
+        observed["caller"] = (payload, kwargs)
+        return {"customer_identity_sha256": customer_identity_sha256}, caller_sha256
+
     monkeypatch.setattr(
         images, "validate_libero_qualified_image_manifest", validate_qualification
     )
     monkeypatch.setattr(
         images, "validate_libero_customer_runtime_authorization", validate_authorization
+    )
+    monkeypatch.setattr(
+        images, "validate_libero_authenticated_caller_assertion", validate_caller
     )
     document = libero_task("npa-byof-libero-payload")
     document["envs"]["NPA_BYOF_RUN_ID"] = run_id
@@ -1034,6 +1084,10 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
         ).decode(),
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": authorization_sha256,
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": customer_identity_sha256,
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64": base64.b64encode(
+            caller_bytes
+        ).decode(),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": caller_sha256,
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": "/owner/trust-root",
     }
 
@@ -1045,6 +1099,12 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
     )
 
     assert observed["qualification"] == manifest
+    caller_payload, caller_kwargs = observed["caller"]
+    assert caller_payload == caller_bytes
+    assert caller_kwargs == {
+        "run_id": run_id,
+        "public_key_file": "/owner/trust-root",
+    }
     payload, kwargs = observed["authorization"]
     assert payload == authorization_bytes
     assert kwargs == {
@@ -1061,9 +1121,11 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
         ("qualification", "qualification", "fail"),
         ("authorization-missing", "authorization", "needs_customer_acceptance"),
         ("authorization-denied", "authorization_denied", "needs_customer_acceptance"),
-        ("authorization-bytes", "authorization", "fail"),
+        ("authorization-bytes", "authorization", "needs_customer_acceptance"),
+        ("authorization-invalid", "authorization", "needs_customer_acceptance"),
         ("authorization-digest", "authorization", "fail"),
         ("customer", "authorization", "fail"),
+        ("caller-bytes", "authorization", "fail"),
         ("candidate", "submission_identity", "fail"),
         ("run", "submission_identity", "fail"),
         ("backend", "submission_identity", "fail"),
@@ -1084,6 +1146,8 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
     manifest = {"schema": "signed-fixture"}
     authorization_bytes = b'{"fixture":"customer-authorization"}\n'
     authorization_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
+    caller_bytes = b'{"fixture":"authenticated-caller"}\n'
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
     authorization = {"customer_identity_sha256": "8" * 64}
     monkeypatch.setattr(images, "libero_image_manifest", lambda: manifest)
     monkeypatch.setattr(
@@ -1100,13 +1164,24 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
             }
         ),
     )
+
     def validate_authorization(*_args, **_kwargs):
         if drift == "authorization-denied":
             raise images.LiberoCustomerAuthorizationDenied("signed denial")
+        if drift == "authorization-invalid":
+            raise RuntimeError("authorization is expired or replayable")
         return authorization, authorization_sha256
 
     monkeypatch.setattr(
         images, "validate_libero_customer_runtime_authorization", validate_authorization
+    )
+    monkeypatch.setattr(
+        images,
+        "validate_libero_authenticated_caller_assertion",
+        lambda *_args, **_kwargs: (
+            {"customer_identity_sha256": "8" * 64},
+            caller_sha256,
+        ),
     )
     document = libero_task("npa-byof-libero-payload")
     document["envs"]["NPA_BYOF_RUN_ID"] = (
@@ -1128,6 +1203,12 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": (
             "7" * 64 if drift == "customer" else "8" * 64
         ),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64": (
+            "self-attested"
+            if drift == "caller-bytes"
+            else base64.b64encode(caller_bytes).decode()
+        ),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": caller_sha256,
     }
     if drift == "candidate":
         document["envs"]["BYOF_IMAGE"] = (

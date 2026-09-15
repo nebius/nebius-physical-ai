@@ -241,7 +241,8 @@ def test_archive_decompression_is_bounded(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(module, "MAX_UNCOMPRESSED_ARCHIVE_BYTES", 100)
 
     with pytest.raises(RuntimeError, match="uncompressed archive exceeds"):
-        module._uncompressed_tar_bytes(archive)
+        with module._uncompressed_tar_file(archive):
+            pytest.fail("over-budget archive was exposed")
 
 
 def test_scanner_accepts_neutral_bootstrap_symlink_and_system_metadata(

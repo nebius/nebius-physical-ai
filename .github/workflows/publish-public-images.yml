@@ -89,10 +89,11 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO customer-control-plane trust root
+      - name: Materialize owner-private LIBERO control-plane trust roots
         if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         env:
           NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
+          NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
@@ -101,6 +102,12 @@ jobs:
           test "$(base64 -d "$key_file" | wc -c)" = 32
           chmod 0600 "$key_file"
           echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
+          storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
+          printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
+          test "$(base64 -d "$storage_key_file" | wc -c)" = 32
+          test "$(cat "$key_file")" != "$(cat "$storage_key_file")"
+          chmod 0600 "$storage_key_file"
+          echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
 
       - name: Resolve immutable public development plan
         id: plan
@@ -164,6 +171,25 @@ jobs:
               ):
                   raise SystemExit(
                       "libero: customer-authorization trust root differs from qualification"
+                  )
+              storage_key_bytes = base64.b64decode(
+                  Path(
+                      os.environ[
+                          "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE"
+                      ]
+                  ).read_bytes(),
+                  validate=True,
+              )
+              if (
+                  len(storage_key_bytes) != 32
+                  or hashlib.sha256(storage_key_bytes).hexdigest()
+                  != libero_qualification[
+                      "output_storage_authorization_public_key_sha256"
+                  ]
+                  or storage_key_bytes == key_bytes
+              ):
+                  raise SystemExit(
+                      "libero: output-storage trust root differs or is not independent"
                   )
               if libero_qualification["development_sha"] != sha:
                   raise SystemExit(
@@ -293,6 +319,13 @@ jobs:
                       if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
+                  "libero_qualified_output_storage_authorization_public_key_sha256": (
+                      libero_qualification[
+                          "output_storage_authorization_public_key_sha256"
+                      ]
+                      if tool == "libero" and libero_qualification is not None
+                      else ""
+                  ),
               })
 
           cleanup = []
@@ -377,6 +410,7 @@ jobs:
       LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256: ${{ matrix.libero_qualified_base_provenance_sha256 }}
       LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256: ${{ matrix.libero_qualified_publication_bundle_sha256 }}
       LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ matrix.libero_qualified_customer_authorization_public_key_sha256 }}
+      LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ matrix.libero_qualified_output_storage_authorization_public_key_sha256 }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -395,10 +429,11 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO customer-control-plane trust root
+      - name: Materialize owner-private LIBERO control-plane trust roots
         if: matrix.tool == 'libero'
         env:
           NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
+          NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
@@ -409,6 +444,14 @@ jobs:
             "$LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256"
           chmod 0600 "$key_file"
           echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
+          storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
+          printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
+          test "$(base64 -d "$storage_key_file" | wc -c)" = 32
+          test "$(base64 -d "$storage_key_file" | sha256sum | cut -d' ' -f1)" = \
+            "$LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256"
+          test "$(cat "$key_file")" != "$(cat "$storage_key_file")"
+          chmod 0600 "$storage_key_file"
+          echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
 
       - name: Refuse source, license, packaging, or skill guard drift
         run: |
@@ -717,8 +760,12 @@ jobs:
           secret_args=()
           if [[ "$TOOL" == libero ]]; then
             NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE")"
+            NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE")"
             export NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
+            export NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
             test "$(printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
+            test "$(printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
+            test "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" != "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64"
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
               --provenance=mode=max
@@ -726,6 +773,7 @@ jobs:
             )
             secret_args+=(
               --secret id=npa_libero_customer_authorization_public_key_b64,env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
+              --secret id=npa_libero_output_storage_authorization_public_key_b64,env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
             )
             export BUILDX_METADATA_PROVENANCE=max
           fi
@@ -749,9 +797,18 @@ jobs:
           set -euo pipefail
           libero_export_container=""
           cleanup_libero_export() {
-            if [ -n "$libero_export_container" ]; then
-              docker container rm "$libero_export_container" >/dev/null
+            primary_status=$?
+            trap - EXIT
+            cleanup_status=0
+            if [ -n "$libero_export_container" ] && \
+              ! docker container rm "$libero_export_container" >/dev/null; then
+              cleanup_status=1
+              echo "::error::LIBERO export-container cleanup failed"
             fi
+            if [ "$primary_status" -ne 0 ]; then
+              exit "$primary_status"
+            fi
+            exit "$cleanup_status"
           }
           trap cleanup_libero_export EXIT
           npa/.venv/bin/python - <<'PY'
@@ -1078,9 +1135,18 @@ jobs:
           set -euo pipefail
           libero_export_container=""
           cleanup_libero_export() {
-            if [ -n "$libero_export_container" ]; then
-              docker container rm "$libero_export_container" >/dev/null
+            primary_status=$?
+            trap - EXIT
+            cleanup_status=0
+            if [ -n "$libero_export_container" ] && \
+              ! docker container rm "$libero_export_container" >/dev/null; then
+              cleanup_status=1
+              echo "::error::LIBERO export-container cleanup failed"
             fi
+            if [ "$primary_status" -ne 0 ]; then
+              exit "$primary_status"
+            fi
+            exit "$cleanup_status"
           }
           trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
@@ -1600,25 +1666,26 @@ jobs:
           digest="$(jq -r '.[0].name' <<<"$matches")"
           test "$digest" = "$(crane digest "$IMAGE")"
           visibility="$(gh api "$package_api" --jq .visibility)"
-          if [ "$visibility" = private ]; then
-            # The globally serialized preflight proved this package nonexistent
-            # or empty. Deleting the whole still-private package removes the exact
-            # run image plus every untagged SBOM/provenance referrer it created.
-            other_tagged="$(jq --arg tag "$tag" '[.[] | .metadata.container.tags[]? | select(. != $tag)] | length' "$versions")"
-            test "$other_tagged" = 0 || {
-              echo "::error::Private failed-build package gained an unrelated tag"
-              exit 1
-            }
-            gh api --method DELETE "$package_api"
-          elif [ "$visibility" = public ] && [ "$(jq length "$versions")" = 1 ]; then
-            gh api --method DELETE "$package_api"
-          elif [ "$visibility" = public ]; then
-            gh api --method DELETE "${package_api}/versions/${version_id}"
-          else
+          if [ "$visibility" != private ] && [ "$visibility" != public ]; then
             echo "::error::Unsupported failed-build package visibility: $visibility"
             exit 1
           fi
-          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          current_versions="$(mktemp)"
+          gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+            jq 'add' > "$current_versions"
+          jq -e --arg id "$version_id" --arg digest "$digest" --arg tag "$tag" '
+            [.[] | select(
+              (.id | tostring) == $id and .name == $digest and
+              (.metadata.container.tags // []) == [$tag]
+            )] | length == 1
+          ' "$current_versions" >/dev/null || {
+            echo "::error::Refusing cleanup: exact run-owned version identity changed"
+            exit 1
+          }
+          # Delete only the version carrying this run's unique tag. Never delete
+          # the package or infer ownership of untagged versions/referrers.
+          gh api --method DELETE "${package_api}/versions/${version_id}"
+          echo "Deleted only exact failed dev version $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:

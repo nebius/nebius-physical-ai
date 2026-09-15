@@ -327,8 +327,7 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
     assert "versions/${version_id}" in text
-    assert 'if [ "$(jq length "$versions")" = 1 ]' in text
-    assert 'gh api --method DELETE "$package_api"' in text
+    assert "Refusing cleanup: exact run-owned version identity changed" in text
     assert "Deletion does not revoke downloads" in text
     assert "Requested development tag is already absent" in text
     failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
@@ -337,6 +336,7 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
         for step in failed_cleanup["steps"]
         if str(step.get("name") or "").startswith("Remove an exact run-owned")
     )
+    assert 'gh api --method DELETE "$package_api"' not in script
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script

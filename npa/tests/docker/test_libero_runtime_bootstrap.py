@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -21,6 +22,18 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "npa" / "docker" / "workbench" / "libero" / "runtime-bootstrap.py"
+
+
+@pytest.fixture(autouse=True)
+def _restore_process_environment() -> object:
+    """Keep every runtime-bootstrap test's process environment isolated."""
+
+    original = os.environ.copy()
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
 
 
 def _load_module():
@@ -205,6 +218,15 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     trust_root.chmod(0o444)
     module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY = trust_root
     module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = os.getuid()
+    storage_key = Ed25519PrivateKey.generate()
+    storage_public_key = storage_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    storage_trust_root = tmp_path / "output-storage-authorization-public-key.b64"
+    storage_trust_root.write_bytes(module.base64.b64encode(storage_public_key))
+    storage_trust_root.chmod(0o444)
+    module.OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = storage_trust_root
+    module.OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = os.getuid()
     authorization["signature"]["public_key_sha256"] = _sha(customer_public_key)
     authorization["signature"]["signature_b64"] = module.base64.b64encode(
         customer_key.sign(
@@ -242,9 +264,12 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
             manifest_sha,
             authorization["customer_identity_sha256"],
             authorization["run_id"],
+            authorization_sha256,
         ),
         "customer_private_key": customer_key,
         "customer_public_key": customer_public_key,
+        "storage_private_key": storage_key,
+        "storage_public_key": storage_public_key,
         "authorization_path": authorization_path,
         "customer_identity_sha256": authorization["customer_identity_sha256"],
         "run_id": authorization["run_id"],
@@ -308,9 +333,11 @@ def test_fetched_execution_environment_excludes_every_storage_secret(
 
 def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    module = _load_module()
-    run_id = "libero-output-authorization"
+    module, args, fixture = _fixture(tmp_path)
+    module.DEFAULT_MANIFEST = Path(args.manifest)
+    run_id = fixture["run_id"]
     prefix = f"s3://fixture/byof/{run_id}/"
     endpoint = "https://storage.fixture.invalid"
     credentials = {
@@ -322,9 +349,13 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         monkeypatch.setenv(name, value)
     policy_sha256 = "a" * 64
     authorization = {
-        "schema": "npa.libero.output-storage-authorization.v2",
-        "issuer": "npa-control-plane",
+        "schema": module.OUTPUT_STORAGE_AUTHORIZATION_SCHEMA,
+        "issuer": "npa-output-storage-control-plane",
+        "capability_id": "libero-output-capability-fixture-0001",
+        "customer_identity_sha256": fixture["customer_identity_sha256"],
         "run_id": run_id,
+        "candidate_image": os.environ["BYOF_IMAGE"],
+        "runtime_manifest_sha256": fixture["manifest_sha"],
         "output_prefix": prefix,
         "endpoint_url": endpoint,
         "access_key_id_sha256": _sha(credentials["AWS_ACCESS_KEY_ID"].encode()),
@@ -336,7 +367,22 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "nonce": "libero-output-authorization-nonce-0001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": _sha(fixture["storage_public_key"]),
+            "signature_b64": "",
+        },
     }
+    unsigned = json.loads(json.dumps(authorization))
+    unsigned.pop("signature")
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        fixture["storage_private_key"].sign(
+            module._sshsig_signature_payload(
+                module.OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE, canonical
+            )
+        )
+    ).decode("ascii")
     payload = (json.dumps(authorization, sort_keys=True) + "\n").encode()
     monkeypatch.setenv(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
@@ -570,6 +616,38 @@ def test_missing_authorization_notification_names_exact_terms_and_refusal(
     }
 
 
+def test_invalid_authorization_emits_structured_acceptance_state(
+    capsys, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+
+    status = module.main(
+        [
+            "ensure",
+            "--manifest",
+            args.manifest,
+            "--requirements",
+            args.requirements,
+            "--cache-root",
+            args.cache_root,
+            "--authorization",
+            args.authorization,
+            "--authorization-sha256",
+            "0" * 64,
+            "--output-dir",
+            args.output_dir,
+        ]
+    )
+
+    notification = json.loads(capsys.readouterr().err)
+    fixture_manifest_sha = module.EXPECTED_RUNTIME_MANIFEST_SHA256
+    assert status == 3
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["reason"] == "authorization_hash_mismatch"
+    assert notification["runtime_manifest_sha256"] == fixture_manifest_sha
+    assert len(fixture_manifest_sha) == 64
+
+
 def test_locally_invented_customer_authorization_refuses_before_network_or_cache(
     monkeypatch, tmp_path
 ) -> None:
@@ -591,7 +669,7 @@ def test_locally_invented_customer_authorization_refuses_before_network_or_cache
         lambda *_args: pytest.fail("network authorization began for a local signer"),
     )
 
-    with pytest.raises(module.BootstrapRefusal, match="trust root differs"):
+    with pytest.raises(module.BootstrapRefusal, match="authorization signature invalid"):
         module.ensure(args)
 
     assert not Path(args.cache_root).exists()
@@ -605,7 +683,7 @@ def test_customer_authorization_payload_cannot_select_its_trust_root(tmp_path) -
     args.authorization_sha256 = _write_json(Path(args.authorization), payload)
 
     assert module._trusted_customer_authorization_public_key() == authoritative_key
-    with pytest.raises(module.BootstrapRefusal, match="trust root differs"):
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization signature invalid"):
         module._validate_customer_authorization(
             Path(args.authorization),
             args.authorization_sha256,
@@ -636,7 +714,7 @@ def test_customer_authorization_rejects_descriptor_metadata_race(
 
     monkeypatch.setattr(module.os, "fstat", racing_fstat)
 
-    with pytest.raises(module.BootstrapRefusal, match="not stable owner-private"):
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization file invalid"):
         module._validate_customer_authorization(
             authorization_path,
             args.authorization_sha256,
@@ -734,7 +812,7 @@ def test_mismatched_customer_authorization_refuses_before_cache_mutation(
             Path(args.authorization), authorization
         )
 
-    with pytest.raises(module.BootstrapRefusal):
+    with pytest.raises(module.CustomerAcceptanceRequired):
         module.ensure(args)
     assert not Path(args.cache_root).exists()
 
@@ -993,6 +1071,11 @@ def _prepared_execute(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "DEFAULT_MANIFEST", Path(args.manifest))
     monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
     monkeypatch.setattr(module, "DEFAULT_CACHE", Path(args.cache_root))
+    monkeypatch.setattr(
+        module,
+        "RUNTIME_SUPERVISOR_USER",
+        module.pwd.getpwuid(os.getuid()).pw_name,
+    )
     monkeypatch.setenv(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", args.authorization_sha256
     )
@@ -1002,13 +1085,62 @@ def _prepared_execute(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("NPA_BYOF_RUN_ID", fixture["run_id"])
     final = Path(args.cache_root) / fixture["scope_sha"]
-    return module, final, Path(args.cache_root) / "current"
+    return module, args, final, Path(args.cache_root) / "current"
+
+
+@contextmanager
+def _execution_descriptors(module, args, final):
+    root_fd = os.open(args.cache_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    cache_fd = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    authorization_fd = os.open(args.authorization, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        with ExitStack() as stack:
+            execution_lock = stack.enter_context(
+                module._cache_lock(root_fd, ".execution.lock", exclusive=True, create=True)
+            )
+            bootstrap_lock = stack.enter_context(
+                module._cache_lock(root_fd, ".bootstrap.lock", exclusive=False, create=False)
+            )
+            yield cache_fd, authorization_fd, execution_lock, bootstrap_lock
+    finally:
+        os.close(authorization_fd)
+        os.close(cache_fd)
+        os.close(root_fd)
 
 
 def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> None:
-    module, final, _current = _prepared_execute(monkeypatch, tmp_path)
+    module, args, final, _current = _prepared_execute(monkeypatch, tmp_path)
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    expected_signature_input = module._canonical_unsigned_customer_authorization(
+        authorization
+    )
+    original_run = module.subprocess.run
 
     def smoke(command, **kwargs):
+        if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            assert len(command) == 11
+            allowed_signers = Path(command[4])
+            signature = Path(command[10])
+            assert command[3:] == [
+                "-f",
+                str(allowed_signers),
+                "-I",
+                "npa-customer-control-plane",
+                "-n",
+                module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature),
+            ]
+            assert allowed_signers.name == "allowed-signers"
+            assert signature == allowed_signers.with_name("authorization.sig")
+            assert kwargs["input"] == expected_signature_input
+            assert kwargs["stdout"] == module.subprocess.DEVNULL
+            assert kwargs["stderr"] == module.subprocess.DEVNULL
+            assert kwargs["env"] == {"HOME": "/nonexistent", "PATH": "/usr/bin:/bin"}
+            assert kwargs["check"] is False
+            assert "capture_output" not in kwargs
+            assert "text" not in kwargs
+            return original_run(command, **kwargs)
         assert command == ["/opt/npa/libero/smoke.sh"]
         assert kwargs["check"] is False
         assert kwargs["env"]["LIBERO_RUNTIME_ROOT"].startswith("/proc/self/fd/")
@@ -1017,20 +1149,76 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
 
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
-    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        assert module.execute(descriptor) == 23
-    finally:
-        os.close(descriptor)
+    with _execution_descriptors(module, args, final) as descriptors:
+        assert module.execute(*descriptors) == 23
+
+
+def test_execute_revalidates_expiry_immediately_before_smoke(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, final, _current = _prepared_execute(monkeypatch, tmp_path)
+    actual_datetime = module.datetime
+
+    class FutureDateTime(actual_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return actual_datetime.now(tz) + timedelta(hours=2)
+
+    monkeypatch.setattr(module, "datetime", FutureDateTime)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("smoke began after authorization expiry"),
+    )
+
+    with _execution_descriptors(module, args, final) as descriptors:
+        with pytest.raises(
+            module.CustomerAcceptanceRequired,
+            match="authorization expired or replayable",
+        ):
+            module.execute(*descriptors)
 
 
 @pytest.mark.parametrize("drift", ["current-removed", "cache-replaced"])
 def test_execute_rejects_post_smoke_cache_identity_drift(
     monkeypatch, tmp_path, drift
 ) -> None:
-    module, final, current = _prepared_execute(monkeypatch, tmp_path)
+    module, args, final, current = _prepared_execute(monkeypatch, tmp_path)
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    expected_signature_input = module._canonical_unsigned_customer_authorization(
+        authorization
+    )
+    original_run = module.subprocess.run
 
-    def smoke(_command, **_kwargs):
+    def smoke(command, **kwargs):
+        if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            assert len(command) == 11
+            allowed_signers = Path(command[4])
+            signature = Path(command[10])
+            assert command[3:] == [
+                "-f",
+                str(allowed_signers),
+                "-I",
+                "npa-customer-control-plane",
+                "-n",
+                module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature),
+            ]
+            assert allowed_signers.name == "allowed-signers"
+            assert signature == allowed_signers.with_name("authorization.sig")
+            assert kwargs["input"] == expected_signature_input
+            assert kwargs["stdout"] == module.subprocess.DEVNULL
+            assert kwargs["stderr"] == module.subprocess.DEVNULL
+            assert kwargs["env"] == {
+                "HOME": "/nonexistent",
+                "PATH": "/usr/bin:/bin",
+            }
+            assert kwargs["check"] is False
+            assert "capture_output" not in kwargs
+            assert "text" not in kwargs
+            return original_run(command, **kwargs)
+        assert command == ["/opt/npa/libero/smoke.sh"]
         if drift == "current-removed":
             current.unlink()
         else:
@@ -1041,12 +1229,9 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
 
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
-    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
+    with _execution_descriptors(module, args, final) as descriptors:
         with pytest.raises(module.BootstrapRefusal, match="changed|current link"):
-            module.execute(descriptor)
-    finally:
-        os.close(descriptor)
+            module.execute(*descriptors)
 
 
 def test_execution_process_inventory_requires_runtime_account(
@@ -1110,6 +1295,31 @@ def test_verified_warm_cache_reuse_performs_no_network_fetch(
     assert warm["warm_reuse"] is True
 
 
+def test_renewed_authorization_selects_a_distinct_bound_cache(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    _install_fake_materializers(monkeypatch, module, fixture)
+    first = module.ensure(args)
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    authorization["authorization_id"] = "libero-customer-authorization-0002"
+    authorization["nonce"] = "libero-customer-authorization-nonce-0002"
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        fixture["customer_private_key"].sign(
+            module._customer_authorization_signature_payload(authorization)
+        )
+    ).decode("ascii")
+    args.authorization_sha256 = _write_json(Path(args.authorization), authorization)
+
+    renewed = module.ensure(args)
+
+    assert first["warm_reuse"] is False
+    assert renewed["warm_reuse"] is False
+    assert first["cache_path"] != renewed["cache_path"]
+    assert Path(first["cache_path"]).is_dir()
+    assert Path(renewed["cache_path"]).is_dir()
+
+
 def test_manifest_cache_entry_symlink_to_output_refuses_without_network(
     monkeypatch, tmp_path
 ) -> None:
@@ -1143,19 +1353,24 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
     preserved = cache_root / ".preserved-final"
     output = Path(args.output_dir)
     output.mkdir()
-    original_identity = module._cache_entry_identity
+    original_identity = module._cache_entry_identity_at
     first = True
+    swapped_identity = None
 
-    def swap_after_initial_identity(path: Path):
-        nonlocal first
-        identity = original_identity(path)
-        if first and path == final:
+    def swap_after_initial_identity(parent_descriptor: int, name: str):
+        nonlocal first, swapped_identity
+        identity = original_identity(parent_descriptor, name)
+        if first and name == fixture["scope_sha"]:
             first = False
+            assert identity is not None
+            swapped_identity = identity
             final.rename(preserved)
             final.symlink_to(output, target_is_directory=True)
         return identity
 
-    monkeypatch.setattr(module, "_cache_entry_identity", swap_after_initial_identity)
+    monkeypatch.setattr(
+        module, "_cache_entry_identity_at", swap_after_initial_identity
+    )
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
@@ -1168,8 +1383,19 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
         ):
             module.ensure(args)
     finally:
-        final.unlink(missing_ok=True)
-        preserved.rename(final)
+        try:
+            preserved_info = os.lstat(preserved)
+        except FileNotFoundError:
+            preserved_info = None
+        if preserved_info is not None:
+            final_info = os.lstat(final)
+            assert swapped_identity is not None
+            assert stat.S_ISDIR(preserved_info.st_mode)
+            assert (preserved_info.st_dev, preserved_info.st_ino) == swapped_identity
+            assert stat.S_ISLNK(final_info.st_mode)
+            assert os.readlink(final) == str(output)
+            final.unlink()
+            preserved.rename(final)
 
     assert (cache_root / "current").resolve() == final.resolve()
 
@@ -1447,18 +1673,19 @@ def test_post_rename_rollback_attempts_independent_cleanup_after_fault(
 def test_inner_execution_rejects_path_substitution_after_outer_descriptor_open(
     monkeypatch, tmp_path
 ) -> None:
-    module, final, _current = _prepared_execute(monkeypatch, tmp_path)
-    descriptor = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    module, args, final, _current = _prepared_execute(monkeypatch, tmp_path)
     preserved = final.with_name(".outer-validated-cache")
-    final.rename(preserved)
-    final.mkdir(mode=0o550)
     try:
-        with pytest.raises(module.BootstrapRefusal, match="descriptor identity changed"):
-            module.execute(descriptor)
+        with _execution_descriptors(module, args, final) as descriptors:
+            final.rename(preserved)
+            final.mkdir(mode=0o550)
+            with pytest.raises(module.BootstrapRefusal, match="descriptor identity changed"):
+                module.execute(*descriptors)
     finally:
-        os.close(descriptor)
-        final.rmdir()
-        preserved.rename(final)
+        if final.exists():
+            final.rmdir()
+        if preserved.exists():
+            preserved.rename(final)
 
 
 def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
@@ -1471,14 +1698,75 @@ def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
     real_cache = tmp_path / "real-cache"
     real_cache.mkdir()
     Path(args.cache_root).symlink_to(real_cache, target_is_directory=True)
-    with pytest.raises(module.BootstrapRefusal, match="may not be a symlink"):
+    with pytest.raises(
+        module.BootstrapRefusal,
+        match="runtime cache root contains a link or invalid component",
+    ):
         module.ensure(args)
+
+
+def test_cache_root_creation_callback_refuses_concurrent_appearance(tmp_path) -> None:
+    module = _load_module()
+    cache_root = tmp_path / "cache"
+
+    def create_replacement(parent_descriptor: int, name: str) -> None:
+        parent = os.fstat(parent_descriptor)
+        expected_parent = os.stat(tmp_path, follow_symlinks=False)
+        assert (parent.st_dev, parent.st_ino) == (
+            expected_parent.st_dev,
+            expected_parent.st_ino,
+        )
+        os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+        replacement = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent_descriptor,
+        )
+        try:
+            marker = os.open(
+                "racer-owned",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=replacement,
+            )
+            os.write(marker, b"preserve")
+            os.close(marker)
+        finally:
+            os.close(replacement)
+
+    with pytest.raises(module.BootstrapRefusal, match="appeared during creation"):
+        with module._open_cache_root_descriptor(
+            cache_root,
+            create=True,
+            before_create=create_replacement,
+        ):
+            pytest.fail("concurrent cache root was trusted")
+
+    assert (cache_root / "racer-owned").read_bytes() == b"preserve"
+
+
+def test_cache_lock_refuses_a_symlink_through_the_retained_root(tmp_path) -> None:
+    module = _load_module()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"")
+    (cache / ".bootstrap.lock").symlink_to(outside)
+    descriptor = os.open(cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="lock is unavailable"):
+            with module._cache_lock(
+                descriptor, ".bootstrap.lock", exclusive=True, create=False
+            ):
+                pytest.fail("symlinked lock was acquired")
+    finally:
+        os.close(descriptor)
 
 
 def test_customer_authorization_must_be_owner_private_regular_file(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     os.chmod(args.authorization, 0o644)
-    with pytest.raises(module.BootstrapRefusal, match="not stable owner-private"):
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization file invalid"):
         module.ensure(args)
 
 
@@ -1695,6 +1983,9 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     output = tmp_path / "run-output"
     output.mkdir()
     output.chmod(0o1770)
+    protected_authorization = output / module.PROTECTED_AUTHORIZATION_NAME
+    protected_authorization.write_bytes(Path(args.authorization).read_bytes())
+    protected_authorization.chmod(0o600)
     output_identity = (output.stat().st_dev, output.stat().st_ino)
     replaced_output = tmp_path / "replaced-run-output"
     (output / "libero-smoke.json").write_text("{}\n", encoding="utf-8")
@@ -1719,18 +2010,43 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     class Completed:
         returncode = 0
 
+    original_run = module.subprocess.run
+
     def fake_run(command, **kwargs):
+        if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            assert len(command) == 11
+            allowed_signers = Path(command[4])
+            signature = Path(command[10])
+            assert command[3:] == [
+                "-f",
+                str(allowed_signers),
+                "-I",
+                "npa-customer-control-plane",
+                "-n",
+                module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature),
+            ]
+            assert allowed_signers.name == "allowed-signers"
+            assert signature == allowed_signers.with_name("authorization.sig")
+            return original_run(command, **kwargs)
         assert command == [
             "/usr/bin/sudo",
             "--close-from",
-            str(module.INHERITED_CACHE_DESCRIPTOR + 1),
+            str(module.INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
             "--user=npa-libero-exec",
             "/opt/npa/libero/runtime-bootstrap.py",
             "execute",
         ]
-        assert kwargs["pass_fds"] == (module.INHERITED_CACHE_DESCRIPTOR,)
+        assert kwargs["pass_fds"] == (
+            module.INHERITED_CACHE_DESCRIPTOR,
+            module.INHERITED_AUTHORIZATION_DESCRIPTOR,
+            module.INHERITED_EXECUTION_LOCK_DESCRIPTOR,
+            module.INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR,
+        )
         opened = os.fstat(module.INHERITED_CACHE_DESCRIPTOR)
         assert stat.S_ISDIR(opened.st_mode)
+        assert stat.S_ISREG(os.fstat(module.INHERITED_AUTHORIZATION_DESCRIPTOR).st_mode)
         environment = kwargs["env"]
         assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(environment)
         assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in environment
@@ -1739,6 +2055,12 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
         assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
         assert environment["PATH"] == "/usr/bin:/bin"
+        with (Path(args.cache_root) / ".execution.lock").open("rb") as competing:
+            with pytest.raises(BlockingIOError):
+                module.fcntl.flock(
+                    competing,
+                    module.fcntl.LOCK_EX | module.fcntl.LOCK_NB,
+                )
         if replace_output_root:
             output.rename(replaced_output)
             output.mkdir()
@@ -1752,6 +2074,12 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
         opened = os.fstat(root_fd)
         assert (opened.st_dev, opened.st_ino) == output_identity
         with lock_path.open("rb") as competing:
+            with pytest.raises(BlockingIOError):
+                module.fcntl.flock(
+                    competing,
+                    module.fcntl.LOCK_EX | module.fcntl.LOCK_NB,
+                )
+        with (Path(args.cache_root) / ".execution.lock").open("rb") as competing:
             with pytest.raises(BlockingIOError):
                 module.fcntl.flock(
                     competing,
@@ -1778,6 +2106,67 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     assert (output / "npa_runtime_bootstrap.json").read_bytes() == receipt.read_bytes()
     assert (output / "npa_runtime_metadata.json").is_file()
     assert output.stat().st_mode & 0o7777 == 0o700
+    assert not protected_authorization.exists()
+
+
+@pytest.mark.parametrize("fail_put", [None, 2])
+def test_output_upload_commits_only_after_unique_staging_readback(
+    monkeypatch, tmp_path, fail_put
+) -> None:
+    module, _args, fixture = _fixture(tmp_path)
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    for name in set(module.OUTPUT_SIZE_LIMITS) - {"npa_byof_summary.json"}:
+        (output / name).write_bytes(f"fixture:{name}\n".encode())
+    run_id = fixture["run_id"]
+    monkeypatch.setenv("NPA_BYOF_RUN_ID", run_id)
+    monkeypatch.setenv("S3_OUTPUT_PREFIX", f"s3://fixture-bucket/byof/{run_id}/")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.fixture.invalid")
+    capability = {"capability_id": "libero-output-capability-fixture-0001"}
+    validation_calls = 0
+
+    def validate_storage(*_args, **_kwargs):
+        nonlocal validation_calls
+        validation_calls += 1
+        return capability
+
+    objects: dict[str, bytes] = {}
+    puts: list[str] = []
+
+    def request(method, url, *, payload=b"", extra_headers=None):
+        if method == "PUT":
+            puts.append(url)
+            if fail_put is not None and len(puts) == fail_put:
+                raise module.BootstrapRefusal("injected staging upload failure")
+            objects[url] = payload
+            return {}, b""
+        observed = objects[url]
+        return {
+            "x-amz-checksum-sha256": module.base64.b64encode(
+                bytes.fromhex(hashlib.sha256(observed).hexdigest())
+            ).decode()
+        }, observed
+
+    monkeypatch.setattr(module, "_storage_authorization", validate_storage)
+    monkeypatch.setattr(module, "_sigv4_request", request)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if fail_put is not None:
+            with pytest.raises(module.BootstrapRefusal, match="injected staging"):
+                module.upload_outputs(0, root_fd=root_fd)
+            assert not any(url.endswith("/npa_output_commit.json") for url in puts)
+            return
+        result = module.upload_outputs(0, root_fd=root_fd)
+    finally:
+        os.close(root_fd)
+
+    assert result["status"] == "verified"
+    assert puts[-1].endswith("/npa_output_commit.json")
+    assert all(
+        f"/.npa-staging/{run_id}/{result['transaction_id']}/" in url
+        for url in puts[:-1]
+    )
+    assert validation_calls == len(puts) + 1
 
 
 def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(

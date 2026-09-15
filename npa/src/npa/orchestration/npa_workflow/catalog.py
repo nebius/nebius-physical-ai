@@ -99,6 +99,8 @@ _BYOF_REPO_ARGV = [
     "{{config.libero_qualified_candidate_image}}",
     "--libero-customer-runtime-authorization-file",
     "{{config.libero_customer_runtime_authorization_file}}",
+    "--libero-authenticated-caller-identity-file",
+    "{{config.libero_authenticated_caller_identity_file}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -125,6 +127,7 @@ _BYOF_REPO_CONFIG_DEFAULTS = {
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
     "libero_customer_runtime_authorization_file": "",
+    "libero_authenticated_caller_identity_file": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]

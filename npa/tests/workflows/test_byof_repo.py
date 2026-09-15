@@ -69,6 +69,11 @@ def _libero_contract_args(
     authorization_sha256 = hashlib.sha256(
         authorization_path.read_bytes()
     ).hexdigest()
+    caller_bytes = b'{"fixture":"authenticated-caller"}\n'
+    caller_path = tmp_path / "libero-authenticated-caller.json"
+    caller_path.write_bytes(caller_bytes)
+    caller_path.chmod(0o600)
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
     qualification = {
         "development_sha": "a" * 40,
         "candidate_image": authorization["candidate_image"],
@@ -98,13 +103,31 @@ def _libero_contract_args(
         "--libero-qualified-candidate-image",
         str(authorization["candidate_image"]),
         "--libero-customer-runtime-authorization-file", str(authorization_path),
+        "--libero-authenticated-caller-identity-file", str(caller_path),
     ]
     return arguments, {
         "image_manifest": {"qualification": qualification},
         "qualification": qualification,
         "authorization": authorization,
         "authorization_sha256": authorization_sha256,
+        "caller_bytes": caller_bytes,
+        "caller_sha256": caller_sha256,
     }
+
+
+def _mock_libero_caller(module, monkeypatch, contract) -> None:
+    monkeypatch.setattr(
+        module,
+        "validate_libero_authenticated_caller_assertion",
+        lambda *_args, **_kwargs: (
+            {
+                "customer_identity_sha256": contract["authorization"][
+                    "customer_identity_sha256"
+                ]
+            },
+            contract["caller_sha256"],
+        ),
+    )
 
 
 def test_libero_outer_contract_constants_match_reviewed_workflow() -> None:
@@ -163,6 +186,43 @@ def test_libero_missing_customer_authorization_notifies_before_registry(
     }
 
 
+def test_libero_requires_independently_authenticated_caller_before_authorization(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, contract = _libero_contract_args(tmp_path)
+    image_manifest = json.loads(json.dumps(module.libero_image_manifest()))
+    image_manifest["qualification"] = contract["qualification"]
+    caller_index = arguments.index("--libero-authenticated-caller-identity-file")
+    del arguments[caller_index : caller_index + 2]
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: image_manifest)
+    monkeypatch.setattr(
+        module,
+        "validate_libero_qualified_image_manifest",
+        lambda _value: contract["qualification"],
+    )
+    monkeypatch.setattr(
+        module, "libero_publication_lineage_values", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_libero_customer_runtime_authorization",
+        lambda *_args, **_kwargs: pytest.fail(
+            "authorization was evaluated before caller authentication"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry must remain untouched"),
+    )
+
+    assert module.main(["--run-id", "libero-managed-route", *arguments]) == 3
+    notification = json.loads(capsys.readouterr().out)
+    assert notification["status"] == "needs_customer_acceptance"
+    assert notification["reason"] == "authenticated_customer_identity_required"
+
+
 def test_libero_signed_denial_notifies_only_after_validation(
     monkeypatch, capsys, tmp_path
 ) -> None:
@@ -193,6 +253,7 @@ def test_libero_signed_denial_notifies_only_after_validation(
         "libero_publication_lineage_values",
         lambda *_args, **_kwargs: {},
     )
+    _mock_libero_caller(module, monkeypatch, contract)
     monkeypatch.setattr(
         module,
         "validate_libero_customer_runtime_authorization",
@@ -229,6 +290,7 @@ def test_libero_symlinked_customer_authorization_is_hard_failure(
     monkeypatch.setattr(
         module, "libero_publication_lineage_values", lambda *_args, **_kwargs: {}
     )
+    _mock_libero_caller(module, monkeypatch, contract)
     monkeypatch.setattr(
         module,
         "resolve_container_registry",
@@ -247,15 +309,17 @@ def test_libero_customer_authorization_rejects_descriptor_metadata_race(
     module = _load_module()
     arguments, contract = _libero_contract_args(tmp_path)
     args = module._parse_args(["--run-id", "libero-managed-route", *arguments])
+    _mock_libero_caller(module, monkeypatch, contract)
     authorization_path = Path(args.libero_customer_runtime_authorization_file)
+    authorization_inode = authorization_path.stat().st_ino
     original_fstat = module.os.fstat
-    first_fstat = True
+    authorization_fstat_seen = False
 
     def racing_fstat(descriptor):
-        nonlocal first_fstat
+        nonlocal authorization_fstat_seen
         metadata = original_fstat(descriptor)
-        if first_fstat:
-            first_fstat = False
+        if metadata.st_ino == authorization_inode and not authorization_fstat_seen:
+            authorization_fstat_seen = True
             os.utime(
                 authorization_path,
                 ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
@@ -949,6 +1013,13 @@ def test_libero_live_environment_never_loads_saved_project_storage(
     monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("NPA_S3_BUCKET", "manager-bucket")
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "/owner/customer-key"
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE",
+        "/owner/storage-key",
+    )
 
     env = module._live_runner_env("saved-project", libero=True)
 
@@ -1009,6 +1080,7 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             contract["authorization_sha256"],
         ),
     )
+    _mock_libero_caller(module, monkeypatch, contract)
     seen: dict[str, object] = {}
 
     def validate_lineage(value, repository_root, *, development_sha):
@@ -1041,6 +1113,13 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
     monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "/owner/customer-key"
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE",
+        "/owner/storage-key",
+    )
 
     def fake_run(cmd, **_kwargs):
         if str(module.CONTAINER_VERIFY_RUNNER) in cmd:

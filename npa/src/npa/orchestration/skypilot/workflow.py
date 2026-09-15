@@ -872,6 +872,10 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
         raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
     prepared.yaml_path.write_bytes(prepared_profile_bytes)
     _chmod_owner_only(prepared.yaml_path)
+    if prepared.libero_submission:
+        # Seal the exact accepted bytes before controller or workload effects.
+        prepared.config_path.chmod(0o400)
+        prepared.yaml_path.chmod(0o400)
 
 
 def _prepare_workflow_submission(

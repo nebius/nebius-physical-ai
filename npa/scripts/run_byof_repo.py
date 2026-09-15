@@ -21,11 +21,14 @@ from typing import Any
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
+    LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+    LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
     LiberoCustomerAuthorizationDenied,
     container_image_for_tool,
     libero_customer_acceptance_notification,
     libero_image_manifest,
     libero_publication_lineage_values,
+    validate_libero_authenticated_caller_assertion,
     validate_libero_customer_runtime_authorization,
     validate_libero_qualified_image_manifest,
     wan_accepted_image_manifest,
@@ -161,22 +164,87 @@ def _libero_qualified_candidate(value: str, qualification: dict[str, Any]) -> st
 
 def _libero_customer_authorization(
     args: argparse.Namespace, image_manifest: dict[str, Any]
-) -> tuple[Path, bytes, str, str]:
+) -> tuple[Path, bytes, str, str, bytes, str]:
+    caller_path_value = str(
+        args.libero_authenticated_caller_identity_file or ""
+    ).strip()
+    if not caller_path_value:
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(
+                image_manifest, reason="authenticated_customer_identity_required"
+            )
+        )
+    caller_bytes = _owner_private_file_bytes(
+        Path(caller_path_value).expanduser(), label="authenticated caller assertion"
+    )
+    try:
+        caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
+            caller_bytes, run_id=args.run_id
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    customer_identity_sha256 = str(caller["customer_identity_sha256"])
     path_value = str(args.libero_customer_runtime_authorization_file or "").strip()
     if not path_value:
         raise LiberoCustomerAcceptanceRequired(
             libero_customer_acceptance_notification(image_manifest)
         )
     path = Path(path_value).expanduser()
+    authorization_bytes = _owner_private_file_bytes(
+        path, label="customer authorization"
+    )
+    try:
+        authorization, observed = validate_libero_customer_runtime_authorization(
+            authorization_bytes,
+            image_manifest=image_manifest,
+            run_id=args.run_id,
+            customer_identity_sha256=customer_identity_sha256,
+        )
+    except LiberoCustomerAuthorizationDenied as exc:
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(
+                image_manifest, reason="authorization_denied"
+            )
+        ) from exc
+    except RuntimeError as exc:
+        message = str(exc)
+        if any(
+            infrastructure_failure in message
+            for infrastructure_failure in (
+                "trust-root file is unavailable",
+                "trust-root file is mutable or invalid",
+                "trust root differs",
+            )
+        ):
+            raise ValueError(message) from exc
+        reason = (
+            "authorization_expired_or_replayable"
+            if "expired or replayable" in message
+            else "authorization_invalid"
+        )
+        raise LiberoCustomerAcceptanceRequired(
+            libero_customer_acceptance_notification(image_manifest, reason=reason)
+        ) from exc
+    return (
+        path,
+        authorization_bytes,
+        observed,
+        customer_identity_sha256,
+        caller_bytes,
+        caller_sha256,
+    )
+
+
+def _owner_private_file_bytes(path: Path, *, label: str) -> bytes:
+    """Read one stable owner-private control-plane artifact."""
+
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except FileNotFoundError as exc:
-        raise LiberoCustomerAcceptanceRequired(
-            libero_customer_acceptance_notification(image_manifest)
-        ) from exc
+        raise ValueError(f"LIBERO {label} file is unavailable") from exc
     except OSError as exc:
         raise ValueError(
-            "LIBERO customer authorization file is unavailable or invalid"
+            f"LIBERO {label} file is unavailable or invalid"
         ) from exc
     try:
         before = os.fstat(descriptor)
@@ -196,28 +264,9 @@ def _libero_customer_authorization(
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
         raise ValueError(
-            "LIBERO customer authorization must be a stable owner-private regular file"
+            f"LIBERO {label} must be a stable owner-private regular file"
         )
-    try:
-        authorization, observed = validate_libero_customer_runtime_authorization(
-            authorization_bytes,
-            image_manifest=image_manifest,
-            run_id=args.run_id,
-        )
-    except LiberoCustomerAuthorizationDenied as exc:
-        raise LiberoCustomerAcceptanceRequired(
-            libero_customer_acceptance_notification(
-                image_manifest, reason="authorization_denied"
-            )
-        ) from exc
-    except RuntimeError as exc:
-        raise ValueError(str(exc)) from exc
-    return (
-        path,
-        authorization_bytes,
-        observed,
-        str(authorization["customer_identity_sha256"]),
-    )
+    return authorization_bytes
 
 
 def _validate_libero_identity(args: argparse.Namespace) -> None:
@@ -300,10 +349,14 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         authorization_bytes,
         authorization_sha256,
         customer_identity_sha256,
+        caller_bytes,
+        caller_sha256,
     ) = _libero_customer_authorization(args, image_manifest)
     args._libero_customer_authorization_bytes = authorization_bytes
     args._libero_customer_authorization_sha256 = authorization_sha256
     args._libero_customer_identity_sha256 = customer_identity_sha256
+    args._libero_authenticated_caller_bytes = caller_bytes
+    args._libero_authenticated_caller_sha256 = caller_sha256
 
 
 def _image_repository_name(image_ref: str) -> str:
@@ -498,6 +551,8 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "AWS_SESSION_TOKEN",
+            LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+            LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
         )
         exact_values = {name: str(os.environ.get(name) or "") for name in exact_names}
         if not all(exact_values.values()):
@@ -1018,6 +1073,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--libero-customer-runtime-authorization-file", default="")
+    parser.add_argument("--libero-authenticated-caller-identity-file", default="")
     parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
@@ -1529,6 +1585,12 @@ def _run_byof(
                         ),
                         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": (
                             args._libero_customer_identity_sha256
+                        ),
+                        "NPA_LIBERO_AUTHENTICATED_CALLER_B64": base64.b64encode(
+                            args._libero_authenticated_caller_bytes
+                        ).decode("ascii"),
+                        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": (
+                            args._libero_authenticated_caller_sha256
                         ),
                         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256": (
                             args._libero_qualification[

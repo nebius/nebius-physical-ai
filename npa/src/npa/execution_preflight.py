@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -35,6 +34,14 @@ class ExecutionPreflightError(RuntimeError):
         super().__init__(f"execution preflight {check}: {reason}")
 
 
+class _LiberoCallerAuthenticationError(RuntimeError):
+    """The independent initiating-caller assertion is absent or invalid."""
+
+
+class _LiberoCustomerAuthorizationInvalid(RuntimeError):
+    """The customer must renew or correct the signed runtime authorization."""
+
+
 LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_OFFICIAL_IMAGE_REPOSITORY = (
     "ghcr.io/nebius/nebius-physical-ai/npa-libero"
@@ -48,6 +55,8 @@ LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
     "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+    "NPA_LIBERO_AUTHENTICATED_CALLER_B64",
+    "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
     "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
 )
 
@@ -625,6 +634,17 @@ def _verify_libero_submission_authorization(
             "LIBERO customer declined the required runtime terms",
             status="needs_customer_acceptance",
         ) from exc
+    except _LiberoCustomerAuthorizationInvalid as exc:
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO customer/run authorization is invalid",
+            status="needs_customer_acceptance",
+        ) from exc
+    except _LiberoCallerAuthenticationError as exc:
+        raise ExecutionPreflightError(
+            "authorization",
+            "LIBERO authenticated caller identity is invalid",
+        ) from exc
     except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
         raise ExecutionPreflightError(
             "authorization",
@@ -705,26 +725,60 @@ def _libero_submission_authorization(
 ) -> tuple[dict[str, Any], str]:
     """Validate customer acceptance against an independently qualified image."""
 
-    authorization_bytes = base64.b64decode(
-        process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""),
-        validate=True,
-    )
     from npa.deploy.images import (
         LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+        LiberoCustomerAuthorizationDenied,
+        validate_libero_authenticated_caller_assertion,
         validate_libero_customer_runtime_authorization,
     )
 
-    authorization, authorization_sha256 = validate_libero_customer_runtime_authorization(
-        authorization_bytes,
-        image_manifest=image_manifest,
-        run_id=run_id,
-        customer_identity_sha256=process_env.get(
-            "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
-        ),
-        public_key_file=process_env.get(
-            LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
-        ),
-    )
+    try:
+        caller_bytes = base64.b64decode(
+            process_env.get("NPA_LIBERO_AUTHENTICATED_CALLER_B64", ""), validate=True
+        )
+        caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
+            caller_bytes,
+            run_id=run_id,
+            public_key_file=process_env.get(
+                LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+            ),
+        )
+    except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        raise _LiberoCallerAuthenticationError(
+            "LIBERO authenticated caller identity is invalid"
+        ) from exc
+    customer_identity = str(caller["customer_identity_sha256"])
+    if (
+        process_env.get("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", "")
+        != caller_sha256
+        or process_env.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "")
+        != customer_identity
+    ):
+        raise _LiberoCallerAuthenticationError(
+            "LIBERO authenticated caller identity differs"
+        )
+    try:
+        authorization_bytes = base64.b64decode(
+            process_env.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""),
+            validate=True,
+        )
+        authorization, authorization_sha256 = (
+            validate_libero_customer_runtime_authorization(
+                authorization_bytes,
+                image_manifest=image_manifest,
+                run_id=run_id,
+                customer_identity_sha256=customer_identity,
+                public_key_file=process_env.get(
+                    LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+                ),
+            )
+        )
+    except LiberoCustomerAuthorizationDenied:
+        raise
+    except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        raise _LiberoCustomerAuthorizationInvalid(
+            "LIBERO customer/run authorization is invalid"
+        ) from exc
     return authorization, authorization_sha256
 
 
@@ -754,18 +808,6 @@ def _verify_libero_output_storage_authorization(
         raise ValueError("LIBERO requires one exact output storage endpoint")
     output_prefix = prefixes.pop().rstrip("/") + "/"
     endpoint = endpoints.pop()
-    parsed_endpoint = urlparse(endpoint)
-    if (
-        parsed_endpoint.scheme != "https"
-        or not parsed_endpoint.hostname
-        or parsed_endpoint.username is not None
-        or parsed_endpoint.password is not None
-        or parsed_endpoint.path not in {"", "/"}
-        or parsed_endpoint.params
-        or parsed_endpoint.query
-        or parsed_endpoint.fragment
-    ):
-        raise ValueError("LIBERO output storage endpoint must be origin-only HTTPS")
     configured_endpoints = {
         str(process_env.get(name) or "").strip().rstrip("/")
         for name in STORAGE_ENDPOINT_ENV_NAMES
@@ -774,39 +816,30 @@ def _verify_libero_output_storage_authorization(
     if configured_endpoints != {endpoint}:
         raise ValueError("LIBERO output endpoint differs from the executing environment")
 
-    expected_authorization_hashes = {
-        str(
-            (document.get("envs") or {}).get(
-                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"
-            )
-            or ""
-        )
-        for document in task_documents
-    }
-    expected_prefix_hashes = {
-        str(
-            (document.get("envs") or {}).get(
-                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"
-            )
-            or ""
-        )
-        for document in task_documents
-    }
-    expected_policy_hashes = {
-        str(
-            (document.get("envs") or {}).get(
-                "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"
-            )
-            or ""
-        )
-        for document in task_documents
-    }
+    def exact_expected(name: str) -> str:
+        values = {
+            str((document.get("envs") or {}).get(name) or "")
+            for document in task_documents
+        }
+        if len(values) != 1 or not next(iter(values), ""):
+            raise ValueError("LIBERO output storage binding is incomplete")
+        return values.pop()
+
+    expected_authorization_sha256 = exact_expected(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"
+    )
+    expected_prefix_sha256 = exact_expected(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"
+    )
+    expected_policy_sha256 = exact_expected(
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"
+    )
     if any(
-        len(values) != 1 or not next(iter(values), "")
-        for values in (
-            expected_authorization_hashes,
-            expected_prefix_hashes,
-            expected_policy_hashes,
+        re.fullmatch(r"[0-9a-f]{64}", value) is None
+        for value in (
+            expected_authorization_sha256,
+            expected_prefix_sha256,
+            expected_policy_sha256,
         )
     ):
         raise ValueError("LIBERO output storage binding is incomplete")
@@ -817,77 +850,30 @@ def _verify_libero_output_storage_authorization(
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO output storage authorization is invalid") from exc
-    if hashlib.sha256(payload).hexdigest() != expected_authorization_hashes.pop():
+    if hashlib.sha256(payload).hexdigest() != expected_authorization_sha256:
         raise ValueError("LIBERO output storage authorization is not bound")
-    try:
-        authorization = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("LIBERO output storage authorization is invalid") from exc
-    expected_keys = {
-        "schema",
-        "issuer",
-        "run_id",
-        "output_prefix",
-        "endpoint_url",
-        "access_key_id_sha256",
-        "secret_access_key_sha256",
-        "session_token_sha256",
-        "policy_sha256",
-        "issued_at",
-        "expires_at",
-        "nonce",
-    }
-    if not isinstance(authorization, Mapping) or set(authorization) != expected_keys:
-        raise ValueError("LIBERO output storage authorization schema is not closed")
-    access_key = str(process_env.get("AWS_ACCESS_KEY_ID") or "")
-    secret_key = str(process_env.get("AWS_SECRET_ACCESS_KEY") or "")
-    session_token = str(process_env.get("AWS_SESSION_TOKEN") or "")
-    try:
-        issued_at = datetime.fromisoformat(
-            str(authorization["issued_at"]).replace("Z", "+00:00")
-        )
-        expires_at = datetime.fromisoformat(
-            str(authorization["expires_at"]).replace("Z", "+00:00")
-        )
-        customer_authorization_expires_at = datetime.fromisoformat(
-            str(customer_authorization["expires_at"]).replace("Z", "+00:00")
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
-    now = datetime.now(timezone.utc)
-    valid = (
-        authorization.get("schema")
-        == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-control-plane"
-        and authorization.get("run_id") == run_id
-        and authorization.get("output_prefix") == output_prefix
-        and authorization.get("endpoint_url") == endpoint
-        and hashlib.sha256(output_prefix.encode()).hexdigest()
-        == expected_prefix_hashes.pop()
-        and authorization.get("policy_sha256")
-        == expected_policy_hashes.pop()
-        and all((access_key, secret_key, session_token))
-        and authorization.get("access_key_id_sha256")
-        == hashlib.sha256(access_key.encode()).hexdigest()
-        and authorization.get("secret_access_key_sha256")
-        == hashlib.sha256(secret_key.encode()).hexdigest()
-        and authorization.get("session_token_sha256")
-        == hashlib.sha256(session_token.encode()).hexdigest()
-        and re.fullmatch(
-            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
-        )
-        is not None
-        and issued_at.tzinfo is not None
-        and expires_at.tzinfo is not None
-        and customer_authorization_expires_at.tzinfo is not None
-        and issued_at <= now + timedelta(minutes=5)
-        and issued_at < expires_at
-        and expires_at > now
-        and expires_at - issued_at <= timedelta(hours=24)
-        and expires_at <= customer_authorization_expires_at
+    if hashlib.sha256(output_prefix.encode()).hexdigest() != expected_prefix_sha256:
+        raise ValueError("LIBERO output storage prefix is not bound")
+    from npa.deploy.images import (
+        libero_image_manifest,
+        validate_libero_output_storage_authorization,
     )
-    if not valid:
-        raise ValueError("LIBERO output storage authorization is invalid or expired")
+
+    try:
+        validate_libero_output_storage_authorization(
+            payload,
+            image_manifest=libero_image_manifest(),
+            customer_authorization=dict(customer_authorization),
+            run_id=run_id,
+            output_prefix=output_prefix,
+            endpoint_url=endpoint,
+            access_key_id=str(process_env.get("AWS_ACCESS_KEY_ID") or ""),
+            secret_access_key=str(process_env.get("AWS_SECRET_ACCESS_KEY") or ""),
+            session_token=str(process_env.get("AWS_SESSION_TOKEN") or ""),
+            expected_policy_sha256=expected_policy_sha256,
+        )
+    except RuntimeError as exc:
+        raise ValueError("LIBERO output storage authorization is invalid") from exc
 
 
 def preflight_skypilot_submission(

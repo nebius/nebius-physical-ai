@@ -10,11 +10,13 @@ import hashlib
 import io
 import json
 import lzma
+import mmap
 import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -487,34 +489,51 @@ def _normalized_tar_path(name: str) -> str:
     return "/".join(parts)
 
 
-def _uncompressed_tar_bytes(path: Path) -> bytes:
+@contextmanager
+def _uncompressed_tar_file(path: Path) -> Any:
+    """Yield a seekable bounded tar stream without retaining archive bytes in RAM."""
+
     if path.stat().st_size > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
         raise RuntimeError("compressed archive exceeds the scanner size budget")
-    payload = path.read_bytes()
-    stream: Any
-    if payload.startswith(b"\x1f\x8b"):
-        stream = gzip.GzipFile(fileobj=io.BytesIO(payload))
-    elif payload.startswith(b"BZh"):
-        stream = bz2.BZ2File(io.BytesIO(payload))
-    elif payload.startswith(b"\xfd7zXZ\x00"):
-        stream = lzma.LZMAFile(io.BytesIO(payload))
-    elif payload.startswith(b"\x28\xb5\x2f\xfd"):
-        if walker.zstd is None:
-            raise RuntimeError("zstd archive cannot be accounted without zstandard")
-        stream = walker.zstd.ZstdDecompressor().stream_reader(io.BytesIO(payload))
-    else:
-        return payload
+    source = path.open("rb")
+    temporary: Any | None = None
+    decompressor: Any | None = None
     try:
-        chunks: list[bytes] = []
+        magic = source.read(6)
+        source.seek(0)
+        if magic.startswith(b"\x1f\x8b"):
+            decompressor = gzip.GzipFile(fileobj=source)
+        elif magic.startswith(b"BZh"):
+            decompressor = bz2.BZ2File(source)
+        elif magic.startswith(b"\xfd7zXZ\x00"):
+            decompressor = lzma.LZMAFile(source)
+        elif magic.startswith(b"\x28\xb5\x2f\xfd"):
+            if walker.zstd is None:
+                raise RuntimeError("zstd archive cannot be accounted without zstandard")
+            decompressor = walker.zstd.ZstdDecompressor().stream_reader(source)
+        stream = decompressor or source
+        output = source
+        if decompressor is not None:
+            temporary = tempfile.TemporaryFile(mode="w+b")
+            output = temporary
+        digest = hashlib.sha256()
         total = 0
         while chunk := stream.read(1024 * 1024):
             total += len(chunk)
             if total > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
                 raise RuntimeError("uncompressed archive exceeds the scanner size budget")
-            chunks.append(chunk)
-        return b"".join(chunks)
+            digest.update(chunk)
+            if temporary is not None:
+                temporary.write(chunk)
+        output.flush()
+        output.seek(0)
+        yield output, total, digest.hexdigest()
     finally:
-        stream.close()
+        if decompressor is not None:
+            decompressor.close()
+        if temporary is not None:
+            temporary.close()
+        source.close()
 
 
 def _archive_records(
@@ -527,128 +546,131 @@ def _archive_records(
     list[walker.Finding],
     _ArchiveIdentity,
 ]:
-    payload = _uncompressed_tar_bytes(path)
-    identity = _ArchiveIdentity(
-        sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload)
-    )
     findings: list[walker.Finding] = []
-    if len(payload) % tarfile.BLOCKSIZE:
-        findings.append(
-            walker.Finding(
-                "unaccounted_archive_bytes",
-                path.name,
-                "decompressed tar length is not block aligned",
-            )
-        )
     records: list[tuple[tarfile.TarInfo, str, tuple[object, ...]]] = []
     cursor = 0
-    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
-        for member in archive:
-            try:
-                normalized = _normalized_tar_path(member.name)
-            except ValueError as exc:
-                findings.append(
-                    walker.Finding("unsafe_archive_member", member.name, str(exc))
+    with _uncompressed_tar_file(path) as (stream, size_bytes, sha256):
+        identity = _ArchiveIdentity(sha256=sha256, size_bytes=size_bytes)
+        if size_bytes % tarfile.BLOCKSIZE:
+            findings.append(
+                walker.Finding(
+                    "unaccounted_archive_bytes",
+                    path.name,
+                    "decompressed tar length is not block aligned",
                 )
-                continue
-            if member.offset < cursor or member.offset_data < member.offset:
-                findings.append(
-                    walker.Finding(
-                        "overlapping_archive_member",
-                        normalized,
-                        f"invalid tar offsets in {path.name}",
-                    )
-                )
-                continue
-            if any(payload[cursor : member.offset]):
+            )
+        mapped = mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                for member in archive:
+                    try:
+                        normalized = _normalized_tar_path(member.name)
+                    except ValueError as exc:
+                        findings.append(
+                            walker.Finding("unsafe_archive_member", member.name, str(exc))
+                        )
+                        continue
+                    if member.offset < cursor or member.offset_data < member.offset:
+                        findings.append(
+                            walker.Finding(
+                                "overlapping_archive_member",
+                                normalized,
+                                f"invalid tar offsets in {path.name}",
+                            )
+                        )
+                        continue
+                    if any(memoryview(mapped)[cursor : member.offset]):
+                        findings.append(
+                            walker.Finding(
+                                "unaccounted_archive_bytes",
+                                normalized,
+                                f"nonzero bytes precede a member in {path.name}",
+                            )
+                        )
+                    data_end = member.offset_data + member.size
+                    padded_end = (data_end + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+                    padded_end *= tarfile.BLOCKSIZE
+                    if data_end > size_bytes:
+                        findings.append(
+                            walker.Finding(
+                                "truncated_archive_member",
+                                normalized,
+                                f"member exceeds {path.name}",
+                            )
+                        )
+                        continue
+                    if any(memoryview(mapped)[data_end:padded_end]):
+                        findings.append(
+                            walker.Finding(
+                                "nonzero_archive_padding",
+                                normalized,
+                                f"member padding contains bytes in {path.name}",
+                            )
+                        )
+                    descriptor: tuple[object, ...]
+                    if member.isfile():
+                        content = memoryview(mapped)[member.offset_data:data_end]
+                        content_sha256 = hashlib.sha256(content).hexdigest()
+                        descriptor = ("file", member.size, content_sha256)
+                        forbidden = scan_payload_content and any(
+                            pattern.search(content) for pattern in FORBIDDEN_PAYLOAD_CONTENT
+                        )
+                        if forbidden and (
+                            NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST.get(normalized)
+                            != content_sha256
+                        ):
+                            findings.append(
+                                walker.Finding(
+                                    "renamed_runtime_payload_content",
+                                    normalized,
+                                    "forbidden source signature is not the reviewed neutral smoke driver",
+                                )
+                            )
+                        if content_sha256 in payload_hashes:
+                            findings.append(
+                                walker.Finding(
+                                    "exact_runtime_payload_bytes",
+                                    normalized,
+                                    "file bytes equal a runtime-only source, package, model, or data artifact",
+                                )
+                            )
+                        content.release()
+                    elif member.isdir():
+                        descriptor = ("directory",)
+                    elif member.issym():
+                        descriptor = ("symlink", member.linkname)
+                    elif member.islnk():
+                        try:
+                            target = _normalized_tar_path(member.linkname)
+                        except ValueError as exc:
+                            findings.append(
+                                walker.Finding("unsafe_archive_hardlink", normalized, str(exc))
+                            )
+                            target = ""
+                        descriptor = ("hardlink", target)
+                    elif member.ischr() and member.devmajor == 0 and member.devminor == 0:
+                        descriptor = ("whiteout-device", member.size)
+                    else:
+                        descriptor = ("unsupported", member.type.decode(errors="replace"))
+                        findings.append(
+                            walker.Finding(
+                                "unsupported_archive_member",
+                                normalized,
+                                f"unsupported tar member type in {path.name}",
+                            )
+                        )
+                    records.append((member, normalized, descriptor))
+                    cursor = padded_end
+            if any(memoryview(mapped)[cursor:]):
                 findings.append(
                     walker.Finding(
                         "unaccounted_archive_bytes",
-                        normalized,
-                        f"nonzero bytes precede a member in {path.name}",
+                        path.name,
+                        "nonzero bytes remain after the final accounted member",
                     )
                 )
-            data_end = member.offset_data + member.size
-            padded_end = (data_end + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
-            padded_end *= tarfile.BLOCKSIZE
-            if data_end > len(payload):
-                findings.append(
-                    walker.Finding(
-                        "truncated_archive_member",
-                        normalized,
-                        f"member exceeds {path.name}",
-                    )
-                )
-                continue
-            if any(payload[data_end:padded_end]):
-                findings.append(
-                    walker.Finding(
-                        "nonzero_archive_padding",
-                        normalized,
-                        f"member padding contains bytes in {path.name}",
-                    )
-                )
-            descriptor: tuple[object, ...]
-            if member.isfile():
-                content = payload[member.offset_data : data_end]
-                content_sha256 = hashlib.sha256(content).hexdigest()
-                descriptor = ("file", member.size, content_sha256)
-                if scan_payload_content and any(
-                    pattern.search(content) for pattern in FORBIDDEN_PAYLOAD_CONTENT
-                ):
-                    if (
-                        NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST.get(normalized)
-                        != content_sha256
-                    ):
-                        findings.append(
-                            walker.Finding(
-                                "renamed_runtime_payload_content",
-                                normalized,
-                                "forbidden source signature is not the reviewed neutral smoke driver",
-                            )
-                        )
-                if content_sha256 in payload_hashes:
-                    findings.append(
-                        walker.Finding(
-                            "exact_runtime_payload_bytes",
-                            normalized,
-                            "file bytes equal a runtime-only source, package, model, or data artifact",
-                        )
-                    )
-            elif member.isdir():
-                descriptor = ("directory",)
-            elif member.issym():
-                descriptor = ("symlink", member.linkname)
-            elif member.islnk():
-                try:
-                    target = _normalized_tar_path(member.linkname)
-                except ValueError as exc:
-                    findings.append(
-                        walker.Finding("unsafe_archive_hardlink", normalized, str(exc))
-                    )
-                    target = ""
-                descriptor = ("hardlink", target)
-            elif member.ischr() and member.devmajor == 0 and member.devminor == 0:
-                descriptor = ("whiteout-device", member.size)
-            else:
-                descriptor = ("unsupported", member.type.decode(errors="replace"))
-                findings.append(
-                    walker.Finding(
-                        "unsupported_archive_member",
-                        normalized,
-                        f"unsupported tar member type in {path.name}",
-                    )
-                )
-            records.append((member, normalized, descriptor))
-            cursor = padded_end
-    if any(payload[cursor:]):
-        findings.append(
-            walker.Finding(
-                "unaccounted_archive_bytes",
-                path.name,
-                "nonzero bytes remain after the final accounted member",
-            )
-        )
+        finally:
+            mapped.close()
     return records, findings, identity
 
 

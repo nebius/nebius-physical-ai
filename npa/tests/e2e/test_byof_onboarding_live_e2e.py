@@ -556,6 +556,13 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         "owner-private customer/run authorization"
     )
     authorization = json.loads(Path(authorization_path).read_text(encoding="utf-8"))
+    caller_path = os.environ.get(
+        "NPA_BYOF_LIBERO_AUTHENTICATED_CALLER_FILE", ""
+    ).strip()
+    assert caller_path, (
+        "NPA_BYOF_LIBERO_AUTHENTICATED_CALLER_FILE must select the owner-private "
+        "short-lived authenticated-caller assertion"
+    )
     assert re.fullmatch(
         r"[0-9a-f]{64}", str(authorization["customer_identity_sha256"])
     )
@@ -604,6 +611,8 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
         qualification["candidate_image"],
         "--libero-customer-runtime-authorization-file",
         authorization_path,
+        "--libero-authenticated-caller-identity-file",
+        caller_path,
         "--num-envs",
         "1",
         "--num-demos",

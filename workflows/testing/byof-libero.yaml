@@ -33,6 +33,7 @@ config:
   poll_interval: 60
   libero_qualified_candidate_image: ""
   libero_customer_runtime_authorization_file: ""
+  libero_authenticated_caller_identity_file: ""
   output_root: s3://{{config.bucket}}/oss-solutions/libero
   summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
   smoke_uri: "{{config.output_root}}/{{run.id}}/libero-smoke.json"
@@ -51,7 +52,7 @@ states:
     description: >
       Submit through the managed scheduler and return its real scheduler job
       identity. The host runner refuses an unqualified candidate or missing
-      customer/run authorization before
+      independently authenticated caller identity and customer/run authorization before
       image, cache, registry, or workload side effects.
     toolRef: workbench.byof.repo
     resources: gpu

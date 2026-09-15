@@ -119,6 +119,7 @@
     "publication_enforcement_bundle_sha256": "",
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
+    "output_storage_authorization_public_key_sha256": "",
     "runtime_manifest_sha256": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
   },
   "catalog_release": false

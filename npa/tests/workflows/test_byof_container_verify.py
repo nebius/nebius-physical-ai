@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -52,7 +53,7 @@ def _indirect_submit_args(module, monkeypatch, tmp_path):
         lambda *_a, **_k: [{"name": "task", "envs": {}, "resources": {}}],
     )
     monkeypatch.setattr(
-        module, "_normalize_kubeconfig_current_context", lambda *_a: None
+        module, "_normalize_kubeconfig_current_context", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
         module,
@@ -396,9 +397,13 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     policy_sha256 = "d" * 64
     endpoint = "https://storage.fixture.invalid"
     storage_authorization = {
-        "schema": "npa.libero.output-storage-authorization.v2",
-        "issuer": "npa-control-plane",
+        "schema": "npa.libero.output-storage-authorization.v3",
+        "issuer": "npa-output-storage-control-plane",
+        "capability_id": "libero-output-capability-test-0001",
+        "customer_identity_sha256": customer_authorization["customer_identity_sha256"],
         "run_id": run_id,
+        "candidate_image": candidate,
+        "runtime_manifest_sha256": runtime_manifest_sha256,
         "output_prefix": output_prefix,
         "endpoint_url": endpoint,
         "access_key_id_sha256": module.hashlib.sha256(access_key.encode()).hexdigest(),
@@ -408,6 +413,11 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": customer_authorization["expires_at"],
         "nonce": "unique-libero-storage-nonce-0000000001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": "e" * 64,
+            "signature_b64": "synthetic-signature",
+        },
     }
     storage_bytes = (json.dumps(storage_authorization, sort_keys=True) + "\n").encode()
     storage_sha256 = module.hashlib.sha256(storage_bytes).hexdigest()
@@ -562,6 +572,13 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
         customer_authorization["customer_identity_sha256"],
     )
+    caller_bytes = b'{"synthetic":"caller"}\n'
+    caller_sha256 = module.hashlib.sha256(caller_bytes).hexdigest()
+    monkeypatch.setenv(
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64",
+        module.base64.b64encode(caller_bytes).decode("ascii"),
+    )
+    monkeypatch.setenv("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", caller_sha256)
     qualification = {
         "development_sha": "a" * 40,
         "candidate_image": candidate,
@@ -578,8 +595,29 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
     monkeypatch.setattr(
         module,
+        "validate_libero_authenticated_caller_assertion",
+        lambda *_args, **_kwargs: (
+            {
+                "customer_identity_sha256": customer_authorization[
+                    "customer_identity_sha256"
+                ]
+            },
+            caller_sha256,
+        ),
+    )
+    monkeypatch.setattr(
+        module,
         "validate_libero_customer_runtime_authorization",
         lambda *_args, **_kwargs: (customer_authorization, authorization_sha256),
+    )
+
+    def validate_storage(*_args, **kwargs):
+        if kwargs["endpoint_url"] != endpoint:
+            raise RuntimeError("LIBERO output storage authorization is invalid or expired")
+        return storage_authorization, storage_sha256
+
+    monkeypatch.setattr(
+        module, "validate_libero_output_storage_authorization", validate_storage
     )
     lineage_calls = []
     monkeypatch.setattr(
@@ -681,7 +719,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
 
     monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "0" * 64)
-    with pytest.raises(ValueError, match="secret pair differs"):
+    with pytest.raises(ValueError, match="authenticated caller identity differs"):
         module._bind_libero_runtime_contract(
             args,
             runtime_documents(
@@ -1788,6 +1826,13 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
     args.cleanup = True
     args.solution_name = "libero"
+    payload_kubeconfig = tmp_path / "payload-kubeconfig-source"
+    payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    payload_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    sky_config = tmp_path / "skypilot.yaml"
+    sky_config.chmod(0o600)
+    args.config_path = str(sky_config)
     isolated = tmp_path / args.run_id
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
@@ -2396,6 +2441,13 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
     args.cleanup = True
     args.solution_name = "libero"
+    payload_kubeconfig = tmp_path / "payload-kubeconfig-source"
+    payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    payload_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    sky_config = tmp_path / "skypilot.yaml"
+    sky_config.chmod(0o600)
+    args.config_path = str(sky_config)
     isolated = tmp_path / args.run_id
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
@@ -3415,6 +3467,13 @@ def test_libero_refuses_isaac_lab_precheck_failure_override(
     isolated.chmod(0o700)
     args.isolated_config_dir = str(isolated)
     args.solution_name = "libero"
+    payload_kubeconfig = tmp_path / "payload-kubeconfig-source"
+    payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    payload_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    sky_config = tmp_path / "skypilot.yaml"
+    sky_config.chmod(0o600)
+    args.config_path = str(sky_config)
     monkeypatch.setenv("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
     monkeypatch.setattr(module, "_is_libero_invocation", lambda *_a: True)
     monkeypatch.setattr(
@@ -4073,6 +4132,33 @@ users: []
     assert str(out) in os.environ["KUBECONFIG"]
 
 
+def test_libero_normalizes_only_from_an_immutable_exact_run_copy(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    source = tmp_path / "source-kubeconfig"
+    source.write_text(
+        "apiVersion: v1\nkind: Config\ncurrent-context: old-context\n",
+        encoding="utf-8",
+    )
+    source.chmod(0o600)
+    out = tmp_path / "out"
+    out.mkdir(mode=0o700)
+    monkeypatch.setenv("KUBECONFIG", str(source))
+    monkeypatch.setenv("KUBECONTEXT", "target-context")
+
+    module._normalize_kubeconfig_current_context(out, immutable=True)
+    source.write_text("attacker replacement\n", encoding="utf-8")
+
+    snapshot = out / "execution-kubeconfig.source"
+    normalized = Path(os.environ["KUBECONFIG"])
+    assert stat.S_IMODE(snapshot.stat().st_mode) == 0o400
+    assert stat.S_IMODE(normalized.stat().st_mode) == 0o400
+    assert "current-context: old-context" in snapshot.read_text(encoding="utf-8")
+    assert "current-context: target-context" in normalized.read_text(encoding="utf-8")
+    assert "attacker replacement" not in normalized.read_text(encoding="utf-8")
+
+
 def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     monkeypatch, tmp_path
 ) -> None:
@@ -4099,7 +4185,7 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     )
     monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a, **_k: None)
 
-    def _leak_kubeconfig(tmp: Path) -> None:
+    def _leak_kubeconfig(tmp: Path, **_kwargs) -> None:
         os.environ["KUBECONFIG"] = str(tmp / "leaked")
 
     monkeypatch.setattr(

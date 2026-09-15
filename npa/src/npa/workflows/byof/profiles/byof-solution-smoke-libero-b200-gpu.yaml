@@ -62,6 +62,8 @@ setup: |
   output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   install -d -m 1770 "${output_dir}"
   chgrp npa-libero-exec "${output_dir}"
+  protected_authorization="${output_dir}/.npa-customer-authorization.json"
+  test ! -e "${protected_authorization}"
   receipt_dir="/workspace/.cache/npa/libero/run-receipts"
   install -d -m 0750 "${receipt_dir}"
   chgrp npa-libero-exec "${receipt_dir}"
@@ -80,6 +82,7 @@ setup: |
   chmod 0640 "${bootstrap_receipt}.partial"
   chgrp npa-libero-exec "${bootstrap_receipt}.partial"
   mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
+  install -m 0600 "${authorization}" "${protected_authorization}"
   cleanup_authorization
   trap - EXIT INT TERM
   unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
@@ -94,6 +97,6 @@ run: |
   export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
   /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
   /usr/bin/nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
-  # The image-owned supervisor retains a shared descriptor-stable cache lock
-  # across the unprivileged smoke, immutable uploads, and checksum readback.
+  # The image-owned supervisor retains descriptor-stable authorization and
+  # exclusive execution ownership through smoke, sealing, and upload readback.
   /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-upload

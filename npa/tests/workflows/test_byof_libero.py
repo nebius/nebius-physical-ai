@@ -24,12 +24,16 @@ from npa.deploy.images import (
     LIBERO_REQUIRED_PUBLICATION_REFERRERS,
     libero_customer_acceptance_notification,
     libero_customer_authorization_signature_payload,
+    libero_authenticated_caller_signature_payload,
+    libero_output_storage_authorization_signature_payload,
     libero_qualified_image_manifest,
     libero_build_input_bundle_sha256,
     libero_publication_enforcement_bundle_sha256,
     libero_publication_enforcement_paths,
     libero_publication_lineage_values,
     validate_libero_customer_runtime_authorization,
+    validate_libero_authenticated_caller_assertion,
+    validate_libero_output_storage_authorization,
     validate_libero_qualified_image_manifest,
 )
 
@@ -109,6 +113,7 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert config["wait_timeout"] == -1
     assert config["libero_qualified_candidate_image"] == ""
     assert config["libero_customer_runtime_authorization_file"] == ""
+    assert config["libero_authenticated_caller_identity_file"] == ""
     assert "libero_build_metadata_sha256" not in config
     resources = workflow["resources"]
     assert isinstance(resources, dict)
@@ -243,10 +248,10 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     bootstrap = (IMAGE_ROOT / "runtime-bootstrap.py").read_text(encoding="utf-8")
     assert '"rendering_invoked": False' in bootstrap
     assert (
-        "root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)"
+        "output_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)"
         in bootstrap
     )
-    assert "upload_outputs(smoke_exit_code, root_fd=root_fd)" in bootstrap
+    assert "upload_outputs(smoke_exit_code, root_fd=output_fd)" in bootstrap
     assert "output staging directory changed during execution" in bootstrap
     assert "dir_fd=root_fd" in bootstrap
     assert "stat.S_ISREG(info.st_mode)" in bootstrap
@@ -256,17 +261,24 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert '"if-none-match": "*"' in bootstrap
     assert '"x-amz-checksum-mode": "ENABLED"' in bootstrap
     assert "headers.get(\"x-amz-checksum-sha256\") != checksum" in bootstrap
-    assert '"schema": "npa.libero.s3-upload-readback.v1"' in bootstrap
+    assert '"schema": "npa.libero.output-commit.v1"' in bootstrap
+    assert "current_authorization = _storage_authorization" in bootstrap
     assert "set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS)" in bootstrap
     assert "MAX_OUTPUT_BYTES" in bootstrap
     assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
     assert "_execution_uid_processes()" in bootstrap
-    assert "os.fchmod(root_fd, 0o700)" in bootstrap
+    assert "os.fchmod(output_fd, 0o700)" in bootstrap
     assert "snapshots.append((name, payload, digest))" in bootstrap
     assert '"PATH": "/usr/bin:/bin"' in bootstrap
     assert '["git"' not in bootstrap
     assert '"/usr/bin/git"' in bootstrap
     assert "_discard_new_cache_entry" in bootstrap
+    workflow_source = (
+        ROOT / "npa/src/npa/orchestration/skypilot/workflow.py"
+    ).read_text(encoding="utf-8")
+    assert "if libero_submission:" in workflow_source
+    assert "generated_config_path.chmod(0o400)" in workflow_source
+    assert "prepared_yaml.chmod(0o400)" in workflow_source
     assert profile.count("unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64") == 2
     assert (
         "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "
@@ -316,6 +328,12 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["qualification"]["status"] == "not_qualified"
     assert manifest["qualification"]["candidate_image"] == ""
     assert manifest["qualification"]["customer_authorization_public_key_sha256"] == ""
+    assert (
+        manifest["qualification"][
+            "output_storage_authorization_public_key_sha256"
+        ]
+        == ""
+    )
     assert manifest["customer_runtime_authorization_required"] is True
     notification = libero_customer_acceptance_notification(manifest)
     assert notification["status"] == "needs_customer_acceptance"
@@ -363,6 +381,14 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     key_file = tmp_path / "customer-authorization-public-key.b64"
     key_file.write_bytes(base64.b64encode(public_key))
     key_file.chmod(0o600)
+    storage_private_key = Ed25519PrivateKey.generate()
+    storage_public_key = storage_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    storage_key_file = tmp_path / "output-storage-authorization-public-key.b64"
+    storage_key_file.write_bytes(base64.b64encode(storage_public_key))
+    storage_key_file.chmod(0o600)
     qualification = manifest["qualification"]
     qualification.update(
         {
@@ -407,6 +433,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             "customer_authorization_public_key_sha256": hashlib.sha256(
                 public_key
             ).hexdigest(),
+            "output_storage_authorization_public_key_sha256": hashlib.sha256(
+                storage_public_key
+            ).hexdigest(),
         }
     )
     qualification["publication_bundle_sha256"] = hashlib.sha256(
@@ -449,6 +478,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 ],
                 "customer_authorization_public_key_sha256": qualification[
                     "customer_authorization_public_key_sha256"
+                ],
+                "output_storage_authorization_public_key_sha256": qualification[
+                    "output_storage_authorization_public_key_sha256"
                 ],
             },
             sort_keys=True,
@@ -503,6 +535,112 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     )
     assert validated == authorization
     assert observed_sha256 == hashlib.sha256(authorization_bytes).hexdigest()
+
+    caller_assertion = {
+        "schema": "npa.libero.authenticated-caller.v1",
+        "issuer": "npa-authenticated-caller-control-plane",
+        "session_id": "libero-caller-session-0001",
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "run_id": run_id,
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(minutes=10)).isoformat(),
+        "nonce": "authenticated-caller-nonce-00000001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": hashlib.sha256(public_key).hexdigest(),
+            "signature_b64": "",
+        },
+    }
+    caller_assertion["signature"]["signature_b64"] = base64.b64encode(
+        private_key.sign(libero_authenticated_caller_signature_payload(caller_assertion))
+    ).decode("ascii")
+    caller_bytes = json.dumps(caller_assertion, sort_keys=True).encode()
+    validated_caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
+        caller_bytes,
+        run_id=run_id,
+        public_key_file=str(key_file),
+        now=now,
+    )
+    assert validated_caller["customer_identity_sha256"] == authorization[
+        "customer_identity_sha256"
+    ]
+    assert caller_sha256 == hashlib.sha256(caller_bytes).hexdigest()
+
+    output_prefix = f"s3://customer-output/libero/{run_id}/"
+    endpoint = "https://storage.example.invalid"
+    access_key = "temporary-access-key"
+    secret_key = "temporary-secret-key"
+    session_token = "temporary-session-token"
+    policy_sha256 = "a" * 64
+    storage_authorization = {
+        "schema": "npa.libero.output-storage-authorization.v3",
+        "issuer": "npa-output-storage-control-plane",
+        "capability_id": "libero-output-capability-0001",
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "run_id": run_id,
+        "candidate_image": authorization["candidate_image"],
+        "runtime_manifest_sha256": authorization["runtime_manifest_sha256"],
+        "output_prefix": output_prefix,
+        "endpoint_url": endpoint,
+        "access_key_id_sha256": hashlib.sha256(access_key.encode()).hexdigest(),
+        "secret_access_key_sha256": hashlib.sha256(secret_key.encode()).hexdigest(),
+        "session_token_sha256": hashlib.sha256(session_token.encode()).hexdigest(),
+        "policy_sha256": policy_sha256,
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(minutes=30)).isoformat(),
+        "nonce": "output-storage-capability-nonce-0001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": hashlib.sha256(storage_public_key).hexdigest(),
+            "signature_b64": "",
+        },
+    }
+    storage_authorization["signature"]["signature_b64"] = base64.b64encode(
+        storage_private_key.sign(
+            libero_output_storage_authorization_signature_payload(
+                storage_authorization
+            )
+        )
+    ).decode("ascii")
+    storage_bytes = json.dumps(storage_authorization, sort_keys=True).encode()
+    validated_storage, storage_sha256 = validate_libero_output_storage_authorization(
+        storage_bytes,
+        image_manifest=manifest,
+        customer_authorization=authorization,
+        run_id=run_id,
+        output_prefix=output_prefix,
+        endpoint_url=endpoint,
+        access_key_id=access_key,
+        secret_access_key=secret_key,
+        session_token=session_token,
+        expected_policy_sha256=policy_sha256,
+        customer_public_key_file=str(key_file),
+        storage_public_key_file=str(storage_key_file),
+        now=now,
+    )
+    assert validated_storage == storage_authorization
+    assert storage_sha256 == hashlib.sha256(storage_bytes).hexdigest()
+
+    forged_storage = json.loads(storage_bytes)
+    forged_storage["signature"]["signature_b64"] = base64.b64encode(
+        b"\0" * 64
+    ).decode("ascii")
+    with pytest.raises(RuntimeError, match="signature is invalid"):
+        validate_libero_output_storage_authorization(
+            json.dumps(forged_storage, sort_keys=True).encode(),
+            image_manifest=manifest,
+            customer_authorization=authorization,
+            run_id=run_id,
+            output_prefix=output_prefix,
+            endpoint_url=endpoint,
+            access_key_id=access_key,
+            secret_access_key=secret_key,
+            session_token=session_token,
+            expected_policy_sha256=policy_sha256,
+            customer_public_key_file=str(key_file),
+            storage_public_key_file=str(storage_key_file),
+            now=now,
+        )
 
     denied = json.loads(authorization_bytes)
     denied["status"] = "denied"

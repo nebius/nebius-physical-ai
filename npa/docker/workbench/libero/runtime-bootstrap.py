@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
@@ -37,6 +37,7 @@ from typing import Any
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
 CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v1"
+OUTPUT_STORAGE_AUTHORIZATION_SCHEMA = "npa.libero.output-storage-authorization.v3"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
 EXPECTED_MANIFEST_KEYS = frozenset(
@@ -82,8 +83,13 @@ DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
 CUSTOMER_AUTHORIZATION_PUBLIC_KEY = Path(
     "/opt/npa/libero/customer-authorization-public-key.b64"
 )
+OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = Path(
+    "/opt/npa/libero/output-storage-authorization-public-key.b64"
+)
 CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
+OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
+OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
         "files.pythonhosted.org",
@@ -106,6 +112,10 @@ SEALED_EXECUTABLE_MODE = SEALED_DIRECTORY_MODE
 SEALED_REGULAR_MODE = stat.S_IRUSR | stat.S_IRGRP
 CACHE_ROOT_MODE = SEALED_DIRECTORY_MODE | stat.S_IWUSR
 INHERITED_CACHE_DESCRIPTOR = 200
+INHERITED_AUTHORIZATION_DESCRIPTOR = 201
+INHERITED_EXECUTION_LOCK_DESCRIPTOR = 202
+INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR = 203
+PROTECTED_AUTHORIZATION_NAME = ".npa-customer-authorization.json"
 ALLOWED_TERMS_HOSTS = frozenset(
     {
         "raw.githubusercontent.com",
@@ -129,6 +139,7 @@ EXPECTED_GOVERNING_TERMS = frozenset(
 MAX_RUNTIME_CACHE_DOWNLOAD_BYTES = 32 * 1024 * 1024 * 1024
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
+RUNTIME_SUPERVISOR_USER = "ubuntu"
 STORAGE_SECRET_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -251,15 +262,27 @@ def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
             "customer authorization file is unavailable or invalid"
         ) from exc
     try:
-        before = os.fstat(descriptor)
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            payload = stream.read(limit + 1)
-        after = os.fstat(descriptor)
+        return _read_private_regular_descriptor(
+            descriptor, limit=limit, owner_uid=os.geteuid()
+        )
     finally:
         os.close(descriptor)
+
+
+def _read_private_regular_descriptor(
+    descriptor: int, *, limit: int, owner_uid: int
+) -> bytes:
+    """Read stable private bytes without changing an inherited descriptor offset."""
+
+    try:
+        before = os.fstat(descriptor)
+        payload = os.pread(descriptor, limit + 1, 0)
+        after = os.fstat(descriptor)
+    except OSError as exc:
+        raise BootstrapRefusal("customer authorization descriptor is unavailable") from exc
     if (
         not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.geteuid()
+        or before.st_uid != owner_uid
         or before.st_nlink != 1
         or stat.S_IMODE(before.st_mode) & 0o077
         or len(payload) > limit
@@ -577,13 +600,14 @@ def _open_https_download(
 
 
 def _validate_cache_root(cache_root: Path, output_dir: Path | None) -> Path:
-    if cache_root.is_symlink():
-        raise BootstrapRefusal("runtime cache root may not be a symlink")
-    resolved = cache_root.resolve(strict=False)
-    if not resolved.is_absolute() or resolved == Path("/"):
+    raw = os.fspath(cache_root)
+    if not os.path.isabs(raw) or os.path.normpath(raw) in {"/", "."}:
         raise BootstrapRefusal("runtime cache root must be a narrow absolute path")
+    if any(part in {"", ".", ".."} for part in Path(raw).parts[1:]):
+        raise BootstrapRefusal("runtime cache root must be canonical")
+    resolved = Path(os.path.normpath(raw))
     if output_dir is not None:
-        output = output_dir.resolve(strict=False)
+        output = Path(os.path.normpath(os.fspath(output_dir)))
         if (
             output == resolved
             or output in resolved.parents
@@ -591,6 +615,155 @@ def _validate_cache_root(cache_root: Path, output_dir: Path | None) -> Path:
         ):
             raise BootstrapRefusal("runtime cache and output boundaries overlap")
     return resolved
+
+
+def _create_cache_root_component(
+    parent_descriptor: int,
+    name: str,
+    before_create: Callable[[int, str], None] | None,
+) -> int:
+    """Create and bind the final root component without trusting a pathname."""
+
+    if before_create is not None:
+        before_create(parent_descriptor, name)
+    try:
+        os.mkdir(name, CACHE_ROOT_MODE, dir_fd=parent_descriptor)
+    except FileExistsError:
+        raise BootstrapRefusal(
+            "runtime cache root appeared during creation"
+        ) from None
+    except OSError as exc:
+        raise BootstrapRefusal("runtime cache root could not be created") from exc
+    child: int | None = None
+    try:
+        created = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+        child = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(child)
+    except OSError as exc:
+        if child is not None:
+            os.close(child)
+        raise BootstrapRefusal("runtime cache root changed during creation") from exc
+    if (
+        not stat.S_ISDIR(created.st_mode)
+        or (created.st_dev, created.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        os.close(child)
+        raise BootstrapRefusal("runtime cache root changed during creation")
+    return child
+
+
+@contextmanager
+def _open_cache_root_descriptor(
+    cache_root: Path,
+    *,
+    create: bool,
+    owner_uid: int | None = None,
+    before_create: Callable[[int, str], None] | None = None,
+) -> Iterator[int]:
+    """Walk an absolute cache root without following any path component."""
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise BootstrapRefusal("runtime cache requires no-follow directory support")
+    parts = cache_root.parts
+    descriptor = os.open("/", os.O_RDONLY | directory | nofollow | os.O_CLOEXEC)
+    try:
+        for index, part in enumerate(parts[1:], start=1):
+            final = index == len(parts) - 1
+            try:
+                child = os.open(
+                    part,
+                    os.O_RDONLY | directory | nofollow | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError:
+                if not (create and final):
+                    raise BootstrapRefusal("runtime cache root is unavailable") from None
+                child = _create_cache_root_component(
+                    descriptor, part, before_create
+                )
+            except OSError as exc:
+                raise BootstrapRefusal(
+                    "runtime cache root contains a link or invalid component"
+                ) from exc
+            os.close(descriptor)
+            descriptor = child
+        info = os.fstat(descriptor)
+        expected_owner = os.getuid() if owner_uid is None else owner_uid
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_nlink < 1
+            or info.st_uid != expected_owner
+        ):
+            raise BootstrapRefusal("runtime cache root ownership or links are invalid")
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def _cache_lock(
+    cache_root_descriptor: int,
+    name: str,
+    *,
+    exclusive: bool,
+    create: bool,
+) -> Iterator[int]:
+    """Open and hold one validated cache lock through the retained root descriptor."""
+
+    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+    if create:
+        flags |= os.O_CREAT
+    try:
+        descriptor = os.open(name, flags, 0o640, dir_fd=cache_root_descriptor)
+    except OSError as exc:
+        raise BootstrapRefusal("runtime cache lock is unavailable") from exc
+    try:
+        root = os.fstat(cache_root_descriptor)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != root.st_uid
+        ):
+            raise BootstrapRefusal("runtime cache lock identity is invalid")
+        if create:
+            try:
+                group_id = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
+            except KeyError as exc:
+                raise BootstrapRefusal("runtime execution group is unavailable") from exc
+            os.fchown(descriptor, -1, group_id)
+            os.fchmod(descriptor, 0o640)
+        elif stat.S_IMODE(opened.st_mode) != 0o640:
+            raise BootstrapRefusal("runtime cache lock mode is invalid")
+        fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _require_inherited_lock(
+    cache_root_descriptor: int, name: str, inherited_descriptor: int
+) -> None:
+    """Bind an inherited lock descriptor to the exact retained cache root."""
+
+    try:
+        named = os.stat(name, dir_fd=cache_root_descriptor, follow_symlinks=False)
+        inherited = os.fstat(inherited_descriptor)
+    except OSError as exc:
+        raise BootstrapRefusal("inherited runtime lock is unavailable") from exc
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or named.st_nlink != 1
+        or stat.S_IMODE(named.st_mode) != 0o640
+        or (named.st_dev, named.st_ino) != (inherited.st_dev, inherited.st_ino)
+    ):
+        raise BootstrapRefusal("inherited runtime lock identity is invalid")
 
 
 def _cache_entry_identity(path: Path) -> tuple[int, int] | None:
@@ -847,10 +1020,14 @@ def _canonical_unsigned_customer_authorization(payload: dict[str, Any]) -> bytes
 
 def _customer_authorization_signature_payload(payload: dict[str, Any]) -> bytes:
     canonical = _canonical_unsigned_customer_authorization(payload)
+    return _sshsig_signature_payload(CUSTOMER_AUTHORIZATION_NAMESPACE, canonical)
+
+
+def _sshsig_signature_payload(namespace: bytes, canonical: bytes) -> bytes:
     return b"".join(
         (
             b"SSHSIG",
-            _ssh_string(CUSTOMER_AUTHORIZATION_NAMESPACE),
+            _ssh_string(namespace),
             _ssh_string(b""),
             _ssh_string(b"sha512"),
             _ssh_string(hashlib.sha512(canonical).digest()),
@@ -859,6 +1036,12 @@ def _customer_authorization_signature_payload(payload: dict[str, Any]) -> bytes:
 
 
 def _customer_authorization_sshsig(public_key: bytes, signature: bytes) -> bytes:
+    return _sshsig_envelope(
+        CUSTOMER_AUTHORIZATION_NAMESPACE, public_key, signature
+    )
+
+
+def _sshsig_envelope(namespace: bytes, public_key: bytes, signature: bytes) -> bytes:
     public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
     signature_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(signature)
     payload = b"".join(
@@ -866,7 +1049,7 @@ def _customer_authorization_sshsig(public_key: bytes, signature: bytes) -> bytes
             b"SSHSIG",
             struct.pack(">I", 1),
             _ssh_string(public_key_blob),
-            _ssh_string(CUSTOMER_AUTHORIZATION_NAMESPACE),
+            _ssh_string(namespace),
             _ssh_string(b""),
             _ssh_string(b"sha512"),
             _ssh_string(signature_blob),
@@ -881,17 +1064,17 @@ def _customer_authorization_sshsig(public_key: bytes, signature: bytes) -> bytes
     ).encode()
 
 
-def _trusted_customer_authorization_public_key() -> bytes:
-    """Load the image-baked control-plane trust root."""
+def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
+    """Load one immutable image-baked Ed25519 verification key."""
 
     try:
         descriptor = os.open(
-            CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
+            path,
             os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
         )
     except OSError as exc:
         raise BootstrapRefusal(
-            "customer-authorization trust root is unavailable"
+            f"{label} trust root is unavailable"
         ) from exc
     try:
         before = os.fstat(descriptor)
@@ -900,13 +1083,13 @@ def _trusted_customer_authorization_public_key() -> bytes:
         after = os.fstat(descriptor)
     except OSError as exc:
         raise BootstrapRefusal(
-            "customer-authorization trust root is unavailable"
+            f"{label} trust root is unavailable"
         ) from exc
     finally:
         os.close(descriptor)
     if (
         not stat.S_ISREG(before.st_mode)
-        or before.st_uid != CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID
+        or before.st_uid != owner_uid
         or before.st_nlink != 1
         or stat.S_IMODE(before.st_mode) != 0o444
         or (
@@ -932,15 +1115,35 @@ def _trusted_customer_authorization_public_key() -> bytes:
         or encoded != encoded.strip()
     ):
         raise BootstrapRefusal(
-            "customer-authorization trust root is mutable or invalid"
+            f"{label} trust root is mutable or invalid"
         )
     try:
         public_key = base64.b64decode(encoded, validate=True)
     except ValueError as exc:
-        raise BootstrapRefusal("customer-authorization trust root is invalid") from exc
+        raise BootstrapRefusal(f"{label} trust root is invalid") from exc
     if len(public_key) != 32:
-        raise BootstrapRefusal("customer-authorization trust root is invalid")
+        raise BootstrapRefusal(f"{label} trust root is invalid")
     return public_key
+
+
+def _trusted_customer_authorization_public_key() -> bytes:
+    return _trusted_public_key(
+        CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
+        owner_uid=CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID,
+        label="customer-authorization",
+    )
+
+
+def _trusted_output_storage_authorization_public_key() -> bytes:
+    customer_key = _trusted_customer_authorization_public_key()
+    storage_key = _trusted_public_key(
+        OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY,
+        owner_uid=OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID,
+        label="output-storage-authorization",
+    )
+    if hmac.compare_digest(customer_key, storage_key):
+        raise BootstrapRefusal("output-storage trust root is not independent")
+    return storage_key
 
 
 def _verify_customer_authorization_signature(
@@ -1004,9 +1207,68 @@ def _verify_customer_authorization_signature(
         raise BootstrapRefusal("customer authorization signature is invalid")
 
 
+def _verify_output_storage_authorization_signature(
+    payload: dict[str, Any], signature_record: dict[str, Any]
+) -> None:
+    public_key = _trusted_output_storage_authorization_public_key()
+    fingerprint = hashlib.sha256(public_key).hexdigest()
+    if signature_record.get("public_key_sha256") != fingerprint:
+        raise BootstrapRefusal("output storage authorization trust root differs")
+    try:
+        signature = base64.b64decode(
+            str(signature_record.get("signature_b64") or ""), validate=True
+        )
+    except ValueError as exc:
+        raise BootstrapRefusal("output storage authorization signature is invalid") from exc
+    if len(signature) != 64:
+        raise BootstrapRefusal("output storage authorization signature is invalid")
+    unsigned = json.loads(json.dumps(payload))
+    unsigned.pop("signature", None)
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    allowed_signer = (
+        "npa-output-storage-control-plane ssh-ed25519 "
+        + base64.b64encode(_ssh_string(b"ssh-ed25519") + _ssh_string(public_key)).decode(
+            "ascii"
+        )
+        + "\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-libero-storage-signature-") as root:
+        allowed_path = Path(root) / "allowed-signers"
+        signature_path = Path(root) / "authorization.sig"
+        allowed_path.write_text(allowed_signer, encoding="ascii")
+        signature_path.write_bytes(
+            _sshsig_envelope(OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE, public_key, signature)
+        )
+        os.chmod(allowed_path, 0o600)
+        os.chmod(signature_path, 0o600)
+        completed = subprocess.run(
+            [
+                "/usr/bin/ssh-keygen",
+                "-Y",
+                "verify",
+                "-f",
+                str(allowed_path),
+                "-I",
+                "npa-output-storage-control-plane",
+                "-n",
+                OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature_path),
+            ],
+            input=canonical,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": "/nonexistent", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+    if completed.returncode:
+        raise BootstrapRefusal("output storage authorization signature is invalid")
+
+
 def _customer_acceptance_notification(
     manifest: dict[str, Any], *, manifest_sha256: str, reason: str
 ) -> dict[str, Any]:
+    customer_identity = os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "")
     return {
         "schema": "npa.libero.customer-acceptance-notification.v1",
         "status": "needs_customer_acceptance",
@@ -1014,6 +1276,12 @@ def _customer_acceptance_notification(
         "reason": reason,
         "runtime_manifest_sha256": manifest_sha256,
         "candidate_image": os.environ.get("BYOF_IMAGE") or None,
+        "run_id": os.environ.get("NPA_BYOF_RUN_ID") or None,
+        "customer_identity": (
+            f"sha256:{customer_identity[:12]}…"
+            if _is_hex(customer_identity, 64)
+            else None
+        ),
         "terms": [
             {
                 "id": term["id"],
@@ -1052,16 +1320,34 @@ def _validate_customer_authorization(
 
     if not _is_hex(expected_sha256, 64):
         raise CustomerAcceptanceRequired("authorization_missing")
-    authorization_bytes = _read_private_regular_bytes(path, limit=1024 * 1024)
+    try:
+        authorization_bytes = _read_private_regular_bytes(path, limit=1024 * 1024)
+    except CustomerAcceptanceRequired:
+        raise
+    except BootstrapRefusal as exc:
+        raise CustomerAcceptanceRequired("authorization_file_invalid") from exc
+    return _validate_customer_authorization_bytes(
+        authorization_bytes, expected_sha256, manifest, manifest_sha256
+    )
+
+
+def _validate_customer_authorization_bytes(
+    authorization_bytes: bytes,
+    expected_sha256: str,
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+) -> tuple[dict[str, Any], str]:
+    """Validate exact signed bytes, classifying customer-actionable failures."""
+
     observed_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
     if observed_sha256 != expected_sha256:
-        raise BootstrapRefusal("customer authorization hash does not match")
+        raise CustomerAcceptanceRequired("authorization_hash_mismatch")
     try:
         authorization = json.loads(authorization_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BootstrapRefusal("customer authorization is not valid JSON") from exc
+        raise CustomerAcceptanceRequired("authorization_malformed") from exc
     if not isinstance(authorization, dict):
-        raise BootstrapRefusal("customer authorization is not an object")
+        raise CustomerAcceptanceRequired("authorization_malformed")
     signature_record = authorization.get("signature")
     expected_keys = {
         "schema",
@@ -1121,9 +1407,7 @@ def _validate_customer_authorization(
         )
         is None
     ):
-        raise BootstrapRefusal(
-            "customer authorization does not bind the exact customer/run contract"
-        )
+        raise CustomerAcceptanceRequired("authorization_wrong_scope")
     try:
         acknowledged_at = datetime.fromisoformat(
             str(authorization["acknowledged_at"]).replace("Z", "+00:00")
@@ -1135,7 +1419,7 @@ def _validate_customer_authorization(
             str(authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise BootstrapRefusal("customer authorization timestamps are invalid") from exc
+        raise CustomerAcceptanceRequired("authorization_timestamps_invalid") from exc
     now = datetime.now(timezone.utc)
     if (
         acknowledged_at.tzinfo is None
@@ -1148,8 +1432,17 @@ def _validate_customer_authorization(
         or expires_at <= now
         or expires_at - issued_at > timedelta(hours=24)
     ):
-        raise BootstrapRefusal("customer authorization is expired or replayable")
-    _verify_customer_authorization_signature(authorization, signature_record)
+        raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+    try:
+        _verify_customer_authorization_signature(authorization, signature_record)
+    except BootstrapRefusal as exc:
+        if str(exc) in {
+            "customer-authorization trust root is unavailable",
+            "customer-authorization trust root is mutable or invalid",
+            "customer-authorization trust root is invalid",
+        }:
+            raise
+        raise CustomerAcceptanceRequired("authorization_signature_invalid") from exc
     if authorization["status"] == "denied":
         raise CustomerAcceptanceRequired("authorization_denied")
     return authorization, observed_sha256
@@ -1760,18 +2053,23 @@ def _complete_record_values(
 
 
 def _runtime_cache_scope_sha256(
-    manifest_sha256: str, customer_identity_sha256: str, run_id: str
+    manifest_sha256: str,
+    customer_identity_sha256: str,
+    run_id: str,
+    authorization_sha256: str,
 ) -> str:
     if (
         not _is_hex(manifest_sha256, 64)
         or not _is_hex(customer_identity_sha256, 64)
+        or not _is_hex(authorization_sha256, 64)
         or re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None
     ):
         raise BootstrapRefusal("runtime cache scope is invalid")
     return hashlib.sha256(
         json.dumps(
             {
-                "schema": "npa.libero.customer-runtime-cache-scope.v1",
+                "schema": "npa.libero.customer-runtime-cache-scope.v2",
+                "customer_authorization_sha256": authorization_sha256,
                 "customer_identity_sha256": customer_identity_sha256,
                 "run_id": run_id,
                 "runtime_manifest_sha256": manifest_sha256,
@@ -1783,13 +2081,9 @@ def _runtime_cache_scope_sha256(
 
 
 def ensure(args: argparse.Namespace) -> dict[str, Any]:
-    manifest_path = Path(args.manifest)
-    manifest, manifest_sha256 = _validate_manifest(manifest_path)
+    manifest, manifest_sha256 = _validate_manifest(Path(args.manifest))
     authorization, authorization_sha256 = _validate_customer_authorization(
-        Path(args.authorization),
-        args.authorization_sha256,
-        manifest,
-        manifest_sha256,
+        Path(args.authorization), args.authorization_sha256, manifest, manifest_sha256
     )
     customer_identity_sha256 = authorization["customer_identity_sha256"]
     run_id = authorization["run_id"]
@@ -1798,94 +2092,53 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     )
     output = Path(args.output_dir) if args.output_dir else None
     cache_root = _validate_cache_root(Path(args.cache_root), output)
-    final = cache_root / _runtime_cache_scope_sha256(
-        manifest_sha256, customer_identity_sha256, run_id
+    scope_sha256 = _runtime_cache_scope_sha256(
+        manifest_sha256,
+        customer_identity_sha256,
+        run_id,
+        authorization_sha256,
     )
-    initial_identity = _cache_entry_identity(final)
-    governing_terms_sha256 = (
-        _governing_terms_identity(manifest)
-        if initial_identity is not None
-        else _verify_governing_terms(manifest)
-    )
-    cache_root.mkdir(mode=CACHE_ROOT_MODE, parents=True, exist_ok=True)
-    try:
-        os.chown(cache_root, -1, grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid)
-    except KeyError as exc:
-        raise BootstrapRefusal("runtime execution group is unavailable") from exc
-    os.chmod(cache_root, CACHE_ROOT_MODE)
-    lock_path = cache_root / ".bootstrap.lock"
-    with lock_path.open("a+b") as lock:
-        os.chown(lock_path, -1, grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid)
-        os.chmod(lock_path, 0o640)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        locked_identity = _cache_entry_identity(final)
-        if initial_identity is not None and locked_identity != initial_identity:
-            raise BootstrapRefusal("runtime cache entry changed before validation")
-        warm_reuse = locked_identity is not None
-        if warm_reuse:
-            assert locked_identity is not None
-            record = _validate_and_publish_cache(
-                cache_root=cache_root,
-                final=final,
-                identity=locked_identity,
-                manifest=manifest,
-                manifest_sha256=manifest_sha256,
-                authorization_sha256=authorization_sha256,
-                customer_identity_sha256=customer_identity_sha256,
-                run_id=run_id,
-                requirements_sha256=requirements_sha256,
-                governing_terms_sha256=governing_terms_sha256,
-            )
-        else:
-            partial = Path(
-                tempfile.mkdtemp(prefix=f".{manifest_sha256}.partial-", dir=cache_root)
-            )
-            os.chmod(partial, 0o700)
-            renamed = False
-            committed = False
-            parent_descriptor = os.open(
-                cache_root,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            )
-            renamed_identity: tuple[int, int] | None = None
-            try:
-                _fetch_source(partial, manifest["source"])
-                _validate_task_inputs(partial, manifest)
-                _install_runtime(
-                    partial,
-                    manifest["runtime_artifacts"],
-                    requirement_lines,
-                    published_root=final,
-                )
-                _fetch_inputs(partial, manifest)
-                record = _complete_record(
-                    partial,
-                    manifest,
-                    manifest_sha256,
-                    authorization_sha256,
-                    customer_identity_sha256,
-                    run_id,
-                    requirements_sha256,
-                    governing_terms_sha256,
-                )
-                _seal_cache_tree(partial)
-                renamed_identity = _cache_entry_identity(partial)
-                if renamed_identity is None:
-                    raise BootstrapRefusal("materialized runtime cache is unavailable")
-                os.rename(
-                    partial.name,
-                    final.name,
-                    src_dir_fd=parent_descriptor,
-                    dst_dir_fd=parent_descriptor,
-                )
-                renamed = True
-                locked_identity = _cache_entry_identity_at(
-                    parent_descriptor, final.name
-                )
-                if locked_identity is None or locked_identity != renamed_identity:
-                    raise BootstrapRefusal("materialized runtime cache is unavailable")
+    display_final = cache_root / scope_sha256
+    governing_terms_sha256: str | None = None
+    cache_root_created = False
+
+    def verify_terms_before_cache_creation(
+        _parent_descriptor: int, _name: str
+    ) -> None:
+        nonlocal cache_root_created, governing_terms_sha256
+        governing_terms_sha256 = _verify_governing_terms(manifest)
+        cache_root_created = True
+
+    with _open_cache_root_descriptor(
+        cache_root,
+        create=True,
+        before_create=verify_terms_before_cache_creation,
+    ) as root_fd:
+        initial_identity = _cache_entry_identity_at(root_fd, scope_sha256)
+        if cache_root_created and initial_identity is not None:
+            raise BootstrapRefusal("runtime cache entry appeared during creation")
+        if initial_identity is not None:
+            governing_terms_sha256 = _governing_terms_identity(manifest)
+        elif governing_terms_sha256 is None:
+            governing_terms_sha256 = _verify_governing_terms(manifest)
+        try:
+            group_id = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
+        except KeyError as exc:
+            raise BootstrapRefusal("runtime execution group is unavailable") from exc
+        os.fchown(root_fd, -1, group_id)
+        os.fchmod(root_fd, CACHE_ROOT_MODE)
+        stable_cache_root = Path("/proc/self/fd") / str(root_fd)
+        final = stable_cache_root / scope_sha256
+        assert governing_terms_sha256 is not None
+        with _cache_lock(root_fd, ".bootstrap.lock", exclusive=True, create=True):
+            locked_identity = _cache_entry_identity_at(root_fd, scope_sha256)
+            if locked_identity != initial_identity:
+                raise BootstrapRefusal("runtime cache entry changed before validation")
+            warm_reuse = locked_identity is not None
+            if warm_reuse:
+                assert locked_identity is not None
                 record = _validate_and_publish_cache(
-                    cache_root=cache_root,
+                    cache_root=stable_cache_root,
                     final=final,
                     identity=locked_identity,
                     manifest=manifest,
@@ -1896,28 +2149,82 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     requirements_sha256=requirements_sha256,
                     governing_terms_sha256=governing_terms_sha256,
                 )
-                committed = True
-            except Exception as exc:
-                rollback_errors: tuple[str, ...] = ()
-                if renamed and not committed and renamed_identity is not None:
-                    rollback_errors = _rollback_new_cache_entry(
-                        cache_root,
-                        final,
-                        renamed_identity,
-                        parent_descriptor=parent_descriptor,
+            else:
+                partial = Path(
+                    tempfile.mkdtemp(
+                        prefix=f".{manifest_sha256}.partial-", dir=stable_cache_root
                     )
-                shutil.rmtree(partial, ignore_errors=True)
-                if rollback_errors:
-                    raise BootstrapRefusal(
-                        "runtime cache rollback was incomplete: "
-                        + ", ".join(rollback_errors)
-                    ) from exc
-                raise
-            finally:
-                os.close(parent_descriptor)
+                )
+                os.chmod(partial, 0o700)
+                renamed = False
+                committed = False
+                renamed_identity: tuple[int, int] | None = None
+                try:
+                    _fetch_source(partial, manifest["source"])
+                    _validate_task_inputs(partial, manifest)
+                    _install_runtime(
+                        partial,
+                        manifest["runtime_artifacts"],
+                        requirement_lines,
+                        published_root=display_final,
+                    )
+                    _fetch_inputs(partial, manifest)
+                    record = _complete_record(
+                        partial,
+                        manifest,
+                        manifest_sha256,
+                        authorization_sha256,
+                        customer_identity_sha256,
+                        run_id,
+                        requirements_sha256,
+                        governing_terms_sha256,
+                    )
+                    _seal_cache_tree(partial)
+                    renamed_identity = _cache_entry_identity(partial)
+                    if renamed_identity is None:
+                        raise BootstrapRefusal("materialized runtime cache is unavailable")
+                    os.rename(
+                        partial.name,
+                        scope_sha256,
+                        src_dir_fd=root_fd,
+                        dst_dir_fd=root_fd,
+                    )
+                    renamed = True
+                    locked_identity = _cache_entry_identity_at(root_fd, scope_sha256)
+                    if locked_identity != renamed_identity:
+                        raise BootstrapRefusal("materialized runtime cache is unavailable")
+                    record = _validate_and_publish_cache(
+                        cache_root=stable_cache_root,
+                        final=final,
+                        identity=locked_identity,
+                        manifest=manifest,
+                        manifest_sha256=manifest_sha256,
+                        authorization_sha256=authorization_sha256,
+                        customer_identity_sha256=customer_identity_sha256,
+                        run_id=run_id,
+                        requirements_sha256=requirements_sha256,
+                        governing_terms_sha256=governing_terms_sha256,
+                    )
+                    committed = True
+                except Exception as exc:
+                    rollback_errors: tuple[str, ...] = ()
+                    if renamed and not committed and renamed_identity is not None:
+                        rollback_errors = _rollback_new_cache_entry(
+                            stable_cache_root,
+                            final,
+                            renamed_identity,
+                            parent_descriptor=root_fd,
+                        )
+                    shutil.rmtree(partial, ignore_errors=True)
+                    if rollback_errors:
+                        raise BootstrapRefusal(
+                            "runtime cache rollback was incomplete: "
+                            + ", ".join(rollback_errors)
+                        ) from exc
+                    raise
     return {
         **record,
-        "cache_path": str(final),
+        "cache_path": str(display_final),
         "warm_reuse": warm_reuse,
         "governing_terms_fetched_this_invocation": not warm_reuse,
     }
@@ -1998,31 +2305,75 @@ def _execution_authorization_values(
     if not _is_hex(authorization_sha256, 64):
         raise BootstrapRefusal("customer authorization SHA-256 is unavailable")
     scope_sha256 = _runtime_cache_scope_sha256(
-        manifest_sha256, customer_identity_sha256, run_id
+        manifest_sha256,
+        customer_identity_sha256,
+        run_id,
+        authorization_sha256,
     )
     return authorization_sha256, customer_identity_sha256, run_id, scope_sha256
 
 
-def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
+def _require_current_cache_link(
+    cache_root_descriptor: int, expected: str, refusal: str
+) -> None:
+    """Require the descriptor-relative current link to name the expected cache."""
+
+    try:
+        current = os.readlink("current", dir_fd=cache_root_descriptor)
+    except OSError:
+        raise BootstrapRefusal(refusal) from None
+    if current != expected:
+        raise BootstrapRefusal(refusal)
+
+
+def execute(
+    cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR,
+    authorization_descriptor: int = INHERITED_AUTHORIZATION_DESCRIPTOR,
+    execution_lock_descriptor: int = INHERITED_EXECUTION_LOCK_DESCRIPTOR,
+    bootstrap_lock_descriptor: int = INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR,
+) -> int:
     """Run the fixed smoke from one locked, descriptor-stable cache snapshot."""
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
-    authorization_sha256, customer_identity_sha256, run_id, scope_sha256 = (
+    expected_authorization_sha256, expected_customer, expected_run, scope_sha256 = (
         _execution_authorization_values(manifest_sha256)
     )
+    try:
+        supervisor_uid = pwd.getpwnam(RUNTIME_SUPERVISOR_USER).pw_uid
+    except KeyError as exc:
+        raise BootstrapRefusal("runtime supervisor account is unavailable") from exc
+    try:
+        authorization_bytes = _read_private_regular_descriptor(
+            authorization_descriptor, limit=1024 * 1024, owner_uid=supervisor_uid
+        )
+    except BootstrapRefusal as exc:
+        raise CustomerAcceptanceRequired("authorization_file_invalid") from exc
+    authorization, authorization_sha256 = _validate_customer_authorization_bytes(
+        authorization_bytes,
+        expected_authorization_sha256,
+        manifest,
+        manifest_sha256,
+    )
+    customer_identity_sha256 = authorization["customer_identity_sha256"]
+    run_id = authorization["run_id"]
+    if customer_identity_sha256 != expected_customer or run_id != expected_run:
+        raise CustomerAcceptanceRequired("authorization_wrong_scope")
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
-    final = cache_root / scope_sha256
-    identity = _cache_entry_identity(final)
-    if identity is None:
-        raise BootstrapRefusal("runtime cache is not materialized")
-    current = cache_root / "current"
-    if not current.is_symlink() or os.readlink(current) != final.name:
-        raise BootstrapRefusal("runtime current link differs from the accepted cache")
-    governing_terms_sha256 = _governing_terms_identity(manifest)
-    lock_path = cache_root / ".bootstrap.lock"
-    with lock_path.open("rb") as lock:
-        fcntl.flock(lock, fcntl.LOCK_SH)
+    with _open_cache_root_descriptor(
+        cache_root, create=False, owner_uid=supervisor_uid
+    ) as root_fd:
+        identity = _cache_entry_identity_at(root_fd, scope_sha256)
+        if identity is None:
+            raise BootstrapRefusal("runtime cache is not materialized")
+        _require_inherited_lock(root_fd, ".execution.lock", execution_lock_descriptor)
+        _require_inherited_lock(root_fd, ".bootstrap.lock", bootstrap_lock_descriptor)
+        _require_current_cache_link(
+            root_fd,
+            scope_sha256,
+            "runtime current link differs from the accepted cache",
+        )
+        governing_terms_sha256 = _governing_terms_identity(manifest)
         try:
             opened = os.fstat(cache_descriptor)
         except OSError as exc:
@@ -2061,9 +2412,13 @@ def execute(cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR) -> int:
             requirements_sha256,
             governing_terms_sha256,
         )
-        _require_cache_entry_identity(final, identity)
-        if not current.is_symlink() or os.readlink(current) != final.name:
-            raise BootstrapRefusal("runtime current link changed during execution")
+        if _cache_entry_identity_at(root_fd, scope_sha256) != identity:
+            raise BootstrapRefusal("runtime cache entry changed during execution")
+        _require_current_cache_link(
+            root_fd,
+            scope_sha256,
+            "runtime current link changed during execution",
+        )
         return completed.returncode
 
 
@@ -2097,7 +2452,11 @@ def _storage_authorization(
     keys = {
         "schema",
         "issuer",
+        "capability_id",
+        "customer_identity_sha256",
         "run_id",
+        "candidate_image",
+        "runtime_manifest_sha256",
         "output_prefix",
         "endpoint_url",
         "access_key_id_sha256",
@@ -2107,6 +2466,7 @@ def _storage_authorization(
         "issued_at",
         "expires_at",
         "nonce",
+        "signature",
     }
     if not isinstance(authorization, dict) or set(authorization) != keys:
         raise BootstrapRefusal("output storage authorization schema is not closed")
@@ -2114,6 +2474,7 @@ def _storage_authorization(
     secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
     session_token = os.environ.get("AWS_SESSION_TOKEN", "")
     prefix_sha256 = hashlib.sha256(output_prefix.encode()).hexdigest()
+    _, runtime_manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     issued_at = _parse_utc(authorization.get("issued_at"), "authorization issued_at")
     expires_at = _parse_utc(authorization.get("expires_at"), "authorization expires_at")
     customer_authorization_expires_at = _parse_utc(
@@ -2122,9 +2483,18 @@ def _storage_authorization(
     )
     now = datetime.now(timezone.utc)
     valid = (
-        authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-control-plane"
+        authorization.get("schema") == OUTPUT_STORAGE_AUTHORIZATION_SCHEMA
+        and authorization.get("issuer") == "npa-output-storage-control-plane"
+        and re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}",
+            str(authorization.get("capability_id") or ""),
+        )
+        is not None
+        and authorization.get("customer_identity_sha256")
+        == os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256")
         and authorization.get("run_id") == run_id
+        and authorization.get("candidate_image") == os.environ.get("BYOF_IMAGE")
+        and authorization.get("runtime_manifest_sha256") == runtime_manifest_sha256
         and authorization.get("output_prefix") == output_prefix
         and authorization.get("endpoint_url") == endpoint
         and prefix_sha256
@@ -2143,9 +2513,16 @@ def _storage_authorization(
         and expires_at > now
         and expires_at - issued_at <= timedelta(hours=24)
         and expires_at <= customer_authorization_expires_at
+        and isinstance(authorization.get("signature"), dict)
+        and set(authorization["signature"])
+        == {"algorithm", "public_key_sha256", "signature_b64"}
+        and authorization["signature"].get("algorithm") == "ed25519"
     )
     if not valid:
         raise BootstrapRefusal("output storage authorization is invalid or expired")
+    _verify_output_storage_authorization_signature(
+        authorization, authorization["signature"]
+    )
     return authorization
 
 
@@ -2296,7 +2673,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     endpoint_parts = urllib.parse.urlsplit(endpoint)
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
-    _storage_authorization(output_prefix, run_id, endpoint)
+    storage_authorization = _storage_authorization(output_prefix, run_id, endpoint)
     root_info = os.fstat(root_fd)
     if (
         not stat.S_ISDIR(root_info.st_mode)
@@ -2353,9 +2730,17 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
 
     prefix = parsed.path.lstrip("/")
 
-    def upload_and_read_back(name: str, payload: bytes, digest: str) -> dict[str, Any]:
+    transaction_id = uuid4().hex
+    staging_prefix = f"{prefix}.npa-staging/{run_id}/{transaction_id}/"
+
+    def upload_and_read_back(
+        object_key: str, name: str, payload: bytes, digest: str
+    ) -> dict[str, Any]:
+        current_authorization = _storage_authorization(output_prefix, run_id, endpoint)
+        if current_authorization["capability_id"] != storage_authorization["capability_id"]:
+            raise BootstrapRefusal("output storage authorization changed during upload")
         checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-        url = _s3_object_url(endpoint, parsed.netloc, prefix + name)
+        url = _s3_object_url(endpoint, parsed.netloc, object_key)
         _sigv4_request(
             "PUT",
             url,
@@ -2371,7 +2756,12 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             or headers.get("x-amz-checksum-sha256") != checksum
         ):
             raise BootstrapRefusal("output storage checksum/readback differs")
-        return {"name": name, "size_bytes": len(payload), "sha256": digest}
+        return {
+            "name": name,
+            "object_key": object_key,
+            "size_bytes": len(payload),
+            "sha256": digest,
+        }
 
     if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
         raise BootstrapRefusal("output differs from the exact artifact allowlist")
@@ -2386,15 +2776,26 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         payload, digest = immutable_bytes(root_fd, name, limit)
         snapshots.append((name, payload, digest))
     receipts = [
-        upload_and_read_back(name, payload, digest)
+        upload_and_read_back(staging_prefix + name, name, payload, digest)
         for name, payload, digest in snapshots
     ]
     receipt_payload = (
         json.dumps(
             {
-                "schema": "npa.libero.s3-upload-readback.v1",
+                "schema": "npa.libero.output-commit.v1",
                 "run_id": run_id,
-                "status": "verified",
+                "customer_identity_sha256": os.environ.get(
+                    "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+                ),
+                "candidate_image": os.environ.get("BYOF_IMAGE", ""),
+                "output_storage_capability_id": storage_authorization[
+                    "capability_id"
+                ],
+                "output_storage_authorization_sha256": os.environ.get(
+                    "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256", ""
+                ),
+                "transaction_id": transaction_id,
+                "status": "committed",
                 "artifacts": receipts,
             },
             indent=2,
@@ -2402,6 +2803,13 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         )
         + "\n"
     ).encode()
+    receipt_sha256 = hashlib.sha256(receipt_payload).hexdigest()
+    upload_and_read_back(
+        prefix + "npa_output_commit.json",
+        "npa_output_commit.json",
+        receipt_payload,
+        receipt_sha256,
+    )
     receipt_name = "npa_upload_receipt.json"
     receipt_fd = os.open(
         receipt_name,
@@ -2411,11 +2819,13 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     )
     with os.fdopen(receipt_fd, "wb") as stream:
         stream.write(receipt_payload)
-    receipt_bytes, receipt_sha256 = immutable_bytes(
-        root_fd, receipt_name, 8 * 1024 * 1024
-    )
-    upload_and_read_back(receipt_name, receipt_bytes, receipt_sha256)
-    return {"schema": "npa.libero.output-upload.v1", "status": "verified"}
+    immutable_bytes(root_fd, receipt_name, 8 * 1024 * 1024)
+    return {
+        "schema": "npa.libero.output-upload.v2",
+        "status": "verified",
+        "transaction_id": transaction_id,
+        "commit_sha256": receipt_sha256,
+    }
 
 
 def _run_output_root(run_id: str) -> Path:
@@ -2498,8 +2908,28 @@ def _materialize_supervisor_artifact(
         stream.write(payload)
 
 
+@contextmanager
+def _bind_inherited_descriptors(sources: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    """Expose exact retained descriptors at the sudo close-from boundary."""
+
+    targets = tuple(range(INHERITED_CACHE_DESCRIPTOR, INHERITED_CACHE_DESCRIPTOR + len(sources)))
+    preserved = [os.dup(source) for source in sources]
+    try:
+        for source, target in zip(preserved, targets, strict=True):
+            os.dup2(source, target, inheritable=True)
+        yield targets
+    finally:
+        for target in targets:
+            try:
+                os.close(target)
+            except OSError:
+                pass
+        for descriptor in preserved:
+            os.close(descriptor)
+
+
 def execute_and_upload() -> int:
-    """Hold the customer-scoped cache lock through smoke output readback."""
+    """Hold exact authorization and exclusive UID ownership through readback."""
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
@@ -2507,184 +2937,230 @@ def execute_and_upload() -> int:
         _execution_authorization_values(manifest_sha256)
     )
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
-    final = cache_root / scope_sha256
-    identity = _cache_entry_identity(final)
-    if identity is None:
-        raise BootstrapRefusal("runtime cache is not materialized")
-    current = cache_root / "current"
-    governing_terms_sha256 = _governing_terms_identity(manifest)
     output_root = _run_output_root(run_id)
-    root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    output_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    authorization_fd = -1
     try:
-        root_info = os.fstat(root_fd)
-        if (
-            root_info.st_uid != os.getuid()
-            or stat.S_IMODE(root_info.st_mode) != 0o1770
-        ):
+        output_info = os.fstat(output_fd)
+        if output_info.st_uid != os.getuid() or stat.S_IMODE(output_info.st_mode) != 0o1770:
             raise BootstrapRefusal("execution output staging directory is invalid")
+        try:
+            authorization_fd = os.open(
+                PROTECTED_AUTHORIZATION_NAME,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=output_fd,
+            )
+        except OSError as exc:
+            raise CustomerAcceptanceRequired("authorization_missing_at_execution") from exc
+        try:
+            authorization_bytes = _read_private_regular_descriptor(
+                authorization_fd, limit=1024 * 1024, owner_uid=os.getuid()
+            )
+        except BootstrapRefusal as exc:
+            raise CustomerAcceptanceRequired("authorization_file_invalid") from exc
+        authorization, observed_authorization_sha256 = (
+            _validate_customer_authorization_bytes(
+                authorization_bytes,
+                authorization_sha256,
+                manifest,
+                manifest_sha256,
+            )
+        )
+        if (
+            observed_authorization_sha256 != authorization_sha256
+            or authorization["customer_identity_sha256"] != customer_identity_sha256
+            or authorization["run_id"] != run_id
+        ):
+            raise CustomerAcceptanceRequired("authorization_wrong_scope")
         bootstrap_receipt = _bootstrap_receipt_path(cache_root, run_id)
         bootstrap_payload = _immutable_supervisor_bytes(
             bootstrap_receipt, OUTPUT_SIZE_LIMITS["npa_runtime_bootstrap.json"]
         )
-        if _execution_uid_processes():
-            raise BootstrapRefusal("runtime execution UID is already active")
-    except Exception:
-        os.close(root_fd)
-        raise
-    lock_path = cache_root / ".bootstrap.lock"
-    try:
-        stdout_fd = os.open(
-            "solution_smoke_stdout.log",
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
-            dir_fd=root_fd,
-        )
-        try:
-            stderr_fd = os.open(
-                "solution_smoke_stderr.log",
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
-                dir_fd=root_fd,
-            )
-        except Exception:
-            os.close(stdout_fd)
-            raise
-        with lock_path.open("rb") as lock:
-            fcntl.flock(lock, fcntl.LOCK_SH)
-            descriptor = os.open(
-                final,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            )
-            try:
-                opened = os.fstat(descriptor)
-                if (opened.st_dev, opened.st_ino) != identity:
-                    raise BootstrapRefusal("runtime cache descriptor identity changed")
-                stable_root = Path("/proc/self/fd") / str(descriptor)
-                _validate_complete(
-                    stable_root,
-                    manifest,
-                    manifest_sha256,
-                    authorization_sha256,
-                    customer_identity_sha256,
-                    run_id,
-                    requirements_sha256,
-                    governing_terms_sha256,
-                )
-                runtime_metadata = _immutable_supervisor_bytes(
-                    stable_root / ".complete.json",
-                    OUTPUT_SIZE_LIMITS["npa_runtime_metadata.json"],
-                )
-                with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
-                    stderr_fd, "wb"
-                ) as stderr:
-                    inherited_root = (
-                        Path("/proc/self/fd") / str(INHERITED_CACHE_DESCRIPTOR)
+        with _open_cache_root_descriptor(cache_root, create=False) as cache_root_fd:
+            identity = _cache_entry_identity_at(cache_root_fd, scope_sha256)
+            if identity is None:
+                raise BootstrapRefusal("runtime cache is not materialized")
+            if os.readlink("current", dir_fd=cache_root_fd) != scope_sha256:
+                raise BootstrapRefusal("runtime current link differs from accepted cache")
+            with _cache_lock(
+                cache_root_fd, ".execution.lock", exclusive=True, create=True
+            ) as execution_lock_fd:
+                if _execution_uid_processes():
+                    raise BootstrapRefusal("runtime execution UID is already active")
+                with _cache_lock(
+                    cache_root_fd, ".bootstrap.lock", exclusive=False, create=False
+                ) as bootstrap_lock_fd:
+                    descriptor = os.open(
+                        scope_sha256,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=cache_root_fd,
                     )
-                    environment = _runtime_execution_environment(inherited_root)
-                    environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] = str(
-                        bootstrap_receipt
-                    )
-                    inherited_is_duplicate = descriptor != INHERITED_CACHE_DESCRIPTOR
-                    if inherited_is_duplicate:
-                        os.dup2(
-                            descriptor,
-                            INHERITED_CACHE_DESCRIPTOR,
-                            inheritable=True,
-                        )
-                    else:
-                        os.set_inheritable(INHERITED_CACHE_DESCRIPTOR, True)
                     try:
-                        completed = subprocess.run(
-                            [
-                                "/usr/bin/sudo",
-                                "--close-from",
-                                str(INHERITED_CACHE_DESCRIPTOR + 1),
-                                "--user=npa-libero-exec",
-                                "/opt/npa/libero/runtime-bootstrap.py",
-                                "execute",
-                            ],
-                            check=False,
-                            env=environment,
-                            stdout=stdout,
-                            stderr=stderr,
-                            pass_fds=(INHERITED_CACHE_DESCRIPTOR,),
+                        opened = os.fstat(descriptor)
+                        if (opened.st_dev, opened.st_ino) != identity:
+                            raise BootstrapRefusal("runtime cache descriptor identity changed")
+                        stable_root = Path("/proc/self/fd") / str(descriptor)
+                        governing_terms_sha256 = _governing_terms_identity(manifest)
+                        _validate_complete(
+                            stable_root,
+                            manifest,
+                            manifest_sha256,
+                            authorization_sha256,
+                            customer_identity_sha256,
+                            run_id,
+                            requirements_sha256,
+                            governing_terms_sha256,
                         )
+                        runtime_metadata = _immutable_supervisor_bytes(
+                            stable_root / ".complete.json",
+                            OUTPUT_SIZE_LIMITS["npa_runtime_metadata.json"],
+                        )
+                        stdout_fd = os.open(
+                            "solution_smoke_stdout.log",
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                            0o640,
+                            dir_fd=output_fd,
+                        )
+                        try:
+                            stderr_fd = os.open(
+                                "solution_smoke_stderr.log",
+                                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                0o640,
+                                dir_fd=output_fd,
+                            )
+                        except Exception:
+                            os.close(stdout_fd)
+                            raise
+                        with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
+                            stderr_fd, "wb"
+                        ) as stderr, _bind_inherited_descriptors(
+                            (
+                                descriptor,
+                                authorization_fd,
+                                execution_lock_fd,
+                                bootstrap_lock_fd,
+                            )
+                        ) as inherited:
+                            _validate_customer_authorization_bytes(
+                                authorization_bytes,
+                                authorization_sha256,
+                                manifest,
+                                manifest_sha256,
+                            )
+                            environment = _runtime_execution_environment(
+                                Path("/proc/self/fd") / str(INHERITED_CACHE_DESCRIPTOR)
+                            )
+                            environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] = str(
+                                bootstrap_receipt
+                            )
+                            completed = subprocess.run(
+                                [
+                                    "/usr/bin/sudo",
+                                    "--close-from",
+                                    str(INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
+                                    "--user=npa-libero-exec",
+                                    "/opt/npa/libero/runtime-bootstrap.py",
+                                    "execute",
+                                ],
+                                check=False,
+                                env=environment,
+                                stdout=stdout,
+                                stderr=stderr,
+                                pass_fds=inherited,
+                            )
+                        smoke_exit_code = completed.returncode
+                        if smoke_exit_code == 3:
+                            # The child emits this code only for a customer-actionable
+                            # authorization refusal. Revalidate the same retained bytes
+                            # so the supervisor returns the structured acceptance state
+                            # and never publishes it as a workload failure.
+                            try:
+                                _validate_customer_authorization_bytes(
+                                    authorization_bytes,
+                                    authorization_sha256,
+                                    manifest,
+                                    manifest_sha256,
+                                )
+                            except CustomerAcceptanceRequired:
+                                raise
+                            raise BootstrapRefusal(
+                                "runtime child reported an inconsistent authorization refusal"
+                            )
+                        remaining_processes = _execution_uid_processes()
+                        if remaining_processes:
+                            raise BootstrapRefusal(
+                                "runtime execution left processes behind: "
+                                + ",".join(str(pid) for pid in remaining_processes)
+                            )
+                        current_output = output_root.stat(follow_symlinks=False)
+                        if (
+                            not stat.S_ISDIR(current_output.st_mode)
+                            or (current_output.st_dev, current_output.st_ino)
+                            != (output_info.st_dev, output_info.st_ino)
+                        ):
+                            raise BootstrapRefusal(
+                                "execution output staging directory changed during execution"
+                            )
+                        os.fchmod(output_fd, 0o700)
+                        authorization_info = os.fstat(authorization_fd)
+                        named_authorization = os.stat(
+                            PROTECTED_AUTHORIZATION_NAME,
+                            dir_fd=output_fd,
+                            follow_symlinks=False,
+                        )
+                        if (authorization_info.st_dev, authorization_info.st_ino) != (
+                            named_authorization.st_dev,
+                            named_authorization.st_ino,
+                        ):
+                            raise BootstrapRefusal("protected authorization identity changed")
+                        os.unlink(PROTECTED_AUTHORIZATION_NAME, dir_fd=output_fd)
+                        _materialize_supervisor_artifact(
+                            output_fd, "npa_runtime_bootstrap.json", bootstrap_payload
+                        )
+                        _materialize_supervisor_artifact(
+                            output_fd, "npa_runtime_metadata.json", runtime_metadata
+                        )
+                        artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
+                        try:
+                            artifact_info = os.stat(
+                                artifact_name, dir_fd=output_fd, follow_symlinks=False
+                            )
+                            artifact_is_regular = stat.S_ISREG(
+                                artifact_info.st_mode
+                            ) and artifact_info.st_nlink == 1
+                        except OSError:
+                            artifact_is_regular = False
+                        if artifact_name not in OUTPUT_SIZE_LIMITS or not artifact_is_regular:
+                            error_fd = os.open(
+                                "solution_smoke_stderr.log",
+                                os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW,
+                                dir_fd=output_fd,
+                            )
+                            with os.fdopen(error_fd, "a", encoding="utf-8") as stderr:
+                                stderr.write(f"missing required smoke artifact: {artifact_name}\n")
+                            smoke_exit_code = 1
+                        upload_outputs(smoke_exit_code, root_fd=output_fd)
+                        _validate_complete(
+                            stable_root,
+                            manifest,
+                            manifest_sha256,
+                            authorization_sha256,
+                            customer_identity_sha256,
+                            run_id,
+                            requirements_sha256,
+                            governing_terms_sha256,
+                        )
+                        if _cache_entry_identity_at(cache_root_fd, scope_sha256) != identity:
+                            raise BootstrapRefusal("runtime cache changed before readback")
+                        if os.readlink("current", dir_fd=cache_root_fd) != scope_sha256:
+                            raise BootstrapRefusal("runtime current link changed before readback")
+                        return smoke_exit_code
                     finally:
-                        if inherited_is_duplicate:
-                            os.close(INHERITED_CACHE_DESCRIPTOR)
-                        else:
-                            os.set_inheritable(INHERITED_CACHE_DESCRIPTOR, False)
-                smoke_exit_code = completed.returncode
-                remaining_processes = _execution_uid_processes()
-                if remaining_processes:
-                    raise BootstrapRefusal(
-                        "runtime execution left processes behind: "
-                        + ",".join(str(pid) for pid in remaining_processes)
-                    )
-                try:
-                    current_root_info = output_root.stat(follow_symlinks=False)
-                except OSError as exc:
-                    raise BootstrapRefusal(
-                        "execution output staging directory is unavailable after execution"
-                    ) from exc
-                if (
-                    not stat.S_ISDIR(current_root_info.st_mode)
-                    or (current_root_info.st_dev, current_root_info.st_ino)
-                    != (root_info.st_dev, root_info.st_ino)
-                ):
-                    raise BootstrapRefusal(
-                        "execution output staging directory changed during execution"
-                    )
-                os.fchmod(root_fd, 0o700)
-                _materialize_supervisor_artifact(
-                    root_fd, "npa_runtime_bootstrap.json", bootstrap_payload
-                )
-                _materialize_supervisor_artifact(
-                    root_fd, "npa_runtime_metadata.json", runtime_metadata
-                )
-                artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
-                try:
-                    artifact_info = os.stat(
-                        artifact_name, dir_fd=root_fd, follow_symlinks=False
-                    )
-                    artifact_is_regular = (
-                        stat.S_ISREG(artifact_info.st_mode)
-                        and artifact_info.st_nlink == 1
-                    )
-                except OSError:
-                    artifact_is_regular = False
-                if artifact_name not in OUTPUT_SIZE_LIMITS or not artifact_is_regular:
-                    stderr_fd = os.open(
-                        "solution_smoke_stderr.log",
-                        os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW,
-                        dir_fd=root_fd,
-                    )
-                    with os.fdopen(stderr_fd, "a", encoding="utf-8") as stderr:
-                        stderr.write(
-                            f"missing required smoke artifact: {artifact_name}\n"
-                        )
-                    smoke_exit_code = 1
-                upload_outputs(smoke_exit_code, root_fd=root_fd)
-                _validate_complete(
-                    stable_root,
-                    manifest,
-                    manifest_sha256,
-                    authorization_sha256,
-                    customer_identity_sha256,
-                    run_id,
-                    requirements_sha256,
-                    governing_terms_sha256,
-                )
-                _require_cache_entry_identity(final, identity)
-                if not current.is_symlink() or os.readlink(current) != final.name:
-                    raise BootstrapRefusal(
-                        "runtime current link changed before output readback completed"
-                    )
-                return smoke_exit_code
-            finally:
-                os.close(descriptor)
+                        os.close(descriptor)
     finally:
-        os.close(root_fd)
+        if authorization_fd >= 0:
+            os.close(authorization_fd)
+        os.close(output_fd)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

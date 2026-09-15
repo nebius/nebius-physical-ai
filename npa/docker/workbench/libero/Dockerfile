@@ -72,9 +72,10 @@ RUN set -eux; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
-# The customer-control-plane key is public verification material, injected as a
-# BuildKit secret so Docker history and build arguments cannot substitute trust.
+# The customer and storage control planes use distinct public verification
+# material. BuildKit secrets prevent build arguments from substituting either.
 RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,required=true \
+    --mount=type=secret,id=npa_libero_output_storage_authorization_public_key_b64,required=true \
     set -eux; \
     tr -d '\r\n' \
       < /run/secrets/npa_libero_customer_authorization_public_key_b64 \
@@ -86,7 +87,20 @@ RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,requ
       "$(cat /opt/npa/libero/customer-authorization-public-key.b64)"; \
     rm -f /tmp/npa-libero-customer-authorization-public-key.raw; \
     chown root:root /opt/npa/libero/customer-authorization-public-key.b64; \
-    chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64
+    chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64; \
+    tr -d '\r\n' \
+      < /run/secrets/npa_libero_output_storage_authorization_public_key_b64 \
+      > /opt/npa/libero/output-storage-authorization-public-key.b64; \
+    base64 -d /opt/npa/libero/output-storage-authorization-public-key.b64 \
+      > /tmp/npa-libero-output-storage-authorization-public-key.raw; \
+    test "$(wc -c < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = 32; \
+    test "$(base64 -w 0 < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = \
+      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"; \
+    test "$(cat /opt/npa/libero/customer-authorization-public-key.b64)" != \
+      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"; \
+    rm -f /tmp/npa-libero-output-storage-authorization-public-key.raw; \
+    chown root:root /opt/npa/libero/output-storage-authorization-public-key.b64; \
+    chmod 0444 /opt/npa/libero/output-storage-authorization-public-key.b64
 
 COPY docker/workbench/libero/runtime-manifest.json /opt/npa/libero/runtime-manifest.json
 COPY docker/workbench/libero/runtime-requirements.txt /opt/npa/libero/runtime-requirements.txt

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from importlib import resources
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import stat
 import struct
 import shlex
 from typing import Any
+from urllib.parse import urlparse
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -49,8 +51,15 @@ PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA = (
     "npa.libero.customer-runtime-authorization.v1"
 )
+LIBERO_AUTHENTICATED_CALLER_SCHEMA = "npa.libero.authenticated-caller.v1"
 LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV = (
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"
+)
+LIBERO_OUTPUT_STORAGE_AUTHORIZATION_SCHEMA = (
+    "npa.libero.output-storage-authorization.v3"
+)
+LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV = (
+    "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE"
 )
 LIBERO_OFFICIAL_CANDIDATE_PREFIX = (
     "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
@@ -537,6 +546,23 @@ def libero_customer_authorization_signature_payload(
     )
 
 
+def libero_authenticated_caller_signature_payload(payload: dict[str, Any]) -> bytes:
+    """Return SSHSIG-framed bytes for an authenticated caller assertion."""
+
+    unsigned = json.loads(json.dumps(payload))
+    unsigned.pop("signature", None)
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    return b"".join(
+        (
+            b"SSHSIG",
+            _ssh_signature_string(b"npa.libero.authenticated-caller"),
+            _ssh_signature_string(b""),
+            _ssh_signature_string(b"sha512"),
+            _ssh_signature_string(hashlib.sha512(canonical).digest()),
+        )
+    )
+
+
 def _verify_libero_customer_authorization_signature(
     payload: dict[str, Any],
     *,
@@ -755,6 +781,7 @@ def libero_publication_lineage_values(
         "publication_bundle_sha256",
         "package_writer_repository",
         "customer_authorization_public_key_sha256",
+        "output_storage_authorization_public_key_sha256",
     )
     return {field: qualification[field] for field in fields}
 
@@ -900,6 +927,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "publication_enforcement_bundle_sha256",
         "package_writer_repository",
         "customer_authorization_public_key_sha256",
+        "output_storage_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     }
     require(set(qualification) == expected_keys, "closed qualification schema")
@@ -949,6 +977,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
         "customer_authorization_public_key_sha256",
+        "output_storage_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     ):
         require(
@@ -1040,6 +1069,9 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "package_writer_repository": qualification.get("package_writer_repository"),
         "customer_authorization_public_key_sha256": qualification.get(
             "customer_authorization_public_key_sha256"
+        ),
+        "output_storage_authorization_public_key_sha256": qualification.get(
+            "output_storage_authorization_public_key_sha256"
         ),
     }
     require(
@@ -1205,6 +1237,294 @@ def validate_libero_customer_runtime_authorization(
         )
     observed_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
     return authorization, observed_sha256
+
+
+def libero_output_storage_authorization_signature_payload(
+    payload: dict[str, Any],
+) -> bytes:
+    """Return SSHSIG-framed bytes for an output-storage capability."""
+
+    unsigned = json.loads(json.dumps(payload))
+    unsigned.pop("signature", None)
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    return b"".join(
+        (
+            b"SSHSIG",
+            _ssh_signature_string(b"npa.libero.output-storage-authorization"),
+            _ssh_signature_string(b""),
+            _ssh_signature_string(b"sha512"),
+            _ssh_signature_string(hashlib.sha512(canonical).digest()),
+        )
+    )
+
+
+def _libero_trust_root_bytes(path_value: str, *, label: str) -> bytes:
+    try:
+        descriptor = os.open(path_value, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise RuntimeError(f"LIBERO {label} trust-root file is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        encoded = os.read(descriptor, 1024)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or before.st_size != len(encoded)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or encoded != encoded.strip()
+    ):
+        raise RuntimeError(f"LIBERO {label} trust-root file is mutable or invalid")
+    try:
+        key = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError(f"LIBERO {label} trust root is invalid") from exc
+    if len(key) != 32:
+        raise RuntimeError(f"LIBERO {label} trust root is invalid")
+    return key
+
+
+def validate_libero_authenticated_caller_assertion(
+    assertion_bytes: bytes,
+    *,
+    run_id: str,
+    public_key_file: str = "",
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Validate the short-lived identity asserted by the authenticated caller edge."""
+
+    try:
+        assertion = json.loads(assertion_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("LIBERO authenticated-caller assertion is invalid JSON") from exc
+    keys = {
+        "schema",
+        "issuer",
+        "session_id",
+        "customer_identity_sha256",
+        "run_id",
+        "issued_at",
+        "expires_at",
+        "nonce",
+        "signature",
+    }
+    signature = assertion.get("signature") if isinstance(assertion, dict) else None
+    if (
+        not isinstance(assertion, dict)
+        or set(assertion) != keys
+        or assertion.get("schema") != LIBERO_AUTHENTICATED_CALLER_SCHEMA
+        or assertion.get("issuer") != "npa-authenticated-caller-control-plane"
+        or re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}", str(assertion.get("session_id") or "")
+        )
+        is None
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(assertion.get("customer_identity_sha256") or "")
+        )
+        is None
+        or assertion.get("run_id") != run_id
+        or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(assertion.get("nonce") or ""))
+        is None
+        or not isinstance(signature, dict)
+        or set(signature) != {"algorithm", "public_key_sha256", "signature_b64"}
+        or signature.get("algorithm") != "ed25519"
+    ):
+        raise RuntimeError("LIBERO authenticated-caller assertion is invalid")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(assertion["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(assertion["expires_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO authenticated-caller timestamps are invalid") from exc
+    current = now or datetime.now(timezone.utc)
+    if (
+        issued_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or issued_at > current + timedelta(minutes=1)
+        or issued_at >= expires_at
+        or expires_at <= current
+        or expires_at - issued_at > timedelta(minutes=15)
+    ):
+        raise RuntimeError("LIBERO authenticated-caller assertion is expired or replayable")
+    key_path = public_key_file.strip() or os.environ.get(
+        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+    ).strip()
+    public_key = _libero_trust_root_bytes(
+        key_path, label="authenticated-caller"
+    )
+    fingerprint = hashlib.sha256(public_key).hexdigest()
+    if signature.get("public_key_sha256") != fingerprint:
+        raise RuntimeError("LIBERO authenticated-caller trust root differs")
+    try:
+        signature_bytes = base64.b64decode(
+            str(signature.get("signature_b64") or ""), validate=True
+        )
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature_bytes, libero_authenticated_caller_signature_payload(assertion)
+        )
+    except (ValueError, binascii.Error, InvalidSignature) as exc:
+        raise RuntimeError("LIBERO authenticated-caller signature is invalid") from exc
+    return assertion, hashlib.sha256(assertion_bytes).hexdigest()
+
+
+def validate_libero_output_storage_authorization(
+    authorization_bytes: bytes,
+    *,
+    image_manifest: dict[str, Any],
+    customer_authorization: dict[str, Any],
+    run_id: str,
+    output_prefix: str,
+    endpoint_url: str,
+    access_key_id: str,
+    secret_access_key: str,
+    session_token: str,
+    expected_policy_sha256: str = "",
+    customer_public_key_file: str = "",
+    storage_public_key_file: str = "",
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Validate a separately signed, exact-run output capability."""
+
+    try:
+        authorization = json.loads(authorization_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("LIBERO output storage authorization is invalid JSON") from exc
+    keys = {
+        "schema",
+        "issuer",
+        "capability_id",
+        "customer_identity_sha256",
+        "run_id",
+        "candidate_image",
+        "runtime_manifest_sha256",
+        "output_prefix",
+        "endpoint_url",
+        "access_key_id_sha256",
+        "secret_access_key_sha256",
+        "session_token_sha256",
+        "policy_sha256",
+        "issued_at",
+        "expires_at",
+        "nonce",
+        "signature",
+    }
+    if not isinstance(authorization, dict) or set(authorization) != keys:
+        raise RuntimeError("LIBERO output storage authorization schema is not closed")
+    parsed_endpoint = urlparse(endpoint_url)
+    if (
+        parsed_endpoint.scheme != "https"
+        or not parsed_endpoint.hostname
+        or parsed_endpoint.username is not None
+        or parsed_endpoint.password is not None
+        or parsed_endpoint.path not in {"", "/"}
+        or parsed_endpoint.params
+        or parsed_endpoint.query
+        or parsed_endpoint.fragment
+    ):
+        raise RuntimeError("LIBERO output storage endpoint must be origin-only HTTPS")
+    qualification = validate_libero_qualified_image_manifest(image_manifest)
+    signature = authorization.get("signature")
+    if (
+        not isinstance(signature, dict)
+        or set(signature) != {"algorithm", "public_key_sha256", "signature_b64"}
+        or signature.get("algorithm") != "ed25519"
+    ):
+        raise RuntimeError("LIBERO output storage authorization signature is invalid")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(authorization["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(authorization["expires_at"]).replace("Z", "+00:00")
+        )
+        customer_expires_at = datetime.fromisoformat(
+            str(customer_authorization["expires_at"]).replace("Z", "+00:00")
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO output storage authorization timestamps are invalid") from exc
+    current = now or datetime.now(timezone.utc)
+    valid = (
+        authorization.get("schema") == LIBERO_OUTPUT_STORAGE_AUTHORIZATION_SCHEMA
+        and authorization.get("issuer") == "npa-output-storage-control-plane"
+        and re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{15,79}",
+            str(authorization.get("capability_id") or ""),
+        )
+        is not None
+        and authorization.get("customer_identity_sha256")
+        == customer_authorization.get("customer_identity_sha256")
+        and authorization.get("run_id") == run_id == customer_authorization.get("run_id")
+        and authorization.get("candidate_image")
+        == customer_authorization.get("candidate_image")
+        == qualification.get("candidate_image")
+        and authorization.get("runtime_manifest_sha256")
+        == customer_authorization.get("runtime_manifest_sha256")
+        == image_manifest.get("runtime_manifest_sha256")
+        and authorization.get("output_prefix") == output_prefix
+        and authorization.get("endpoint_url") == endpoint_url
+        and all((access_key_id, secret_access_key, session_token))
+        and authorization.get("access_key_id_sha256")
+        == hashlib.sha256(access_key_id.encode()).hexdigest()
+        and authorization.get("secret_access_key_sha256")
+        == hashlib.sha256(secret_access_key.encode()).hexdigest()
+        and authorization.get("session_token_sha256")
+        == hashlib.sha256(session_token.encode()).hexdigest()
+        and re.fullmatch(r"[0-9a-f]{64}", str(authorization.get("policy_sha256") or ""))
+        is not None
+        and (not expected_policy_sha256 or authorization.get("policy_sha256") == expected_policy_sha256)
+        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
+        is not None
+        and issued_at.tzinfo is not None
+        and expires_at.tzinfo is not None
+        and customer_expires_at.tzinfo is not None
+        and issued_at <= current + timedelta(minutes=5)
+        and issued_at < expires_at <= customer_expires_at
+        and expires_at > current
+        and expires_at - issued_at <= timedelta(hours=24)
+    )
+    if not valid:
+        raise RuntimeError("LIBERO output storage authorization is invalid or expired")
+    customer_key_path = customer_public_key_file.strip() or os.environ.get(
+        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+    ).strip()
+    storage_key_path = storage_public_key_file.strip() or os.environ.get(
+        LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+    ).strip()
+    customer_key = _libero_trust_root_bytes(
+        customer_key_path, label="customer-authorization"
+    )
+    storage_key = _libero_trust_root_bytes(
+        storage_key_path, label="output-storage-authorization"
+    )
+    customer_fingerprint = hashlib.sha256(customer_key).hexdigest()
+    storage_fingerprint = hashlib.sha256(storage_key).hexdigest()
+    if (
+        customer_fingerprint != qualification["customer_authorization_public_key_sha256"]
+        or storage_fingerprint
+        != qualification["output_storage_authorization_public_key_sha256"]
+        or hmac.compare_digest(customer_fingerprint, storage_fingerprint)
+        or signature.get("public_key_sha256") != storage_fingerprint
+    ):
+        raise RuntimeError("LIBERO output storage trust root differs or is not independent")
+    try:
+        signature_bytes = base64.b64decode(
+            str(signature.get("signature_b64") or ""), validate=True
+        )
+        Ed25519PublicKey.from_public_bytes(storage_key).verify(
+            signature_bytes,
+            libero_output_storage_authorization_signature_payload(authorization),
+        )
+    except (ValueError, binascii.Error, InvalidSignature) as exc:
+        raise RuntimeError("LIBERO output storage authorization signature is invalid") from exc
+    return authorization, hashlib.sha256(authorization_bytes).hexdigest()
 
 
 def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:

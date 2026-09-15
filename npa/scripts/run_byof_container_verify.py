@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Callable
@@ -27,6 +27,8 @@ from npa.deploy.images import (
     libero_image_manifest,
     libero_publication_lineage_values,
     validate_libero_customer_runtime_authorization,
+    validate_libero_authenticated_caller_assertion,
+    validate_libero_output_storage_authorization,
     validate_libero_qualified_image_manifest,
 )
 from npa.execution_preflight import (
@@ -141,6 +143,8 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64",
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
     ),
 }
@@ -328,6 +332,52 @@ def _mode_private_regular_file(value: str, *, label: str) -> Path:
             f"LIBERO {label} must be an owner-private regular file"
         )
     return path.resolve()
+
+
+def _stable_owner_private_bytes(path: Path, *, label: str, limit: int = 8 << 20) -> bytes:
+    """Snapshot one owner-private file through a stable no-follow descriptor."""
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise ValueError(f"LIBERO {label} is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        payload = os.pread(descriptor, limit + 1, 0)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or len(payload) > limit
+        or before.st_size != len(payload)
+        or identity
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise ValueError(f"LIBERO {label} is not a stable owner-private file")
+    return payload
+
+
+def _immutable_exact_run_copy(source: Path, target: Path, *, label: str) -> Path:
+    """Create one no-overwrite mode-0400 copy used for all later operations."""
+
+    payload = _stable_owner_private_bytes(source, label=label)
+    descriptor = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o400,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if _stable_owner_private_bytes(target, label=f"immutable {label}") != payload:
+        raise ValueError(f"LIBERO immutable {label} readback differs")
+    return target
 
 
 def _stop_sky_api(
@@ -1054,6 +1104,22 @@ def _bind_libero_runtime_contract(
     image = str(args.image or "").strip().removeprefix("docker:")
     if image != qualification["candidate_image"]:
         raise ValueError("LIBERO image differs from checked-in qualified lineage")
+    encoded_caller = os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_B64", "").strip()
+    try:
+        caller_bytes = base64.b64decode(encoded_caller, validate=True)
+        caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
+            caller_bytes, run_id=run_id
+        )
+    except (ValueError, binascii.Error, RuntimeError) as exc:
+        raise ValueError("LIBERO authenticated caller identity is invalid") from exc
+    authenticated_customer_identity = str(caller["customer_identity_sha256"])
+    if (
+        os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", "").strip()
+        != caller_sha256
+        or os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "").strip()
+        != authenticated_customer_identity
+    ):
+        raise ValueError("LIBERO authenticated caller identity differs")
     encoded_authorization = os.environ.get(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""
     ).strip()
@@ -1069,9 +1135,7 @@ def _bind_libero_runtime_contract(
                 authorization_bytes,
                 image_manifest=image_manifest,
                 run_id=run_id,
-                customer_identity_sha256=os.environ.get(
-                    "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
-                ).strip(),
+                customer_identity_sha256=authenticated_customer_identity,
             )
         )
     except RuntimeError as exc:
@@ -1590,73 +1654,22 @@ def _validate_libero_output_storage_authorization(
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO output storage authorization secret is invalid") from exc
-    authorization_sha256 = hashlib.sha256(payload).hexdigest()
     try:
-        authorization = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("LIBERO output storage authorization is not valid JSON") from exc
-    keys = {
-        "schema",
-        "issuer",
-        "run_id",
-        "output_prefix",
-        "endpoint_url",
-        "access_key_id_sha256",
-        "secret_access_key_sha256",
-        "session_token_sha256",
-        "policy_sha256",
-        "issued_at",
-        "expires_at",
-        "nonce",
-    }
-    if not isinstance(authorization, dict) or set(authorization) != keys:
-        raise ValueError("LIBERO output storage authorization schema is not closed")
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    session_token = os.environ.get("AWS_SESSION_TOKEN", "")
-    try:
-        issued_at = datetime.fromisoformat(
-            str(authorization["issued_at"]).replace("Z", "+00:00")
+        authorization, authorization_sha256 = (
+            validate_libero_output_storage_authorization(
+                payload,
+                image_manifest=libero_image_manifest(),
+                customer_authorization=customer_authorization,
+                run_id=run_id,
+                output_prefix=output_prefix,
+                endpoint_url=endpoint,
+                access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                session_token=os.environ.get("AWS_SESSION_TOKEN", ""),
+            )
         )
-        expires_at = datetime.fromisoformat(
-            str(authorization["expires_at"]).replace("Z", "+00:00")
-        )
-        customer_authorization_expires_at = datetime.fromisoformat(
-            str(customer_authorization["expires_at"]).replace("Z", "+00:00")
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError("LIBERO output storage authorization timestamps are invalid") from exc
-    now = datetime.now(timezone.utc)
-    valid = (
-        authorization.get("schema") == "npa.libero.output-storage-authorization.v2"
-        and authorization.get("issuer") == "npa-control-plane"
-        and authorization.get("run_id") == run_id
-        and authorization.get("output_prefix") == output_prefix
-        and authorization.get("endpoint_url") == endpoint
-        and re.fullmatch(
-            r"[0-9a-f]{64}", str(authorization.get("policy_sha256") or "")
-        )
-        is not None
-        and all((access_key, secret_key, session_token))
-        and authorization.get("access_key_id_sha256")
-        == hashlib.sha256(access_key.encode()).hexdigest()
-        and authorization.get("secret_access_key_sha256")
-        == hashlib.sha256(secret_key.encode()).hexdigest()
-        and authorization.get("session_token_sha256")
-        == hashlib.sha256(session_token.encode()).hexdigest()
-        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
-        is not None
-        and issued_at.tzinfo is not None
-        and expires_at.tzinfo is not None
-        and issued_at <= now + timedelta(minutes=5)
-        and issued_at < expires_at
-        and expires_at > now
-        and expires_at - issued_at <= timedelta(hours=24)
-        and customer_authorization_expires_at.tzinfo is not None
-        and expires_at <= customer_authorization_expires_at
-    )
-    if not valid:
-        raise ValueError("LIBERO output storage authorization is invalid or expired")
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
     return {**authorization, "authorization_sha256": authorization_sha256}
 
 
@@ -2543,6 +2556,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         previous_customer_authorization = os.environ.get(
             "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"
         )
+        previous_payload_kubeconfig = os.environ.get(
+            "NPA_LIBERO_PAYLOAD_KUBECONFIG"
+        )
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
         )
@@ -2564,14 +2580,33 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         submission_started = False
         submission_absence_proven = False
         try:
-            _normalize_kubeconfig_current_context(tmp_path)
+            if is_libero:
+                payload_source = _mode_private_regular_file(
+                    os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG", ""),
+                    label="payload kubeconfig",
+                )
+                payload_copy = _immutable_exact_run_copy(
+                    payload_source,
+                    isolated_config_dir / "libero-payload-kubeconfig",
+                    label="payload kubeconfig",
+                )
+                os.environ["NPA_LIBERO_PAYLOAD_KUBECONFIG"] = str(payload_copy)
+            _normalize_kubeconfig_current_context(tmp_path, immutable=is_libero)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
             infra = args.infra or _default_infra()
-            config_path = (
-                _libero_global_config_path(args)
-                if is_libero
-                else args.config_path or _write_default_k8s_config(tmp_path, infra)
-            )
+            if is_libero:
+                config_source = Path(_libero_global_config_path(args))
+                config_path = str(
+                    _immutable_exact_run_copy(
+                        config_source,
+                        isolated_config_dir / "libero-skypilot-config.yaml",
+                        label="SkyPilot global config",
+                    )
+                )
+            else:
+                config_path = args.config_path or _write_default_k8s_config(
+                    tmp_path, infra
+                )
             api_config_path = Path(config_path) if config_path else None
             global_config: dict[str, Any] = {}
             if config_path:
@@ -2999,6 +3034,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"] = (
                     previous_customer_authorization
                 )
+            if previous_payload_kubeconfig is None:
+                os.environ.pop("NPA_LIBERO_PAYLOAD_KUBECONFIG", None)
+            else:
+                os.environ["NPA_LIBERO_PAYLOAD_KUBECONFIG"] = (
+                    previous_payload_kubeconfig
+                )
             if (
                 os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
                 and not api_stop_attempted
@@ -3093,7 +3134,9 @@ def _default_infra() -> str:
     return "kubernetes"
 
 
-def _normalize_kubeconfig_current_context(tmp_path: Path) -> None:
+def _normalize_kubeconfig_current_context(
+    tmp_path: Path, *, immutable: bool = False
+) -> None:
     kubeconfig = os.environ.get("KUBECONFIG", "").strip()
     context = (
         os.environ.get("KUBECONTEXT", "")
@@ -3102,15 +3145,45 @@ def _normalize_kubeconfig_current_context(tmp_path: Path) -> None:
     ).strip()
     if not kubeconfig or not context:
         return
-    path = Path(kubeconfig)
-    if not path.is_file():
+    if not immutable:
+        path = Path(kubeconfig)
+        if not path.is_file():
+            return
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return
+        data["current-context"] = context
+        target = tmp_path / "kubeconfig"
+        target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        os.environ["KUBECONFIG"] = str(target)
         return
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    source = _immutable_exact_run_copy(
+        Path(kubeconfig).expanduser(),
+        tmp_path / "execution-kubeconfig.source",
+        label="execution kubeconfig",
+    )
+    try:
+        data = yaml.safe_load(
+            _stable_owner_private_bytes(
+                source, label="immutable execution kubeconfig"
+            ).decode("utf-8")
+        )
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValueError("LIBERO execution kubeconfig is invalid") from exc
     if not isinstance(data, dict):
-        return
+        raise ValueError("LIBERO execution kubeconfig must be a mapping")
     data["current-context"] = context
     target = tmp_path / "kubeconfig"
-    target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    payload = yaml.safe_dump(data, sort_keys=False).encode()
+    descriptor = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o400,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
     os.environ["KUBECONFIG"] = str(target)
 
 

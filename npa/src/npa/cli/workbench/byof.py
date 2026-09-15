@@ -96,6 +96,7 @@ def build_byof_argv(
     smoke_artifact_name: str = "",
     libero_qualified_candidate_image: str = "",
     libero_customer_runtime_authorization_file: str = "",
+    libero_authenticated_caller_identity_file: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -166,6 +167,13 @@ def build_byof_argv(
             [
                 "--libero-customer-runtime-authorization-file",
                 libero_customer_runtime_authorization_file,
+            ]
+        )
+    if libero_authenticated_caller_identity_file:
+        argv.extend(
+            [
+                "--libero-authenticated-caller-identity-file",
+                libero_authenticated_caller_identity_file,
             ]
         )
     if project:
@@ -270,6 +278,14 @@ def run_cmd(
             "acknowledges the exact LIBERO terms for the run."
         ),
     ),
+    libero_authenticated_caller_identity_file: str = typer.Option(
+        "",
+        "--libero-authenticated-caller-identity-file",
+        help=(
+            "Owner-private, short-lived assertion from the authenticated caller "
+            "control-plane boundary."
+        ),
+    ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
     ),
@@ -338,6 +354,9 @@ def run_cmd(
         libero_qualified_candidate_image=libero_qualified_candidate_image,
         libero_customer_runtime_authorization_file=(
             libero_customer_runtime_authorization_file
+        ),
+        libero_authenticated_caller_identity_file=(
+            libero_authenticated_caller_identity_file
         ),
         project=project,
         registry=registry,
