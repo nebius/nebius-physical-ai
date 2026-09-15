@@ -104,6 +104,33 @@ real stages use `workbench.openarm.mujoco_rollout`,
 rejects missing, empty, non-finite, or path-escaping payloads, hashes each real
 trace/video/checkpoint, and writes `qualification/qualification.json`.
 
+## Accepted exact-image evidence
+
+The public development image at revision
+`01fbf3a554cb7b15066283fd171c5b81f6207eda` and digest
+`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`
+passed anonymous pull, all-layer restricted-payload/history scanning, critical
+vulnerability and secret scanning, SPDX inventory generation, and provenance
+and SBOM attestation verification. The scanned archive contained 98,660
+filesystem entries and no prohibited Isaac, Kit, credential, cache, or customer
+payload.
+
+That exact digest then completed the four-stage reference workflow on one RTX
+PRO 6000. MuJoCo executed 500 real simulation steps and emitted finite command
+`[500,16]`, joint-position `[101,14]`, and energy `[101]` arrays plus a fully
+decoded 100-frame H.264 640×480 video. Isaac Lab executed 64 upstream
+`Isaac-Reach-OpenArm-v0` environments for 100 CUDA/PhysX steps and emitted
+finite reward `[100]` and policy-observation `[100,28]` arrays. The pinned
+upstream RSL-RL trainer completed one iteration and wrote a non-empty Torch
+archive containing serialized state. The final qualifier independently matched
+all four declared artifact sizes and hashes; a separate read-after-run check
+repeated the finite-array, full-video-decode, and checkpoint-archive gates.
+
+This acceptance proves the pinned reach task and one-iteration training path on
+RTX PRO 6000. It does not claim policy convergence, physical-robot behavior,
+unlisted OpenArm tasks, L40S execution, or support on H100/H200/B200/B300. The
+datacenter parts do not have the RT cores required by this complete Isaac path.
+
 ## Verify
 
 ```bash

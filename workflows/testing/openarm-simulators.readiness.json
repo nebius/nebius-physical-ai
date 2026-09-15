@@ -21,9 +21,11 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Writable output storage has not yet been checked for the live qualification run.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The selected project-scoped store passed read/write scope preflight and retained all four workflow outputs for an independent read-after-run check.",
+      "evidence": [
+        "private access-controlled validation record"
+      ]
     },
     "worker_input": {
       "status": "verified",
@@ -33,19 +35,27 @@
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Nebius and output-storage credential preflight has not yet run.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Nebius compute and exact project-scoped storage credentials passed the required health preflights before GPU submission.",
+      "evidence": [
+        "private access-controlled validation record"
+      ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The immutable development image has not yet been built, scanned, pushed, or anonymously pulled.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The exact development digest was built by the trusted publisher and independently passed anonymous pull, full-layer payload/history, critical-CVE, secret, license, SBOM, and provenance checks.",
+      "evidence": [
+        "npa-openarm dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a"
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The exact image has not yet completed both simulator integrations on an RT-capable GPU.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The exact digest completed a 500-step MuJoCo rollout with rendered video, a 64-environment 100-step Isaac reach rollout on CUDA, one iteration of upstream RSL-RL training with a real checkpoint, and fail-closed artifact qualification on an RT-capable GPU.",
+      "evidence": [
+        "private access-controlled validation record",
+        "independent finite-array, full-video-decode, checkpoint-archive, and artifact-hash verification"
+      ]
     }
   }
 }

@@ -149,7 +149,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa", "openarm"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -193,6 +193,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "detection-training": {
         "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1",
         "oci_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
+    },
+    "openarm": {
+        "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "oci_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
     },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
