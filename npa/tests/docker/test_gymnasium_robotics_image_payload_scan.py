@@ -53,6 +53,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "zip local descriptor metadata is not zero",
         'struct.unpack("<3L", fields)',
         "_nested_archive_members(",
+        "nested_budget=nested_budget",
         "allowed_system_wheel_path=",
         '"requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a"',
         "KNOWN_FORBIDDEN_CONTENT_SHA256",

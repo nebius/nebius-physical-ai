@@ -1144,6 +1144,8 @@ def _layers(
 
 def _layers_from_bytes(
     layers: list[tuple[str, bytes]],
+    *,
+    nested_budget: _NestedArchiveBudget | None = None,
 ) -> tuple[
     dict[str, bytes],
     dict[str, dict[str, Any]],
@@ -1160,7 +1162,8 @@ def _layers_from_bytes(
     whiteouts: list[dict[str, Any]] = []
     ordered_layer_bytes = 0
     materialized_layer_bytes = 0
-    nested_budget = _NestedArchiveBudget()
+    if nested_budget is None:
+        nested_budget = _NestedArchiveBudget()
     for layer_name, raw in layers:
         if len(raw) > MAX_LAYER_ARCHIVE_BYTES:
             raise ValueError(f"archive member exceeds scan bound: {layer_name}")
@@ -1497,6 +1500,7 @@ def _oci_blob(
     *,
     label: str,
     referenced: set[str],
+    nested_budget: _NestedArchiveBudget,
 ) -> tuple[bytes, str]:
     if not isinstance(descriptor, dict):
         raise ValueError(f"OCI {label} descriptor is not an object")
@@ -1519,7 +1523,9 @@ def _oci_blob(
         raise ValueError(f"OCI {label} descriptor does not bind its blob")
     referenced.add(name)
     _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
-    _nested_archive_members(f"raw OCI {label} blob", raw)
+    _nested_archive_members(
+        f"raw OCI {label} blob", raw, budget=nested_budget
+    )
     return raw, media_type
 
 
@@ -1528,6 +1534,7 @@ def _oci_manifest_candidates(
     descriptors: object,
     *,
     referenced: set[str],
+    nested_budget: _NestedArchiveBudget,
     inherited_platform: dict[str, object] | None = None,
     depth: int = 0,
 ) -> list[tuple[dict[str, object], dict[str, object]]]:
@@ -1544,6 +1551,7 @@ def _oci_manifest_candidates(
             descriptor,
             label=f"graph descriptor {depth}:{index}",
             referenced=referenced,
+            nested_budget=nested_budget,
         )
         if media_type not in OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES:
             raise ValueError("OCI index contains an unsupported descriptor media type")
@@ -1567,6 +1575,7 @@ def _oci_manifest_candidates(
                     archive,
                     document.get("manifests"),
                     referenced=referenced,
+                    nested_budget=nested_budget,
                     inherited_platform=platform,
                     depth=depth + 1,
                 )
@@ -1579,6 +1588,7 @@ def _oci_manifest_candidates(
             document.get("config"),
             label=f"manifest config {depth}:{index}",
             referenced=referenced,
+            nested_budget=nested_budget,
         )
         _scan_decoded_member_bytes(
             f"decoded OCI manifest config {depth}:{index}", config_raw
@@ -1592,6 +1602,7 @@ def _oci_manifest_candidates(
                 layer_descriptor,
                 label=f"manifest layer {depth}:{index}:{layer_index}",
                 referenced=referenced,
+                nested_budget=nested_budget,
             )
         annotations = descriptor.get("annotations") or {}
         if not isinstance(annotations, dict):
@@ -1653,6 +1664,7 @@ def _finalize_scan(
     layers: list[tuple[str, bytes]],
     layer_descriptors: list[dict[str, object]] | None,
     archive_format: str,
+    nested_budget: _NestedArchiveBudget | None = None,
 ) -> dict[str, Any]:
     runtime_config = config.get("config")
     if not isinstance(runtime_config, dict) or runtime_config.get("User") != "ubuntu":
@@ -1664,7 +1676,7 @@ def _finalize_scan(
         nested_members,
         layer_diff_ids,
         whiteouts,
-    ) = _layers_from_bytes(layers)
+    ) = _layers_from_bytes(layers, nested_budget=nested_budget)
     config_rootfs = config.get("rootfs")
     if (
         not isinstance(config_rootfs, dict)
@@ -1742,8 +1754,12 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
         ):
             raise ValueError("OCI root index is malformed")
         referenced: set[str] = set()
+        nested_budget = _NestedArchiveBudget()
         candidates = _oci_manifest_candidates(
-            archive, index.get("manifests"), referenced=referenced
+            archive,
+            index.get("manifests"),
+            referenced=referenced,
+            nested_budget=nested_budget,
         )
         manifest = _selected_oci_manifest(candidates)
         config_descriptor = manifest.get("config")
@@ -1752,6 +1768,7 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
             config_descriptor,
             label="selected image config",
             referenced=referenced,
+            nested_budget=nested_budget,
         )
         if config_media not in OCI_CONFIG_MEDIA_TYPES:
             raise ValueError("OCI image config media type is unsupported")
@@ -1769,6 +1786,7 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
                 descriptor,
                 label=f"selected layer {position}",
                 referenced=referenced,
+                nested_budget=nested_budget,
             )
             assert isinstance(descriptor, dict)
             decoded = _strict_oci_layer(
@@ -1795,6 +1813,7 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
         layers=layers,
         layer_descriptors=normalized_descriptors,
         archive_format="oci-layout",
+        nested_budget=nested_budget,
     )
 
 
